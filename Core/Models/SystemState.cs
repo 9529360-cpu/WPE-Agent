@@ -57,6 +57,21 @@ public class SystemState
     public string NewsSummary { get; set; } = "等待新闻证据";
     public string RiskSummary { get; set; } = "等待风险检查";
     public string DecisionDiagnostics { get; set; } = "等待信号聚合与 Reviewer 检查";
+    public double BrainConfidence { get; set; }
+    public double DecisionScore { get; set; }
+    public double RiskLoad { get; set; }
+    public double ConflictRate { get; set; }
+    public string MarketRegime { get; set; } = "UNKNOWN";
+    public string WorkflowNode { get; set; } = "IDLE";
+    public string ReflectionStatus { get; set; } = "MEMORY READY";
+    public int ThinkingProgress { get; set; }
+    public decimal BtcPrice { get; set; }
+    public decimal EthPrice { get; set; }
+    public double BtcTrend { get; set; }
+    public double EthTrend { get; set; }
+    public double BtcRsi { get; set; }
+    public double EthRsi { get; set; }
+    public IReadOnlyDictionary<string,double> SignalContributions { get; set; } = new Dictionary<string,double>();
 }
 
 
