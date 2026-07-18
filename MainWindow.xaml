@@ -21,9 +21,9 @@
                     <TextBlock x:Name="CycleText" Foreground="#7ED6A5" Margin="0,0,12,4"/>
                 </WrapPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="启动" Height="34" MinWidth="72" Margin="6,0,0,0" Click="StartAgent_Click"/>
-                    <Button x:Name="PauseButton" Content="暂停" Height="34" MinWidth="72" Margin="6,0,0,0" Click="PauseAgent_Click"/>
-                    <Button Content="停止" Height="34" MinWidth="72" Margin="6,0,0,0" Click="StopAgent_Click"/>
+                    <Button x:Name="StartButton" Content="启动" Height="34" MinWidth="72" Margin="6,0,0,0" Click="StartAgent_Click"/>
+                    <Button x:Name="PauseButton" Content="暂停" Height="34" MinWidth="72" Margin="6,0,0,0" IsEnabled="False" Click="PauseAgent_Click"/>
+                    <Button x:Name="StopButton" Content="停止" Height="34" MinWidth="72" Margin="6,0,0,0" IsEnabled="False" Click="StopAgent_Click"/>
                     <Button x:Name="EmergencyButton" Content="紧急全平" Height="34" MinWidth="86" Margin="10,0,0,0" Background="#B33A3A" Foreground="White" FontWeight="Bold" Click="EmergencyClose_Click"/>
                 </StackPanel>
             </Grid>
