@@ -56,6 +56,7 @@ public class SystemState
     public string MarketSummary { get; set; } = "等待市场证据";
     public string NewsSummary { get; set; } = "等待新闻证据";
     public string RiskSummary { get; set; } = "等待风险检查";
+    public string DecisionDiagnostics { get; set; } = "等待信号聚合与 Reviewer 检查";
 }
 
 

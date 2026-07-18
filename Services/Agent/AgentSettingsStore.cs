@@ -6,11 +6,11 @@ namespace 币安量化机器人.Services.Agent;
 
 public sealed class BrainSlot { public string Provider { get; set; } = "DeepSeek"; public string Endpoint { get; set; } = "https://api.deepseek.com/chat/completions"; public string Model { get; set; } = "deepseek-chat"; public string EncryptedKey { get; set; } = string.Empty; }
 public sealed class EnvironmentSlot { public string EncryptedApiKey { get; set; } = string.Empty; public string EncryptedApiSecret { get; set; } = string.Empty; }
-public sealed class AgentSettings { public ExchangeEnvironment Environment { get; set; } = ExchangeEnvironment.Testnet; public string ActiveBrain { get; set; } = "DeepSeek"; public Dictionary<string, BrainSlot> Brains { get; set; } = new(StringComparer.OrdinalIgnoreCase); public EnvironmentSlot Testnet { get; set; } = new(); public EnvironmentSlot Mainnet { get; set; } = new(); public bool MainnetTradingConfirmed { get; set; } public DateTime? MainnetConfirmedAtUtc { get; set; } public RiskLimits Risk { get; set; } = new(); }
+public sealed class AgentSettings { public ExchangeEnvironment Environment { get; set; } = ExchangeEnvironment.Testnet; public string ActiveBrain { get; set; } = "DeepSeek"; public Dictionary<string, BrainSlot> Brains { get; set; } = new(StringComparer.OrdinalIgnoreCase); public EnvironmentSlot Testnet { get; set; } = new(); public EnvironmentSlot Mainnet { get; set; } = new(); public bool MainnetTradingConfirmed { get; set; } public DateTime? MainnetConfirmedAtUtc { get; set; } public RiskLimits Risk { get; set; } = new(); public DecisionPolicy Decision { get; set; } = new(); }
 public sealed class AgentSettingsStore
 {
     private readonly string _path = Path.Combine(AppContext.BaseDirectory, "Data", "agent-settings.json");
-    public AgentSettings Load() { try { if (File.Exists(_path)) return JsonSerializer.Deserialize<AgentSettings>(File.ReadAllText(_path)) ?? Defaults(); } catch { } return Defaults(); }
+    public AgentSettings Load() { try { if (File.Exists(_path)) return Normalize(JsonSerializer.Deserialize<AgentSettings>(File.ReadAllText(_path)) ?? Defaults()); } catch { } return Defaults(); }
     public void Save(AgentSettings settings) { Directory.CreateDirectory(Path.GetDirectoryName(_path)!); File.WriteAllText(_path, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented=true })); }
     public void ImportDesktopTestnetIfEmpty(AgentSettings settings)
     {
@@ -32,5 +32,15 @@ public sealed class AgentSettingsStore
         if(!string.Equals(confirmation,"ENABLE MAINNET",StringComparison.Ordinal))throw new InvalidOperationException("主网确认短语不匹配");settings.MainnetTradingConfirmed=true;settings.MainnetConfirmedAtUtc=DateTime.UtcNow;Save(settings);
     }
     public void RevokeMainnet(AgentSettings settings){settings.MainnetTradingConfirmed=false;settings.MainnetConfirmedAtUtc=null;if(settings.Environment==ExchangeEnvironment.Mainnet)settings.Environment=ExchangeEnvironment.Testnet;Save(settings);}
+    private static AgentSettings Normalize(AgentSettings settings)
+    {
+        settings.Risk??=new();settings.Decision??=new();settings.Brains??=new(StringComparer.OrdinalIgnoreCase);settings.Testnet??=new();settings.Mainnet??=new();
+        settings.Decision.MinimumConfidence=Math.Clamp(settings.Decision.MinimumConfidence,.50,.95);
+        settings.Decision.MinimumDirectionalScore=Math.Clamp(settings.Decision.MinimumDirectionalScore,.10,.80);
+        settings.Decision.MaximumConflictRatio=Math.Clamp(settings.Decision.MaximumConflictRatio,.10,.90);
+        settings.Decision.MinimumEvidenceCompleteness=Math.Clamp(settings.Decision.MinimumEvidenceCompleteness,60,100);
+        settings.Decision.MaximumEvidenceAgeMinutes=Math.Clamp(settings.Decision.MaximumEvidenceAgeMinutes,1,30);
+        return settings;
+    }
     private static AgentSettings Defaults() => new() { Brains = new(StringComparer.OrdinalIgnoreCase) { ["DeepSeek"] = new BrainSlot() } };
 }

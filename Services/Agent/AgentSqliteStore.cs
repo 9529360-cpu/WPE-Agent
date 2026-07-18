@@ -18,6 +18,7 @@ public sealed class AgentSqliteStore
     CREATE TABLE IF NOT EXISTS errors(id INTEGER PRIMARY KEY AUTOINCREMENT,occurred_at TEXT,stage TEXT,message TEXT,details TEXT);
     CREATE TABLE IF NOT EXISTS agent_state(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT);
     CREATE TABLE IF NOT EXISTS daily_risk(day TEXT PRIMARY KEY,equity_high TEXT NOT NULL,updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS decision_audits(cycle_id TEXT PRIMARY KEY,created_at TEXT NOT NULL,assessments_json TEXT NOT NULL,review_json TEXT NOT NULL);
     """;q.ExecuteNonQuery();}
     public async Task StartCycleAsync(string id,EvidencePack e,string brain,CancellationToken ct){await Exec("INSERT OR REPLACE INTO cycles(id,started_at,status,completeness,evidence_json,brain) VALUES($i,$t,'RUNNING',$c,$e,$b)",ct,("$i",id),("$t",DateTime.UtcNow.ToString("O")),("$c",e.Completeness),("$e",JsonSerializer.Serialize(e)),("$b",brain));}
     public async Task CompleteCycleAsync(string id,DecisionPlan d,string risk,string? request,string? response,CancellationToken ct){await Exec("UPDATE cycles SET completed_at=$t,status='COMPLETED',decision_json=$d,risk_result=$r,brain_request=$q,brain_response=$b WHERE id=$i",ct,("$i",id),("$t",DateTime.UtcNow.ToString("O")),("$d",JsonSerializer.Serialize(d)),("$r",risk),("$q",request??""),("$b",response??""));}
@@ -52,6 +53,20 @@ public sealed class AgentSqliteStore
         q.Parameters.Clear();q.CommandText="INSERT OR REPLACE INTO daily_risk(day,equity_high,updated_at) VALUES($d,$h,$t)";q.Parameters.AddWithValue("$d",day.ToString("yyyy-MM-dd",CultureInfo.InvariantCulture));q.Parameters.AddWithValue("$h",high.ToString(CultureInfo.InvariantCulture));q.Parameters.AddWithValue("$t",DateTime.UtcNow.ToString("O"));await q.ExecuteNonQueryAsync(ct);await tx.CommitAsync(ct);return high;
     }
     public async Task RecordErrorAsync(string stage,Exception ex,CancellationToken ct)=>await Exec("INSERT INTO errors(occurred_at,stage,message,details) VALUES($t,$s,$m,$d)",ct,("$t",DateTime.UtcNow.ToString("O")),("$s",stage),("$m",ex.Message),("$d",ex.ToString()));
-    public async Task<IReadOnlyList<string>> RecentOutcomesAsync(CancellationToken ct){var list=new List<string>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT decision_json||' | '||risk_result FROM cycles WHERE status='COMPLETED' ORDER BY completed_at DESC LIMIT 5";await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))list.Add(r.GetString(0));return list;}
+    public Task RecordDecisionAuditAsync(string cycle,IReadOnlyList<MarketDecisionAssessment> assessments,DecisionReview review,CancellationToken ct)=>Exec("INSERT OR REPLACE INTO decision_audits(cycle_id,created_at,assessments_json,review_json) VALUES($c,$t,$a,$r)",ct,("$c",cycle),("$t",DateTime.UtcNow.ToString("O")),("$a",JsonSerializer.Serialize(assessments)),("$r",JsonSerializer.Serialize(review)));
+    public async Task<IReadOnlyList<string>> RecentOutcomesAsync(CancellationToken ct)
+    {
+        var groups=new Dictionary<string,(DecisionPlan Decision,string Risk,int Count)>(StringComparer.OrdinalIgnoreCase);await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT decision_json,risk_result FROM cycles WHERE status='COMPLETED' ORDER BY completed_at DESC LIMIT 20";await using var r=await q.ExecuteReaderAsync(ct);
+        while(await r.ReadAsync(ct))
+        {
+            try{var d=JsonSerializer.Deserialize<DecisionPlan>(r.GetString(0));if(d is null)continue;var risk=r.GetString(1);var key=$"{d.Action}|{d.Instrument}|{Math.Round(d.Confidence,1):F1}|{risk}";if(groups.TryGetValue(key,out var old))groups[key]=(old.Decision,old.Risk,old.Count+1);else groups[key]=(d,risk,1);}catch(JsonException){}
+        }
+        return groups.Values.Take(6).Select(x=>{var reason=x.Decision.Reason.Length>180?x.Decision.Reason[..180]+"…":x.Decision.Reason;return $"{x.Decision.Action} {x.Decision.Instrument} confidence={x.Decision.Confidence:F2} result={x.Risk} repeats={x.Count} latestReason={reason}";}).ToArray();
+    }
+    public async Task<int> ConsecutiveHoldCountAsync(CancellationToken ct)
+    {
+        var count=0;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT decision_json FROM cycles WHERE status='COMPLETED' ORDER BY completed_at DESC LIMIT 20";await using var r=await q.ExecuteReaderAsync(ct);
+        while(await r.ReadAsync(ct)){try{var d=JsonSerializer.Deserialize<DecisionPlan>(r.GetString(0));if(d?.Action!=DecisionAction.Hold)break;count++;}catch(JsonException){break;}}return count;
+    }
     private async Task Exec(string sql,CancellationToken ct,params (string,object?)[] args){await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText=sql;foreach(var a in args)q.Parameters.AddWithValue(a.Item1,a.Item2??DBNull.Value);await q.ExecuteNonQueryAsync(ct);}
 }

@@ -42,6 +42,15 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
+        if (e.Args.Any(x => string.Equals(x, "--maturity-test", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var result = await MaturityTestRunner.RunAsync();
+            Log.Information("Maturity tests completed. Success={Success}; Report={Report}", result.Success, result.ReportPath);
+            Shutdown(result.Success ? 0 : 3);
+            return;
+        }
+
         var main = new MainWindow();
         main.Show();
 

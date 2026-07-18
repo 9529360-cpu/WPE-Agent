@@ -39,8 +39,34 @@ public sealed class DecisionPlan
     public string Regime { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
     public List<string> EvidenceReferences { get; set; } = new();
+    public List<string> MissingConditions { get; set; } = new();
+    public string ConflictSummary { get; set; } = string.Empty;
 }
-public sealed record AgentContext(string BrainName, bool CircuitBreakerActive, string? ActiveSymbol, IReadOnlyList<string> PreviousOutcomes);
+public enum MarketRegime { Trending, Ranging, Transition, Unknown }
+public sealed record SignalContribution(string Name,string Horizon,double RawValue,double Weight,double WeightedScore,string Direction,string Explanation);
+public sealed class MarketDecisionAssessment
+{
+    public string Symbol { get; init; } = string.Empty;
+    [JsonConverter(typeof(JsonStringEnumConverter))] public MarketRegime Regime { get; init; }
+    public double NetScore { get; init; }
+    public double Confidence { get; init; }
+    public double ConflictRatio { get; init; }
+    public bool Fresh { get; init; }
+    public bool EntryReady { get; init; }
+    [JsonConverter(typeof(JsonStringEnumConverter))] public DecisionAction RecommendedAction { get; init; } = DecisionAction.Hold;
+    public IReadOnlyList<SignalContribution> Signals { get; init; } = Array.Empty<SignalContribution>();
+    public IReadOnlyList<string> MissingConditions { get; init; } = Array.Empty<string>();
+    public string Summary { get; init; } = string.Empty;
+}
+public sealed class DecisionReview
+{
+    public DecisionPlan Decision { get; init; } = new();
+    public bool Accepted { get; init; }
+    public string Verdict { get; init; } = string.Empty;
+    public IReadOnlyList<string> BlockingReasons { get; init; } = Array.Empty<string>();
+    public string Explanation { get; init; } = string.Empty;
+}
+public sealed record AgentContext(string BrainName, bool CircuitBreakerActive, string? ActiveSymbol, IReadOnlyList<string> PreviousOutcomes, IReadOnlyList<MarketDecisionAssessment> MarketAssessments, int ConsecutiveHolds);
 public sealed record BrainHealth(bool Healthy, string Message);
 public sealed record BrainDecisionResult(DecisionPlan Decision, string Request, string Response);
 public sealed class BrainCallException : Exception
@@ -68,6 +94,14 @@ public interface IExchangeAdapter : IAsyncDisposable
     Task CancelOrderAsync(string symbol, long orderId, CancellationToken ct);
 }
 public sealed class RiskLimits { public decimal[] MarginTiers { get; set; } = [0.20m,0.40m,0.60m]; public decimal MaxMargin { get; set; } = .60m; public int Leverage { get; set; } = 50; public decimal DailyDrawdownLimit { get; set; } = .30m; public bool Isolated { get; set; } = true; }
+public sealed class DecisionPolicy
+{
+    public double MinimumConfidence { get; set; } = .62;
+    public double MinimumDirectionalScore { get; set; } = .28;
+    public double MaximumConflictRatio { get; set; } = .65;
+    public int MinimumEvidenceCompleteness { get; set; } = 70;
+    public int MaximumEvidenceAgeMinutes { get; set; } = 5;
+}
 public sealed record ExecutionIntent(string Symbol, PositionSide Side, decimal Quantity, bool ReduceOnly, decimal StopLoss, decimal TakeProfit, string ClientOrderId, string Reason, DecisionAction Action = DecisionAction.Hold);
 public sealed record PersistedIntent(string CycleId, ExecutionIntent Intent, string Status, long? ExchangeOrderId);
 public sealed record RecoveryResult(bool SafeToIncreaseRisk, IReadOnlyList<string> Messages);

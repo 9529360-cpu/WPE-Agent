@@ -39,7 +39,7 @@ public partial class MainWindow : Window
         _currentPage=page;MainContentHost.Children.Clear();StatusText.Text=$"状态：{page}";var s=ServiceLocator.SystemState;
         switch(page)
         {
-            case "市场证据":SectionTitle.Text="市场与证据";ShowCards("BTC/ETH 多周期结构、衍生品和可验证新闻",("市场结构",s.MarketSummary),("新闻证据",s.NewsSummary),("证据质量",$"完整度 {s.EvidenceCompleteness}/100\n{s.RiskSummary}"),("判定原则","价格结构优先于新闻叙事；证据不足时降低置信度并 HOLD。"));break;
+            case "市场证据":SectionTitle.Text="市场与证据";ShowCards("BTC/ETH 分品种聚合 · 市场状态 · 可解释冲突",("市场结构",s.MarketSummary),("新闻证据",s.NewsSummary),("证据质量",$"完整度 {s.EvidenceCompleteness}/100\n{s.RiskSummary}"),("决策透明度",s.DecisionDiagnostics));break;
             case "持仓订单":SectionTitle.Text="持仓与订单";ShowCards("交易所状态是最终事实来源",("持仓",s.PositionsSummary),("活动订单",s.OrdersSummary),("账户",$"钱包 {s.WalletBalance:F2} USDT\n可用 {s.AvailableBalance:F2} USDT"),("保护状态",s.LastMessage));break;
             case "风控设置":SectionTitle.Text="风控与设置";ShowCards("确定性身体规则，不由大脑绕过",("仓位档位","20% / 40% / 60% · 每周期最多提升一档"),("硬限制","聚合保证金 ≤ 60% · 当日回撤 30% 熔断"),("执行保护","50x 默认并受交易所上限约束\n止损距估算强平价保留30%缓冲"),("当前风险",s.RiskSummary));break;
             case "账户大脑":SectionTitle.Text="账户与大脑";ShowCards("密钥仅以 DPAPI 加密保存，界面不显示明文",("环境",$"{s.Mode}\n主网必须独立显式确认"),("账户",$"钱包 {s.WalletBalance:F2} USDT\n可用 {s.AvailableBalance:F2} USDT"),("当前唯一大脑",s.BrainName),("大脑职责","只输出判断、档位和保护价格；数量与交易规则由身体计算。"));break;
