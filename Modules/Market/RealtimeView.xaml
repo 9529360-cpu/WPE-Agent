@@ -1,0 +1,119 @@
+<UserControl x:Class="币安量化机器人.Modules.Market.RealtimeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:sp="clr-namespace:ScottPlot.WPF;assembly=ScottPlot.WPF"
+             xmlns:conv="clr-namespace:币安量化机器人.Converters"
+             xmlns:helpers="clr-namespace:币安量化机器人.Helpers">
+    <UserControl.Resources>
+        <conv:PositiveNegativeBrushConverter x:Key="ChangeBrush"/>
+        <Style x:Key="RightAlignCell" TargetType="TextBlock">
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="TextAlignment" Value="Right"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Background="White">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="#1F2937" Padding="12">
+            <DockPanel>
+                <StackPanel Orientation="Vertical" DockPanel.Dock="Left">
+                    <TextBlock Text="实时行情监控" FontSize="16" FontWeight="Bold" Foreground="White"/>
+                    <TextBlock Text="通过 Binance 永续合约 WebSocket 获取实时报价" FontSize="12" Foreground="#D1D5DB"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" helpers:StackPanelHelper.Spacing="8">
+                    <ComboBox x:Name="SymbolSelector" Width="140" Height="26" SelectionChanged="SymbolSelector_SelectionChanged"/>
+                    <ComboBox x:Name="IntervalSelector" Width="100" Height="26" SelectionChanged="IntervalSelector_SelectionChanged">
+                        <ComboBoxItem Content="1m"/>
+                        <ComboBoxItem Content="5m"/>
+                        <ComboBoxItem Content="15m"/>
+                        <ComboBoxItem Content="1h"/>
+                        <ComboBoxItem Content="4h"/>
+                    </ComboBox>
+                    <TextBox x:Name="SearchBox" Width="180" Height="26" Margin="0,0,12,0"
+                             VerticalContentAlignment="Center" TextChanged="SearchBox_TextChanged"/>
+                    <Button Content="AI 预测" Height="26" MinWidth="80" Click="Forecast_Click" Margin="0,0,8,0"/>
+                    <Button Content="重置视图" Height="26" MinWidth="80" Click="ResetView_Click"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="360"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6">
+                <DataGrid x:Name="QuotesGrid"
+                          AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                          SelectionMode="Single" HeadersVisibility="Column"
+                          SelectionChanged="QuotesGrid_SelectionChanged">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="交易对" Binding="{Binding Symbol}" Width="*"/>
+                        <DataGridTextColumn Header="最新价格" Binding="{Binding LastPrice, StringFormat=F4}" Width="120" ElementStyle="{StaticResource RightAlignCell}"/>
+                        <DataGridTemplateColumn Header="24h 涨跌" Width="110">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding ChangePercent, StringFormat={}{0:+0.00;-0.00;0.00}%}"
+                                               HorizontalAlignment="Right"
+                                               Foreground="{Binding ChangePercent, Converter={StaticResource ChangeBrush}}"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="指数价" Binding="{Binding IndexPrice, StringFormat=F4}" Width="120" ElementStyle="{StaticResource RightAlignCell}"/>
+                        <DataGridTextColumn Header="基差" Binding="{Binding Basis, StringFormat=F4}" Width="100" ElementStyle="{StaticResource RightAlignCell}"/>
+                        <DataGridTextColumn Header="基差%" Binding="{Binding BasisPct, StringFormat=P2}" Width="100" ElementStyle="{StaticResource RightAlignCell}"/>
+                        <DataGridTextColumn Header="成交额" Binding="{Binding Volume, StringFormat=N0}" Width="140" ElementStyle="{StaticResource RightAlignCell}"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Border>
+
+            <Border Grid.Column="2" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="12">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock x:Name="DetailTitle" Text="请选择左侧交易对" FontSize="15" FontWeight="Bold"/>
+                    <TextBlock x:Name="DetailPrice" Grid.Row="1" Margin="0,4,0,0" FontSize="14" Foreground="#111827"/>
+
+                    <GroupBox Header="价格走势" Grid.Row="2" Margin="0,12,0,0">
+                        <sp:WpfPlot x:Name="PricePlot" Height="200"/>
+                    </GroupBox>
+
+                    <GroupBox Header="AI 预测 / 风险预估" Grid.Row="3" Margin="0,12,0,0">
+                        <StackPanel>
+                            <TextBlock x:Name="ForecastSummary" Foreground="#1F2937" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="ForecastRisk" Margin="0,4,0,0" Foreground="#4B5563" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <StackPanel Grid.Row="4" Margin="0,12,0,0">
+                        <TextBlock x:Name="DetailChange" Foreground="#4B5563"/>
+                        <TextBlock x:Name="DetailRange" Foreground="#4B5563" Margin="0,4,0,0"/>
+                        <TextBlock x:Name="DetailVolume" Foreground="#4B5563" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <StatusBar Grid.Row="2" Background="#F3F4F6" HorizontalAlignment="Stretch">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="状态：初始化"/>
+            </StatusBarItem>
+            <StatusBarItem HorizontalAlignment="Right">
+                <TextBlock x:Name="ConnectionText" Text="连接：未开始"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</UserControl>

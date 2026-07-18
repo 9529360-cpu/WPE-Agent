@@ -1,0 +1,93 @@
+﻿<UserControl x:Class="币安量化机器人.Modules.AI.ModelHub"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <Grid Background="White">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="380"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- 顶部条：用 Border 承载 Padding，避免在 DockPanel 上用 Padding -->
+        <Border Grid.Row="0" Grid.ColumnSpan="2" Background="#F5F7FA" Padding="12">
+            <DockPanel LastChildFill="False">
+                <TextBlock Text="AI 模型中心" FontSize="16" FontWeight="Bold"
+                   VerticalAlignment="Center" DockPanel.Dock="Left"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="训练任务" Margin="8,0,0,0" Height="28" MinWidth="88" Click="Train_Click"/>
+                    <Button Content="注册到模型库" Margin="8,0,0,0" Height="28" MinWidth="108" Click="Register_Click"/>
+                    <Button Content="提升到 Staging" Margin="8,0,0,0" Height="28" MinWidth="118" Click="PromoteStaging_Click"/>
+                    <Button Content="提升到 Production" Margin="8,0,0,0" Height="28" MinWidth="138" Click="PromoteProd_Click"/>
+                    <Button Content="回滚上一版本" Margin="8,0,0,0" Height="28" MinWidth="118" Click="Rollback_Click"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- 左侧：模型列表 -->
+        <Grid Grid.Row="1" Grid.Column="0" Margin="12,8,6,8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,8">
+                <TextBlock Text="搜索：" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox x:Name="SearchBox" Width="220" Height="28" VerticalContentAlignment="Center"
+                 TextChanged="SearchBox_TextChanged"/>
+                <TextBlock Text="（阶段：Draft / Staging / Production / Archived）" Foreground="#6B7280"
+                   VerticalAlignment="Center" Margin="12,0,0,0"/>
+            </StackPanel>
+
+            <DataGrid x:Name="GridModels" Grid.Row="1" AutoGenerateColumns="False"
+                CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single"
+                HeadersVisibility="Column" BorderBrush="#E1E6EB" BorderThickness="1">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="模型名"  Binding="{Binding Name}" Width="*"/>
+                    <DataGridTextColumn Header="版本"    Binding="{Binding Version}" Width="70"/>
+                    <DataGridTextColumn Header="阶段"    Binding="{Binding Stage}" Width="110"/>
+                    <DataGridTextColumn Header="主指标"  Binding="{Binding Metric}" Width="110"/>
+                    <DataGridTextColumn Header="更新时间" Binding="{Binding UpdatedAt}" Width="160"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+
+        <!-- 右侧：详情 -->
+        <Border Grid.Row="1" Grid.Column="1" Margin="6,8,12,8" BorderBrush="#E1E6EB" BorderThickness="1" CornerRadius="6">
+            <Grid Margin="10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock x:Name="DetailTitle" Text="请选择左侧模型查看详情" FontSize="15" FontWeight="Bold"/>
+                <TextBlock x:Name="DetailInfo"  Grid.Row="1" Margin="0,6,0,0" TextWrapping="Wrap"
+                   Foreground="#6B7280"/>
+                <Separator Grid.Row="2" Margin="0,8,0,8"/>
+                <StackPanel Grid.Row="3">
+                    <TextBlock Text="部署实验（A/B、金丝雀、Shadow）占位：后续接入流量分配与监控" Foreground="#6B7280" TextWrapping="Wrap"/>
+                    <WrapPanel Margin="0,8,0,0">
+                        <Button Content="创建 A/B 实验" Margin="0,0,8,8" Click="CreateAB_Click"/>
+                        <Button Content="创建金丝雀" Margin="0,0,8,8" Click="CreateCanary_Click"/>
+                        <Button Content="创建 Shadow" Margin="0,0,8,8" Click="CreateShadow_Click"/>
+                    </WrapPanel>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 状态栏 -->
+        <StatusBar Grid.Row="2" Grid.ColumnSpan="2" Background="#F5F7FA">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="状态：就绪"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</UserControl>

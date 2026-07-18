@@ -1,0 +1,76 @@
+﻿<UserControl x:Class="币安量化机器人.Modules.Strategy.TemplateHub"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <Grid Background="White">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- 顶部说明 -->
+        <Border Grid.Row="0" Background="#F5F7FA" Padding="12">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="策略库 / 模板" FontSize="16" FontWeight="Bold" Margin="0,0,12,0"/>
+                <TextBlock Text="从常见模板快速新建：网格、DCA、趋势、信号跟随、做市、套利"
+                   Foreground="#6B7280" VerticalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+
+        <!-- 模板卡片区 -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <UniformGrid Columns="3" Margin="12" IsItemsHost="False">
+                <!-- 每张卡片做成 Button + 内部面板 -->
+                <Button Style="{StaticResource {x:Static ToolBar.ButtonStyleKey}}" Margin="6" Padding="12"
+                Tag="GRID" Click="Template_Click">
+                    <StackPanel>
+                        <TextBlock Text="📊 网格交易" FontWeight="Bold"/>
+                        <TextBlock Text="在区间内挂多层买卖单，吃波动利润（现货/合约）" Foreground="#6B7280" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Button>
+
+                <Button Style="{StaticResource {x:Static ToolBar.ButtonStyleKey}}" Margin="6" Padding="12"
+                Tag="DCA" Click="Template_Click">
+                    <StackPanel>
+                        <TextBlock Text="📈 DCA 定投 / 补仓" FontWeight="Bold"/>
+                        <TextBlock Text="分批入场/加仓，平滑成本（支持止盈/止损/追踪）" Foreground="#6B7280" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Button>
+
+                <Button Style="{StaticResource {x:Static ToolBar.ButtonStyleKey}}" Margin="6" Padding="12"
+                Tag="TREND" Click="Template_Click">
+                    <StackPanel>
+                        <TextBlock Text="📉 趋势跟随" FontWeight="Bold"/>
+                        <TextBlock Text="基于均线/突破/动量信号，顺势做多或做空" Foreground="#6B7280" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Button>
+
+                <Button Style="{StaticResource {x:Static ToolBar.ButtonStyleKey}}" Margin="6" Padding="12"
+                Tag="SIGNAL" Click="Template_Click">
+                    <StackPanel>
+                        <TextBlock Text="🔔 信号跟随" FontWeight="Bold"/>
+                        <TextBlock Text="接入 TradingView/自研信号，触发下单" Foreground="#6B7280" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Button>
+
+                <Button Style="{StaticResource {x:Static ToolBar.ButtonStyleKey}}" Margin="6" Padding="12"
+                Tag="MAKER" Click="Template_Click">
+                    <StackPanel>
+                        <TextBlock Text="🏷 做市" FontWeight="Bold"/>
+                        <TextBlock Text="双向挂单维持点差，赚取交易费与价差" Foreground="#6B7280" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Button>
+
+                <Button Style="{StaticResource {x:Static ToolBar.ButtonStyleKey}}" Margin="6" Padding="12"
+                Tag="ARBITRAGE" Click="Template_Click">
+                    <StackPanel>
+                        <TextBlock Text="♻ 套利" FontWeight="Bold"/>
+                        <TextBlock Text="跨期/跨品种/跨交易所价差捕捉（研究用）" Foreground="#6B7280" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Button>
+            </UniformGrid>
+        </ScrollViewer>
+    </Grid>
+</UserControl>
