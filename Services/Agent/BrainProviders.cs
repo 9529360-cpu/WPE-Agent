@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人.Services.Agent;
 
@@ -10,7 +11,7 @@ public sealed class HttpBrainProvider : IBrainProvider
 {
     private static readonly HttpClient Http=new(){Timeout=TimeSpan.FromSeconds(75)}; private readonly BrainSlot _slot; private readonly string _key; public string Name=>_slot.Provider;
     public HttpBrainProvider(BrainSlot slot,string key){_slot=slot;_key=key;}
-    public async Task<BrainHealth> HealthCheckAsync(CancellationToken ct){if(string.IsNullOrWhiteSpace(_key)||string.IsNullOrWhiteSpace(_slot.Endpoint)||string.IsNullOrWhiteSpace(_slot.Model))return new(false,"配置不完整");try{using var r=await BuildAndSend("只回复 HOLD",ct);return new(r.IsSuccessStatusCode,$"HTTP {(int)r.StatusCode}");}catch(Exception ex){return new(false,ex.Message);}}
+    public async Task<BrainHealth> HealthCheckAsync(CancellationToken ct){if(string.IsNullOrWhiteSpace(_key)||string.IsNullOrWhiteSpace(_slot.Endpoint)||string.IsNullOrWhiteSpace(_slot.Model))return new(false,LocalizationService.Current.T("Provider.Incomplete"));try{using var r=await BuildAndSend("Reply only: HOLD",ct);return new(r.IsSuccessStatusCode,$"HTTP {(int)r.StatusCode}");}catch(Exception ex){return new(false,ex.Message);}}
     public async Task<BrainDecisionResult> DecideAsync(EvidencePack e,AgentContext c,CancellationToken ct)
     {
         var instruction="""
@@ -22,14 +23,15 @@ public sealed class HttpBrainProvider : IBrainProvider
         只有结构破坏/重新站回、失效条件触发、核心驱动替换或验证等级下降时才改变观点；核心区间内不得直接称为反转。多空证据冲突时仍须给出唯一最终倾向。
         不得编造新闻、鲸鱼流向、截图、订单流或来源，不得承诺收益。reason 必须简述核心证据与风险，invalidation 必须写明观点失效条件，evidenceReferences 只能引用输入中实际存在的项目；conflictSummary 描述同一品种内部冲突。
         """;
+        instruction += $"\n所有面向用户的描述字段（reason、invalidation、conflictSummary、missingConditions）必须使用{LocalizationService.Current.CurrentLanguage.AiLanguage}；action、instrument 和 JSON 字段名保持规定的英文枚举。";
         var compactEvidence=new
         {
             e.CollectedAt,e.Account,e.Positions,e.Markets,e.MissingSources,e.Completeness,
             News=e.News.OrderByDescending(x=>x.PublishedAt).Take(12).Select(x=>new{x.Source,x.Title,x.PublishedAt,x.Reliability,x.AffectedAssets})
         };
-        var prompt=JsonSerializer.Serialize(new{instruction,evidence=compactEvidence,marketAssessments=c.MarketAssessments,context=new{c.BrainName,c.CircuitBreakerActive,c.ActiveSymbol,c.PreviousOutcomes,c.ConsecutiveHolds}});string raw="";
-        try{using var r=await BuildAndSend(prompt,ct);raw=await r.Content.ReadAsStringAsync(ct);if(!r.IsSuccessStatusCode)throw new BrainCallException($"{Name} HTTP {(int)r.StatusCode}",prompt,raw);var content=ExtractProviderText(raw);var json=ExtractJson(content);var opt=new JsonSerializerOptions{PropertyNameCaseInsensitive=true};opt.Converters.Add(new JsonStringEnumConverter());var decision=JsonSerializer.Deserialize<DecisionPlan>(json,opt)??new DecisionPlan{Reason="空响应"};return new(decision,prompt,raw);}
-        catch(BrainCallException){throw;}catch(Exception ex){throw new BrainCallException($"{Name} 响应解析失败：{ex.Message}",prompt,raw,ex);}
+        var prompt=JsonSerializer.Serialize(new{instruction,outputLanguage=LocalizationService.Current.CurrentLanguage.AiLanguage,evidence=compactEvidence,marketAssessments=c.MarketAssessments,context=new{c.BrainName,c.CircuitBreakerActive,c.ActiveSymbol,c.PreviousOutcomes,c.ConsecutiveHolds}});string raw="";
+        try{using var r=await BuildAndSend(prompt,ct);raw=await r.Content.ReadAsStringAsync(ct);if(!r.IsSuccessStatusCode)throw new BrainCallException($"{Name} HTTP {(int)r.StatusCode}",prompt,raw);var content=ExtractProviderText(raw);var json=ExtractJson(content);var opt=new JsonSerializerOptions{PropertyNameCaseInsensitive=true};opt.Converters.Add(new JsonStringEnumConverter());var decision=JsonSerializer.Deserialize<DecisionPlan>(json,opt)??new DecisionPlan{Reason=LocalizationService.Current.T("Provider.EmptyResponse")};return new(decision,prompt,raw);}
+        catch(BrainCallException){throw;}catch(Exception ex){throw new BrainCallException(LocalizationService.Current.T("Provider.ParseFailed",Name,ex.Message),prompt,raw,ex);}
     }
     private async Task<HttpResponseMessage> BuildAndSend(string prompt,CancellationToken ct)
     {
@@ -41,5 +43,5 @@ public sealed class HttpBrainProvider : IBrainProvider
         req.Content=new StringContent(JsonSerializer.Serialize(body),Encoding.UTF8,"application/json");return await Http.SendAsync(req,ct);
     }
     private string ExtractProviderText(string raw){using var d=JsonDocument.Parse(raw);var p=_slot.Provider.ToLowerInvariant();if(p.Contains("claude"))return d.RootElement.GetProperty("content")[0].GetProperty("text").GetString()??"";if(p.Contains("gemini"))return d.RootElement.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString()??"";if(p.Contains("openai")){if(d.RootElement.TryGetProperty("output_text",out var ot))return ot.GetString()??"";foreach(var o in d.RootElement.GetProperty("output").EnumerateArray())if(o.TryGetProperty("content",out var a))foreach(var x in a.EnumerateArray())if(x.TryGetProperty("text",out var t))return t.GetString()??"";}var m=d.RootElement.GetProperty("choices")[0].GetProperty("message");return m.TryGetProperty("content",out var c)?c.GetString()??"":m.GetProperty("reasoning_content").GetString()??"";}
-    private static string ExtractJson(string s){var a=s.IndexOf('{');var b=s.LastIndexOf('}');if(a<0||b<=a)throw new JsonException("模型没有返回JSON");return s[a..(b+1)];}
+private static string ExtractJson(string s){var a=s.IndexOf('{');var b=s.LastIndexOf('}');if(a<0||b<=a)throw new JsonException(LocalizationService.Current.T("Provider.JsonMissing"));return s[a..(b+1)];}
 }

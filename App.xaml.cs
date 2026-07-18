@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using 币安量化机器人.Services;
 using 币安量化机器人.Services.Agent;
+using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人;
 
@@ -28,6 +29,17 @@ public partial class App : global::System.Windows.Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        LocalizationService.Current.Initialize();
+
+        if (e.Args.Any(x => string.Equals(x, "--i18n-test", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var result = LocalizationSelfTest.Run();
+            Log.Information("Localization self-test completed. Success={Success}; Report={Report}", result.Success, result.ReportPath);
+            Shutdown(result.Success ? 0 : 4);
+            return;
+        }
 
         // Configure dependency injection
         var services = new ServiceCollection();

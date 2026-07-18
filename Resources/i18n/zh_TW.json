@@ -1,0 +1,5 @@
+{
+  "__code":"zh_TW","__culture":"zh-TW","__name":"繁體中文","__aiLanguage":"繁體中文","__fallback":"zh_CN","Format.DateTime":"yyyy-MM-dd HH:mm",
+  "Language.Button":"🌐 語言","Status.AiOnline":"AI 在線","Status.AiStandby":"AI 待命","Status.BrainReady":"BRAIN 就緒","Status.Testnet":"測試網","Status.MemoryLoaded":"MEMORY 已載入","Status.SkillsOnline":"12 個 SKILLS 在線","Command.Initialize":"啟動智能體","Command.Running":"運行中","Command.Pause":"暫停","Command.Resume":"繼續","Command.Stop":"停止","Command.EmergencyClose":"緊急平倉",
+  "Dashboard.Title":"AI 智能體指揮中心","Dashboard.Subtitle":"自主智能、確定性風控、可觀測決策。","Nav.Kicker":"指揮控制台","Nav.CommandCenter":"◈  智能體指揮中心","Nav.MarketPulse":"⌁  市場脈衝","Nav.Positions":"◎  持倉矩陣","Nav.Risk":"△  風險矩陣","Market.Title":"當前市場","Market.Bullish":"看多","Market.Bearish":"看空","Market.Neutral":"中性","Signal.Title":"SIGNAL FUSION（信號融合）","Portfolio.Title":"資產與持倉","Thought.LanguageChanged":"介面語言已切換為 {0}。"
+}

@@ -37,6 +37,7 @@ public class SystemState
     public double DailyPnl { get; set; }
     public double MaxDrawdown { get; set; }
     public string SkillStage { get; set; } = "未启动";
+    public string SkillStageKey { get; set; } = "Stage.Idle";
     public string LastDecision { get; set; } = "HOLD";
     public string LastReason { get; set; } = string.Empty;
     public decimal WalletBalance { get; set; }
@@ -49,7 +50,7 @@ public class SystemState
     public string LastError { get; set; } = string.Empty;
     public string LastMessage { get; set; } = "就绪";
     public int EvidenceCompleteness { get; set; }
-    public string BrainName { get; set; } = "未配置";
+    public string BrainName { get; set; } = string.Empty;
     public DateTime? NextCycleAtUtc { get; set; }
     public string PositionsSummary { get; set; } = "当前无持仓";
     public string OrdersSummary { get; set; } = "当前无挂单";

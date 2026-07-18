@@ -1,4 +1,5 @@
 using System.Text;
+using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人.Services.Agent;
 
@@ -10,14 +11,14 @@ public sealed class SignalAggregationSkill
     private static MarketDecisionAssessment AnalyzeMarket(MarketEvidence market,int completeness,DecisionPolicy policy)
     {
         var signals=new List<SignalContribution>();
-        Add("15分钟趋势","15m",market.Trend15m,.20,.006,"短周期执行动量");
-        Add("1小时趋势","1h",market.Trend1h,.22,.012,"中周期方向");
-        Add("4小时趋势","4h",market.Trend4h,.28,.025,"高周期背景");
-        Add("RSI","15m",market.Rsi-50,.10,20,"相对强弱偏离50");
-        Add("主动买卖比","衍生品",(double)(market.Derivatives.TakerBuySellRatio-1),.08,.20,"主动成交方向");
-        Add("资金费率反向拥挤","衍生品",(double)-market.Derivatives.FundingRate,.04,.001,"高资金费率按拥挤反向计分");
-        Add("多空账户反向拥挤","衍生品",(double)(1-market.Derivatives.LongShortRatio),.04,.30,"账户多空比按拥挤反向计分");
-        Add("基差","衍生品",(double)market.Derivatives.Basis,.04,.003,"期现基差方向");
+        Add("trend_15m","15m",market.Trend15m,.20,.006);
+        Add("trend_1h","1h",market.Trend1h,.22,.012);
+        Add("trend_4h","4h",market.Trend4h,.28,.025);
+        Add("rsi","15m",market.Rsi-50,.10,20);
+        Add("order_flow","derivatives",(double)(market.Derivatives.TakerBuySellRatio-1),.08,.20);
+        Add("funding","derivatives",(double)-market.Derivatives.FundingRate,.04,.001);
+        Add("crowd","derivatives",(double)(1-market.Derivatives.LongShortRatio),.04,.30);
+        Add("basis","derivatives",(double)market.Derivatives.Basis,.04,.003);
 
         var positive=signals.Where(x=>x.WeightedScore>0).Sum(x=>x.WeightedScore);
         var negative=-signals.Where(x=>x.WeightedScore<0).Sum(x=>x.WeightedScore);
@@ -29,20 +30,20 @@ public sealed class SignalAggregationSkill
         var confidence=Math.Clamp((Math.Abs(score)*.75+agreement*.25)*(completeness/100d)*(fresh?1:.25),0,1);
         var regime=DetectRegime(market);
         var missing=new List<string>();
-        if(!fresh)missing.Add($"行情超过 {policy.MaximumEvidenceAgeMinutes} 分钟，必须刷新");
-        if(completeness<policy.MinimumEvidenceCompleteness)missing.Add($"证据完整度需达到 {policy.MinimumEvidenceCompleteness}/100");
-        if(Math.Abs(score)<policy.MinimumDirectionalScore)missing.Add($"方向净分需达到 ±{policy.MinimumDirectionalScore:F2}（当前 {score:+0.00;-0.00;0.00}）");
-        if(conflict>policy.MaximumConflictRatio)missing.Add($"冲突率需降至 {policy.MaximumConflictRatio:P0} 以下（当前 {conflict:P0}）");
-        if(confidence<policy.MinimumConfidence)missing.Add($"聚合置信度需达到 {policy.MinimumConfidence:P0}（当前 {confidence:P0}）");
+        if(!fresh)missing.Add(L("Decision.Stale",policy.MaximumEvidenceAgeMinutes));
+        if(completeness<policy.MinimumEvidenceCompleteness)missing.Add(L("Decision.Completeness",policy.MinimumEvidenceCompleteness));
+        if(Math.Abs(score)<policy.MinimumDirectionalScore)missing.Add(L("Decision.Score",policy.MinimumDirectionalScore,score));
+        if(conflict>policy.MaximumConflictRatio)missing.Add(L("Decision.Conflict",policy.MaximumConflictRatio,conflict));
+        if(confidence<policy.MinimumConfidence)missing.Add(L("Decision.Confidence",policy.MinimumConfidence,confidence));
         var entryReady=missing.Count==0;
         var action=entryReady?(score>0?DecisionAction.OpenLong:DecisionAction.OpenShort):DecisionAction.Hold;
-        var summary=$"{market.Symbol} · {regime} · 净分 {score:+0.00;-0.00;0.00} · 置信 {confidence:P0} · 冲突 {conflict:P0} · {(entryReady?"满足入场条件":"等待条件")}";
+        var summary=L("Decision.Summary",market.Symbol,regime,score,confidence,conflict,L(entryReady?"Decision.Ready":"Decision.Waiting"));
         return new(){Symbol=market.Symbol,Regime=regime,NetScore=score,Confidence=confidence,ConflictRatio=conflict,Fresh=fresh,EntryReady=entryReady,RecommendedAction=action,Signals=signals,MissingConditions=missing,Summary=summary};
 
-        void Add(string name,string horizon,double raw,double weight,double scale,string explanation)
+        void Add(string name,string horizon,double raw,double weight,double scale)
         {
             var normalized=Math.Clamp(raw/scale,-1,1);var weighted=normalized*weight;
-            signals.Add(new(name,horizon,raw,weight,weighted,weighted>.0001?"多":weighted<-.0001?"空":"中性",explanation));
+            signals.Add(new(name,horizon,raw,weight,weighted,weighted>.0001?"LONG":weighted<-.0001?"SHORT":"NEUTRAL",name));
         }
     }
 
@@ -56,6 +57,7 @@ public sealed class SignalAggregationSkill
     }
 
     private static double Quality(MarketDecisionAssessment x)=>Math.Abs(x.NetScore)*(1-x.ConflictRatio)+(x.Fresh?.05:0);
+    private static string L(string key,params object?[] args)=>LocalizationService.Current.T(key,args);
 }
 
 public sealed class DecisionGovernanceSkill
@@ -65,21 +67,21 @@ public sealed class DecisionGovernanceSkill
         var blocks=new List<string>();
         var assessment=assessments.FirstOrDefault(x=>x.Symbol.Equals(proposed.Instrument,StringComparison.OrdinalIgnoreCase));
         var riskIncreasing=proposed.Action is DecisionAction.OpenLong or DecisionAction.OpenShort or DecisionAction.AddLong or DecisionAction.AddShort or DecisionAction.Lock or DecisionAction.ReverseToLong or DecisionAction.ReverseToShort;
-        if(assessment is null)blocks.Add("所选品种没有可验证的本地聚合结果");
-        if(evidence.Completeness<policy.MinimumEvidenceCompleteness&&riskIncreasing)blocks.Add("证据完整度不足");
-        if(assessment is{Fresh:false}&&riskIncreasing)blocks.Add("行情数据已过期");
-        if(proposed.Confidence<policy.MinimumConfidence&&riskIncreasing)blocks.Add($"Brain 置信度 {proposed.Confidence:P0} 低于 {policy.MinimumConfidence:P0}");
+        if(assessment is null)blocks.Add(L("Review.NoAssessment"));
+        if(evidence.Completeness<policy.MinimumEvidenceCompleteness&&riskIncreasing)blocks.Add(L("Review.Incomplete"));
+        if(assessment is{Fresh:false}&&riskIncreasing)blocks.Add(L("Review.Stale"));
+        if(proposed.Confidence<policy.MinimumConfidence&&riskIncreasing)blocks.Add(L("Review.BrainConfidence",proposed.Confidence,policy.MinimumConfidence));
         if(assessment is{EntryReady:false}&&riskIncreasing)blocks.AddRange(assessment.MissingConditions);
         if(assessment is not null&&riskIncreasing)
         {
             var wantsLong=proposed.Action is DecisionAction.OpenLong or DecisionAction.AddLong or DecisionAction.ReverseToLong;
             var wantsShort=proposed.Action is DecisionAction.OpenShort or DecisionAction.AddShort or DecisionAction.ReverseToShort;
-            if((wantsLong&&assessment.NetScore<0)||(wantsShort&&assessment.NetScore>0))blocks.Add("Brain 方向与确定性聚合方向相反");
+            if((wantsLong&&assessment.NetScore<0)||(wantsShort&&assessment.NetScore>0))blocks.Add(L("Review.DirectionConflict"));
         }
         var final=blocks.Count==0?proposed:CopyAsHold(proposed,blocks);
         var accepted=blocks.Count==0;
         var explanation=Explain(final,assessment,blocks);
-        return new(){Decision=final,Accepted=accepted,Verdict=accepted?(final.Action==DecisionAction.Hold?"Reviewer 确认 HOLD":"Reviewer 通过"):"Reviewer 否决并安全降级为 HOLD",BlockingReasons=blocks.Distinct().ToArray(),Explanation=explanation};
+        return new(){Decision=final,Accepted=accepted,Verdict=L(accepted?(final.Action==DecisionAction.Hold?"Review.Hold":"Review.Accepted"):"Review.Rejected"),BlockingReasons=blocks.Distinct().ToArray(),Explanation=explanation};
     }
 
     private static DecisionPlan CopyAsHold(DecisionPlan p,IReadOnlyList<string> blocks)=>new()
@@ -93,16 +95,17 @@ public sealed class DecisionGovernanceSkill
         var b=new StringBuilder();b.Append($"{decision.Action} · Brain {decision.Confidence:P0}");
         if(assessment is not null)
         {
-            b.Append($" · 本地聚合 {assessment.Confidence:P0} · 冲突 {assessment.ConflictRatio:P0}\n");
+            b.Append(L("Review.Aggregation",assessment.Confidence,assessment.ConflictRatio)).Append('\n');
             b.Append(assessment.Summary);
-            var strongest=assessment.Signals.OrderByDescending(x=>Math.Abs(x.WeightedScore)).Take(5).Select(x=>$"{x.Name} {x.Direction} 权重{x.Weight:P0} 贡献{x.WeightedScore:+0.00;-0.00;0.00}");
-            b.Append("\n信号：").Append(string.Join("；",strongest));
+            var strongest=assessment.Signals.OrderByDescending(x=>Math.Abs(x.WeightedScore)).Take(5).Select(x=>L("Review.Signal",L("SignalName."+x.Name),L("Direction."+x.Direction),x.Weight,x.WeightedScore));
+            b.Append('\n').Append(L("Review.Signals")).Append(string.Join("; ",strongest));
         }
-        b.Append("\n原因：").Append(decision.Reason);
+        b.Append('\n').Append(L("Review.Reason")).Append(decision.Reason);
         var missing=blocks.Concat(decision.MissingConditions).Concat(assessment?.MissingConditions??Array.Empty<string>()).Where(x=>!string.IsNullOrWhiteSpace(x)).Distinct().ToArray();
-        if(missing.Length>0)b.Append("\n允许开单还需要：").Append(string.Join("；",missing));
+        if(missing.Length>0)b.Append('\n').Append(L("Review.Missing")).Append(string.Join("; ",missing));
         return b.ToString();
     }
+    private static string L(string key,params object?[] args)=>LocalizationService.Current.T(key,args);
 }
 
 public sealed class AgentSkillRegistry
