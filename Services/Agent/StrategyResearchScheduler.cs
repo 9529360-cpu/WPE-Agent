@@ -24,11 +24,24 @@ public sealed class StrategyResearchScheduler
     private async Task RunAsync(IReadOnlyList<string> symbols, RiskLimits limits, CancellationToken ct)
     {
         var delay = await ResumeDelayAsync(ct);
+        await PublishHealthAsync("STARTING", null, delay, ct);
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                if (delay > TimeSpan.Zero) await Task.Delay(delay, ct);
+                if (delay > TimeSpan.Zero)
+                {
+                    await PublishHealthAsync("WAITING", null, delay, ct);
+                    var heartbeat = TimeSpan.FromMinutes(1);
+                    while (delay > TimeSpan.Zero && !ct.IsCancellationRequested)
+                    {
+                        var tick = delay < heartbeat ? delay : heartbeat;
+                        await Task.Delay(tick, ct);
+                        delay -= tick;
+                        if (delay > TimeSpan.Zero) await PublishHealthAsync("WAITING", null, delay, ct);
+                    }
+                }
+                await PublishHealthAsync("RUNNING", null, TimeSpan.Zero, ct);
                 var snapshot = await _research.RunOnceAsync(symbols, limits, ct);
                 await _database.SetStateAsync("strategy-research:scheduler", JsonSerializer.Serialize(new
                 {
@@ -44,10 +57,20 @@ public sealed class StrategyResearchScheduler
             catch (Exception ex)
             {
                 await _database.RecordErrorAsync("STRATEGY_RESEARCH_SCHEDULER", ex, CancellationToken.None);
+                await PublishHealthAsync("ERROR", ex.Message, delay, CancellationToken.None);
                 delay = delay == TimeSpan.Zero ? TimeSpan.FromMinutes(5) : TimeSpan.FromMinutes(Math.Min(delay.TotalMinutes * 2, 60));
             }
         }
     }
+
+    private Task PublishHealthAsync(string status, string? error, TimeSpan nextDelay, CancellationToken ct)
+        => _database.SetStateAsync("strategy-research:health", JsonSerializer.Serialize(new
+        {
+            status,
+            heartbeatAtUtc = DateTime.UtcNow,
+            nextRunAtUtc = DateTime.UtcNow.Add(nextDelay),
+            error
+        }), ct);
 
     private async Task<TimeSpan> ResumeDelayAsync(CancellationToken ct)
     {
