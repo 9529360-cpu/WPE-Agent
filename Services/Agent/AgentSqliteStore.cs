@@ -200,6 +200,13 @@ public sealed class AgentSqliteStore
         var all=await GetMemoryExplorerAsync(Math.Clamp(limit,1,300),ct);var value=(filter??string.Empty).Trim();
         return value.Length==0?all:all.Where(x=>x.Contains(value,StringComparison.OrdinalIgnoreCase)).ToArray();
     }
+    public async Task<IReadOnlyDictionary<string,long>> GetMemorySourceCountsAsync(CancellationToken ct)
+    {
+        var result=new Dictionary<string,long>(StringComparer.OrdinalIgnoreCase);await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);
+        foreach(var pair in new[]{("DECISION","SELECT COUNT(*) FROM cycles WHERE completed_at IS NOT NULL"),("STRATEGY_LIFECYCLE","SELECT COUNT(*) FROM strategy_lifecycle_events"),("NEWS","SELECT COUNT(*) FROM news_documents")})
+        {await using var q=c.CreateCommand();q.CommandText=pair.Item2;result[pair.Item1]=Convert.ToInt64(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture);}
+        return result;
+    }
     public async Task<bool> TryAcquireRuntimeLeaseAsync(string name,string ownerId,TimeSpan ttl,CancellationToken ct)
     {
         var now=DateTime.UtcNow;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="INSERT INTO runtime_leases(name,owner_id,expires_at,heartbeat_at) VALUES($n,$o,$e,$h) ON CONFLICT(name) DO UPDATE SET owner_id=excluded.owner_id,expires_at=excluded.expires_at,heartbeat_at=excluded.heartbeat_at WHERE runtime_leases.owner_id=$o OR runtime_leases.expires_at<$h; SELECT changes();";q.Parameters.AddWithValue("$n",name);q.Parameters.AddWithValue("$o",ownerId);q.Parameters.AddWithValue("$e",now.Add(ttl).ToString("O"));q.Parameters.AddWithValue("$h",now.ToString("O"));return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)>0;
