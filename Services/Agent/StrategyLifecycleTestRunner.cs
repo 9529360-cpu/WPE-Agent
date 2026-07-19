@@ -30,6 +30,10 @@ public static class StrategyLifecycleTestRunner
         await stateStore.SetStateAsync("strategy-research:scheduler", stateValue, CancellationToken.None);
         var restoredStore = new AgentSqliteStore(statePath);
         Check("调度状态可跨重启恢复", await restoredStore.GetStateAsync("strategy-research:scheduler", CancellationToken.None) == stateValue, "sqlite state round-trip");
+        var healthy = JsonSerializer.Serialize(new { status = "WAITING", heartbeatAtUtc = DateTime.UtcNow });
+        Check("研究心跳新鲜时可继续使用策略", StrategyResearchHealth.IsHealthy(healthy, DateTime.UtcNow, TimeSpan.FromMinutes(2)), "fresh heartbeat");
+        var stale = JsonSerializer.Serialize(new { status = "WAITING", heartbeatAtUtc = DateTime.UtcNow.AddMinutes(-5) });
+        Check("研究心跳过期时拒绝旧状态", !StrategyResearchHealth.IsHealthy(stale, DateTime.UtcNow, TimeSpan.FromMinutes(2)), "stale heartbeat rejected");
         var report = new StrategyLifecycleTestResult(passed, AppDataPaths.File("strategy-lifecycle-test-report.json"), cases);
         await File.WriteAllTextAsync(report.ReportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
         return report;
