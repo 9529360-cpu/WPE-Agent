@@ -31,14 +31,11 @@ public class BinanceApiClient : IDisposable
 
     private string? _apiKey;
     private byte[]? _secretBytes;
+    private readonly int _receiveWindow;
 
-    public BinanceApiClient(HttpClient? httpClient = null, bool useTestnet = true)
+    public BinanceApiClient(HttpClient? httpClient = null, bool useTestnet = true, string? endpoint = null, int timeoutSeconds = 20, bool useProxy = false, string? proxyUrl = null, int receiveWindow = 5000)
     {
-        var endpoint = useTestnet ? TestnetEndpoint : MainnetEndpoint;
-        _httpClient = httpClient ?? new HttpClient
-        {
-            BaseAddress = new Uri(endpoint)
-        };
+        endpoint=string.IsNullOrWhiteSpace(endpoint)?useTestnet?TestnetEndpoint:MainnetEndpoint:endpoint.TrimEnd('/');var handler=new HttpClientHandler();if(useProxy&&Uri.TryCreate(proxyUrl,UriKind.Absolute,out var proxy)){handler.Proxy=new WebProxy(proxy);handler.UseProxy=true;}_httpClient=httpClient??new HttpClient(handler){BaseAddress=new Uri(endpoint),Timeout=TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds,5,120))};_receiveWindow=Math.Clamp(receiveWindow,1000,60000);
     }
 
     public void SetApiCredentials(string apiKey, string secretKey)
@@ -245,6 +242,7 @@ public class BinanceApiClient : IDisposable
         {
             var payload = CloneQuery(query);
             payload["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+            payload["recvWindow"] = _receiveWindow.ToString(CultureInfo.InvariantCulture);
             var queryString = BuildQueryString(payload);
             payload["signature"] = ComputeSignature(queryString);
             var request = new HttpRequestMessage(method, BuildUri(path, payload));

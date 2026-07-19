@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using 币安量化机器人.Services;
 using 币安量化机器人.Services.Agent;
+using 币安量化机器人.Services.Access;
 using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人;
@@ -44,6 +45,24 @@ public partial class App : global::System.Windows.Application
         // Configure dependency injection
         var services = new ServiceCollection();
         ServiceProvider = ServiceConfiguration.ConfigureServices(services);
+
+        if (e.Args.Any(x => string.Equals(x, "--access-test", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var result = await AccessTestRunner.RunAsync();
+            Log.Information("Access and credential security tests completed. Success={Success}; Report={Report}", result.Success, result.ReportPath);
+            Shutdown(result.Success ? 0 : 8);
+            return;
+        }
+
+        if (e.Args.Any(x => string.Equals(x, "--access-live-test", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var result = await AccessTestRunner.RunLiveAsync();
+            Log.Information("Live access readiness test completed. Success={Success}; Report={Report}", result.Success, result.ReportPath);
+            Shutdown(result.Success ? 0 : 9);
+            return;
+        }
 
         if (e.Args.Any(x => string.Equals(x, "--autonomy-test", StringComparison.OrdinalIgnoreCase)))
         {
@@ -90,7 +109,18 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
-        var main = new MainWindow();
+        var login = new LoginWindow();
+        if (login.ShowDialog() != true || string.IsNullOrWhiteSpace(login.AuthenticatedUser)) { Shutdown(); return; }
+        var settingsStore = new AgentSettingsStore();
+        var settings = settingsStore.Load();
+        settings.ActiveUser = login.AuthenticatedUser;
+        settingsStore.Save(settings);
+        if (!settings.SetupCompleted)
+        {
+            var setup = new SetupWindow(login.AuthenticatedUser);
+            if (setup.ShowDialog() != true || !setup.SetupCompleted) { Shutdown(); return; }
+        }
+        var main = new MainWindow(login.AuthenticatedUser);
         main.Show();
 
         // Agent 由用户在总控台明确启动，应用打开时不自动下单。

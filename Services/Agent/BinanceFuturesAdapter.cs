@@ -12,9 +12,9 @@ public sealed class BinanceFuturesAdapter : IExchangeAdapter
     private readonly Dictionary<string,TradingRule> _rules = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<long,byte> _algoOrderIds = new();
     public ExchangeEnvironment Environment { get; }
-    public BinanceFuturesAdapter(ExchangeEnvironment environment, string key, string secret)
+    public BinanceFuturesAdapter(ExchangeEnvironment environment, string key, string secret,EnvironmentSlot? options=null)
     {
-        Environment=environment; _api=new BinanceApiClient(useTestnet: environment==ExchangeEnvironment.Testnet); _api.SetApiCredentials(key,secret);
+        Environment=environment;options??=new EnvironmentSlot{ApiBaseUrl=environment==ExchangeEnvironment.Testnet?"https://testnet.binancefuture.com":"https://fapi.binance.com"}; _api=new BinanceApiClient(useTestnet:environment==ExchangeEnvironment.Testnet,endpoint:options.ApiBaseUrl,timeoutSeconds:options.TimeoutSeconds,useProxy:options.UseProxy,proxyUrl:options.ProxyUrl,receiveWindow:options.ReceiveWindow); _api.SetApiCredentials(key,secret);
     }
     public async Task<AccountSnapshot> GetAccountAsync(CancellationToken ct) { var b=(await _api.GetAccountBalancesAsync(ct)).FirstOrDefault(x=>x.Asset=="USDT"); return new(b?.WalletBalance??0,b?.AvailableBalance??0,b?.MarginBalance??0,DateTime.UtcNow); }
     public async Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct) => (await _api.GetPositionsAsync(ct)).Select(x=>new ManagedPosition(x.Symbol, ParseSide(x),Math.Abs(x.PositionAmt),x.EntryPrice,x.MarkPrice,x.UnrealizedProfit,x.Leverage,x.IsIsolated,x.LiquidationPrice)).ToArray();

@@ -97,6 +97,12 @@ public class SystemState
     public string PortfolioRiskSummary { get; set; } = string.Empty;
     public int NewsFullTextDocuments { get; set; }
     public int NewsCorroboratingSources { get; set; }
+    public string LoggedInUser { get; set; } = string.Empty;
+    public bool ExchangeConnected { get; set; }
+    public bool BrainConnected { get; set; }
+    public bool ApiTradePermission { get; set; }
+    public bool RiskReady { get; set; }
+    public DateTime? LastAccessCheckAtUtc { get; set; }
 }
 
 

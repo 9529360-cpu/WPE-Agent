@@ -63,14 +63,15 @@ public sealed class ReliableOrderExecutor
             var status=order.ExecutedQuantity<intent.Quantity?"PARTIALLY_FILLED_PROTECTED":"PROTECTED";await _db.SaveIntentAsync(cycle,intent,status,order.OrderId,ct);
             return order.ExecutedQuantity<intent.Quantity?L("Execution.PartialProtected",order.ExecutedQuantity,intent.Quantity):L("Execution.Protected");
         }
-        catch
+        catch(Exception protectionError)
         {
             var emergency=filledIntent with{ReduceOnly=true,OrderType=ExecutionOrderType.Market,ClientOrderId=EmergencyId(intent.ClientOrderId)};
             var close=await _ex.PlaceMarketAsync(emergency.Symbol,emergency.Side,emergency.Quantity,emergency.ClientOrderId,true,ct);await _db.SaveIntentAsync(cycle,intent,"EMERGENCY_SUBMITTED",close.OrderId,ct);
             for(var n=0;n<12&&close.Status is not("FILLED" or "CANCELED" or "REJECTED" or "EXPIRED");n++){await Task.Delay(1000,ct);close=await _ex.FindOrderAsync(intent.Symbol,emergency.ClientOrderId,ct)??close;}
             await _db.SaveIntentAsync(cycle,intent,close.Status=="FILLED"?"EMERGENCY_CLOSED":"EMERGENCY_UNKNOWN",close.OrderId,ct);
             if(close.Status=="FILLED")await _db.RecordExecutionAsync(cycle,emergency,close,"wpe-core-v2",ct);
-            throw new InvalidOperationException(close.Status=="FILLED"?L("Execution.ProtectionEmergencyClosed"):L("Execution.ProtectionEmergencyUnknown",close.Status));
+            var safety=close.Status=="FILLED"?L("Execution.ProtectionEmergencyClosed"):L("Execution.ProtectionEmergencyUnknown",close.Status);
+            throw new InvalidOperationException($"{safety} · {protectionError.Message}",protectionError);
         }
     }
 

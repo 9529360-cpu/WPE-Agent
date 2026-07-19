@@ -9,6 +9,8 @@ using System.Windows.Threading;
 using 币安量化机器人.Core.Models;
 using 币安量化机器人.Services;
 using 币安量化机器人.Services.Localization;
+using 币安量化机器人.Services.Access;
+using 币安量化机器人.Services.Agent;
 
 namespace 币安量化机器人;
 
@@ -25,10 +27,15 @@ public partial class MainWindow : Window
     private readonly SolidColorBrush _green = new(Color.FromRgb(53, 230, 160));
     private readonly SolidColorBrush _orange = new(Color.FromRgb(255, 170, 76));
     private readonly SolidColorBrush _red = new(Color.FromRgb(255, 83, 112));
+    private readonly string _user;
+    private readonly AgentSettingsStore _settingsStore = new();
+    private readonly AccessReadinessService _readiness = new();
 
-    public MainWindow()
+    public MainWindow(string user="")
     {
         InitializeComponent();
+        _user=user;
+        ServiceLocator.SystemState.LoggedInUser=user;
         Language = System.Windows.Markup.XmlLanguage.GetLanguage(I18n.Culture.IetfLanguageTag);
         ThoughtList.ItemsSource = _thoughts;
         AutoTradingAgent.StateChanged += OnAgentStateChanged;
@@ -37,6 +44,7 @@ public partial class MainWindow : Window
         _clock.Start();
         AddThought(I18n.T("Thought.Initialized"));
         UpdateInterface();
+        Loaded+=async(_,_)=>await RefreshAccessAsync();
     }
 
     protected override void OnClosed(EventArgs e)
@@ -47,10 +55,19 @@ public partial class MainWindow : Window
         base.OnClosed(e);
     }
 
-    private void StartAgent_Click(object sender, RoutedEventArgs e)
+    private async void StartAgent_Click(object sender, RoutedEventArgs e)
     {
         try
         {
+            StartButton.IsEnabled=false;
+            var settings=_settingsStore.Load();
+            var access=await _readiness.CheckAsync(settings);
+            ApplyAccess(access,settings);
+            if(!settings.SetupCompleted||!access.Ready)
+            {
+                MessageBox.Show(I18n.T("Access.StartBlocked",access.Summary),I18n.T("Dialog.InitFailed"),MessageBoxButton.OK,MessageBoxImage.Warning);
+                var setup=new SetupWindow(_user,true);setup.ShowDialog();UpdateInterface();return;
+            }
             AutoTradingAgent.StartDefault();
             AddThought(I18n.T("Thought.Initializing"));
             UpdateInterface();
@@ -59,7 +76,12 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(ex.Message, I18n.T("Dialog.InitFailed"), MessageBoxButton.OK, MessageBoxImage.Error);
         }
+        finally { if(!AutoTradingAgent.IsRunning)StartButton.IsEnabled=true; }
     }
+
+    private void Settings_Click(object sender,RoutedEventArgs e){var setup=new SetupWindow(_user,true);setup.ShowDialog();_ = RefreshAccessAsync();}
+    private async Task RefreshAccessAsync(){try{var settings=_settingsStore.Load();var report=await _readiness.CheckAsync(settings);ApplyAccess(report,settings);UpdateInterface();}catch{}}
+    private static void ApplyAccess(AccessReadinessReport report,AgentSettings settings){var state=ServiceLocator.SystemState;state.ExchangeConnected=report.Checks.Any(x=>x.Key=="exchange"&&x.Passed);state.BrainConnected=report.Checks.Any(x=>x.Key=="brain"&&x.Passed);state.ApiTradePermission=report.Checks.Any(x=>x.Key=="trade_permission"&&x.Passed);state.RiskReady=report.Checks.Any(x=>x.Key=="risk"&&x.Passed);state.LastAccessCheckAtUtc=report.CheckedAtUtc;state.LoggedInUser=settings.ActiveUser;}
 
     private void PauseAgent_Click(object sender, RoutedEventArgs e)
     {
@@ -172,7 +194,11 @@ public partial class MainWindow : Window
         EmergencyButton.IsEnabled = AutoTradingAgent.CanEmergencyClose;
         AiStatusText.Text = I18n.T(running ? "Status.AiOnline" : "Status.AiStandby");
         AiDot.Fill = running ? _green : _orange;
-        BrainStatusText.Text = string.IsNullOrWhiteSpace(state.BrainName) ? I18n.T("Status.BrainReady") : I18n.T("Status.BrainConnected", state.BrainName.ToUpperInvariant());
+        BrainStatusText.Text = state.BrainConnected ? I18n.T("Status.BrainConnected",string.IsNullOrWhiteSpace(state.BrainName)?_settingsStore.Load().ActiveBrain:state.BrainName.ToUpperInvariant()) : I18n.T("Status.BrainOffline");BrainStatusText.Foreground=state.BrainConnected?_green:_red;
+        UserStatusText.Text=I18n.T("Access.UserOnline",string.IsNullOrWhiteSpace(state.LoggedInUser)?_user:state.LoggedInUser);
+        ExchangeStatusText.Text=I18n.T(state.ExchangeConnected?"Access.BinanceConnected":"Access.BinanceOffline");ExchangeStatusText.Foreground=state.ExchangeConnected?_green:_red;
+        PermissionStatusText.Text=I18n.T(state.ApiTradePermission?"Access.PermissionReady":"Access.PermissionBlocked");PermissionStatusText.Foreground=state.ApiTradePermission?_green:_red;
+        RiskReadyStatusText.Text=I18n.T(state.RiskReady?"Access.RiskReady":"Access.RiskBlocked");RiskReadyStatusText.Foreground=state.RiskReady?_green:_red;
         StageText.Text = " " + I18n.T(state.SkillStageKey);
         LastDecisionText.Text = " " + state.LastDecision.ToUpperInvariant();
         LastDecisionText.Foreground = state.LastDecision.Contains("Open", StringComparison.OrdinalIgnoreCase) ? _green : _orange;

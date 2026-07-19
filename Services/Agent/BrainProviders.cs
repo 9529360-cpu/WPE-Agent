@@ -9,8 +9,8 @@ namespace 币安量化机器人.Services.Agent;
 
 public sealed class HttpBrainProvider : IBrainProvider
 {
-    private static readonly HttpClient Http=new(){Timeout=TimeSpan.FromSeconds(75)}; private readonly BrainSlot _slot; private readonly string _key; public string Name=>_slot.Provider;
-    public HttpBrainProvider(BrainSlot slot,string key){_slot=slot;_key=key;}
+    private readonly HttpClient _http; private readonly BrainSlot _slot; private readonly string _key; public string Name=>_slot.Provider;
+    public HttpBrainProvider(BrainSlot slot,string key){_slot=slot;_key=key;_http=new HttpClient{Timeout=TimeSpan.FromSeconds(Math.Clamp(slot.TimeoutSeconds,5,300))};}
     public async Task<BrainHealth> HealthCheckAsync(CancellationToken ct){if(string.IsNullOrWhiteSpace(_key)||string.IsNullOrWhiteSpace(_slot.Endpoint)||string.IsNullOrWhiteSpace(_slot.Model))return new(false,LocalizationService.Current.T("Provider.Incomplete"));try{using var r=await BuildAndSend("Reply only: HOLD",ct);return new(r.IsSuccessStatusCode,$"HTTP {(int)r.StatusCode}");}catch(Exception ex){return new(false,ex.Message);}}
     public async Task<BrainDecisionResult> DecideAsync(EvidencePack e,AgentContext c,CancellationToken ct)
     {
@@ -36,11 +36,11 @@ public sealed class HttpBrainProvider : IBrainProvider
     private async Task<HttpResponseMessage> BuildAndSend(string prompt,CancellationToken ct)
     {
         var provider=_slot.Provider.ToLowerInvariant();var req=new HttpRequestMessage(HttpMethod.Post,_slot.Endpoint);object body;
-        if(provider.Contains("claude")){req.Headers.Add("x-api-key",_key);req.Headers.Add("anthropic-version","2023-06-01");body=new{model=_slot.Model,max_tokens=1200,messages=new[]{new{role="user",content=prompt}}};}
-        else if(provider.Contains("gemini")){req.RequestUri=new Uri(_slot.Endpoint+( _slot.Endpoint.Contains('?')?'&':'?')+"key="+Uri.EscapeDataString(_key));body=new{contents=new[]{new{parts=new[]{new{text=prompt}}}},generationConfig=new{temperature=.1}};}
+        if(provider.Contains("claude")){req.Headers.Add("x-api-key",_key);req.Headers.Add("anthropic-version","2023-06-01");body=new{model=_slot.Model,max_tokens=_slot.MaxTokens,messages=new[]{new{role="user",content=prompt}}};}
+        else if(provider.Contains("gemini")){req.RequestUri=new Uri(_slot.Endpoint+( _slot.Endpoint.Contains('?')?'&':'?')+"key="+Uri.EscapeDataString(_key));body=new{contents=new[]{new{parts=new[]{new{text=prompt}}}},generationConfig=new{temperature=_slot.Temperature}};}
         else if(provider.Contains("openai")){req.Headers.Authorization=new AuthenticationHeaderValue("Bearer",_key);body=new{model=_slot.Model,input=prompt};}
-        else {req.Headers.Authorization=new AuthenticationHeaderValue("Bearer",_key);body=new{model=_slot.Model,messages=new[]{new{role="user",content=prompt}},temperature=.1,max_tokens=1200};}
-        req.Content=new StringContent(JsonSerializer.Serialize(body),Encoding.UTF8,"application/json");return await Http.SendAsync(req,ct);
+        else {req.Headers.Authorization=new AuthenticationHeaderValue("Bearer",_key);body=new{model=_slot.Model,messages=new[]{new{role="user",content=prompt}},temperature=_slot.Temperature,max_tokens=_slot.MaxTokens};}
+        req.Content=new StringContent(JsonSerializer.Serialize(body),Encoding.UTF8,"application/json");return await _http.SendAsync(req,ct);
     }
     private string ExtractProviderText(string raw){using var d=JsonDocument.Parse(raw);var p=_slot.Provider.ToLowerInvariant();if(p.Contains("claude"))return d.RootElement.GetProperty("content")[0].GetProperty("text").GetString()??"";if(p.Contains("gemini"))return d.RootElement.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString()??"";if(p.Contains("openai")){if(d.RootElement.TryGetProperty("output_text",out var ot))return ot.GetString()??"";foreach(var o in d.RootElement.GetProperty("output").EnumerateArray())if(o.TryGetProperty("content",out var a))foreach(var x in a.EnumerateArray())if(x.TryGetProperty("text",out var t))return t.GetString()??"";}var m=d.RootElement.GetProperty("choices")[0].GetProperty("message");return m.TryGetProperty("content",out var c)?c.GetString()??"":m.GetProperty("reasoning_content").GetString()??"";}
 private static string ExtractJson(string s){var a=s.IndexOf('{');var b=s.LastIndexOf('}');if(a<0||b<=a)throw new JsonException(LocalizationService.Current.T("Provider.JsonMissing"));return s[a..(b+1)];}
