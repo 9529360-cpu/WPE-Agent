@@ -34,6 +34,8 @@ public static class StrategyLifecycleTestRunner
         Check("研究心跳新鲜时可继续使用策略", StrategyResearchHealth.IsHealthy(healthy, DateTime.UtcNow, TimeSpan.FromMinutes(2)), "fresh heartbeat");
         var stale = JsonSerializer.Serialize(new { status = "WAITING", heartbeatAtUtc = DateTime.UtcNow.AddMinutes(-5) });
         Check("研究心跳过期时拒绝旧状态", !StrategyResearchHealth.IsHealthy(stale, DateTime.UtcNow, TimeSpan.FromMinutes(2)), "stale heartbeat rejected");
+        var retry = JsonSerializer.Serialize(new { status = "RETRY_WAIT", heartbeatAtUtc = DateTime.UtcNow });
+        Check("研究失败重试期间拒绝旧策略", !StrategyResearchHealth.IsHealthy(retry, DateTime.UtcNow, TimeSpan.FromMinutes(2)), "retry wait rejected");
         var gatedResearch = new StrategyResearchAgent(restoredStore);
         var gatedProfile = new StrategyProfile { Id = "GATE", Symbol = "BTCUSDT", Family = StrategyFamily.TrendBreakout, Parameters = LocalStrategyParameters.For(StrategyFamily.TrendBreakout, 0) };
         var gatedMarket = new MarketEvidence("BTCUSDT", 100, 0, 0, 50, 0, 0, 0, new(0, 0, 1, 1, 1, 1, 0), DateTime.UtcNow);

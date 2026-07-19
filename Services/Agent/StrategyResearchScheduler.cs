@@ -24,6 +24,7 @@ public sealed class StrategyResearchScheduler
     private async Task RunAsync(IReadOnlyList<string> symbols, RiskLimits limits, CancellationToken ct)
     {
         var delay = await ResumeDelayAsync(ct);
+        var retrying = false;
         await PublishHealthAsync("STARTING", null, delay, ct);
         while (!ct.IsCancellationRequested)
         {
@@ -31,18 +32,19 @@ public sealed class StrategyResearchScheduler
             {
                 if (delay > TimeSpan.Zero)
                 {
-                    await PublishHealthAsync("WAITING", null, delay, ct);
+                    await PublishHealthAsync(retrying ? "RETRY_WAIT" : "WAITING", null, delay, ct);
                     var heartbeat = TimeSpan.FromMinutes(1);
                     while (delay > TimeSpan.Zero && !ct.IsCancellationRequested)
                     {
                         var tick = delay < heartbeat ? delay : heartbeat;
                         await Task.Delay(tick, ct);
                         delay -= tick;
-                        if (delay > TimeSpan.Zero) await PublishHealthAsync("WAITING", null, delay, ct);
+                        if (delay > TimeSpan.Zero) await PublishHealthAsync(retrying ? "RETRY_WAIT" : "WAITING", null, delay, ct);
                     }
                 }
                 await PublishHealthAsync("RUNNING", null, TimeSpan.Zero, ct);
                 var snapshot = await _research.RunOnceAsync(symbols, limits, ct);
+                retrying = false;
                 await _database.SetStateAsync("strategy-research:scheduler", JsonSerializer.Serialize(new
                 {
                     status = "RUNNING",
@@ -57,8 +59,9 @@ public sealed class StrategyResearchScheduler
             catch (Exception ex)
             {
                 await _database.RecordErrorAsync("STRATEGY_RESEARCH_SCHEDULER", ex, CancellationToken.None);
-                await PublishHealthAsync("ERROR", ex.Message, delay, CancellationToken.None);
                 delay = delay == TimeSpan.Zero ? TimeSpan.FromMinutes(5) : TimeSpan.FromMinutes(Math.Min(delay.TotalMinutes * 2, 60));
+                retrying = true;
+                await PublishHealthAsync("RETRY_WAIT", ex.Message, delay, CancellationToken.None);
             }
         }
     }
