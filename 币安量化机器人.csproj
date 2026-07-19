@@ -8,6 +8,9 @@
 		<!-- 代码质量（按需留） -->
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
+		<Version>3.3.0</Version>
+		<AssemblyVersion>3.3.0.0</AssemblyVersion>
+		<FileVersion>3.3.0.0</FileVersion>
 
 		<!-- 防止与手动 AssemblyInfo.cs 冲突 -->
 		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>

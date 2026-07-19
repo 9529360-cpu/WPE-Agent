@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
+using 币安量化机器人.Services.Exchange;
 
 namespace 币安量化机器人.Services.Agent;
 
@@ -23,8 +24,8 @@ public static class SmokeTestRunner
         var report=new SmokeReport{StartedAtUtc=DateTime.UtcNow};var reportDir=Path.Combine(AppContext.BaseDirectory,"Data","smoke-tests");Directory.CreateDirectory(reportDir);var reportPath=Path.Combine(reportDir,$"smoke-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");IExchangeAdapter? exchange=null;ReliableOrderExecutor? executor=null;string? symbol=null;var openedBySmoke=false;
         try
         {
-            var store=new AgentSettingsStore();var settings=store.Load();store.ImportDesktopTestnetIfEmpty(settings);store.ImportDesktopDeepSeekIfEmpty(settings);if(settings.Environment!=ExchangeEnvironment.Testnet)throw new InvalidOperationException("冒烟入口只允许 Testnet，当前配置不是测试网");var(key,secret)=store.GetCredentials(settings);if(string.IsNullOrWhiteSpace(key)||string.IsNullOrWhiteSpace(secret))throw new InvalidOperationException("测试网 API 凭据不完整");
-            exchange=new BinanceFuturesAdapter(ExchangeEnvironment.Testnet,key,secret);var db=new AgentSqliteStore();executor=new ReliableOrderExecutor(exchange,db);await Step(report,"测试网账户与持仓读取",async()=>{var a=await exchange.GetAccountAsync(ct);var p=await exchange.GetPositionsAsync(ct);var o=await exchange.GetOpenOrdersAsync(null,ct);if(a.Equity<=0)throw new InvalidOperationException("测试网账户权益为0，需要 Faucet Token");return $"equity={a.Equity:F2}, available={a.AvailableBalance:F2}, positions={p.Count}, openOrders={o.Count}";});
+            var store=new AgentSettingsStore();var settings=store.Load();store.ImportDesktopTestnetIfEmpty(settings);store.ImportDesktopDeepSeekIfEmpty(settings);var profile=store.GetActiveExchange(settings);if(!profile.IsTestnet)throw new InvalidOperationException("冒烟入口只允许 Testnet，当前配置不是测试网");var credentials=store.GetExchangeCredentials(profile);var catalog=new ExchangeProviderCatalog();
+            exchange=catalog.Create(profile,credentials);report.Environment=$"{profile.DisplayName} / Testnet";var db=new AgentSqliteStore();executor=new ReliableOrderExecutor(exchange,db);await Step(report,"测试网账户与持仓读取",async()=>{var a=await exchange.GetAccountAsync(ct);var p=await exchange.GetPositionsAsync(ct);var o=await exchange.GetOpenOrdersAsync(null,ct);if(a.Equity<=0)throw new InvalidOperationException("测试网账户权益为0，需要 Faucet Token");return $"provider={profile.ProviderId}, equity={a.Equity:F2}, available={a.AvailableBalance:F2}, positions={p.Count}, openOrders={o.Count}";});
             var positions=await exchange.GetPositionsAsync(ct);symbol=new[]{"BTCUSDT","ETHUSDT"}.FirstOrDefault(s=>positions.All(p=>!p.Symbol.Equals(s,StringComparison.OrdinalIgnoreCase)));if(symbol is null)throw new InvalidOperationException("BTCUSDT 与 ETHUSDT 都已有仓位，无法选择不干扰现有仓位的冒烟品种");
             TradingRule? rule=null;MarketEvidence? market=null;await Step(report,"交易规则与市场证据",async()=>{rule=await exchange.GetRulesAsync(symbol,ct);market=await exchange.GetMarketAsync(symbol,ct);if(rule.StepSize<=0||rule.MinQuantity<=0||market.Price<=0)throw new InvalidOperationException("交易规则或市场价格无效");return $"{symbol} price={market.Price:F2}, step={rule.StepSize}, minQty={rule.MinQuantity}, minNotional={rule.MinNotional}, basis={market.Derivatives.Basis:P4}";});
             EvidencePack? evidence=null;await Step(report,"完整证据包与新闻",async()=>{evidence=await new EvidenceCollector(exchange).CollectAsync(ct);if(evidence.Markets.Count==0)throw new InvalidOperationException("没有可用市场证据");return $"completeness={evidence.Completeness}/100, markets={evidence.Markets.Count}, news={evidence.News.Count}, missing={string.Join(',',evidence.MissingSources)}";});

@@ -1,0 +1,52 @@
+using System.Reflection;
+using System.Runtime.Loader;
+using System.IO;
+
+namespace 币安量化机器人.Services.Exchange;
+
+public sealed class ExchangeProviderCatalog
+{
+    private readonly Dictionary<string,IExchangeProviderPlugin> _plugins;
+    public ExchangeProviderCatalog(IEnumerable<Assembly>? assemblies=null)
+    {
+        var source=assemblies?.ToArray()??DiscoverAssemblies().ToArray();
+        _plugins=source.SelectMany(SafeTypes).Where(t=>!t.IsAbstract&&typeof(IExchangeProviderPlugin).IsAssignableFrom(t)&&t.GetConstructor(Type.EmptyTypes)is not null)
+            .Select(t=>(IExchangeProviderPlugin)Activator.CreateInstance(t)!).GroupBy(x=>x.Descriptor.Id,StringComparer.OrdinalIgnoreCase).ToDictionary(x=>x.Key,x=>x.First(),StringComparer.OrdinalIgnoreCase);
+    }
+    public IReadOnlyList<ExchangeProviderDescriptor> Installed=>_plugins.Values.Select(x=>x.Descriptor).OrderBy(x=>x.DisplayName).ToArray();
+    public IReadOnlyList<ExchangeProviderDescriptor> All=>Installed.Concat(ProviderTemplates.Planned.Where(p=>!_plugins.ContainsKey(p.Id))).ToArray();
+    public IExchangeProvider Create(ExchangeConnectionProfile profile,IReadOnlyDictionary<string,string> credentials)
+    {
+        if(!_plugins.TryGetValue(profile.ProviderId,out var plugin))throw new NotSupportedException($"Exchange adapter '{profile.ProviderId}' is not installed.");
+        return plugin.Create(profile,credentials);
+    }
+    public bool IsInstalled(string providerId)=>_plugins.ContainsKey(providerId);
+    private static IEnumerable<Assembly> DiscoverAssemblies()
+    {
+        yield return typeof(ExchangeProviderCatalog).Assembly;
+        var directory=Path.Combine(AppContext.BaseDirectory,"ExchangeAdapters");if(!Directory.Exists(directory))yield break;
+        foreach(var file in Directory.EnumerateFiles(directory,"*.dll",SearchOption.TopDirectoryOnly))
+        {
+            Assembly? assembly=null;try{assembly=AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.GetFullPath(file));}catch{/* One broken optional plugin must not stop the Agent. */}
+            if(assembly is not null)yield return assembly;
+        }
+    }
+    private static IEnumerable<Type> SafeTypes(Assembly assembly){try{return assembly.GetTypes();}catch(ReflectionTypeLoadException ex){return ex.Types.OfType<Type>();}}
+}
+
+public static class ProviderTemplates
+{
+    private static readonly IReadOnlySet<string> StandardCapabilities=new HashSet<string>(["account","balance","positions","margin","candles","orderbook","trades","funding","open-interest","index-price","mark-price","place-order","cancel-order","query-order","health"]);
+    private static readonly ExchangeCredentialField Key=new("apiKey","API Key",ExchangeCredentialKind.ApiKey);
+    private static readonly ExchangeCredentialField Secret=new("secret","API Secret",ExchangeCredentialKind.Secret);
+    private static ExchangeProviderDescriptor PlannedProvider(string id,string name,ExchangeAssetClass assetClass=ExchangeAssetClass.CryptoCex,params ExchangeCredentialField[] extra)=>new(id,name,assetClass,true,true,[Key,Secret,..extra],StandardCapabilities,false,"ADAPTER NOT INSTALLED");
+    private static ExchangeProviderDescriptor PlannedDex(string id,string name)=>new(id,name,ExchangeAssetClass.CryptoDex,true,true,[new("wallet","Wallet Address",ExchangeCredentialKind.WalletAddress),new("privateKey","Signing Key",ExchangeCredentialKind.PrivateKey)],StandardCapabilities,false,"ADAPTER NOT INSTALLED");
+    public static IReadOnlyList<ExchangeProviderDescriptor> Planned { get; }=
+    [
+        PlannedProvider("okx","OKX",ExchangeAssetClass.CryptoCex,new ExchangeCredentialField("passphrase","Passphrase",ExchangeCredentialKind.Passphrase)),
+        PlannedProvider("bybit","Bybit"),PlannedProvider("bitget","Bitget",ExchangeAssetClass.CryptoCex,new ExchangeCredentialField("passphrase","Passphrase",ExchangeCredentialKind.Passphrase)),
+        PlannedProvider("gate","Gate.io"),PlannedProvider("kucoin","KuCoin",ExchangeAssetClass.CryptoCex,new ExchangeCredentialField("passphrase","Passphrase",ExchangeCredentialKind.Passphrase)),
+        PlannedProvider("coinbase","Coinbase",ExchangeAssetClass.CryptoCex,new ExchangeCredentialField("passphrase","Passphrase",ExchangeCredentialKind.Passphrase)),
+        PlannedProvider("kraken","Kraken"),PlannedProvider("deribit","Deribit"),PlannedDex("hyperliquid","Hyperliquid"),PlannedDex("dydx","dYdX")
+    ];
+}

@@ -8,10 +8,11 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using 币安量化机器人.Services.Exchange;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed class RealTimeMarketHub : IAsyncDisposable
+public sealed class RealTimeMarketHub : IRealtimeMarketFeed
 {
     private sealed record TradePoint(DateTime Time,decimal Quantity,bool Buy);
     private sealed class SymbolState

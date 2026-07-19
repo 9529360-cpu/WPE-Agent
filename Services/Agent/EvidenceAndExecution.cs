@@ -1,11 +1,12 @@
 using 币安量化机器人.Services.Localization;
+using 币安量化机器人.Services.Exchange;
 
 namespace 币安量化机器人.Services.Agent;
 
 public sealed class EvidenceCollector
 {
-    private readonly IExchangeAdapter _exchange;private readonly IReadOnlyList<string> _symbols;private readonly RealTimeMarketHub? _realtime;private readonly NewsResearchService _news;
-    public EvidenceCollector(IExchangeAdapter exchange,IEnumerable<string>? symbols=null,RealTimeMarketHub? realtime=null,NewsResearchService? news=null){_exchange=exchange;_symbols=(symbols??["BTCUSDT","ETHUSDT"]).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();_realtime=realtime;_news=news??new();}
+    private readonly IExchangeAdapter _exchange;private readonly IReadOnlyList<string> _symbols;private readonly IRealtimeMarketFeed? _realtime;private readonly NewsResearchService _news;
+    public EvidenceCollector(IExchangeAdapter exchange,IEnumerable<string>? symbols=null,IRealtimeMarketFeed? realtime=null,NewsResearchService? news=null){_exchange=exchange;_symbols=(symbols??["BTCUSDT","ETHUSDT"]).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();_realtime=realtime;_news=news??new();}
     public async Task<EvidencePack> CollectAsync(CancellationToken ct)
     {
         var missing=new List<string>();var markets=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase);

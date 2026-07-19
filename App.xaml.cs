@@ -6,6 +6,7 @@ using 币安量化机器人.Services;
 using 币安量化机器人.Services.Agent;
 using 币安量化机器人.Services.Access;
 using 币安量化机器人.Services.Localization;
+using 币安量化机器人.Services.Exchange;
 
 namespace 币安量化机器人;
 
@@ -40,6 +41,15 @@ public partial class App : global::System.Windows.Application
             var result = LocalizationSelfTest.Run();
             Log.Information("Localization self-test completed. Success={Success}; Report={Report}", result.Success, result.ReportPath);
             Shutdown(result.Success ? 0 : 4);
+            return;
+        }
+
+        if (e.Args.Any(x => string.Equals(x, "--exchange-adapter-test", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await ExchangeAdapterTestRunner.RunAsync();
+            Log.Information("Exchange adapter tests completed. Success={Success}; Report={Report}",result.Success,result.ReportPath);
+            Shutdown(result.Success?0:12);
             return;
         }
 
