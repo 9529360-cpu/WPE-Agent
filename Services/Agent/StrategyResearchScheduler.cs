@@ -64,13 +64,17 @@ public sealed class StrategyResearchScheduler
     }
 
     private Task PublishHealthAsync(string status, string? error, TimeSpan nextDelay, CancellationToken ct)
-        => _database.SetStateAsync("strategy-research:health", JsonSerializer.Serialize(new
+    {
+        var healthy = status is "WAITING" or "RUNNING";
+        _research.SetSchedulerHealth(healthy);
+        return _database.SetStateAsync("strategy-research:health", JsonSerializer.Serialize(new
         {
             status,
             heartbeatAtUtc = DateTime.UtcNow,
             nextRunAtUtc = DateTime.UtcNow.Add(nextDelay),
             error
         }), ct);
+    }
 
     private async Task<TimeSpan> ResumeDelayAsync(CancellationToken ct)
     {

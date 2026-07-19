@@ -8,12 +8,16 @@ public sealed class StrategyResearchAgent
     private readonly AgentSqliteStore _database;
     private readonly StrategyGovernor _governor;
     private readonly HistoricalResearchEngine _engine = new();
+    private volatile bool _schedulerHealthy;
 
     public StrategyResearchAgent(AgentSqliteStore database, StrategyGovernor? governor = null)
     {
         _database = database;
         _governor = governor ?? new StrategyGovernor();
     }
+
+    public bool SchedulerHealthy => _schedulerHealthy;
+    public void SetSchedulerHealth(bool healthy) => _schedulerHealthy = healthy;
 
     public async Task<StrategyResearchSnapshot> RunOnceAsync(IReadOnlyList<string> symbols, RiskLimits limits, CancellationToken ct)
     {
@@ -79,7 +83,7 @@ public sealed class StrategyResearchAgent
     }
 
     public StrategySignal GetSignal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
-        => _engine.Signal(profile, market, news);
+        => _schedulerHealthy ? _engine.Signal(profile, market, news) : new StrategySignal(profile.Id, profile.Symbol, 0, 0, "strategy research heartbeat is stale; hold");
 
     private async Task<IReadOnlyList<StrategyProfile>> EnsureCandidatesAsync(IReadOnlyList<string> symbols, CancellationToken ct)
     {
