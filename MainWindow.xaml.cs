@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     public MainWindow(string user="")
     {
         InitializeComponent();
+        InstallPluginNavigationButton();
         _user=user;
         ServiceLocator.SystemState.LoggedInUser=user;
         Language = System.Windows.Markup.XmlLanguage.GetLanguage(I18n.Culture.IetfLanguageTag);
@@ -45,6 +46,33 @@ public partial class MainWindow : Window
         AddThought(I18n.T("Thought.Initialized"));
         UpdateInterface();
         Loaded+=async(_,_)=>await InitializeAndStartAsync();
+    }
+
+    private void InstallPluginNavigationButton()
+    {
+        var navigation = FindNavigationPanel(this);
+        if (navigation is null || navigation.Children.OfType<Button>().Any(x => Equals(x.Tag, "PLUGINS"))) return;
+        var button = new Button
+        {
+            Style = (Style)FindResource("NavButton"),
+            Tag = "PLUGINS",
+            Content = I18n.T("Nav.Plugins")
+        };
+        button.Click += NavButton_Click;
+        navigation.Children.Add(button);
+        I18n.LanguageChanged += () => button.Content = I18n.T("Nav.Plugins");
+    }
+
+    private static StackPanel? FindNavigationPanel(DependencyObject root)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is StackPanel panel && panel.Children.OfType<Button>().Any(x => Equals(x.Tag, "LOGS"))) return panel;
+            var nested = FindNavigationPanel(child);
+            if (nested is not null) return nested;
+        }
+        return null;
     }
 
     protected override void OnClosed(EventArgs e)
@@ -334,6 +362,7 @@ public partial class MainWindow : Window
             "POSITIONS" => (I18n.T("Secondary.PositionsTitle"), I18n.T("Secondary.PositionsSubtitle"), $"{I18n.T("Portfolio.Equity")}  {I18n.Number(state.WalletBalance)} USDT\n{I18n.T("Portfolio.Available")}  {I18n.Number(state.AvailableBalance)} USDT\n\n{state.PositionsSummary}\n\n{state.OrdersSummary}"),
             "RISK" => (I18n.T("Secondary.RiskTitle"), I18n.T("Secondary.RiskSubtitle"), $"{state.RiskSummary}\n{state.PortfolioRiskSummary}\n\n{I18n.T("Audit.DataQuality")}  {state.DataQualityScore}/100\n{I18n.T("Audit.Liquidity")}  {state.LiquidityScore:0}%\n{I18n.T("Audit.Volatility")}  {state.VolatilityPercent:0.00}%\n{I18n.T("Audit.Research")}  {state.ResearchScore:0}%\n{I18n.T("Audit.HistoricalCoverage")}  {state.HistoricalCoverageDays} d\n{I18n.T("Audit.VaR99")}  {state.PortfolioVaR99:0.00}%\n{I18n.T("Audit.CVaR99")}  {state.PortfolioCVaR99:0.00}%\n{I18n.T("Audit.Concentration")}  {state.PortfolioConcentration:0.0}%\n{I18n.T("Audit.Correlation")}  {state.PortfolioCorrelation:0.00}\n{I18n.T("Brain.RiskLoad")}  {state.RiskLoad:0}%\n{I18n.T("Brain.ConflictRate")}  {state.ConflictRate:0}%\n\n{I18n.T("Audit.Reviewer")}  {AuditStatus(state.ReviewerStatus)}\n{I18n.T("Audit.RiskApproval")}  {AuditStatus(state.RiskApprovalStatus)}\n{I18n.T("Audit.ExecutionApproval")}  {AuditStatus(state.ExecutionApprovalStatus)}\n{I18n.T("Audit.CircuitBreaker")}  {I18n.T(state.CircuitBreakerActive?"Audit.Status.ACTIVE":"Audit.Status.CLEAR")}\n\n{I18n.T("Audit.Missing")}\n{state.MissingConditions}"),
             "BRAIN" => (I18n.T("Secondary.BrainTitle"), I18n.T("Secondary.BrainSubtitle"), $"Brain  {state.BrainName}\n{state.Status}\n{I18n.T("Brain.Confidence")}  {state.BrainConfidence:0}%\n{I18n.T("Label.Market")}  {state.MarketRegime}\n{I18n.T("Label.Reflection")}  {state.ReflectionStatus}\n\n{I18n.T("Audit.Entry")}  {I18n.Number(state.PlannedEntry)}\n{I18n.T("Audit.Stop")}  {I18n.Number(state.PlannedStop)}\n{I18n.T("Audit.TakeProfit")}  {I18n.Number(state.PlannedTakeProfit)}\n{I18n.T("Audit.Quantity")}  {I18n.Number(state.PlannedQuantity)}\n{I18n.T("Audit.RiskReward")}  {state.RiskRewardRatio:0.00}\n\n{state.DecisionAuditSummary}\n\n{state.LastReason}\n\nMEMORY EXPLORER\n{string.Join("\n\n", memory)}\n\n{PluginCenterSnapshot.Build(_settingsStore.Load())}"),
+            "PLUGINS" => (I18n.T("Secondary.PluginsTitle"), I18n.T("Secondary.PluginsSubtitle"), PluginCenterSnapshot.Build(_settingsStore.Load())),
             "LOGS" => (I18n.T("Secondary.EventsTitle"), I18n.T("Secondary.EventsSubtitle"), await ReadRuntimeEventsAsync()),
             _ => (I18n.T("Secondary.Module"), I18n.T("Secondary.NoTelemetry"), state.LastMessage)
         };
