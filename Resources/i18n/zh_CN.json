@@ -84,6 +84,7 @@
     "Status.RuntimeStandby":  "运行核心待命",
     "Status.RuntimeHealthy":  "运行核心心跳正常",
     "Status.RuntimeDegraded":  "运行核心异常",
+    "Status.StrategyStandby":  "策略研究待命",
     "Command.Initialize":  "启动智能体",
     "Command.Running":  "运行中",
     "Command.Pause":  "暂停",

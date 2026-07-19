@@ -15,6 +15,7 @@
     "Status.RuntimeStandby":  "執行核心待命",
     "Status.RuntimeHealthy":  "執行核心正常",
     "Status.RuntimeDegraded":  "執行核心異常",
+    "Status.StrategyStandby":  "策略研究待命",
     "Command.Initialize":  "啟動智能體",
     "Command.Running":  "運行中",
     "Command.Pause":  "暫停",

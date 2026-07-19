@@ -18,6 +18,7 @@
     "Status.RuntimeStandby":  "RUNTIME IN ATTESA",
     "Status.RuntimeHealthy":  "RUNTIME ATTIVO",
     "Status.RuntimeDegraded":  "RUNTIME DEGRADATO",
+    "Status.StrategyStandby":  "RICERCA STRATEGIE IN ATTESA",
     "Command.Initialize":  "AVVIA AGENTE",
     "Command.Running":  "IN ESECUZIONE",
     "Command.Pause":  "PAUSA",

@@ -149,6 +149,7 @@
     "Status.RuntimeStandby":  "런타임 대기",
     "Status.RuntimeHealthy":  "런타임 정상",
     "Status.RuntimeDegraded":  "런타임 이상",
+    "Status.StrategyStandby":  "전략 연구 대기",
     "Command.Initialize":  "에이전트 시작",
     "Command.Running":  "실행 중",
     "Command.Pause":  "일시정지",

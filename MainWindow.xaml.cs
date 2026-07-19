@@ -201,6 +201,7 @@ public partial class MainWindow : Window
          RiskReadyStatusText.Text=I18n.T(state.RiskReady?"Access.RiskReady":"Access.RiskBlocked");RiskReadyStatusText.Foreground=state.RiskReady?_green:_red;
          var runtimeHealthy=running&&state.RuntimeHeartbeatAtUtc is not null&&DateTime.UtcNow-state.RuntimeHeartbeatAtUtc<TimeSpan.FromSeconds(15);
          RuntimeStatusText.Text=I18n.T(runtimeHealthy?"Status.RuntimeHealthy":running?"Status.RuntimeDegraded":"Status.RuntimeStandby");RuntimeStatusText.Foreground=runtimeHealthy?_green:running?_red:_orange;RuntimeDot.Fill=RuntimeStatusText.Foreground;RuntimeStatusText.ToolTip=$"Run {ShortId(state.RuntimeRunId)} · {state.RuntimeRecoveryStatus} · #{state.RuntimeEventSequence}";
+         StrategyStatusText.Text=string.IsNullOrWhiteSpace(state.StrategySummary)?I18n.T("Status.StrategyStandby"):$"{state.StrategyStatus} · {state.StrategySummary}";StrategyStatusText.ToolTip=$"{state.StrategyCandidates} local strategy candidates";
         StageText.Text = " " + I18n.T(state.SkillStageKey);
         LastDecisionText.Text = " " + state.LastDecision.ToUpperInvariant();
         LastDecisionText.Foreground = state.LastDecision.Contains("Open", StringComparison.OrdinalIgnoreCase) ? _green : _orange;

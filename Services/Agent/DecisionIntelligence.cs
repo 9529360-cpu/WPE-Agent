@@ -1,14 +1,15 @@
 using System.Text;
+using 币安量化机器人.Core.Strategy;
 using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人.Services.Agent;
 
 public sealed class SignalAggregationSkill
 {
-    public IReadOnlyList<MarketDecisionAssessment> Analyze(EvidencePack evidence,DecisionPolicy policy)
-        => evidence.Markets.Values.Select(m=>AnalyzeMarket(m,evidence.Completeness,policy)).OrderByDescending(Quality).ToArray();
+    public IReadOnlyList<MarketDecisionAssessment> Analyze(EvidencePack evidence,DecisionPolicy policy,IReadOnlyDictionary<string,StrategySignal>? localSignals=null)
+        => evidence.Markets.Values.Select(m=>AnalyzeMarket(m,evidence.Completeness,policy,localSignals?.GetValueOrDefault(m.Symbol))).OrderByDescending(Quality).ToArray();
 
-    private static MarketDecisionAssessment AnalyzeMarket(MarketEvidence market,int completeness,DecisionPolicy policy)
+    private static MarketDecisionAssessment AnalyzeMarket(MarketEvidence market,int completeness,DecisionPolicy policy,StrategySignal? localSignal)
     {
         var signals=new List<SignalContribution>();
         Add("trend_15m","15m",market.Trend15m,.17,.006);
@@ -20,7 +21,8 @@ public sealed class SignalAggregationSkill
         Add("crowd","derivatives",(double)(1-market.Derivatives.LongShortRatio),.04,.30);
         Add("basis","derivatives",(double)market.Derivatives.Basis,.03,.003);
         Add("order_book","microstructure",market.Quality.OrderBookImbalance,.06,.35);
-        Add("relative_volume","volume",Math.Sign(market.Trend15m)*Math.Max(0,market.Quality.RelativeVolume-1),.04,1);
+            Add("relative_volume","volume",Math.Sign(market.Trend15m)*Math.Max(0,market.Quality.RelativeVolume-1),.04,1);
+            if(localSignal is not null) Add("local_strategy","strategy",localSignal.Direction*localSignal.Confidence,.20,1);
 
         var positive=signals.Where(x=>x.WeightedScore>0).Sum(x=>x.WeightedScore);
         var negative=-signals.Where(x=>x.WeightedScore<0).Sum(x=>x.WeightedScore);

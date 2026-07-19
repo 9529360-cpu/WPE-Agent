@@ -1,0 +1,31 @@
+using System.Text.Json;
+using System.IO;
+using 币安量化机器人.Core.Strategy;
+
+namespace 币安量化机器人.Services.Agent;
+
+public sealed record StrategyLifecycleTestResult(bool Success, string ReportPath, IReadOnlyList<string> Cases);
+
+public static class StrategyLifecycleTestRunner
+{
+    public static async Task<StrategyLifecycleTestResult> RunAsync()
+    {
+        var cases = new List<string>(); var passed = true;
+        void Check(string name, bool condition, string detail) { if (!condition) passed = false; cases.Add($"{(condition ? "PASS" : "FAIL")} {name}: {detail}"); }
+        var governor = new StrategyGovernor();
+        var profile = new StrategyProfile { Id = "TEST", Symbol = "BTCUSDT", Family = StrategyFamily.TrendBreakout, Parameters = LocalStrategyParameters.For(StrategyFamily.TrendBreakout, 0), Lifecycle = StrategyLifecycle.Draft };
+        var good = new StrategyValidation("TEST", 1000, 80, .58, 1.5, .002, .12, 1.2, .08, .7, .2, .78, true, "good");
+        Check("严格验证晋级到影子", governor.NextLifecycle(profile, good) == StrategyLifecycle.Shadow, "backtest passed -> shadow");
+        profile.Lifecycle = StrategyLifecycle.Shadow; profile.QualityScore = .78; profile.Expectancy = .002; profile.MaxDrawdown = .12; profile.ShadowObservations = StrategyGovernor.MinimumShadowObservations; profile.FailureStreak = 0;
+        Check("影子运行达到门槛才上架", governor.NextLifecycle(profile) == StrategyLifecycle.Active, "shadow gate -> active");
+        profile.Lifecycle = StrategyLifecycle.Active; profile.FailureStreak = 3;
+        Check("连续失效自动降级", governor.NextLifecycle(profile) == StrategyLifecycle.Degraded, "active -> degraded");
+        var candles = Enumerable.Range(0, 700).Select(i => { var close = 100m + i * .08m + (decimal)Math.Sin(i / 12d); return new CandleEvidence(DateTime.UtcNow.AddHours(-700 + i), close - 1, close + 1, close - 1.5m, close, 100, 10000, 10, 50); }).ToArray();
+        var engine = new HistoricalResearchEngine();
+        var result = engine.Validate(new StrategyProfile { Id = "TEST-ENGINE", Symbol = "BTCUSDT", Family = StrategyFamily.TrendBreakout, Parameters = LocalStrategyParameters.For(StrategyFamily.TrendBreakout, 0) }, candles, Array.Empty<NewsFeature>(), new RiskLimits { MinimumBacktestTrades = 10 });
+        Check("本地回测输出可审计指标", result.SampleSize == 700 && double.IsFinite(result.QualityScore) && double.IsFinite(result.WalkForwardScore) && result.MonteCarloLossProbability is >= 0 and <= 1, result.Summary);
+        var report = new StrategyLifecycleTestResult(passed, AppDataPaths.File("strategy-lifecycle-test-report.json"), cases);
+        await File.WriteAllTextAsync(report.ReportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+        return report;
+    }
+}

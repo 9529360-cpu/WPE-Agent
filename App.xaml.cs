@@ -70,6 +70,14 @@ public partial class App : global::System.Windows.Application
             Shutdown(result.Success?0:14);
             return;
         }
+        if (e.Args.Any(x => string.Equals(x, "--strategy-lifecycle-test", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await StrategyLifecycleTestRunner.RunAsync();
+            Log.Information("Strategy lifecycle tests completed. Success={Success}; Report={Report}",result.Success,result.ReportPath);
+            Shutdown(result.Success?0:15);
+            return;
+        }
 
         // Configure dependency injection
         var services = new ServiceCollection();

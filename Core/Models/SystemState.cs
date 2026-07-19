@@ -107,6 +107,9 @@ public class SystemState
     public DateTime? RuntimeHeartbeatAtUtc { get; set; }
     public string RuntimeRecoveryStatus { get; set; } = "NOT_STARTED";
     public long RuntimeEventSequence { get; set; }
+    public string StrategyStatus { get; set; } = "NOT_STARTED";
+    public string StrategySummary { get; set; } = string.Empty;
+    public int StrategyCandidates { get; set; }
 }
 
 

@@ -84,6 +84,7 @@
     "Status.RuntimeStandby":  "RUNTIME STANDBY",
     "Status.RuntimeHealthy":  "RUNTIME HEARTBEAT OK",
     "Status.RuntimeDegraded":  "RUNTIME DEGRADED",
+    "Status.StrategyStandby":  "STRATEGY RESEARCH STANDBY",
     "Command.Initialize":  "INITIALIZE",
     "Command.Running":  "RUNNING",
     "Command.Pause":  "PAUSE",
