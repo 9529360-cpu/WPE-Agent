@@ -45,7 +45,7 @@ public static class DeviceLicenseCodec
 
 public sealed class DeviceLicenseService
 {
-    public const string PublicKeyBase64="MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAETpqPoFO2U36bmkDb/tqSbPzBf3KXWVybZHLH6gJfVZ7NCi6qsi/RmIcgL4uJZBeUDG7meMkhoaM7j/CeYQ6eAg==";
+    public const string PublicKeyBase64="MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUSMlb14eN6orfPyPQePphhYsI21wJyXar1OSXm3JrekZG/cgTCgTvLyjEaKtWBGJLq3j1ZONDEgZ8BVrr1GT+Q==";
     private readonly string _licensePath;private readonly string _publicKey;private readonly string _deviceCode;
     public DeviceLicenseService(string? dataDirectory=null,string? publicKey=null,string? deviceCode=null){var data=dataDirectory??Path.Combine(AppContext.BaseDirectory,"Data");Directory.CreateDirectory(data);_licensePath=Path.Combine(data,"device-license.dat");_publicKey=publicKey??PublicKeyBase64;_deviceCode=deviceCode??GetCurrentDeviceCode();}
     public string DeviceCode=>_deviceCode;
