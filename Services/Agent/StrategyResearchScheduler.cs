@@ -23,7 +23,7 @@ public sealed class StrategyResearchScheduler
 
     private async Task RunAsync(IReadOnlyList<string> symbols, RiskLimits limits, CancellationToken ct)
     {
-        var delay = TimeSpan.Zero;
+        var delay = await ResumeDelayAsync(ct);
         while (!ct.IsCancellationRequested)
         {
             try
@@ -34,6 +34,7 @@ public sealed class StrategyResearchScheduler
                 {
                     status = "RUNNING",
                     snapshot.LastRunAtUtc,
+                    nextRunAtUtc = DateTime.UtcNow.AddHours(1),
                     snapshot.Candidates,
                     snapshot.ActiveCandidates
                 }), ct);
@@ -46,5 +47,18 @@ public sealed class StrategyResearchScheduler
                 delay = delay == TimeSpan.Zero ? TimeSpan.FromMinutes(5) : TimeSpan.FromMinutes(Math.Min(delay.TotalMinutes * 2, 60));
             }
         }
+    }
+
+    private async Task<TimeSpan> ResumeDelayAsync(CancellationToken ct)
+    {
+        try
+        {
+            var raw = await _database.GetStateAsync("strategy-research:scheduler", ct);
+            if (string.IsNullOrWhiteSpace(raw)) return TimeSpan.Zero;
+            using var doc = JsonDocument.Parse(raw);
+            if (!doc.RootElement.TryGetProperty("nextRunAtUtc", out var next) || !next.TryGetDateTime(out var nextRun)) return TimeSpan.Zero;
+            return nextRun > DateTime.UtcNow ? nextRun - DateTime.UtcNow : TimeSpan.Zero;
+        }
+        catch { return TimeSpan.Zero; }
     }
 }
