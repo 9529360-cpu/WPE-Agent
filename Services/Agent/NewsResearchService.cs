@@ -1,4 +1,5 @@
 using System.Net;
+using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -26,7 +27,7 @@ public sealed partial class NewsResearchService
         var raw=new List<NewsEvidence>();var missing=new List<string>();var successful=0;
         foreach(var feed in Feeds)try
         {
-            await using var stream=await _http.GetStreamAsync(feed.Url,ct);var doc=await XDocument.LoadAsync(stream,LoadOptions.None,ct);foreach(var item in doc.Descendants().Where(x=>x.Name.LocalName is "item" or "entry").Take(25))
+            await using var stream=await GetStreamWithRetryAsync(feed.Url,ct);var doc=await XDocument.LoadAsync(stream,LoadOptions.None,ct);foreach(var item in doc.Descendants().Where(x=>x.Name.LocalName is "item" or "entry").Take(25))
             {
                 string Value(string name)=>item.Elements().FirstOrDefault(x=>x.Name.LocalName==name)?.Value?.Trim()??string.Empty;var title=WebUtility.HtmlDecode(Value("title"));if(string.IsNullOrWhiteSpace(title))continue;var link=Value("link");if(string.IsNullOrWhiteSpace(link))link=item.Elements().FirstOrDefault(x=>x.Name.LocalName=="link")?.Attribute("href")?.Value??string.Empty;DateTime? published=DateTimeOffset.TryParse(Value("pubDate")+Value("published")+Value("updated"),out var date)?date.UtcDateTime:null;var summary=CleanHtml(Value("description")+" "+Value("summary")+" "+Value("content"),900);raw.Add(new(feed.Source,title,link,published,DateTime.UtcNow,feed.Reliability,Hash(title),Assets(title+" "+summary,symbols),summary));
             }successful++;
@@ -37,6 +38,20 @@ public sealed partial class NewsResearchService
             var representative=cluster.OrderByDescending(x=>Reliability(x.Reliability)).ThenByDescending(x=>x.BodySummary.Length).First();var sources=cluster.Select(x=>x.Source).Distinct(StringComparer.OrdinalIgnoreCase).Count();var ageHours=(DateTime.UtcNow-(representative.PublishedAt??representative.CollectedAt)).TotalHours;var confidence=Math.Clamp(.30+Reliability(representative.Reliability)*.35+Math.Min(3,sources-1)*.12+(representative.BodySummary.Length>200?.10:0)-(ageHours>48?.15:0),0,1);var combined=string.Join(" ",cluster.Select(x=>x.Title+" "+x.BodySummary));var type=EventType(combined);var sentiment=Sentiment(combined);var breaking=ageHours<=2&&(sources>=2||representative.Reliability=="official");output.Add(representative with{DuplicateGroup=Hash(string.Join('|',cluster.Select(x=>x.Title).Order())),Confidence=confidence,CorroboratingSources=sources,EventType=type,IsBreaking=breaking,Sentiment=sentiment});
         }
         return new(output.OrderByDescending(x=>x.IsBreaking).ThenByDescending(x=>x.Confidence).ThenByDescending(x=>x.PublishedAt).Take(50).ToArray(),missing,successful,output.Count(x=>x.BodySummary.Length>200));
+    }
+    private async Task<Stream> GetStreamWithRetryAsync(string url,CancellationToken ct)
+    {
+        Exception? last = null;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try { return await _http.GetStreamAsync(url, ct); }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                last = ex;
+                if (attempt < 2) await Task.Delay(TimeSpan.FromMilliseconds(250 * (attempt + 1)), ct);
+            }
+        }
+        throw last ?? new HttpRequestException($"Unable to fetch news feed: {url}");
     }
     private static IReadOnlyList<List<NewsEvidence>> Cluster(IEnumerable<NewsEvidence> items)
     {
