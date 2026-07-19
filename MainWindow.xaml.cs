@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using System.Diagnostics;
 using 币安量化机器人.Core.Models;
 using 币安量化机器人.Services;
 using 币安量化机器人.Services.Localization;
@@ -334,8 +335,28 @@ public partial class MainWindow : Window
     private void UpdateClock()
     {
         ClockText.Text = I18n.DateTime(System.DateTime.Now);
+        UpdateHealthTelemetry();
         var remain = ServiceLocator.SystemState.NextCycleAtUtc - System.DateTime.UtcNow;
         CycleText.Text = remain is { Ticks: > 0 } ? remain.Value.ToString("mm\\:ss") : "--:--";
+    }
+
+    private void UpdateHealthTelemetry()
+    {
+        try
+        {
+            var process = Process.GetCurrentProcess();
+            var state = ServiceLocator.SystemState;
+            RuntimeStatusText.ToolTip = string.Join(Environment.NewLine,
+                "AGENT HEALTH",
+                $"Status: {state.Status}",
+                $"Workflow: {state.WorkflowNode}",
+                $"Memory: {process.WorkingSet64 / 1024d / 1024d:0.0} MB",
+                $"Threads: {process.Threads.Count}",
+                $"GC: {GC.GetTotalMemory(false) / 1024d / 1024d:0.0} MB",
+                $"Events: #{state.RuntimeEventSequence}",
+                $"Last update: {I18n.DateTime(state.LastUpdated.ToLocalTime())}");
+        }
+        catch { }
     }
 
     private void NavButton_Click(object sender, RoutedEventArgs e)
