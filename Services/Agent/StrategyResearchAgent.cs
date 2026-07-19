@@ -57,6 +57,24 @@ public sealed class StrategyResearchAgent
             if (next != StrategyLifecycle.Active && profile.Lifecycle == StrategyLifecycle.Degraded)
                 await _database.RecordStrategyLifecycleAsync(profile, profile.LastReason, ct);
         }
+        // Deterministic failover: a degraded strategy never remains the selected
+        // strategy when a validated Shadow challenger has passed the same gates.
+        foreach (var symbol in profiles.Select(x => x.Symbol).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var hasActive = profiles.Any(x => x.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase) && x.Lifecycle == StrategyLifecycle.Active);
+            if (hasActive) continue;
+            var challenger = profiles.Where(x => x.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase))
+                .Where(x => _governor.CanActivateFromShadow(x))
+                .OrderByDescending(x => x.QualityScore)
+                .ThenByDescending(x => x.Expectancy)
+                .FirstOrDefault();
+            if (challenger is null) continue;
+            challenger.Lifecycle = StrategyLifecycle.Active;
+            challenger.StateChangedAtUtc = DateTime.UtcNow;
+            challenger.LastReason = "deterministic failover from degraded strategy";
+            await _database.UpsertStrategyAsync(challenger, ct);
+            await _database.RecordStrategyLifecycleAsync(challenger, challenger.LastReason, ct);
+        }
         return await _database.GetStrategySnapshotAsync(ct);
     }
 
