@@ -25,11 +25,16 @@ public sealed class StrategyResearchScheduler
     {
         var delay = await ResumeDelayAsync(ct);
         var retrying = false;
-        await PublishHealthAsync("STARTING", null, delay, ct);
+        var starting = true;
         while (!ct.IsCancellationRequested)
         {
             try
             {
+                if (starting)
+                {
+                    await PublishHealthAsync("STARTING", null, delay, ct);
+                    starting = false;
+                }
                 if (delay > TimeSpan.Zero)
                 {
                     await PublishHealthAsync(retrying ? "RETRY_WAIT" : "WAITING", null, delay, ct);
@@ -58,10 +63,11 @@ public sealed class StrategyResearchScheduler
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
-                await _database.RecordErrorAsync("STRATEGY_RESEARCH_SCHEDULER", ex, CancellationToken.None);
                 delay = delay == TimeSpan.Zero ? TimeSpan.FromMinutes(5) : TimeSpan.FromMinutes(Math.Min(delay.TotalMinutes * 2, 60));
                 retrying = true;
-                await PublishHealthAsync("RETRY_WAIT", ex.Message, delay, CancellationToken.None);
+                _research.SetSchedulerHealth(false);
+                try { await _database.RecordErrorAsync("STRATEGY_RESEARCH_SCHEDULER", ex, CancellationToken.None); } catch { }
+                try { await PublishHealthAsync("RETRY_WAIT", ex.Message, delay, CancellationToken.None); } catch { }
             }
         }
     }
