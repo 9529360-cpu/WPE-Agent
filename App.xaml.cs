@@ -1,4 +1,5 @@
 ﻿using System.Windows;
+using System.IO;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using 币安量化机器人.Services;
@@ -45,6 +46,33 @@ public partial class App : global::System.Windows.Application
         // Configure dependency injection
         var services = new ServiceCollection();
         ServiceProvider = ServiceConfiguration.ConfigureServices(services);
+
+        if (e.Args.Any(x => string.Equals(x, "--license-test", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var result = await DeviceLicenseTestRunner.RunAsync();
+            Log.Information("Device-license tests completed. Success={Success}; Report={Report}",result.Success,result.ReportPath);
+            Shutdown(result.Success?0:10);
+            return;
+        }
+
+        if (e.Args.Any(x => string.Equals(x, "--device-code", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var path=Path.Combine(AppContext.BaseDirectory,"Data","device-code.txt");Directory.CreateDirectory(Path.GetDirectoryName(path)!);await File.WriteAllTextAsync(path,DeviceLicenseService.GetCurrentDeviceCode());
+            Shutdown(0);
+            return;
+        }
+
+        var activationFileIndex=Array.FindIndex(e.Args,x=>string.Equals(x,"--activate-license",StringComparison.OrdinalIgnoreCase));
+        if(activationFileIndex>=0)
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            if(activationFileIndex+1>=e.Args.Length||!File.Exists(e.Args[activationFileIndex+1])){Shutdown(11);return;}
+            var activationResult=new DeviceLicenseService().Activate(await File.ReadAllTextAsync(e.Args[activationFileIndex+1]));
+            Shutdown(activationResult.Success?0:11);
+            return;
+        }
 
         if (e.Args.Any(x => string.Equals(x, "--access-test", StringComparison.OrdinalIgnoreCase)))
         {
@@ -109,21 +137,28 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
-        // 登录窗关闭后还要继续打开初始化向导或主控制台，不能让 WPF
+        // 激活窗关闭后还要继续打开初始化向导或主控制台，不能让 WPF
         // 在两个窗口切换的间隙按“最后窗口关闭”自动终止应用。
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
-        var login = new LoginWindow();
-        if (login.ShowDialog() != true || string.IsNullOrWhiteSpace(login.AuthenticatedUser)) { Shutdown(); return; }
+        var licenseService = new DeviceLicenseService();
+        var license = licenseService.TryLoad();
+        if (!license.Success)
+        {
+            var activation = new ActivationWindow(licenseService);
+            if (activation.ShowDialog() != true || activation.ActivatedLicense is null) { Shutdown(); return; }
+            license = new DeviceLicenseResult(true,"Activation.Valid",activation.ActivatedLicense);
+        }
+        var localIdentity = "DEVICE-" + license.License!.LicenseId;
         var settingsStore = new AgentSettingsStore();
         var settings = settingsStore.Load();
-        settings.ActiveUser = login.AuthenticatedUser;
+        settings.ActiveUser = localIdentity;
         settingsStore.Save(settings);
         if (!settings.SetupCompleted)
         {
-            var setup = new SetupWindow(login.AuthenticatedUser);
+            var setup = new SetupWindow(localIdentity);
             if (setup.ShowDialog() != true || !setup.SetupCompleted) { Shutdown(); return; }
         }
-        var main = new MainWindow(login.AuthenticatedUser);
+        var main = new MainWindow(localIdentity);
         MainWindow = main;
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         main.Show();

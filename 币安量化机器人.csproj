@@ -40,6 +40,7 @@
     <ItemGroup>
       <!-- 旧占位测试保留在仓库中，但不再作为生产 WPF 源码编译。 -->
       <Compile Remove="Tests\**\*.cs" />
+      <Compile Remove="Tools\WpeLicenseGenerator\**\*.cs" />
     </ItemGroup>
 
     <ItemGroup>

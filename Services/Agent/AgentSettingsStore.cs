@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.IO;
+using System.Security.Cryptography;
 using 币安量化机器人.Services;
 
 namespace 币安量化机器人.Services.Agent;
@@ -28,7 +29,13 @@ public sealed class AgentSettingsStore
         if(!settings.Brains.TryGetValue("DeepSeek",out var slot)){slot=new BrainSlot();settings.Brains["DeepSeek"]=slot;}if(!string.IsNullOrWhiteSpace(slot.EncryptedKey))return;
         var path=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),"API.txt");if(!File.Exists(path))return;var key=File.ReadAllText(path).Trim();if(key.Length>10){slot.EncryptedKey=SecretVaultService.Encrypt(key);Save(settings);}
     }
-    public (string Key,string Secret) GetCredentials(AgentSettings s) { var slot=s.Environment==ExchangeEnvironment.Testnet?s.Testnet:s.Mainnet; return (SecretVaultService.Decrypt(slot.EncryptedApiKey),SecretVaultService.Decrypt(slot.EncryptedApiSecret)); }
+    public (string Key,string Secret) GetCredentials(AgentSettings s)
+    {
+        var slot=s.Environment==ExchangeEnvironment.Testnet?s.Testnet:s.Mainnet;
+        try{return(SecretVaultService.Decrypt(slot.EncryptedApiKey),SecretVaultService.Decrypt(slot.EncryptedApiSecret));}
+        catch(CryptographicException){return(string.Empty,string.Empty);}
+        catch(FormatException){return(string.Empty,string.Empty);}
+    }
     public void ConfirmMainnet(AgentSettings settings,string confirmation)
     {
         if(!string.Equals(confirmation,"ENABLE MAINNET",StringComparison.Ordinal))throw new InvalidOperationException("主网确认短语不匹配");settings.MainnetTradingConfirmed=true;settings.MainnetConfirmedAtUtc=DateTime.UtcNow;Save(settings);
