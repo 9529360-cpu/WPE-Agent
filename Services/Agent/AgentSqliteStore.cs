@@ -172,7 +172,20 @@ public sealed class AgentSqliteStore
     }
     public async Task<IReadOnlyList<string>> GetWorkflowTimelineAsync(int limit,CancellationToken ct)
     {
-        var list=new List<string>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT created_at,cycle_id,node,phase,attempt,state_json FROM workflow_checkpoints ORDER BY id DESC LIMIT $l";q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,300));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var state=r.IsDBNull(5)?string.Empty:r.GetString(5);if(state.Length>160)state=state[..160]+"...";list.Add($"{r.GetString(0)}  [{r.GetString(2)} / {r.GetString(3)}]  cycle={r.GetString(1)}  attempt={r.GetInt32(4)}\n{state}");}return list;
+        var list=new List<string>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT created_at,cycle_id,node,phase,attempt,state_json FROM workflow_checkpoints ORDER BY id DESC LIMIT $l";q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,300));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var state=r.IsDBNull(5)?string.Empty:r.GetString(5);list.Add($"{r.GetString(0)}  [{r.GetString(2)} / {r.GetString(3)}]  cycle={r.GetString(1)}  attempt={r.GetInt32(4)}\n{SummarizeWorkflowState(state)}");}return list;
+    }
+    private static string SummarizeWorkflowState(string state)
+    {
+        if (string.IsNullOrWhiteSpace(state)) return "state: <empty>";
+        try
+        {
+            using var doc=JsonDocument.Parse(state);var root=doc.RootElement;var parts=new List<string>();
+            foreach(var key in new[]{"status","result","tool","toolId","durationMs","costUsd","promptHash","error"})
+                if(root.TryGetProperty(key,out var value)) parts.Add($"{key}: {value.ToString()}");
+            if(parts.Count>0)return string.Join(" | ",parts);
+        }
+        catch(JsonException) { }
+        return state.Length>240?state[..240]+"...":state;
     }
     public async Task<IReadOnlyList<string>> GetMemoryExplorerAsync(int limit,CancellationToken ct)
     {
