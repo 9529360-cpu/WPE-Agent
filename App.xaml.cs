@@ -109,6 +109,9 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
+        // 登录窗关闭后还要继续打开初始化向导或主控制台，不能让 WPF
+        // 在两个窗口切换的间隙按“最后窗口关闭”自动终止应用。
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
         var login = new LoginWindow();
         if (login.ShowDialog() != true || string.IsNullOrWhiteSpace(login.AuthenticatedUser)) { Shutdown(); return; }
         var settingsStore = new AgentSettingsStore();
@@ -121,6 +124,8 @@ public partial class App : global::System.Windows.Application
             if (setup.ShowDialog() != true || !setup.SetupCompleted) { Shutdown(); return; }
         }
         var main = new MainWindow(login.AuthenticatedUser);
+        MainWindow = main;
+        ShutdownMode = ShutdownMode.OnMainWindowClose;
         main.Show();
 
         // Agent 由用户在总控台明确启动，应用打开时不自动下单。
