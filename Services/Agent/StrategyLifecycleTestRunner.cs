@@ -24,6 +24,12 @@ public static class StrategyLifecycleTestRunner
         var engine = new HistoricalResearchEngine();
         var result = engine.Validate(new StrategyProfile { Id = "TEST-ENGINE", Symbol = "BTCUSDT", Family = StrategyFamily.TrendBreakout, Parameters = LocalStrategyParameters.For(StrategyFamily.TrendBreakout, 0) }, candles, Array.Empty<NewsFeature>(), new RiskLimits { MinimumBacktestTrades = 10 });
         Check("本地回测输出可审计指标", result.SampleSize == 700 && double.IsFinite(result.QualityScore) && double.IsFinite(result.WalkForwardScore) && result.MonteCarloLossProbability is >= 0 and <= 1, result.Summary);
+        var statePath = Path.Combine(Path.GetTempPath(), $"wpe-strategy-state-{Guid.NewGuid():N}.db");
+        var stateValue = "{\"status\":\"WAITING\",\"nextRunAtUtc\":\"" + DateTime.UtcNow.AddHours(1).ToString("O") + "\"}";
+        var stateStore = new AgentSqliteStore(statePath);
+        await stateStore.SetStateAsync("strategy-research:scheduler", stateValue, CancellationToken.None);
+        var restoredStore = new AgentSqliteStore(statePath);
+        Check("调度状态可跨重启恢复", await restoredStore.GetStateAsync("strategy-research:scheduler", CancellationToken.None) == stateValue, "sqlite state round-trip");
         var report = new StrategyLifecycleTestResult(passed, AppDataPaths.File("strategy-lifecycle-test-report.json"), cases);
         await File.WriteAllTextAsync(report.ReportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
         return report;
