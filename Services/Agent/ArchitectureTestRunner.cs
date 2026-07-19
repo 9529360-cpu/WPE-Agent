@@ -18,6 +18,14 @@ public static class ArchitectureTestRunner
         var database = new AgentSqliteStore(Path.Combine(root, "runtime.db"));
         try
         {
+            Run(cases, "Assistant Adapter catalog remains provider-agnostic", () =>
+            {
+                var ids = AssistantAdapterCatalog.All.Select(x => x.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                Require(ids.Contains("openai") && ids.Contains("claude") && ids.Contains("gemini") && ids.Contains("deepseek") && ids.Contains("ollama") && ids.Contains("custom"), "required assistant adapters missing");
+                var local = AssistantProviderFactory.Create(null, null, false);
+                Require(local.IsLocal && local is DeterministicBrainProvider, "disabled remote assistant did not fall back to local deterministic provider");
+                return $"{AssistantAdapterCatalog.All.Count} adapters registered; remote disabled fallback is local";
+            });
             Run(cases, "状态图拒绝越级执行", () =>
             {
                 Require(TradingWorkflowGraph.CanTransition(WorkflowNode.Planner, WorkflowNode.Critic), "合法边被拒绝");
