@@ -14,7 +14,7 @@ public sealed record LlmUsagePolicy(int DailyCallLimit = 100, int DailyTokenLimi
 }
 
 public sealed record LlmCallAudit(DateTime AtUtc, string Provider, string Model, string Purpose, string PromptHash, bool CacheHit, bool Allowed, int EstimatedInputTokens, int EstimatedOutputTokens, decimal EstimatedCostUsd, long DurationMs, string Outcome);
-public sealed record LlmUsageSnapshot(int Calls, int Tokens, decimal CostUsd, int CacheHits, int BudgetBlocks, string TopProvider);
+public sealed record LlmUsageSnapshot(int Calls, int Tokens, decimal CostUsd, int CacheHits, int BudgetBlocks, string TopProvider, string TopPurpose);
 
 /// <summary>Mandatory boundary for every optional remote assistant request.</summary>
 public sealed class LlmRequestGovernor
@@ -26,7 +26,7 @@ public sealed class LlmRequestGovernor
     private readonly LlmUsagePolicy _policy;
     private readonly string _auditPath;
     private DateTime _snapshotAtUtc;
-    private LlmUsageSnapshot _snapshot = new(0, 0, 0, 0, 0, "LOCAL");
+    private LlmUsageSnapshot _snapshot = new(0, 0, 0, 0, 0, "LOCAL", "NONE");
     public static LlmRequestGovernor Shared { get; } = new();
 
     public LlmRequestGovernor(LlmUsagePolicy? policy = null, string? auditPath = null)
@@ -41,7 +41,7 @@ public sealed class LlmRequestGovernor
         var rows = new List<LlmCallAudit>();
         if (File.Exists(_auditPath)) foreach (var line in File.ReadLines(_auditPath)) try { var row = JsonSerializer.Deserialize<LlmCallAudit>(line); if (row is not null && row.AtUtc.Date == DateTime.UtcNow.Date) rows.Add(row); } catch (JsonException) { }
         var billable = rows.Where(x => x.Allowed && !x.CacheHit).ToArray();
-        _snapshot = new(billable.Length, billable.Sum(x => x.EstimatedInputTokens + x.EstimatedOutputTokens), billable.Sum(x => x.EstimatedCostUsd), rows.Count(x => x.CacheHit), rows.Count(x => !x.Allowed), billable.GroupBy(x => x.Provider).OrderByDescending(x => x.Count()).FirstOrDefault()?.Key ?? "LOCAL");
+        _snapshot = new(billable.Length, billable.Sum(x => x.EstimatedInputTokens + x.EstimatedOutputTokens), billable.Sum(x => x.EstimatedCostUsd), rows.Count(x => x.CacheHit), rows.Count(x => !x.Allowed), billable.GroupBy(x => x.Provider).OrderByDescending(x => x.Count()).FirstOrDefault()?.Key ?? "LOCAL", billable.GroupBy(x => x.Purpose).OrderByDescending(x => x.Count()).FirstOrDefault()?.Key ?? "NONE");
         _snapshotAtUtc = DateTime.UtcNow;
         return _snapshot;
     }
