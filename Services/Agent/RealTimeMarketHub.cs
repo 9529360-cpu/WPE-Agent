@@ -27,7 +27,7 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
     public string Status=>_status;public bool Healthy=>_marketConnected&&_userConnected&&_states.Values.All(x=>DateTime.UtcNow-x.UpdatedAt<TimeSpan.FromSeconds(30));
     public async Task StartAsync(CancellationToken ct)
     {
-        if(_cts is not null)return;_cts=CancellationTokenSource.CreateLinkedTokenSource(ct);_marketTask=Task.Run(()=>MarketLoopAsync(_cts.Token),_cts.Token);_userTask=Task.Run(()=>UserLoopAsync(_cts.Token),_cts.Token);await Task.Yield();
+        if(_cts is not null)return;var runCts=CancellationTokenSource.CreateLinkedTokenSource(ct);_cts=runCts;_marketTask=Task.Run(()=>MarketLoopAsync(runCts.Token),runCts.Token);_userTask=Task.Run(()=>UserLoopAsync(runCts.Token),runCts.Token);await Task.Yield();
     }
     public async Task<string?> WaitForTriggerAsync(TimeSpan timeout,CancellationToken ct)
     {
@@ -78,5 +78,5 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
     private Task Audit(string type,string symbol,string status,string summary,string hash,CancellationToken ct)=>_db.RecordRealtimeEventAsync(new(type,symbol,status,summary,DateTime.UtcNow,hash),ct);
     private static void Prune(SymbolState state){var cutoff=DateTime.UtcNow.AddMinutes(-5);while(state.Trades.Count>0&&state.Trades.Peek().Time<cutoff)state.Trades.Dequeue();}
     private static TimeSpan Backoff(int attempt)=>TimeSpan.FromSeconds(Math.Min(60,Math.Pow(2,Math.Min(5,attempt))));private static string S(JsonElement e,string name)=>e.TryGetProperty(name,out var p)?p.GetString()??string.Empty:string.Empty;private static decimal D(JsonElement e,string name)=>e.TryGetProperty(name,out var p)&&decimal.TryParse(p.GetString(),NumberStyles.Any,CultureInfo.InvariantCulture,out var value)?value:0;
-    public async ValueTask DisposeAsync(){if(_cts is null)return;_cts.Cancel();try{if(_marketTask is not null)await _marketTask;if(_userTask is not null)await _userTask;}catch(OperationCanceledException){}finally{_cts.Dispose();_cts=null;_marketConnected=false;_userConnected=false;_status="STOPPED";}}
+    public async ValueTask DisposeAsync(){var runCts=Interlocked.Exchange(ref _cts,null);if(runCts is null)return;runCts.Cancel();try{if(_marketTask is not null)await _marketTask;if(_userTask is not null)await _userTask;}catch(OperationCanceledException){}finally{runCts.Dispose();_marketConnected=false;_userConnected=false;_status="STOPPED";}}
 }
