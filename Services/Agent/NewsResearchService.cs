@@ -18,6 +18,7 @@ public sealed partial class NewsResearchService
         ("CoinDesk","https://www.coindesk.com/arc/outboundfeeds/rss/","mainstream"),("Cointelegraph","https://cointelegraph.com/rss","mainstream"),("Google News","https://news.google.com/rss/search?q=Bitcoin%20OR%20Ethereum%20OR%20crypto%20regulation&hl=en-US&gl=US&ceid=US:en","aggregator")
     ];
     private readonly HttpClient _http;
+    private readonly Dictionary<string, DateTime> _feedCooldownUntil = new(StringComparer.OrdinalIgnoreCase);
     public NewsResearchService()
     {
         _http=new HttpClient(new HttpClientHandler{AutomaticDecompression=DecompressionMethods.All,AllowAutoRedirect=true}){Timeout=TimeSpan.FromSeconds(10)};_http.DefaultRequestHeaders.UserAgent.ParseAdd("WPE-Agent/2.0");_http.DefaultRequestHeaders.UserAgent.ParseAdd("(local-research-client)");
@@ -25,13 +26,26 @@ public sealed partial class NewsResearchService
     public async Task<NewsResearchResult> CollectAsync(IEnumerable<string> symbols,CancellationToken ct)
     {
         var raw=new List<NewsEvidence>();var missing=new List<string>();var successful=0;
-        foreach(var feed in Feeds)try
+        foreach(var feed in Feeds)
+        {
+            if (_feedCooldownUntil.TryGetValue(feed.Source, out var cooldown) && cooldown > DateTime.UtcNow)
+            {
+                missing.Add(feed.Source);
+                continue;
+            }
+            try
         {
             await using var stream=await GetStreamWithRetryAsync(feed.Url,ct);var doc=await XDocument.LoadAsync(stream,LoadOptions.None,ct);foreach(var item in doc.Descendants().Where(x=>x.Name.LocalName is "item" or "entry").Take(25))
             {
                 string Value(string name)=>item.Elements().FirstOrDefault(x=>x.Name.LocalName==name)?.Value?.Trim()??string.Empty;var title=WebUtility.HtmlDecode(Value("title"));if(string.IsNullOrWhiteSpace(title))continue;var link=Value("link");if(string.IsNullOrWhiteSpace(link))link=item.Elements().FirstOrDefault(x=>x.Name.LocalName=="link")?.Attribute("href")?.Value??string.Empty;DateTime? published=DateTimeOffset.TryParse(Value("pubDate")+Value("published")+Value("updated"),out var date)?date.UtcDateTime:null;var summary=CleanHtml(Value("description")+" "+Value("summary")+" "+Value("content"),900);raw.Add(new(feed.Source,title,link,published,DateTime.UtcNow,feed.Reliability,Hash(title),Assets(title+" "+summary,symbols),summary));
-            }successful++;
-        }catch{missing.Add(feed.Source);}
+            }successful++;_feedCooldownUntil.Remove(feed.Source);
+            }
+            catch
+            {
+                missing.Add(feed.Source);
+                _feedCooldownUntil[feed.Source] = DateTime.UtcNow.AddMinutes(5);
+            }
+        }
         var candidates=raw.OrderByDescending(x=>x.PublishedAt).Take(35).ToArray();using var gate=new SemaphoreSlim(4);var enriched=await Task.WhenAll(candidates.Select(async item=>{if(string.IsNullOrWhiteSpace(item.Url)||item.Source=="Google News")return item;await gate.WaitAsync(ct);try{var html=await _http.GetStringAsync(item.Url,ct);var text=ExtractArticle(html);return text.Length>item.BodySummary.Length?item with{BodySummary=text}:item;}catch{return item;}finally{gate.Release();}}));
         var clusters=Cluster(enriched);var output=new List<NewsEvidence>();foreach(var cluster in clusters)
         {
