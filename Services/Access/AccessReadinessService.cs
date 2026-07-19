@@ -54,7 +54,7 @@ public sealed class AccessReadinessService
 
         if(settings.Brains.TryGetValue(settings.ActiveBrain,out var brain))try
         {
-            var sw=Stopwatch.StartNew();var brainKey=SecretVaultService.Decrypt(brain.EncryptedKey);var health=await new HttpBrainProvider(brain,brainKey).HealthCheckAsync(ct);
+            var sw=Stopwatch.StartNew();BrainHealth health;if(brain.IsLocal||brain.Provider.Equals("WPE Local Brain",StringComparison.OrdinalIgnoreCase))health=await new DeterministicBrainProvider().HealthCheckAsync(ct);else{var brainKey=SecretVaultService.Decrypt(brain.EncryptedKey);health=await new HttpBrainProvider(brain,brainKey).HealthCheckAsync(ct);}
             Add("brain",health.Healthy,true,$"{brain.Provider} / {brain.Model} · {health.Message} · {sw.ElapsedMilliseconds} ms",sw.ElapsedMilliseconds);
         }
         catch(Exception ex){Add("brain",false,true,"AI Brain 连接失败："+Safe(ex.Message));}
@@ -66,7 +66,7 @@ public sealed class AccessReadinessService
         Add("risk",risk,true,risk?"Risk Manager 参数有效":"风控参数越界");
         Add("data",report.Checks.Any(x=>x.Key=="exchange"&&x.Passed),true,report.Checks.Any(x=>x.Key=="exchange"&&x.Passed)?"市场数据源健康":"市场数据源不可用");
         var brainIndex=report.Checks.FindIndex(x=>x.Key=="brain");
-        if(brainIndex>=0&&credentialsReady)report.Checks[brainIndex]=report.Checks[brainIndex] with{Critical=false};
+        if(brainIndex>=0&&credentialsReady&&settings.Brains.TryGetValue(settings.ActiveBrain,out var configuredBrain)&&!configuredBrain.IsLocal)report.Checks[brainIndex]=report.Checks[brainIndex] with{Critical=false};
         Add("local_brain",true,true,"WPE Local Brain / deterministic rules ready");
         return report;
     }
