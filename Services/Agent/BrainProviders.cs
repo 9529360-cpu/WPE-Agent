@@ -39,6 +39,22 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
     }
 }
 
+public sealed record AssistantAdapterDescriptor(string Id, string DisplayName, bool Local, string Protocol);
+
+public static class AssistantAdapterCatalog
+{
+    public static IReadOnlyList<AssistantAdapterDescriptor> All { get; } =
+    [
+        new("local-deterministic", "WPE Local Deterministic", true, "native"),
+        new("openai", "OpenAI", false, "OpenAI-compatible"),
+        new("claude", "Anthropic Claude", false, "Anthropic Messages"),
+        new("gemini", "Google Gemini", false, "Gemini Generative API"),
+        new("deepseek", "DeepSeek", false, "OpenAI-compatible"),
+        new("ollama", "Ollama", true, "OpenAI-compatible"),
+        new("custom", "Custom API", false, "OpenAI-compatible")
+    ];
+}
+
 public sealed class HttpBrainProvider : IAssistantProvider
 {
     private readonly HttpClient _http; private readonly BrainSlot _slot; private readonly string _key; private readonly LlmRequestGovernor _governor; public string Name=>_slot.Provider; public bool IsLocal => false;

@@ -10,6 +10,9 @@ public static class PluginCenterSnapshot
         var catalog = new ExchangeProviderCatalog();
         var text = new StringBuilder();
         text.AppendLine("LLM / ASSISTANT ADAPTERS");
+        foreach (var adapter in AssistantAdapterCatalog.All)
+            text.AppendLine($"{(adapter.Local ? "LOCAL" : "REMOTE")}  {adapter.DisplayName} [{adapter.Id}]  protocol={adapter.Protocol}");
+        text.AppendLine("CONFIGURED INSTANCES");
         var local = settings.Brains.Values.Any(x => x.IsLocal || x.Provider.Equals("WPE Local Brain", StringComparison.OrdinalIgnoreCase));
         text.AppendLine($"● WPE Local Brain   {(local ? "READY" : "AVAILABLE")}");
         foreach (var brain in settings.Brains.Values.Where(x => !x.IsLocal && !x.Provider.Equals("WPE Local Brain", StringComparison.OrdinalIgnoreCase)))
