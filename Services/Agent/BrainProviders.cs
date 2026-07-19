@@ -7,9 +7,10 @@ using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed class DeterministicBrainProvider : IBrainProvider
+public sealed class DeterministicBrainProvider : IAssistantProvider
 {
     public string Name => "WPE Local Brain";
+    public bool IsLocal => true;
     public Task<BrainHealth> HealthCheckAsync(CancellationToken ct) => Task.FromResult(new BrainHealth(true, "LOCAL_DETERMINISTIC"));
 
     public Task<BrainDecisionResult> DecideAsync(EvidencePack evidence, AgentContext context, CancellationToken ct)
@@ -38,9 +39,9 @@ public sealed class DeterministicBrainProvider : IBrainProvider
     }
 }
 
-public sealed class HttpBrainProvider : IBrainProvider
+public sealed class HttpBrainProvider : IAssistantProvider
 {
-    private readonly HttpClient _http; private readonly BrainSlot _slot; private readonly string _key; private readonly LlmRequestGovernor _governor; public string Name=>_slot.Provider;
+    private readonly HttpClient _http; private readonly BrainSlot _slot; private readonly string _key; private readonly LlmRequestGovernor _governor; public string Name=>_slot.Provider; public bool IsLocal => false;
     public HttpBrainProvider(BrainSlot slot,string key,LlmRequestGovernor? governor=null){_slot=slot;_key=key;_governor=governor??LlmRequestGovernor.Shared;_http=new HttpClient{Timeout=TimeSpan.FromSeconds(Math.Clamp(slot.TimeoutSeconds,5,300))};}
     public async Task<BrainHealth> HealthCheckAsync(CancellationToken ct){if(string.IsNullOrWhiteSpace(_key)||string.IsNullOrWhiteSpace(_slot.Endpoint)||string.IsNullOrWhiteSpace(_slot.Model))return new(false,LocalizationService.Current.T("Provider.Incomplete"));try{using var r=await BuildAndSend("Reply only: HOLD",ct);return new(r.IsSuccessStatusCode,$"HTTP {(int)r.StatusCode}");}catch(Exception ex){return new(false,ex.Message);}}
     public async Task<BrainDecisionResult> DecideAsync(EvidencePack e,AgentContext c,CancellationToken ct)
@@ -89,4 +90,18 @@ public sealed class FlexibleStringListConverter : JsonConverter<List<string>>
         return values;
     }
     public override void Write(Utf8JsonWriter writer,List<string> value,JsonSerializerOptions options){writer.WriteStartArray();foreach(var item in value)writer.WriteStringValue(item);writer.WriteEndArray();}
+}
+
+/// <summary>Composition boundary for optional assistant providers.</summary>
+public static class AssistantProviderFactory
+{
+    public static IAssistantProvider CreateLocal() => new DeterministicBrainProvider();
+
+    public static IAssistantProvider Create(BrainSlot? slot, string? secret, bool allowRemote)
+    {
+        if (!allowRemote || slot is null || string.IsNullOrWhiteSpace(secret) ||
+            string.IsNullOrWhiteSpace(slot.Endpoint) || string.IsNullOrWhiteSpace(slot.Model))
+            return CreateLocal();
+        return new HttpBrainProvider(slot, secret);
+    }
 }

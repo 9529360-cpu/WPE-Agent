@@ -22,6 +22,7 @@ public sealed class LlmRequestGovernor
     private sealed record CacheEntry(string Body, DateTime ExpiresAtUtc);
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new();
     private readonly SemaphoreSlim _auditLock = new(1, 1);
+    private readonly SemaphoreSlim _requestLock = new(1, 1);
     private readonly LlmUsagePolicy _policy;
     private readonly string _auditPath;
     private DateTime _snapshotAtUtc;
@@ -47,6 +48,9 @@ public sealed class LlmRequestGovernor
 
     public async Task<HttpResponseMessage> SendAsync(string provider, string model, string purpose, string prompt, Func<CancellationToken, Task<HttpResponseMessage>> send, CancellationToken ct)
     {
+        await _requestLock.WaitAsync(ct);
+        try
+        {
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{provider}\n{model}\n{purpose}\n{prompt}")));
         var key = $"{provider}:{model}:{purpose}:{hash}";
         var inputTokens = EstimateTokens(prompt);
@@ -73,6 +77,8 @@ public sealed class LlmRequestGovernor
         await AuditAsync(new(DateTime.UtcNow, provider, model, purpose, hash, false, true, inputTokens, outputTokens, cost, started.ElapsedMilliseconds, outcome), ct);
         if (response.IsSuccessStatusCode) _cache[key] = new(body, DateTime.UtcNow.Add(_policy.EffectiveCacheTtl));
         return JsonResponse(body, response.StatusCode);
+        }
+        finally { _requestLock.Release(); }
     }
 
     private async Task<(int Calls, int Tokens, decimal Cost)> ReadTodayAsync(CancellationToken ct)
