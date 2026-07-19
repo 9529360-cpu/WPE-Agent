@@ -31,11 +31,15 @@ public partial class MainWindow : Window
     private readonly string _user;
     private readonly AgentSettingsStore _settingsStore = new();
     private readonly AccessReadinessService _readiness = new();
+    private readonly ThemePreferenceStore _themeStore = new();
+    private Button? _themeButton;
 
     public MainWindow(string user="")
     {
         InitializeComponent();
         InstallPluginNavigationButton();
+        InstallThemeButton();
+        ApplyTheme(_themeStore.Load());
         _user=user;
         ServiceLocator.SystemState.LoggedInUser=user;
         Language = System.Windows.Markup.XmlLanguage.GetLanguage(I18n.Culture.IetfLanguageTag);
@@ -62,6 +66,26 @@ public partial class MainWindow : Window
         button.Click += NavButton_Click;
         navigation.Children.Add(button);
         I18n.LanguageChanged += () => button.Content = I18n.T("Nav.Plugins");
+    }
+
+    private void InstallThemeButton()
+    {
+        if (LanguageButton.Parent is not StackPanel toolbar) return;
+        _themeButton = new Button { Style = (Style)FindResource("CommandButton"), Content = I18n.T("Theme.Button"), ToolTip = I18n.T("Theme.Tooltip") };
+        _themeButton.Click += (_, _) =>
+        {
+            var next = _themeStore.Load() switch { ThemeMode.Dark => ThemeMode.Light, ThemeMode.Light => ThemeMode.Auto, _ => ThemeMode.Dark };
+            _themeStore.Save(next); ApplyTheme(next);
+        };
+        toolbar.Children.Insert(Math.Max(0, toolbar.Children.Count - 5), _themeButton);
+    }
+
+    private void ApplyTheme(ThemeMode mode)
+    {
+        var light = mode == ThemeMode.Light || (mode == ThemeMode.Auto && DateTime.Now.Hour is >= 7 and < 19);
+        Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(light ? "#F3F7FA" : "#050A10"));
+        Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(light ? "#102532" : "#E8F4FA"));
+        if (_themeButton is not null) _themeButton.Content = $"{I18n.T("Theme.Button")} · {I18n.T("Theme." + mode)}";
     }
 
     private static StackPanel? FindNavigationPanel(DependencyObject root)

@@ -93,3 +93,25 @@ public sealed class AgentSettingsStore
     }
     private static AgentSettings Defaults() => new() { Brains = new(StringComparer.OrdinalIgnoreCase) { ["DeepSeek"] = new BrainSlot() } };
 }
+
+public enum ThemeMode { Dark, Light, Auto }
+
+public sealed class ThemePreferenceStore
+{
+    private readonly string _path = AppDataPaths.File("ui-preferences.json");
+    public ThemeMode Load()
+    {
+        try
+        {
+            if (!File.Exists(_path)) return ThemeMode.Dark;
+            using var doc = JsonDocument.Parse(File.ReadAllText(_path));
+            return Enum.TryParse<ThemeMode>(doc.RootElement.GetProperty("theme").GetString(), true, out var mode) ? mode : ThemeMode.Dark;
+        }
+        catch { return ThemeMode.Dark; }
+    }
+    public void Save(ThemeMode mode)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        File.WriteAllText(_path, JsonSerializer.Serialize(new { theme = mode.ToString() }));
+    }
+}
