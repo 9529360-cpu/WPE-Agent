@@ -62,7 +62,7 @@ public class AppSettings
 
 public static class AppSettingsService
 {
-    private static readonly string SettingsPath = Path.Combine(AppContext.BaseDirectory, "Data", "appsettings.json");
+    private static readonly string SettingsPath = AppDataPaths.File("appsettings.json");
     public static AppSettings Current { get; private set; } = new();
 
     public static void Load()

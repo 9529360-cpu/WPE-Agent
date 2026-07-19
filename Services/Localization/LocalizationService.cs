@@ -3,6 +3,7 @@ using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Markup;
+using 币安量化机器人.Services;
 
 namespace 币安量化机器人.Services.Localization;
 
@@ -15,7 +16,7 @@ public sealed class LocalizationService
     private Dictionary<string, string> _fallback = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, string> _strings = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _resourceDirectory = Path.Combine(AppContext.BaseDirectory, "Resources", "i18n");
-    private readonly string _settingsPath = Path.Combine(AppContext.BaseDirectory, "Data", "ui-settings.json");
+    private readonly string _settingsPath = AppDataPaths.File("ui-settings.json");
 
     public static LocalizationService Current { get; } = new();
     public event Action? LanguageChanged;

@@ -1,11 +1,12 @@
 using System.Text.Json;
 using System.IO;
+using 币安量化机器人.Services;
 
 namespace 币安量化机器人.Services.Agent;
 
 public sealed class AgentMemoryStore
 {
-    private readonly string _path = Path.Combine(AppContext.BaseDirectory, "Data", "agent-memory.json");
+    private readonly string _path = AppDataPaths.File("agent-memory.json");
     private readonly JsonSerializerOptions _json = new() { WriteIndented = true };
 
     public async Task<AgentMemory?> LoadAsync(CancellationToken cancellationToken)

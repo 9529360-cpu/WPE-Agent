@@ -56,7 +56,7 @@ public static class ServiceLocator
     private static readonly Lazy<DataPipelineOrchestrator> OrchestratorFactory = new(() => new DataPipelineOrchestrator(PipelineFactory.Value));
     private static readonly Lazy<IMarketDataService> MarketDataFactory = new(() => new PipelineMarketDataService(OrchestratorFactory.Value, FeatureStoreFactory.Value));
     private static readonly Lazy<ITradeMonitoringHub> MonitoringHubFactory = new(() => new InMemoryTradeMonitoringHub());
-    private static readonly Lazy<IOrderStateStore> OrderStateStoreFactory = new(() => new FileOrderStateStore(Path.Combine(AppContext.BaseDirectory, "Data")));
+    private static readonly Lazy<IOrderStateStore> OrderStateStoreFactory = new(() => new FileOrderStateStore(AppDataPaths.DataDirectory));
     private static readonly Lazy<ExecutionService> ExecutionFactory = new(() => new ExecutionService(ApiFactory.Value, OrderStateStoreFactory.Value, SettingsFactory.Value));
     private static readonly Lazy<AccountStateProvider> AccountStateFactory = new(() => new AccountStateProvider(ApiFactory.Value));
     private static readonly Lazy<OrderLifecycleManager> OrderLifecycleFactory = new(() => new OrderLifecycleManager(ApiFactory.Value, OrderStateStoreFactory.Value, LoggerFactory.Value));
@@ -88,7 +88,7 @@ public static class ServiceLocator
 
     private static RealTimeDataPipeline CreatePipeline()
     {
-        var dataDirectory = Path.Combine(AppContext.BaseDirectory, "Data");
+        var dataDirectory = AppDataPaths.DataDirectory;
         Directory.CreateDirectory(dataDirectory);
         var dbPath = Path.Combine(dataDirectory, "trading.sqlite");
         var importPath = Path.Combine(dataDirectory, "import");

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.IO;
 using 币安量化机器人.Services.Localization;
+using 币安量化机器人.Services;
 
 namespace 币安量化机器人.Services.Access;
 
@@ -14,7 +15,7 @@ public sealed record LoginResult(bool Success,string Message,string UserName="")
 public sealed class LocalAccountService
 {
     private readonly string _accountsPath;private readonly string _sessionPath;private const int Iterations=210000;
-    public LocalAccountService(string? dataDirectory=null){var data=dataDirectory??Path.Combine(AppContext.BaseDirectory,"Data");Directory.CreateDirectory(data);_accountsPath=Path.Combine(data,"local-accounts.json");_sessionPath=Path.Combine(data,"local-session.dat");}
+    public LocalAccountService(string? dataDirectory=null){var data=dataDirectory??AppDataPaths.DataDirectory;Directory.CreateDirectory(data);_accountsPath=dataDirectory is null?AppDataPaths.File("local-accounts.json"):Path.Combine(data,"local-accounts.json");_sessionPath=dataDirectory is null?AppDataPaths.File("local-session.dat"):Path.Combine(data,"local-session.dat");}
     public bool HasAccounts=>Load().Count>0;
     public (LoginResult Result,string RecoveryCode) Create(string userName,string password)
     {

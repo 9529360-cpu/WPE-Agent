@@ -14,7 +14,7 @@ public class DataCacheService
 
     public DataCacheService()
     {
-        var dataDirectory = Path.Combine(AppContext.BaseDirectory, "Data");
+        var dataDirectory = AppDataPaths.DataDirectory;
         Directory.CreateDirectory(dataDirectory);
         var dbPath = Path.Combine(dataDirectory, "terminal_cache.db");
         _connectionString = new SqliteConnectionStringBuilder

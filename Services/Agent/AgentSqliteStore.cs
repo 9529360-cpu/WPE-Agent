@@ -2,13 +2,14 @@ using Microsoft.Data.Sqlite;
 using System.Globalization;
 using System.Text.Json;
 using System.IO;
+using 币安量化机器人.Services;
 
 namespace 币安量化机器人.Services.Agent;
 
 public sealed class AgentSqliteStore
 {
     private readonly string _cs;
-    public AgentSqliteStore(string? path=null) { path??=Path.Combine(AppContext.BaseDirectory,"Data","agent.db");Directory.CreateDirectory(Path.GetDirectoryName(path)!);_cs=$"Data Source={path}";Initialize(); }
+    public AgentSqliteStore(string? path=null) { path??=AppDataPaths.File("agent.db");Directory.CreateDirectory(Path.GetDirectoryName(path)!);_cs=$"Data Source={path}";Initialize(); }
     private void Initialize(){using var c=new SqliteConnection(_cs);c.Open();using var q=c.CreateCommand();q.CommandText="""
     PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS cycles(id TEXT PRIMARY KEY,started_at TEXT NOT NULL,completed_at TEXT,status TEXT,completeness INTEGER,evidence_json TEXT,brain TEXT,brain_request TEXT,brain_response TEXT,decision_json TEXT,risk_result TEXT,error TEXT);

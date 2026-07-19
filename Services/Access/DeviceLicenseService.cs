@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
+using 币安量化机器人.Services;
 
 namespace 币安量化机器人.Services.Access;
 
@@ -47,7 +48,7 @@ public sealed class DeviceLicenseService
 {
     public const string PublicKeyBase64="MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUSMlb14eN6orfPyPQePphhYsI21wJyXar1OSXm3JrekZG/cgTCgTvLyjEaKtWBGJLq3j1ZONDEgZ8BVrr1GT+Q==";
     private readonly string _licensePath;private readonly string _publicKey;private readonly string _deviceCode;
-    public DeviceLicenseService(string? dataDirectory=null,string? publicKey=null,string? deviceCode=null){var data=dataDirectory??Path.Combine(AppContext.BaseDirectory,"Data");Directory.CreateDirectory(data);_licensePath=Path.Combine(data,"device-license.dat");_publicKey=publicKey??PublicKeyBase64;_deviceCode=deviceCode??GetCurrentDeviceCode();}
+    public DeviceLicenseService(string? dataDirectory=null,string? publicKey=null,string? deviceCode=null){var data=dataDirectory??AppDataPaths.DataDirectory;Directory.CreateDirectory(data);_licensePath=dataDirectory is null?AppDataPaths.File("device-license.dat"):Path.Combine(data,"device-license.dat");_publicKey=publicKey??PublicKeyBase64;_deviceCode=deviceCode??GetCurrentDeviceCode();}
     public string DeviceCode=>_deviceCode;
     public DeviceLicenseResult TryLoad(){try{if(!File.Exists(_licensePath))return new(false,"Activation.Required");var code=SecretVaultService.Decrypt(File.ReadAllText(_licensePath));return DeviceLicenseCodec.Verify(code,_publicKey,_deviceCode,DateTime.UtcNow);}catch{return new(false,"Activation.StorageInvalid");}}
     public DeviceLicenseResult Activate(string activationCode){var result=DeviceLicenseCodec.Verify(activationCode,_publicKey,_deviceCode,DateTime.UtcNow);if(!result.Success)return result;var temp=_licensePath+".tmp";File.WriteAllText(temp,SecretVaultService.Encrypt(new string(activationCode.Where(c=>!char.IsWhiteSpace(c)).ToArray())));File.Move(temp,_licensePath,true);return result;}
