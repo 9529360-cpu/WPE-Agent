@@ -104,7 +104,7 @@ public sealed class ReliableOrderExecutor
     {
         var safe=true;var messages=new List<string>();foreach(var position in positions)
         {
-            var leg=orders.Where(o=>o.Symbol==position.Symbol&&o.PositionSide==position.Side&&o.IsProtection).ToArray();var hasSl=leg.Any(o=>o.Type=="STOP_MARKET");var hasTp=leg.Any(o=>o.Type=="TAKE_PROFIT_MARKET");if(hasSl&&hasTp)continue;
+            var leg=orders.Where(o=>o.Symbol==position.Symbol&&o.PositionSide==position.Side&&o.IsProtection).ToArray();var combined=leg.Any(o=>o.Type.Contains("OCO",StringComparison.OrdinalIgnoreCase)||o.Type.Contains("POSITION_TPSL",StringComparison.OrdinalIgnoreCase));var genericLegs=leg.Count(o=>o.Type is "TRIGGER" or "TPSL");var hasSl=combined||leg.Any(o=>o.Type.Contains("STOP",StringComparison.OrdinalIgnoreCase)||o.Type.Contains("LOSS",StringComparison.OrdinalIgnoreCase))||genericLegs>=2;var hasTp=combined||leg.Any(o=>o.Type.Contains("TAKE",StringComparison.OrdinalIgnoreCase)||o.Type.Contains("PROFIT",StringComparison.OrdinalIgnoreCase))||genericLegs>=2;if(hasSl&&hasTp)continue;
             var intent=await _db.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);if(intent is null){safe=false;messages.Add(L("Execution.ProtectionMissing",position.Symbol,position.Side,!hasSl,!hasTp));continue;}
             try{await _ex.PlaceProtectionAsync(position.Symbol,position.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);messages.Add(L("Execution.ProtectionRepaired",position.Symbol,position.Side));}catch(Exception ex){safe=false;messages.Add(L("Execution.ProtectionRepairFailed",position.Symbol,position.Side,ex.Message));}
         }return new(safe,messages);

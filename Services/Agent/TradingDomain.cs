@@ -14,7 +14,7 @@ public sealed record TradingRule(string Symbol, decimal StepSize, decimal TickSi
 }
 public sealed record AccountSnapshot(decimal WalletBalance, decimal AvailableBalance, decimal Equity, DateTime Timestamp);
 public sealed record ManagedPosition(string Symbol, PositionSide Side, decimal Quantity, decimal EntryPrice, decimal MarkPrice, decimal UnrealizedPnl, decimal Leverage, bool Isolated, decimal LiquidationPrice);
-public sealed record ExchangeOrder(string Symbol, long OrderId, string ClientOrderId, string Status, decimal ExecutedQuantity, decimal AvgPrice, string Type, PositionSide? PositionSide, bool IsProtection, DateTime UpdatedAt);
+public sealed record ExchangeOrder(string Symbol, string OrderId, string ClientOrderId, string Status, decimal ExecutedQuantity, decimal AvgPrice, string Type, PositionSide? PositionSide, bool IsProtection, DateTime UpdatedAt);
 public sealed record DerivativesSnapshot(decimal FundingRate, decimal OpenInterest, decimal LongShortRatio, decimal TopAccountRatio, decimal TopPositionRatio, decimal TakerBuySellRatio, decimal Basis);
 public sealed record CandleEvidence(DateTime OpenTime, decimal Open, decimal High, decimal Low, decimal Close, decimal Volume, decimal QuoteVolume, long Trades, decimal TakerBuyVolume);
 public sealed record RealtimeMarketSnapshot(string Symbol,decimal LastPrice,decimal BestBid,decimal BestAsk,decimal BidQuantity,decimal AskQuantity,decimal BuyVolume5m,decimal SellVolume5m,decimal LastMinuteVolume,DateTime UpdatedAt,long Messages,bool Connected)
@@ -177,7 +177,7 @@ public interface IExchangeAdapter : IAsyncDisposable
     Task<ExchangeOrder> PlaceLimitAsync(string symbol, PositionSide side, decimal quantity, decimal price, string clientOrderId, bool reduceOnly, CancellationToken ct);
     Task<ExchangeOrder> PlaceProtectionAsync(string symbol, PositionSide sideToClose, decimal stopLoss, decimal takeProfit, string groupId, CancellationToken ct);
     Task<ExchangeOrder?> FindOrderAsync(string symbol, string clientOrderId, CancellationToken ct);
-    Task CancelOrderAsync(string symbol, long orderId, CancellationToken ct);
+    Task CancelOrderAsync(string symbol, string orderId, CancellationToken ct);
 }
 public sealed class RiskLimits
 {
@@ -215,5 +215,5 @@ public sealed class DecisionPolicy
     public double MinimumResearchScore { get; set; } = .45;
 }
 public sealed record ExecutionIntent(string Symbol, PositionSide Side, decimal Quantity, bool ReduceOnly, decimal StopLoss, decimal TakeProfit, string ClientOrderId, string Reason, DecisionAction Action = DecisionAction.Hold, ExecutionOrderType OrderType = ExecutionOrderType.Market, decimal LimitPrice = 0, decimal ExpectedPrice = 0);
-public sealed record PersistedIntent(string CycleId, ExecutionIntent Intent, string Status, long? ExchangeOrderId);
+public sealed record PersistedIntent(string CycleId, ExecutionIntent Intent, string Status, string? ExchangeOrderId);
 public sealed record RecoveryResult(bool SafeToIncreaseRisk, IReadOnlyList<string> Messages);

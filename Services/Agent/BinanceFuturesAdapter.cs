@@ -14,7 +14,7 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
     private readonly ExchangeConnectionProfile _profile;
     private readonly string _streamApiKey;
     private readonly Dictionary<string,TradingRule> _rules = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<long,byte> _algoOrderIds = new();
+    private readonly ConcurrentDictionary<string,byte> _algoOrderIds = new();
     public ExchangeEnvironment Environment { get; }
     public string ConnectionId=>_profile.Id;
     public string ProviderId=>"binance-futures";
@@ -108,12 +108,12 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
         return sl with { IsProtection=true };
     }
     public async Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct) { var q=new Dictionary<string,string?>{{"symbol",N(symbol)},{"origClientOrderId",clientOrderId}}; try { using var d=JsonDocument.Parse(await _api.GetSignedRawAsync("/fapi/v1/order",q,ct)); return MapRaw(d.RootElement); } catch(HttpRequestException){return null;} }
-    public async Task CancelOrderAsync(string symbol,long id,CancellationToken ct)
+    public async Task CancelOrderAsync(string symbol,string id,CancellationToken ct)
     {
         if(_algoOrderIds.TryRemove(id,out _))
-            _=await _api.DeleteSignedRawAsync("/fapi/v1/algoOrder",new Dictionary<string,string?>{{"algoId",id.ToString(CultureInfo.InvariantCulture)}},ct);
+            _=await _api.DeleteSignedRawAsync("/fapi/v1/algoOrder",new Dictionary<string,string?>{{"algoId",id}},ct);
         else
-            _=await _api.CancelOrderAsync(N(symbol),id,ct);
+            _=await _api.CancelOrderAsync(N(symbol),long.Parse(id,CultureInfo.InvariantCulture),ct);
     }
     public ValueTask DisposeAsync(){_api.Dispose();return ValueTask.CompletedTask;}
 
@@ -165,9 +165,9 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
     private static decimal D(JsonElement e,string n)=>e.TryGetProperty(n,out var p)&&decimal.TryParse(p.GetString(),NumberStyles.Any,CultureInfo.InvariantCulture,out var v)?v:0;
     private static decimal Decimal(JsonElement e)=>decimal.TryParse(e.GetString(),NumberStyles.Any,CultureInfo.InvariantCulture,out var v)?v:0;
     private static PositionSide ParseSide(PositionSnapshot p)=>p.PositionSide.Equals("SHORT",StringComparison.OrdinalIgnoreCase)||p.PositionAmt<0?PositionSide.Short:PositionSide.Long;
-    private ExchangeOrder Map(OrderResponse o){var type=o.Type.ToUpperInvariant();return new(C(o.Symbol),o.OrderId,o.ClientOrderId,o.Status,o.ExecutedQuantity,o.AvgPrice,type,ParseSide(o.PositionSide),type is "STOP_MARKET" or "TAKE_PROFIT_MARKET",o.Time);}
-    private ExchangeOrder MapRaw(JsonElement e){var type=S(e,"type").ToUpperInvariant();return new(C(S(e,"symbol")),e.GetProperty("orderId").GetInt64(),S(e,"clientOrderId"),S(e,"status"),D(e,"executedQty"),D(e,"avgPrice"),type,ParseSide(S(e,"positionSide")),type is "STOP_MARKET" or "TAKE_PROFIT_MARKET",DateTime.UtcNow);}
-    private ExchangeOrder MapAlgo(JsonElement e){var type=S(e,"orderType").ToUpperInvariant();var updated=e.TryGetProperty("updateTime",out var u)&&u.TryGetInt64(out var ms)?DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime:DateTime.UtcNow;return new(C(S(e,"symbol")),e.GetProperty("algoId").GetInt64(),S(e,"clientAlgoId"),S(e,"algoStatus"),D(e,"actualQty"),D(e,"actualPrice"),type,ParseSide(S(e,"positionSide")),true,updated);}
+    private ExchangeOrder Map(OrderResponse o){var type=o.Type.ToUpperInvariant();return new(C(o.Symbol),o.OrderId.ToString(CultureInfo.InvariantCulture),o.ClientOrderId,o.Status,o.ExecutedQuantity,o.AvgPrice,type,ParseSide(o.PositionSide),type is "STOP_MARKET" or "TAKE_PROFIT_MARKET",o.Time);}
+    private ExchangeOrder MapRaw(JsonElement e){var type=S(e,"type").ToUpperInvariant();return new(C(S(e,"symbol")),e.GetProperty("orderId").GetRawText().Trim('"'),S(e,"clientOrderId"),S(e,"status"),D(e,"executedQty"),D(e,"avgPrice"),type,ParseSide(S(e,"positionSide")),type is "STOP_MARKET" or "TAKE_PROFIT_MARKET",DateTime.UtcNow);}
+    private ExchangeOrder MapAlgo(JsonElement e){var type=S(e,"orderType").ToUpperInvariant();var updated=e.TryGetProperty("updateTime",out var u)&&u.TryGetInt64(out var ms)?DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime:DateTime.UtcNow;return new(C(S(e,"symbol")),e.GetProperty("algoId").GetRawText().Trim('"'),S(e,"clientAlgoId"),S(e,"algoStatus"),D(e,"actualQty"),D(e,"actualPrice"),type,ParseSide(S(e,"positionSide")),true,updated);}
     private string N(string symbol)=>Symbols.ToNative(symbol);
     private string C(string symbol)=>Symbols.ToCanonical(symbol);
     private static PositionSide? ParseSide(string? value)=>value?.ToUpperInvariant() switch{"LONG"=>PositionSide.Long,"SHORT"=>PositionSide.Short,_=>null};

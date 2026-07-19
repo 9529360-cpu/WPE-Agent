@@ -58,7 +58,7 @@ public interface IBrokerProvider
     Task<ExchangeOrder> PlaceLimitAsync(string canonicalSymbol,PositionSide side,decimal quantity,decimal price,string clientOrderId,bool reduceOnly,CancellationToken ct);
     Task<ExchangeOrder> PlaceProtectionAsync(string canonicalSymbol,PositionSide sideToClose,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct);
     Task<ExchangeOrder?> FindOrderAsync(string canonicalSymbol,string clientOrderId,CancellationToken ct);
-    Task CancelOrderAsync(string canonicalSymbol,long orderId,CancellationToken ct);
+    Task CancelOrderAsync(string canonicalSymbol,string orderId,CancellationToken ct);
 }
 
 public interface IRealtimeMarketFeed:IAsyncDisposable

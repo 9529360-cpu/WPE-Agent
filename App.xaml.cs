@@ -53,6 +53,15 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
+        if (e.Args.Any(x => string.Equals(x, "--exchange-public-test", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await ExchangePublicTestRunner.RunAsync();
+            Log.Information("Exchange public endpoint tests completed. Success={Success}; Report={Report}",result.Success,result.ReportPath);
+            Shutdown(result.Success?0:13);
+            return;
+        }
+
         // Configure dependency injection
         var services = new ServiceCollection();
         ServiceProvider = ServiceConfiguration.ConfigureServices(services);
