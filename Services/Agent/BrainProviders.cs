@@ -7,6 +7,74 @@ using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人.Services.Agent;
 
+public interface IAssistantProtocolAdapter
+{
+    HttpRequestMessage CreateRequest(BrainSlot slot, string secret, string prompt);
+    string ExtractText(JsonDocument document);
+}
+
+public static class AssistantProtocolAdapterFactory
+{
+    public static IAssistantProtocolAdapter Create(string provider)
+    {
+        var id = provider.ToLowerInvariant();
+        if (id.Contains("claude") || id.Contains("anthropic")) return new AnthropicMessagesAdapter();
+        if (id.Contains("gemini") || id.Contains("google")) return new GeminiGenerativeAdapter();
+        return new OpenAiCompatibleAdapter();
+    }
+}
+
+public sealed class OpenAiCompatibleAdapter : IAssistantProtocolAdapter
+{
+    public HttpRequestMessage CreateRequest(BrainSlot slot, string secret, string prompt)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, slot.Endpoint);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secret);
+        object body = slot.Provider.Contains("openai", StringComparison.OrdinalIgnoreCase)
+            ? new { model = slot.Model, input = prompt }
+            : new { model = slot.Model, messages = new[] { new { role = "user", content = prompt } }, temperature = slot.Temperature, max_tokens = slot.MaxTokens };
+        request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        return request;
+    }
+    public string ExtractText(JsonDocument document)
+    {
+        var root = document.RootElement;
+        if (root.TryGetProperty("output_text", out var outputText)) return outputText.GetString() ?? string.Empty;
+        if (root.TryGetProperty("output", out var output))
+            foreach (var item in output.EnumerateArray())
+                if (item.TryGetProperty("content", out var content))
+                    foreach (var part in content.EnumerateArray())
+                        if (part.TryGetProperty("text", out var text)) return text.GetString() ?? string.Empty;
+        var message = root.GetProperty("choices")[0].GetProperty("message");
+        return message.TryGetProperty("content", out var value) ? value.GetString() ?? string.Empty : message.GetProperty("reasoning_content").GetString() ?? string.Empty;
+    }
+}
+
+public sealed class AnthropicMessagesAdapter : IAssistantProtocolAdapter
+{
+    public HttpRequestMessage CreateRequest(BrainSlot slot, string secret, string prompt)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, slot.Endpoint);
+        request.Headers.Add("x-api-key", secret);
+        request.Headers.Add("anthropic-version", "2023-06-01");
+        request.Content = new StringContent(JsonSerializer.Serialize(new { model = slot.Model, max_tokens = slot.MaxTokens, messages = new[] { new { role = "user", content = prompt } } }), Encoding.UTF8, "application/json");
+        return request;
+    }
+    public string ExtractText(JsonDocument document) => document.RootElement.GetProperty("content")[0].GetProperty("text").GetString() ?? string.Empty;
+}
+
+public sealed class GeminiGenerativeAdapter : IAssistantProtocolAdapter
+{
+    public HttpRequestMessage CreateRequest(BrainSlot slot, string secret, string prompt)
+    {
+        var separator = slot.Endpoint.Contains('?') ? '&' : '?';
+        var request = new HttpRequestMessage(HttpMethod.Post, slot.Endpoint + separator + "key=" + Uri.EscapeDataString(secret));
+        request.Content = new StringContent(JsonSerializer.Serialize(new { contents = new[] { new { parts = new[] { new { text = prompt } } } }, generationConfig = new { temperature = slot.Temperature } }), Encoding.UTF8, "application/json");
+        return request;
+    }
+    public string ExtractText(JsonDocument document) => document.RootElement.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString() ?? string.Empty;
+}
+
 public sealed class DeterministicBrainProvider : IAssistantProvider
 {
     public string Name => "WPE Local Brain";
@@ -57,8 +125,8 @@ public static class AssistantAdapterCatalog
 
 public sealed class HttpBrainProvider : IAssistantProvider
 {
-    private readonly HttpClient _http; private readonly BrainSlot _slot; private readonly string _key; private readonly LlmRequestGovernor _governor; public string Name=>_slot.Provider; public bool IsLocal => false;
-    public HttpBrainProvider(BrainSlot slot,string key,LlmRequestGovernor? governor=null){_slot=slot;_key=key;_governor=governor??LlmRequestGovernor.Shared;_http=new HttpClient{Timeout=TimeSpan.FromSeconds(Math.Clamp(slot.TimeoutSeconds,5,300))};}
+    private readonly HttpClient _http; private readonly BrainSlot _slot; private readonly string _key; private readonly LlmRequestGovernor _governor; private readonly IAssistantProtocolAdapter _protocol; public string Name=>_slot.Provider; public bool IsLocal => false;
+    public HttpBrainProvider(BrainSlot slot,string key,LlmRequestGovernor? governor=null, IAssistantProtocolAdapter? protocol=null){_slot=slot;_key=key;_governor=governor??LlmRequestGovernor.Shared;_protocol=protocol??AssistantProtocolAdapterFactory.Create(slot.Provider);_http=new HttpClient{Timeout=TimeSpan.FromSeconds(Math.Clamp(slot.TimeoutSeconds,5,300))};}
     public async Task<BrainHealth> HealthCheckAsync(CancellationToken ct){if(string.IsNullOrWhiteSpace(_key)||string.IsNullOrWhiteSpace(_slot.Endpoint)||string.IsNullOrWhiteSpace(_slot.Model))return new(false,LocalizationService.Current.T("Provider.Incomplete"));try{using var r=await BuildAndSend("Reply only: HOLD",ct);return new(r.IsSuccessStatusCode,$"HTTP {(int)r.StatusCode}");}catch(Exception ex){return new(false,ex.Message);}}
     public async Task<BrainDecisionResult> DecideAsync(EvidencePack e,AgentContext c,CancellationToken ct)
     {
@@ -83,14 +151,11 @@ public sealed class HttpBrainProvider : IAssistantProvider
     }
     private async Task<HttpResponseMessage> BuildAndSend(string prompt,CancellationToken ct)
     {
-        var provider=_slot.Provider.ToLowerInvariant();var req=new HttpRequestMessage(HttpMethod.Post,_slot.Endpoint);object body;
-        if(provider.Contains("claude")){req.Headers.Add("x-api-key",_key);req.Headers.Add("anthropic-version","2023-06-01");body=new{model=_slot.Model,max_tokens=_slot.MaxTokens,messages=new[]{new{role="user",content=prompt}}};}
-        else if(provider.Contains("gemini")){req.RequestUri=new Uri(_slot.Endpoint+( _slot.Endpoint.Contains('?')?'&':'?')+"key="+Uri.EscapeDataString(_key));body=new{contents=new[]{new{parts=new[]{new{text=prompt}}}},generationConfig=new{temperature=_slot.Temperature}};}
-        else if(provider.Contains("openai")){req.Headers.Authorization=new AuthenticationHeaderValue("Bearer",_key);body=new{model=_slot.Model,input=prompt};}
-        else {req.Headers.Authorization=new AuthenticationHeaderValue("Bearer",_key);body=new{model=_slot.Model,messages=new[]{new{role="user",content=prompt}},temperature=_slot.Temperature,max_tokens=_slot.MaxTokens};}
-        req.Content=new StringContent(JsonSerializer.Serialize(body),Encoding.UTF8,"application/json");var purpose=prompt=="Reply only: HOLD"?"health-check":"assistant-advice";return await _governor.SendAsync(_slot.Provider,_slot.Model,purpose,prompt,_=>_http.SendAsync(req,ct),ct);
+        var req = _protocol.CreateRequest(_slot, _key, prompt);
+        var purpose=prompt=="Reply only: HOLD"?"health-check":"assistant-advice";
+        return await _governor.SendAsync(_slot.Provider,_slot.Model,purpose,prompt,_=>_http.SendAsync(req,ct),ct);
     }
-    private string ExtractProviderText(string raw){using var d=JsonDocument.Parse(raw);var p=_slot.Provider.ToLowerInvariant();if(p.Contains("claude"))return d.RootElement.GetProperty("content")[0].GetProperty("text").GetString()??"";if(p.Contains("gemini"))return d.RootElement.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString()??"";if(p.Contains("openai")){if(d.RootElement.TryGetProperty("output_text",out var ot))return ot.GetString()??"";foreach(var o in d.RootElement.GetProperty("output").EnumerateArray())if(o.TryGetProperty("content",out var a))foreach(var x in a.EnumerateArray())if(x.TryGetProperty("text",out var t))return t.GetString()??"";}var m=d.RootElement.GetProperty("choices")[0].GetProperty("message");return m.TryGetProperty("content",out var c)?c.GetString()??"":m.GetProperty("reasoning_content").GetString()??"";}
+    private string ExtractProviderText(string raw){using var d=JsonDocument.Parse(raw);return _protocol.ExtractText(d);}
 private static string ExtractJson(string s){var a=s.IndexOf('{');var b=s.LastIndexOf('}');if(a<0||b<=a)throw new JsonException(LocalizationService.Current.T("Provider.JsonMissing"));return s[a..(b+1)];}
 }
 
