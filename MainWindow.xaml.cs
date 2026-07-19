@@ -249,6 +249,14 @@ public partial class MainWindow : Window
         SetSignals(state.SignalContributions);
         HighlightWorkflow(state.WorkflowNode);
         WorkflowStateText.Text = state.WorkflowNode == "IDLE" ? I18n.T("Workflow.Idle") : state.WorkflowNode;
+        var llm = LlmRequestGovernor.Shared.GetTodaySnapshot();
+        LlmModeText.Text = llm.Calls == 0 ? "LOCAL" : llm.TopProvider.ToUpperInvariant();
+        LlmModeText.Foreground = llm.BudgetBlocks > 0 ? _red : _green;
+        LlmCallsText.Text = llm.Calls.ToString("N0", I18n.Culture);
+        LlmTokensText.Text = llm.Tokens.ToString("N0", I18n.Culture);
+        LlmCostText.Text = llm.CostUsd.ToString("C2", System.Globalization.CultureInfo.GetCultureInfo("en-US"));
+        LlmCacheText.Text = llm.CacheHits.ToString("N0", I18n.Culture);
+        LlmBlockedText.Text = llm.BudgetBlocks.ToString("N0", I18n.Culture);
         DashboardPage.BeginAnimation(OpacityProperty, new DoubleAnimation(.72, 1, TimeSpan.FromMilliseconds(300)));
         UpdateClock();
     }

@@ -479,5 +479,11 @@
     "ExchangeManager.AdapterMissing":  "{0} Adapter 尚未安装",
     "ExchangeManager.Test":  "测试连接",
     "ExchangeManager.Close":  "完成",
-    "ExchangeManager.Endpoint":  "API Endpoint"
+    "ExchangeManager.Endpoint":  "API Endpoint",
+    "Llm.Title":  "Assistant Layer / Token 预算",
+    "Llm.Calls":  "今日调用",
+    "Llm.Tokens":  "今日 Token",
+    "Llm.Cost":  "预估费用",
+    "Llm.Cache":  "缓存命中",
+    "Llm.Blocked":  "预算拦截"
 }

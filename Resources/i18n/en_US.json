@@ -479,5 +479,11 @@
     "Access.BinanceConnected":  "Exchange connected",
     "Agent.ApiMissing":  "Exchange credentials are not configured for the active connection",
     "Setup.EnvironmentFuturesTestnet":  "Exchange Futures Testnet",
-    "Access.BinanceOffline":  "Exchange disconnected"
+    "Access.BinanceOffline":  "Exchange disconnected",
+    "Llm.Title":  "Assistant Layer / Token Budget",
+    "Llm.Calls":  "Calls today",
+    "Llm.Tokens":  "Tokens today",
+    "Llm.Cost":  "Est. cost",
+    "Llm.Cache":  "Cache hits",
+    "Llm.Blocked":  "Budget blocked"
 }
