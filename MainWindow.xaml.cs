@@ -400,6 +400,7 @@ public partial class MainWindow : Window
         }
         DashboardPage.Visibility = Visibility.Collapsed;
         SecondaryPage.Visibility = Visibility.Visible;
+        EventFilters.Visibility = tag == "LOGS" ? Visibility.Visible : Visibility.Collapsed;
         var state = ServiceLocator.SystemState;
         var memory = tag == "BRAIN" ? await new AgentSqliteStore().GetMemoryExplorerAsync(40, CancellationToken.None) : Array.Empty<string>();
         (SecondaryTitle.Text, SecondarySubtitle.Text, SecondaryContent.Text) = tag switch
@@ -428,11 +429,21 @@ public partial class MainWindow : Window
         catch (Exception ex) { return I18n.T("Log.Unavailable", ex.Message); }
     }
 
-    private static async Task<string> ReadRuntimeEventsAsync()
+    private async void EventRefresh_Click(object sender, RoutedEventArgs e)
+    {
+        if (_activePage == "LOGS") SecondaryContent.Text = await ReadRuntimeEventsAsync(EventFilterBox.Text);
+    }
+
+    private async void EventFilter_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_activePage == "LOGS" && IsLoaded) SecondaryContent.Text = await ReadRuntimeEventsAsync(EventFilterBox.Text);
+    }
+
+    private static async Task<string> ReadRuntimeEventsAsync(string? filter = null)
     {
         try
         {
-            var events = await new AgentSqliteStore().GetRecentRuntimeEventsAsync(80, CancellationToken.None);
+            var events = await new AgentSqliteStore().GetRecentRuntimeEventsAsync(80, filter, CancellationToken.None);
             var timeline = await new AgentSqliteStore().GetWorkflowTimelineAsync(80, CancellationToken.None);
             var output = events.Count > 0 ? string.Join(Environment.NewLine + Environment.NewLine, events) : ReadLogTail();
             return timeline.Count == 0 ? output : $"WORKFLOW TIMELINE\n{string.Join(Environment.NewLine + Environment.NewLine, timeline)}\n\nRUNTIME EVENTS\n{output}";

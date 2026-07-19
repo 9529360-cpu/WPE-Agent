@@ -162,7 +162,13 @@ public sealed class AgentSqliteStore
     public Task RecordRuntimeEventAsync(AgentRuntimeEvent value,CancellationToken ct)=>Exec("INSERT OR IGNORE INTO runtime_events(event_id,sequence,correlation_id,causation_id,event_type,source,payload_json,occurred_at) VALUES($i,$q,$c,$a,$e,$s,$p,$t)",ct,("$i",value.EventId),("$q",value.Sequence),("$c",value.CorrelationId),("$a",value.CausationId),("$e",value.EventType),("$s",value.Source),("$p",value.PayloadJson),("$t",value.OccurredAtUtc.ToString("O")));
     public async Task<IReadOnlyList<string>> GetRecentRuntimeEventsAsync(int limit,CancellationToken ct)
     {
-        var list=new List<string>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT occurred_at,event_type,source,sequence,payload_json FROM runtime_events ORDER BY sequence DESC LIMIT $l";q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,500));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var payload=r.IsDBNull(4)?string.Empty:r.GetString(4);if(payload.Length>180)payload=payload[..180]+"...";list.Add($"{r.GetString(0)}  #{r.GetInt64(3)}  {r.GetString(1)}  [{r.GetString(2)}]\n{payload}");}return list;
+        return await GetRecentRuntimeEventsAsync(limit, string.Empty, ct);
+    }
+    public async Task<IReadOnlyList<string>> GetRecentRuntimeEventsAsync(int limit,string? filter,CancellationToken ct)
+    {
+        var list=new List<string>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="SELECT occurred_at,event_type,source,sequence,payload_json FROM runtime_events WHERE ($f='' OR event_type LIKE $like OR source LIKE $like OR payload_json LIKE $like) ORDER BY sequence DESC LIMIT $l";
+        var value=(filter??string.Empty).Trim();q.Parameters.AddWithValue("$f",value);q.Parameters.AddWithValue("$like",$"%{value}%");q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,500));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var payload=r.IsDBNull(4)?string.Empty:r.GetString(4);if(payload.Length>220)payload=payload[..220]+"...";list.Add($"{r.GetString(0)}  #{r.GetInt64(3)}  {r.GetString(1)}  [{r.GetString(2)}]\n{payload}");}return list;
     }
     public async Task<IReadOnlyList<string>> GetWorkflowTimelineAsync(int limit,CancellationToken ct)
     {
