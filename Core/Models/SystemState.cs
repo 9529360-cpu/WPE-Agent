@@ -73,6 +73,21 @@ public class SystemState
     public double BtcRsi { get; set; }
     public double EthRsi { get; set; }
     public IReadOnlyDictionary<string,double> SignalContributions { get; set; } = new Dictionary<string,double>();
+    public int DataQualityScore { get; set; }
+    public double VolatilityPercent { get; set; }
+    public double LiquidityScore { get; set; }
+    public double ResearchScore { get; set; }
+    public decimal PlannedEntry { get; set; }
+    public decimal PlannedStop { get; set; }
+    public decimal PlannedTakeProfit { get; set; }
+    public decimal PlannedQuantity { get; set; }
+    public double RiskRewardRatio { get; set; }
+    public string ReviewerStatus { get; set; } = "PENDING";
+    public string RiskApprovalStatus { get; set; } = "PENDING";
+    public string ExecutionApprovalStatus { get; set; } = "PENDING";
+    public string MissingConditions { get; set; } = string.Empty;
+    public string DecisionAuditSummary { get; set; } = string.Empty;
+    public bool CircuitBreakerActive { get; set; }
 }
 
 

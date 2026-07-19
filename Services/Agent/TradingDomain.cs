@@ -5,6 +5,7 @@ namespace 币安量化机器人.Services.Agent;
 public enum ExchangeEnvironment { Testnet, Mainnet }
 public enum PositionSide { Long, Short }
 public enum DecisionAction { OpenLong, OpenShort, AddLong, AddShort, ReduceLong, ReduceShort, CloseLong, CloseShort, Lock, Unlock, ReverseToLong, ReverseToShort, Hold }
+public enum ExecutionOrderType { Market, Limit }
 
 public sealed record TradingRule(string Symbol, decimal StepSize, decimal TickSize, decimal MinQuantity, decimal MinNotional, int MaxLeverage)
 {
@@ -15,7 +16,28 @@ public sealed record AccountSnapshot(decimal WalletBalance, decimal AvailableBal
 public sealed record ManagedPosition(string Symbol, PositionSide Side, decimal Quantity, decimal EntryPrice, decimal MarkPrice, decimal UnrealizedPnl, decimal Leverage, bool Isolated, decimal LiquidationPrice);
 public sealed record ExchangeOrder(string Symbol, long OrderId, string ClientOrderId, string Status, decimal ExecutedQuantity, decimal AvgPrice, string Type, PositionSide? PositionSide, bool IsProtection, DateTime UpdatedAt);
 public sealed record DerivativesSnapshot(decimal FundingRate, decimal OpenInterest, decimal LongShortRatio, decimal TopAccountRatio, decimal TopPositionRatio, decimal TakerBuySellRatio, decimal Basis);
-public sealed record MarketEvidence(string Symbol, decimal Price, decimal Support, decimal Resistance, double Rsi, double Trend15m, double Trend1h, double Trend4h, DerivativesSnapshot Derivatives, DateTime CollectedAt);
+public sealed record CandleEvidence(DateTime OpenTime, decimal Open, decimal High, decimal Low, decimal Close, decimal Volume, decimal QuoteVolume, long Trades, decimal TakerBuyVolume);
+public sealed class MarketQualityEvidence
+{
+    public decimal BestBid { get; init; }
+    public decimal BestAsk { get; init; }
+    public double SpreadBps { get; init; }
+    public double OrderBookImbalance { get; init; }
+    public double AtrPercent { get; init; } = .01;
+    public double RealizedVolatility { get; init; } = .01;
+    public double RelativeVolume { get; init; } = 1;
+    public double LiquidityScore { get; init; } = .80;
+    public double LiquidationIntensity { get; init; }
+    public long ClockSkewMilliseconds { get; init; }
+    public int SourceCount { get; init; } = 5;
+    public int QualityScore { get; init; } = 100;
+    public IReadOnlyList<string> Anomalies { get; init; } = Array.Empty<string>();
+}
+public sealed record MarketEvidence(string Symbol, decimal Price, decimal Support, decimal Resistance, double Rsi, double Trend15m, double Trend1h, double Trend4h, DerivativesSnapshot Derivatives, DateTime CollectedAt)
+{
+    public MarketQualityEvidence Quality { get; init; } = new();
+    public IReadOnlyList<CandleEvidence> Candles { get; init; } = Array.Empty<CandleEvidence>();
+}
 public sealed record NewsEvidence(string Source, string Title, string Url, DateTime? PublishedAt, DateTime CollectedAt, string Reliability, string DuplicateGroup, IReadOnlyList<string> AffectedAssets);
 public sealed class EvidencePack
 {
@@ -41,8 +63,12 @@ public sealed class DecisionPlan
     public List<string> EvidenceReferences { get; set; } = new();
     public List<string> MissingConditions { get; set; } = new();
     public string ConflictSummary { get; set; } = string.Empty;
+    public decimal EntryPrice { get; set; }
+    public double RiskRewardRatio { get; set; }
+    public ExecutionOrderType OrderType { get; set; } = ExecutionOrderType.Market;
+    public string StrategyVersion { get; set; } = "wpe-core-v2";
 }
-public enum MarketRegime { Trending, Ranging, Transition, Unknown }
+public enum MarketRegime { Trending, Ranging, Transition, Extreme, Unknown }
 public sealed record SignalContribution(string Name,string Horizon,double RawValue,double Weight,double WeightedScore,string Direction,string Explanation);
 public sealed class MarketDecisionAssessment
 {
@@ -66,6 +92,35 @@ public sealed class DecisionReview
     public IReadOnlyList<string> BlockingReasons { get; init; } = Array.Empty<string>();
     public string Explanation { get; init; } = string.Empty;
 }
+public sealed class IndependentRiskReview
+{
+    public bool Approved { get; init; }
+    public string RiskLevel { get; init; } = "UNKNOWN";
+    public decimal PlannedQuantity { get; init; }
+    public decimal RiskAmount { get; init; }
+    public decimal ExposureAfter { get; init; }
+    public IReadOnlyList<string> BlockingReasons { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> Checks { get; init; } = Array.Empty<string>();
+    public string Summary { get; init; } = string.Empty;
+}
+public sealed class ResearchValidationResult
+{
+    public string Symbol { get; init; } = string.Empty;
+    public string StrategyVersion { get; init; } = string.Empty;
+    public int SampleSize { get; init; }
+    public int Trades { get; init; }
+    public double WinRate { get; init; }
+    public double ProfitFactor { get; init; }
+    public double Expectancy { get; init; }
+    public double MaxDrawdown { get; init; }
+    public double Sharpe { get; init; }
+    public double OutOfSampleReturn { get; init; }
+    public double WalkForwardScore { get; init; }
+    public double MonteCarloLossProbability { get; init; }
+    public double QualityScore { get; init; }
+    public bool Approved { get; init; }
+    public string Summary { get; init; } = string.Empty;
+}
 public sealed record AgentContext(string BrainName, bool CircuitBreakerActive, string? ActiveSymbol, IReadOnlyList<string> PreviousOutcomes, IReadOnlyList<MarketDecisionAssessment> MarketAssessments, int ConsecutiveHolds);
 public sealed record BrainHealth(bool Healthy, string Message);
 public sealed record BrainDecisionResult(DecisionPlan Decision, string Request, string Response);
@@ -85,15 +140,35 @@ public interface IExchangeAdapter : IAsyncDisposable
     Task<TradingRule> GetRulesAsync(string symbol, CancellationToken ct);
     Task<MarketEvidence> GetMarketAsync(string symbol, CancellationToken ct);
     Task<IReadOnlyList<DerivativesSnapshot>> GetDerivativeHistoryAsync(string symbol, CancellationToken ct);
+    Task<IReadOnlyList<CandleEvidence>> GetCandlesAsync(string symbol, string interval, int limit, CancellationToken ct);
     Task SetLeverageAsync(string symbol, int leverage, CancellationToken ct);
     Task SetMarginModeAsync(string symbol, bool isolated, CancellationToken ct);
     Task SetHedgeModeAsync(bool enabled, CancellationToken ct);
     Task<ExchangeOrder> PlaceMarketAsync(string symbol, PositionSide side, decimal quantity, string clientOrderId, bool reduceOnly, CancellationToken ct);
+    Task<ExchangeOrder> PlaceLimitAsync(string symbol, PositionSide side, decimal quantity, decimal price, string clientOrderId, bool reduceOnly, CancellationToken ct);
     Task<ExchangeOrder> PlaceProtectionAsync(string symbol, PositionSide sideToClose, decimal stopLoss, decimal takeProfit, string groupId, CancellationToken ct);
     Task<ExchangeOrder?> FindOrderAsync(string symbol, string clientOrderId, CancellationToken ct);
     Task CancelOrderAsync(string symbol, long orderId, CancellationToken ct);
 }
-public sealed class RiskLimits { public decimal[] MarginTiers { get; set; } = [0.20m,0.40m,0.60m]; public decimal MaxMargin { get; set; } = .60m; public int Leverage { get; set; } = 50; public decimal DailyDrawdownLimit { get; set; } = .30m; public bool Isolated { get; set; } = true; }
+public sealed class RiskLimits
+{
+    public decimal[] MarginTiers { get; set; } = [.10m,.20m,.35m];
+    public decimal MaxMargin { get; set; } = .50m;
+    public int Leverage { get; set; } = 10;
+    public decimal DailyDrawdownLimit { get; set; } = .08m;
+    public decimal MaxRiskPerTrade { get; set; } = .01m;
+    public decimal MaxSymbolExposure { get; set; } = .25m;
+    public decimal MaxAccountExposure { get; set; } = .50m;
+    public decimal MaxDailyLoss { get; set; } = .05m;
+    public int MaxConsecutiveLosses { get; set; } = 3;
+    public double MaxAtrPercent { get; set; } = .045;
+    public double MinimumLiquidityScore { get; set; } = .55;
+    public double MaximumSpreadBps { get; set; } = 8;
+    public double MaximumSlippageBps { get; set; } = 12;
+    public double MinimumRiskReward { get; set; } = 1.8;
+    public int ApiFailureThreshold { get; set; } = 3;
+    public bool Isolated { get; set; } = true;
+}
 public sealed class DecisionPolicy
 {
     public double MinimumConfidence { get; set; } = .62;
@@ -101,7 +176,9 @@ public sealed class DecisionPolicy
     public double MaximumConflictRatio { get; set; } = .65;
     public int MinimumEvidenceCompleteness { get; set; } = 70;
     public int MaximumEvidenceAgeMinutes { get; set; } = 5;
+    public int MinimumMarketQuality { get; set; } = 65;
+    public double MinimumResearchScore { get; set; } = .45;
 }
-public sealed record ExecutionIntent(string Symbol, PositionSide Side, decimal Quantity, bool ReduceOnly, decimal StopLoss, decimal TakeProfit, string ClientOrderId, string Reason, DecisionAction Action = DecisionAction.Hold);
+public sealed record ExecutionIntent(string Symbol, PositionSide Side, decimal Quantity, bool ReduceOnly, decimal StopLoss, decimal TakeProfit, string ClientOrderId, string Reason, DecisionAction Action = DecisionAction.Hold, ExecutionOrderType OrderType = ExecutionOrderType.Market, decimal LimitPrice = 0, decimal ExpectedPrice = 0);
 public sealed record PersistedIntent(string CycleId, ExecutionIntent Intent, string Status, long? ExchangeOrderId);
 public sealed record RecoveryResult(bool SafeToIncreaseRisk, IReadOnlyList<string> Messages);

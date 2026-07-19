@@ -6,7 +6,7 @@ namespace 币安量化机器人.Services.Agent;
 
 public sealed class BrainSlot { public string Provider { get; set; } = "DeepSeek"; public string Endpoint { get; set; } = "https://api.deepseek.com/chat/completions"; public string Model { get; set; } = "deepseek-chat"; public string EncryptedKey { get; set; } = string.Empty; }
 public sealed class EnvironmentSlot { public string EncryptedApiKey { get; set; } = string.Empty; public string EncryptedApiSecret { get; set; } = string.Empty; }
-public sealed class AgentSettings { public ExchangeEnvironment Environment { get; set; } = ExchangeEnvironment.Testnet; public string ActiveBrain { get; set; } = "DeepSeek"; public Dictionary<string, BrainSlot> Brains { get; set; } = new(StringComparer.OrdinalIgnoreCase); public EnvironmentSlot Testnet { get; set; } = new(); public EnvironmentSlot Mainnet { get; set; } = new(); public bool MainnetTradingConfirmed { get; set; } public DateTime? MainnetConfirmedAtUtc { get; set; } public RiskLimits Risk { get; set; } = new(); public DecisionPolicy Decision { get; set; } = new(); }
+public sealed class AgentSettings { public ExchangeEnvironment Environment { get; set; } = ExchangeEnvironment.Testnet; public string ActiveBrain { get; set; } = "DeepSeek"; public List<string> Symbols { get; set; } = ["BTCUSDT","ETHUSDT"]; public Dictionary<string, BrainSlot> Brains { get; set; } = new(StringComparer.OrdinalIgnoreCase); public EnvironmentSlot Testnet { get; set; } = new(); public EnvironmentSlot Mainnet { get; set; } = new(); public bool MainnetTradingConfirmed { get; set; } public DateTime? MainnetConfirmedAtUtc { get; set; } public RiskLimits Risk { get; set; } = new(); public DecisionPolicy Decision { get; set; } = new(); }
 public sealed class AgentSettingsStore
 {
     private readonly string _path = Path.Combine(AppContext.BaseDirectory, "Data", "agent-settings.json");
@@ -34,12 +34,29 @@ public sealed class AgentSettingsStore
     public void RevokeMainnet(AgentSettings settings){settings.MainnetTradingConfirmed=false;settings.MainnetConfirmedAtUtc=null;if(settings.Environment==ExchangeEnvironment.Mainnet)settings.Environment=ExchangeEnvironment.Testnet;Save(settings);}
     private static AgentSettings Normalize(AgentSettings settings)
     {
-        settings.Risk??=new();settings.Decision??=new();settings.Brains??=new(StringComparer.OrdinalIgnoreCase);settings.Testnet??=new();settings.Mainnet??=new();
+        settings.Risk??=new();settings.Decision??=new();settings.Brains??=new(StringComparer.OrdinalIgnoreCase);settings.Testnet??=new();settings.Mainnet??=new();settings.Symbols=settings.Symbols?.Select(x=>x.Trim().ToUpperInvariant()).Where(x=>x.EndsWith("USDT",StringComparison.Ordinal)&&x.Length is >=7 and <=20).Distinct().Take(8).ToList()??[];if(settings.Symbols.Count==0)settings.Symbols=["BTCUSDT","ETHUSDT"];
         settings.Decision.MinimumConfidence=Math.Clamp(settings.Decision.MinimumConfidence,.50,.95);
         settings.Decision.MinimumDirectionalScore=Math.Clamp(settings.Decision.MinimumDirectionalScore,.10,.80);
         settings.Decision.MaximumConflictRatio=Math.Clamp(settings.Decision.MaximumConflictRatio,.10,.90);
         settings.Decision.MinimumEvidenceCompleteness=Math.Clamp(settings.Decision.MinimumEvidenceCompleteness,60,100);
         settings.Decision.MaximumEvidenceAgeMinutes=Math.Clamp(settings.Decision.MaximumEvidenceAgeMinutes,1,30);
+        settings.Decision.MinimumMarketQuality=Math.Clamp(settings.Decision.MinimumMarketQuality,50,95);
+        settings.Decision.MinimumResearchScore=Math.Clamp(settings.Decision.MinimumResearchScore,.20,.90);
+        settings.Risk.Leverage=Math.Clamp(settings.Risk.Leverage,1,20);
+        settings.Risk.MaxMargin=Math.Clamp(settings.Risk.MaxMargin,.10m,.50m);
+        settings.Risk.DailyDrawdownLimit=Math.Clamp(settings.Risk.DailyDrawdownLimit,.02m,.10m);
+        settings.Risk.MaxRiskPerTrade=Math.Clamp(settings.Risk.MaxRiskPerTrade,.0025m,.02m);
+        settings.Risk.MaxSymbolExposure=Math.Clamp(settings.Risk.MaxSymbolExposure,.05m,.35m);
+        settings.Risk.MaxAccountExposure=Math.Clamp(settings.Risk.MaxAccountExposure,.10m,.60m);
+        settings.Risk.MaxDailyLoss=Math.Clamp(settings.Risk.MaxDailyLoss,.01m,.08m);
+        settings.Risk.MaxConsecutiveLosses=Math.Clamp(settings.Risk.MaxConsecutiveLosses,2,8);
+        settings.Risk.MaxAtrPercent=Math.Clamp(settings.Risk.MaxAtrPercent,.01,.12);
+        settings.Risk.MinimumLiquidityScore=Math.Clamp(settings.Risk.MinimumLiquidityScore,.20,.95);
+        settings.Risk.MaximumSpreadBps=Math.Clamp(settings.Risk.MaximumSpreadBps,1,30);
+        settings.Risk.MaximumSlippageBps=Math.Clamp(settings.Risk.MaximumSlippageBps,2,50);
+        settings.Risk.MinimumRiskReward=Math.Clamp(settings.Risk.MinimumRiskReward,1.2,4.0);
+        settings.Risk.ApiFailureThreshold=Math.Clamp(settings.Risk.ApiFailureThreshold,2,10);
+        settings.Risk.MarginTiers=settings.Risk.MarginTiers?.Where(x=>x>0).Select(x=>Math.Min(x,settings.Risk.MaxMargin)).Distinct().OrderBy(x=>x).Take(3).ToArray()??[];if(settings.Risk.MarginTiers.Length==0)settings.Risk.MarginTiers=[.10m,.20m,.35m];
         return settings;
     }
     private static AgentSettings Defaults() => new() { Brains = new(StringComparer.OrdinalIgnoreCase) { ["DeepSeek"] = new BrainSlot() } };

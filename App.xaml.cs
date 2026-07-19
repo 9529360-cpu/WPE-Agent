@@ -45,6 +45,15 @@ public partial class App : global::System.Windows.Application
         var services = new ServiceCollection();
         ServiceProvider = ServiceConfiguration.ConfigureServices(services);
 
+        if (e.Args.Any(x => string.Equals(x, "--autonomy-test", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var result = await AutonomyTestRunner.RunAsync();
+            Log.Information("Autonomy fault-injection tests completed. Success={Success}; Report={Report}", result.Success, result.ReportPath);
+            Shutdown(result.Success ? 0 : 5);
+            return;
+        }
+
         if (e.Args.Any(x => string.Equals(x, "--smoke-test", StringComparison.OrdinalIgnoreCase)))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;

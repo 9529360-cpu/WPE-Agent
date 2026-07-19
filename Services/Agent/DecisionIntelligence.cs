@@ -11,14 +11,16 @@ public sealed class SignalAggregationSkill
     private static MarketDecisionAssessment AnalyzeMarket(MarketEvidence market,int completeness,DecisionPolicy policy)
     {
         var signals=new List<SignalContribution>();
-        Add("trend_15m","15m",market.Trend15m,.20,.006);
-        Add("trend_1h","1h",market.Trend1h,.22,.012);
-        Add("trend_4h","4h",market.Trend4h,.28,.025);
-        Add("rsi","15m",market.Rsi-50,.10,20);
+        Add("trend_15m","15m",market.Trend15m,.17,.006);
+        Add("trend_1h","1h",market.Trend1h,.19,.012);
+        Add("trend_4h","4h",market.Trend4h,.23,.025);
+        Add("rsi","15m",market.Rsi-50,.08,20);
         Add("order_flow","derivatives",(double)(market.Derivatives.TakerBuySellRatio-1),.08,.20);
         Add("funding","derivatives",(double)-market.Derivatives.FundingRate,.04,.001);
         Add("crowd","derivatives",(double)(1-market.Derivatives.LongShortRatio),.04,.30);
-        Add("basis","derivatives",(double)market.Derivatives.Basis,.04,.003);
+        Add("basis","derivatives",(double)market.Derivatives.Basis,.03,.003);
+        Add("order_book","microstructure",market.Quality.OrderBookImbalance,.06,.35);
+        Add("relative_volume","volume",Math.Sign(market.Trend15m)*Math.Max(0,market.Quality.RelativeVolume-1),.04,1);
 
         var positive=signals.Where(x=>x.WeightedScore>0).Sum(x=>x.WeightedScore);
         var negative=-signals.Where(x=>x.WeightedScore<0).Sum(x=>x.WeightedScore);
@@ -27,7 +29,7 @@ public sealed class SignalAggregationSkill
         var conflict=gross<.0001?1:Math.Clamp(1-Math.Abs(score)/gross,0,1);
         var agreement=gross<.0001?0:Math.Max(positive,negative)/gross;
         var fresh=DateTime.UtcNow-market.CollectedAt<=TimeSpan.FromMinutes(policy.MaximumEvidenceAgeMinutes);
-        var confidence=Math.Clamp((Math.Abs(score)*.75+agreement*.25)*(completeness/100d)*(fresh?1:.25),0,1);
+        var confidence=Math.Clamp((Math.Abs(score)*.72+agreement*.28)*(completeness/100d)*(market.Quality.QualityScore/100d)*(fresh?1:.25),0,1);
         var regime=DetectRegime(market);
         var missing=new List<string>();
         if(!fresh)missing.Add(L("Decision.Stale",policy.MaximumEvidenceAgeMinutes));
@@ -35,6 +37,7 @@ public sealed class SignalAggregationSkill
         if(Math.Abs(score)<policy.MinimumDirectionalScore)missing.Add(L("Decision.Score",policy.MinimumDirectionalScore,score));
         if(conflict>policy.MaximumConflictRatio)missing.Add(L("Decision.Conflict",policy.MaximumConflictRatio,conflict));
         if(confidence<policy.MinimumConfidence)missing.Add(L("Decision.Confidence",policy.MinimumConfidence,confidence));
+        if(market.Quality.QualityScore<policy.MinimumMarketQuality)missing.Add(L("Decision.MarketQuality",policy.MinimumMarketQuality,market.Quality.QualityScore));
         var entryReady=missing.Count==0;
         var action=entryReady?(score>0?DecisionAction.OpenLong:DecisionAction.OpenShort):DecisionAction.Hold;
         var summary=L("Decision.Summary",market.Symbol,regime,score,confidence,conflict,L(entryReady?"Decision.Ready":"Decision.Waiting"));
@@ -49,6 +52,7 @@ public sealed class SignalAggregationSkill
 
     private static MarketRegime DetectRegime(MarketEvidence m)
     {
+        if(m.Quality.AtrPercent>=.05||m.Quality.LiquidationIntensity>=.80)return MarketRegime.Extreme;
         var one=Math.Sign(m.Trend1h);var four=Math.Sign(m.Trend4h);var aligned=one!=0&&one==four&&Math.Abs(m.Trend1h)>=.003&&Math.Abs(m.Trend4h)>=.006;
         if(aligned&&Math.Sign(m.Trend15m)==one)return MarketRegime.Trending;
         if(aligned)return MarketRegime.Transition;
@@ -108,13 +112,28 @@ public sealed class DecisionGovernanceSkill
     private static string L(string key,params object?[] args)=>LocalizationService.Current.T(key,args);
 }
 
+public sealed record SkillDescriptor(string Name,string Category,string Input,string Output,string Permission,int TimeoutSeconds,int Retries,bool Critical,string HealthCheck);
 public sealed class AgentSkillRegistry
 {
-    public static IReadOnlyList<(string Name,string Category,bool Critical)> Skills { get; } =
+    public static IReadOnlyList<SkillDescriptor> Skills { get; } =
     [
-        ("EvidenceCollector","Observe",true),("SignalAggregation","Reason",true),("MarketRegime","Reason",true),
-        ("BrainPlanner","Plan",true),("DecisionCritic","Critic",true),("DecisionReviewer","Review",true),
-        ("RiskAndPositionPlanner","Risk",true),("ReliableOrderExecutor","Act",true),("ProtectionRecovery","Recover",true),
-        ("DecisionMemory","Memory",false),("ExperienceReplay","Reflect",false),("RuntimeMonitor","Monitor",false)
+        new("EvidenceCollector","Observe","symbols","EvidencePack","read:market,read:account,network:rss",25,2,true,"market freshness and source quorum"),
+        new("DataQuality","Validate","MarketEvidence","MarketQualityEvidence","read:market",8,1,true,"quality score and clock skew"),
+        new("SignalAggregation","Reason","EvidencePack","MarketDecisionAssessment[]","local:compute",5,0,true,"finite weighted contributions"),
+        new("MarketRegime","Reason","multi-timeframe evidence","MarketRegime","local:compute",3,0,true,"known regime result"),
+        new("StrategyResearch","Research","candles and costs","ResearchValidationResult","local:compute,write:research",12,0,true,"in/out-sample metrics"),
+        new("BrainPlanner","Plan","audited evidence","DecisionPlan","network:brain",30,2,true,"schema-valid response"),
+        new("DeterministicPlan","Plan","candidate and market","protected DecisionPlan","local:compute",3,0,true,"entry/stop/take/RR valid"),
+        new("DecisionCritic","Critic","candidate and counter-evidence","DecisionReview","local:compute",3,0,true,"blocking reasons available"),
+        new("DecisionReviewer","Review","candidate and assessments","approval verdict","local:compute",3,0,true,"verdict deterministic"),
+        new("IndependentRiskManager","Risk","plan, account, history","IndependentRiskReview","read:account,local:compute",4,0,true,"all hard checks evaluated"),
+        new("RiskAndPositionPlanner","Risk","approved plan and rules","ExecutionIntent[]","read:account,local:compute",4,0,true,"quantity and protection valid"),
+        new("PositionManagement","Manage","positions and market","close/adjust intents","read:position,write:intent",8,1,true,"position state reconciled"),
+        new("ReliableOrderExecutor","Act","approved intent","confirmed order lifecycle","testnet:trade",20,1,true,"idempotency and exchange confirmation"),
+        new("ProtectionRecovery","Recover","positions, orders, intents","RecoveryResult","testnet:trade,write:state",20,1,true,"every position protected"),
+        new("DecisionMemory","Memory","decision audit","compressed memory","write:local-db",5,1,false,"database writable"),
+        new("ExperienceReplay","Reflect","trade outcomes","strategy performance","read:local-db",8,0,false,"bounded sample window"),
+        new("RuntimeMonitor","Monitor","skill and error events","health status","read:telemetry",3,0,false,"recent heartbeat"),
+        new("EmergencyClose","Safety","all open positions","flat account confirmation","testnet:trade",90,1,true,"no residual position")
     ];
 }
