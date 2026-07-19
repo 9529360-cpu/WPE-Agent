@@ -172,7 +172,11 @@ public sealed class AgentSqliteStore
     }
     public async Task<IReadOnlyList<string>> GetWorkflowTimelineAsync(int limit,CancellationToken ct)
     {
-        var list=new List<string>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT created_at,cycle_id,node,phase,attempt,state_json FROM workflow_checkpoints ORDER BY id DESC LIMIT $l";q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,300));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var state=r.IsDBNull(5)?string.Empty:r.GetString(5);list.Add($"{r.GetString(0)}  [{r.GetString(2)} / {r.GetString(3)}]  cycle={r.GetString(1)}  attempt={r.GetInt32(4)}\n{SummarizeWorkflowState(state)}");}return list;
+        return await GetWorkflowTimelineAsync(limit, string.Empty, ct);
+    }
+    public async Task<IReadOnlyList<string>> GetWorkflowTimelineAsync(int limit,string? filter,CancellationToken ct)
+    {
+        var list=new List<string>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT created_at,cycle_id,node,phase,attempt,state_json FROM workflow_checkpoints ORDER BY id DESC LIMIT $l";q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,300));await using var r=await q.ExecuteReaderAsync(ct);var value=(filter??string.Empty).Trim();while(await r.ReadAsync(ct)){var state=r.IsDBNull(5)?string.Empty:r.GetString(5);var line=$"{r.GetString(0)}  [{r.GetString(2)} / {r.GetString(3)}]  cycle={r.GetString(1)}  attempt={r.GetInt32(4)}\n{SummarizeWorkflowState(state)}";if(value.Length==0||line.Contains(value,StringComparison.OrdinalIgnoreCase))list.Add(line);}return list;
     }
     private static string SummarizeWorkflowState(string state)
     {

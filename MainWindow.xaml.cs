@@ -448,7 +448,7 @@ public partial class MainWindow : Window
         try
         {
             var events = await new AgentSqliteStore().GetRecentRuntimeEventsAsync(80, filter, CancellationToken.None);
-            var timeline = await new AgentSqliteStore().GetWorkflowTimelineAsync(80, CancellationToken.None);
+            var timeline = await new AgentSqliteStore().GetWorkflowTimelineAsync(80, filter, CancellationToken.None);
             var output = events.Count > 0 ? string.Join(Environment.NewLine + Environment.NewLine, events) : ReadLogTail();
             return timeline.Count == 0 ? output : $"WORKFLOW TIMELINE\n{string.Join(Environment.NewLine + Environment.NewLine, timeline)}\n\nRUNTIME EVENTS\n{output}";
         }
