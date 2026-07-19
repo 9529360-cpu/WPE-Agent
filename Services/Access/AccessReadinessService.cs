@@ -65,6 +65,9 @@ public sealed class AccessReadinessService
         var risk=settings.Risk.MaxRiskPerTrade>0&&settings.Risk.MaxAccountExposure<=.60m&&settings.Risk.Leverage<=20;
         Add("risk",risk,true,risk?"Risk Manager 参数有效":"风控参数越界");
         Add("data",report.Checks.Any(x=>x.Key=="exchange"&&x.Passed),true,report.Checks.Any(x=>x.Key=="exchange"&&x.Passed)?"市场数据源健康":"市场数据源不可用");
+        var brainIndex=report.Checks.FindIndex(x=>x.Key=="brain");
+        if(brainIndex>=0&&credentialsReady)report.Checks[brainIndex]=report.Checks[brainIndex] with{Critical=false};
+        Add("local_brain",true,true,"WPE Local Brain / deterministic rules ready");
         return report;
     }
 

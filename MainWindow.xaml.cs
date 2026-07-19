@@ -44,7 +44,7 @@ public partial class MainWindow : Window
         _clock.Start();
         AddThought(I18n.T("Thought.Initialized"));
         UpdateInterface();
-        Loaded+=async(_,_)=>await RefreshAccessAsync();
+        Loaded+=async(_,_)=>await InitializeAndStartAsync();
     }
 
     protected override void OnClosed(EventArgs e)
@@ -80,6 +80,20 @@ public partial class MainWindow : Window
     }
 
     private void Settings_Click(object sender,RoutedEventArgs e){var setup=new SetupWindow(_user,true);setup.ShowDialog();_ = RefreshAccessAsync();}
+    private async Task InitializeAndStartAsync()
+    {
+        await RefreshAccessAsync();
+        var settings=_settingsStore.Load();
+        var access=await _readiness.CheckAsync(settings);
+        settings.LastAccessCheckAtUtc=access.CheckedAtUtc;
+        _settingsStore.Save(settings);
+        if(settings.SetupCompleted&&access.Ready&&!AutoTradingAgent.IsRunning)
+        {
+            try{AutoTradingAgent.StartDefault();AddThought(I18n.T("Thought.Initializing"));}
+            catch(Exception ex){AddThought(ex.Message);}
+        }
+        UpdateInterface();
+    }
     private async Task RefreshAccessAsync(){try{var settings=_settingsStore.Load();var report=await _readiness.CheckAsync(settings);ApplyAccess(report,settings);UpdateInterface();}catch{}}
     private static void ApplyAccess(AccessReadinessReport report,AgentSettings settings){var state=ServiceLocator.SystemState;state.ExchangeConnected=report.Checks.Any(x=>x.Key=="exchange"&&x.Passed);state.BrainConnected=report.Checks.Any(x=>x.Key=="brain"&&x.Passed);state.ApiTradePermission=report.Checks.Any(x=>x.Key=="trade_permission"&&x.Passed);state.RiskReady=report.Checks.Any(x=>x.Key=="risk"&&x.Passed);state.LastAccessCheckAtUtc=report.CheckedAtUtc;state.LoggedInUser=settings.ActiveUser;}
 

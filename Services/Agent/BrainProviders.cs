@@ -7,6 +7,37 @@ using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人.Services.Agent;
 
+public sealed class DeterministicBrainProvider : IBrainProvider
+{
+    public string Name => "WPE Local Brain";
+    public Task<BrainHealth> HealthCheckAsync(CancellationToken ct) => Task.FromResult(new BrainHealth(true, "LOCAL_DETERMINISTIC"));
+
+    public Task<BrainDecisionResult> DecideAsync(EvidencePack evidence, AgentContext context, CancellationToken ct)
+    {
+        var selected = context.MarketAssessments.Where(x => x.EntryReady && x.Fresh)
+            .OrderByDescending(x => x.Confidence * (1 - x.ConflictRatio))
+            .ThenByDescending(x => Math.Abs(x.NetScore))
+            .FirstOrDefault();
+        var blocked = context.CircuitBreakerActive || selected is null;
+        var decision = new DecisionPlan
+        {
+            Action = blocked ? DecisionAction.Hold : selected!.RecommendedAction,
+            Instrument = selected?.Symbol ?? evidence.Markets.Keys.FirstOrDefault() ?? "BTCUSDT",
+            TargetTier = blocked ? 0 : 1,
+            Confidence = selected?.Confidence ?? 0,
+            Regime = selected?.Regime.ToString() ?? MarketRegime.Unknown.ToString(),
+            Reason = context.CircuitBreakerActive ? "local risk circuit breaker is active" : selected?.Summary ?? "no locally validated entry is ready",
+            Invalidation = "local signal, data freshness, strategy health, or risk gate becomes invalid",
+            EvidenceReferences = selected?.Signals.OrderByDescending(x => Math.Abs(x.WeightedScore)).Take(5).Select(x => x.Name).ToList() ?? [],
+            MissingConditions = selected?.MissingConditions.ToList() ?? context.MarketAssessments.SelectMany(x => x.MissingConditions).Distinct().ToList(),
+            ConflictSummary = selected is null ? "no executable local assessment" : $"conflict={selected.ConflictRatio:F3}; score={selected.NetScore:F3}",
+            StrategyVersion = "wpe-local-deterministic-v1"
+        };
+        var audit = JsonSerializer.Serialize(new { provider = Name, decision.Action, decision.Instrument, decision.Confidence, decision.Reason });
+        return Task.FromResult(new BrainDecisionResult(decision, audit, audit));
+    }
+}
+
 public sealed class HttpBrainProvider : IBrainProvider
 {
     private readonly HttpClient _http; private readonly BrainSlot _slot; private readonly string _key; public string Name=>_slot.Provider;
