@@ -39,8 +39,10 @@ public sealed class StrategyResearchAgent
         }
 
         var snapshot = await _database.GetStrategySnapshotAsync(ct);
-        await _database.SetStateAsync("strategy-research:last-run", JsonSerializer.Serialize(new { snapshot, NewsFeatures = news.Count, validated }), ct);
-        return snapshot with { Status = "LOCAL_RESEARCH_COMPLETE", LastRunAtUtc = DateTime.UtcNow, LastMessage = $"validated={validated}; news_features={news.Count}" };
+        var completedAt = DateTime.UtcNow;
+        var completed = snapshot with { Status = "LOCAL_RESEARCH_COMPLETE", LastRunAtUtc = completedAt, LastMessage = $"validated={validated}; news_features={news.Count}" };
+        await _database.SetStateAsync("strategy-research:last-run", JsonSerializer.Serialize(new { snapshot = completed, NewsFeatures = news.Count, validated }), ct);
+        return completed;
     }
 
     public async Task<StrategyResearchSnapshot> ObserveAsync(EvidencePack evidence, CancellationToken ct)
