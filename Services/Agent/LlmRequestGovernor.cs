@@ -13,7 +13,7 @@ public sealed record LlmUsagePolicy(int DailyCallLimit = 100, int DailyTokenLimi
     public TimeSpan EffectiveCacheTtl => CacheTtl ?? TimeSpan.FromMinutes(15);
 }
 
-public sealed record LlmCallAudit(DateTime AtUtc, string Provider, string Model, string Purpose, string PromptHash, bool CacheHit, bool Allowed, int EstimatedInputTokens, int EstimatedOutputTokens, decimal EstimatedCostUsd, long DurationMs, string Outcome);
+public sealed record LlmCallAudit(DateTime AtUtc, string Provider, string Model, string Purpose, string PromptHash, bool CacheHit, bool Allowed, int EstimatedInputTokens, int EstimatedOutputTokens, decimal EstimatedCostUsd, long DurationMs, string Outcome, string AgentId = "core", string ToolId = "assistant");
 public sealed record LlmUsageSnapshot(int Calls, int Tokens, decimal CostUsd, int CacheHits, int BudgetBlocks, string TopProvider, string TopPurpose);
 
 /// <summary>Mandatory boundary for every optional remote assistant request.</summary>
@@ -25,6 +25,7 @@ public sealed class LlmRequestGovernor
     private readonly SemaphoreSlim _requestLock = new(1, 1);
     private readonly LlmUsagePolicy _policy;
     private readonly string _auditPath;
+    private readonly string _cachePath;
     private DateTime _snapshotAtUtc;
     private LlmUsageSnapshot _snapshot = new(0, 0, 0, 0, 0, "LOCAL", "NONE");
     public static LlmRequestGovernor Shared { get; } = new();
@@ -33,6 +34,8 @@ public sealed class LlmRequestGovernor
     {
         _policy = policy ?? new LlmUsagePolicy();
         _auditPath = auditPath ?? AppDataPaths.File("llm-calls.jsonl");
+        _cachePath = Path.Combine(Path.GetDirectoryName(_auditPath)!, "llm-cache.jsonl");
+        LoadPersistentCache();
     }
 
     public LlmUsageSnapshot GetTodaySnapshot()
@@ -46,7 +49,7 @@ public sealed class LlmRequestGovernor
         return _snapshot;
     }
 
-    public async Task<HttpResponseMessage> SendAsync(string provider, string model, string purpose, string prompt, Func<CancellationToken, Task<HttpResponseMessage>> send, CancellationToken ct)
+    public async Task<HttpResponseMessage> SendAsync(string provider, string model, string purpose, string prompt, Func<CancellationToken, Task<HttpResponseMessage>> send, CancellationToken ct, string agentId = "core", string toolId = "assistant")
     {
         await _requestLock.WaitAsync(ct);
         try
@@ -56,7 +59,7 @@ public sealed class LlmRequestGovernor
         var inputTokens = EstimateTokens(prompt);
         if (_cache.TryGetValue(key, out var cached) && cached.ExpiresAtUtc > DateTime.UtcNow)
         {
-            await AuditAsync(new(DateTime.UtcNow, provider, model, purpose, hash, true, true, inputTokens, EstimateTokens(cached.Body), 0, 0, "CACHE_HIT"), ct);
+            await AuditAsync(new(DateTime.UtcNow, provider, model, purpose, hash, true, true, inputTokens, EstimateTokens(cached.Body), 0, 0, "CACHE_HIT", agentId, toolId), ct);
             return JsonResponse(cached.Body);
         }
 
@@ -64,7 +67,7 @@ public sealed class LlmRequestGovernor
         var estimatedCost = EstimateCost(inputTokens, 0);
         if (today.Calls >= _policy.DailyCallLimit || today.Tokens + inputTokens > _policy.DailyTokenLimit || today.Cost + estimatedCost > _policy.DailyCostLimitUsd)
         {
-            await AuditAsync(new(DateTime.UtcNow, provider, model, purpose, hash, false, false, inputTokens, 0, 0, 0, "DAILY_BUDGET_BLOCKED"), ct);
+            await AuditAsync(new(DateTime.UtcNow, provider, model, purpose, hash, false, false, inputTokens, 0, 0, 0, "DAILY_BUDGET_BLOCKED", agentId, toolId), ct);
             throw new InvalidOperationException("Remote assistant daily budget reached; WPE remains in local deterministic mode.");
         }
 
@@ -74,8 +77,13 @@ public sealed class LlmRequestGovernor
         var outputTokens = EstimateTokens(body);
         var cost = EstimateCost(inputTokens, outputTokens);
         var outcome = $"HTTP_{(int)response.StatusCode}";
-        await AuditAsync(new(DateTime.UtcNow, provider, model, purpose, hash, false, true, inputTokens, outputTokens, cost, started.ElapsedMilliseconds, outcome), ct);
-        if (response.IsSuccessStatusCode) _cache[key] = new(body, DateTime.UtcNow.Add(_policy.EffectiveCacheTtl));
+        await AuditAsync(new(DateTime.UtcNow, provider, model, purpose, hash, false, true, inputTokens, outputTokens, cost, started.ElapsedMilliseconds, outcome, agentId, toolId), ct);
+        if (response.IsSuccessStatusCode)
+        {
+            var entry = new CacheEntry(body, DateTime.UtcNow.Add(_policy.EffectiveCacheTtl));
+            _cache[key] = entry;
+            await PersistCacheAsync(key, entry, ct);
+        }
         return JsonResponse(body, response.StatusCode);
         }
         finally { _requestLock.Release(); }
@@ -99,6 +107,33 @@ public sealed class LlmRequestGovernor
         try { await File.AppendAllTextAsync(_auditPath, JsonSerializer.Serialize(row) + Environment.NewLine, ct); }
         finally { _auditLock.Release(); }
     }
+
+    private void LoadPersistentCache()
+    {
+        try
+        {
+            if (!File.Exists(_cachePath)) return;
+            foreach (var line in File.ReadLines(_cachePath))
+            {
+                var row = JsonSerializer.Deserialize<PersistedCache>(line);
+                if (row is not null && row.ExpiresAtUtc > DateTime.UtcNow) _cache[row.Key] = new(row.Body, row.ExpiresAtUtc);
+            }
+        }
+        catch { /* a corrupt cache must never prevent local-mode startup */ }
+    }
+
+    private async Task PersistCacheAsync(string key, CacheEntry entry, CancellationToken ct)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_cachePath)!);
+            var line = JsonSerializer.Serialize(new PersistedCache(key, entry.Body, entry.ExpiresAtUtc)) + Environment.NewLine;
+            await File.AppendAllTextAsync(_cachePath, line, ct);
+        }
+        catch { /* caching is an optimization; request success must not depend on disk */ }
+    }
+
+    private sealed record PersistedCache(string Key, string Body, DateTime ExpiresAtUtc);
 
     private static int EstimateTokens(string value) => Math.Max(1, (value?.Length ?? 0) / 4);
     private static decimal EstimateCost(int input, int output) => input / 1_000_000m * 1m + output / 1_000_000m * 4m;

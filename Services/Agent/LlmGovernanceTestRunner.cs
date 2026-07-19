@@ -23,10 +23,13 @@ public static class LlmGovernanceTestRunner
             using var first = await governor.SendAsync("fake", "test-model", "summary", "same prompt", Send, default);
             using var cached = await governor.SendAsync("fake", "test-model", "summary", "same prompt", Send, default);
             Check("相同 Prompt 命中缓存", sends == 1);
+            var restarted = new LlmRequestGovernor(new LlmUsagePolicy(10, 1000, 1m, TimeSpan.FromMinutes(5)), audit);
+            using var afterRestart = await restarted.SendAsync("fake", "test-model", "summary", "same prompt", Send, default);
+            Check("persistent cache survives a new governor instance", sends == 1);
             var blocked = false; try { using var denied = await governor.SendAsync("fake", "test-model", "summary", "different prompt", Send, default); } catch (InvalidOperationException) { blocked = true; }
             Check("达到每日调用预算后自动拒绝", blocked && sends == 1);
             var rows = File.ReadAllLines(audit).Select(x => JsonSerializer.Deserialize<LlmCallAudit>(x)).Where(x => x is not null).ToArray();
-            Check("请求、缓存和拒绝均有审计", rows.Length == 3 && rows.Any(x => x!.CacheHit) && rows.Any(x => !x!.Allowed));
+            Check("请求、缓存和拒绝均有审计", rows.Length == 4 && rows.Any(x => x!.CacheHit) && rows.Any(x => !x!.Allowed));
             Check("审计不保存完整 Prompt", File.ReadAllText(audit).IndexOf("same prompt", StringComparison.Ordinal) < 0);
         }
         catch (Exception ex) { success = false; cases.Add("FAIL " + ex); }
