@@ -24,6 +24,9 @@ public static class ArchitectureTestRunner
                 Require(ids.Contains("openai") && ids.Contains("claude") && ids.Contains("gemini") && ids.Contains("deepseek") && ids.Contains("ollama") && ids.Contains("custom"), "required assistant adapters missing");
                 var local = AssistantProviderFactory.Create(null, null, false);
                 Require(local.IsLocal && local is DeterministicBrainProvider, "disabled remote assistant did not fall back to local deterministic provider");
+                Require(AssistantProtocolAdapterFactory.Create("OpenAI") is OpenAiCompatibleAdapter, "OpenAI protocol adapter mismatch");
+                Require(AssistantProtocolAdapterFactory.Create("Anthropic Claude") is AnthropicMessagesAdapter, "Anthropic protocol adapter mismatch");
+                Require(AssistantProtocolAdapterFactory.Create("Google Gemini") is GeminiGenerativeAdapter, "Gemini protocol adapter mismatch");
                 return $"{AssistantAdapterCatalog.All.Count} adapters registered; remote disabled fallback is local";
             });
             Run(cases, "状态图拒绝越级执行", () =>
