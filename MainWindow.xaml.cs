@@ -198,7 +198,9 @@ public partial class MainWindow : Window
         UserStatusText.Text=I18n.T("Access.UserOnline",string.IsNullOrWhiteSpace(state.LoggedInUser)?_user:state.LoggedInUser);
         ExchangeStatusText.Text=I18n.T(state.ExchangeConnected?"Access.BinanceConnected":"Access.BinanceOffline");ExchangeStatusText.Foreground=state.ExchangeConnected?_green:_red;
         PermissionStatusText.Text=I18n.T(state.ApiTradePermission?"Access.PermissionReady":"Access.PermissionBlocked");PermissionStatusText.Foreground=state.ApiTradePermission?_green:_red;
-        RiskReadyStatusText.Text=I18n.T(state.RiskReady?"Access.RiskReady":"Access.RiskBlocked");RiskReadyStatusText.Foreground=state.RiskReady?_green:_red;
+         RiskReadyStatusText.Text=I18n.T(state.RiskReady?"Access.RiskReady":"Access.RiskBlocked");RiskReadyStatusText.Foreground=state.RiskReady?_green:_red;
+         var runtimeHealthy=running&&state.RuntimeHeartbeatAtUtc is not null&&DateTime.UtcNow-state.RuntimeHeartbeatAtUtc<TimeSpan.FromSeconds(15);
+         RuntimeStatusText.Text=I18n.T(runtimeHealthy?"Status.RuntimeHealthy":running?"Status.RuntimeDegraded":"Status.RuntimeStandby");RuntimeStatusText.Foreground=runtimeHealthy?_green:running?_red:_orange;RuntimeDot.Fill=RuntimeStatusText.Foreground;RuntimeStatusText.ToolTip=$"Run {ShortId(state.RuntimeRunId)} · {state.RuntimeRecoveryStatus} · #{state.RuntimeEventSequence}";
         StageText.Text = " " + I18n.T(state.SkillStageKey);
         LastDecisionText.Text = " " + state.LastDecision.ToUpperInvariant();
         LastDecisionText.Foreground = state.LastDecision.Contains("Open", StringComparison.OrdinalIgnoreCase) ? _green : _orange;
@@ -314,6 +316,7 @@ public partial class MainWindow : Window
     }
 
     private static string AuditStatus(string status)=>I18n.T("Audit.Status."+status);
+    private static string ShortId(string value)=>string.IsNullOrWhiteSpace(value)?"--":value[..Math.Min(8,value.Length)];
 
     private static string ReadLogTail()
     {

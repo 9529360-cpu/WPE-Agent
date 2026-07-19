@@ -135,6 +135,7 @@ public sealed class AgentSkillRegistry
         new("PositionManagement","Manage","positions and market","close/adjust intents","read:position,write:intent",8,1,true,"position state reconciled"),
         new("ReliableOrderExecutor","Act","approved intent","confirmed order lifecycle","testnet:trade",20,1,true,"idempotency and exchange confirmation"),
         new("ProtectionRecovery","Recover","positions, orders, intents","RecoveryResult","testnet:trade,write:state",20,1,true,"every position protected"),
+        new("ProtectionAudit","Recover","positions, orders and persisted intents","RecoveryResult","testnet:trade,write:state",20,1,true,"position protection reconciled"),
         new("DecisionMemory","Memory","decision audit","compressed memory","write:local-db",5,1,false,"database writable"),
         new("ExperienceReplay","Reflect","trade outcomes","strategy performance","read:local-db",8,0,false,"bounded sample window"),
         new("RuntimeMonitor","Monitor","skill and error events","health status","read:telemetry",3,0,false,"recent heartbeat"),

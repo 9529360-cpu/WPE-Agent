@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.IO;
 using 币安量化机器人.Services;
+using 币安量化机器人.Core.Runtime;
 
 namespace 币安量化机器人.Services.Agent;
 
@@ -34,6 +35,15 @@ public sealed class AgentSqliteStore
     CREATE TABLE IF NOT EXISTS historical_candles(symbol TEXT NOT NULL,interval TEXT NOT NULL,open_time TEXT NOT NULL,open TEXT,high TEXT,low TEXT,close TEXT,volume TEXT,quote_volume TEXT,trades INTEGER,taker_buy_volume TEXT,PRIMARY KEY(symbol,interval,open_time));
     CREATE INDEX IF NOT EXISTS ix_historical_symbol_time ON historical_candles(symbol,interval,open_time);
     CREATE TABLE IF NOT EXISTS portfolio_risk_audits(cycle_id TEXT PRIMARY KEY,created_at TEXT NOT NULL,result_json TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS workflow_runs(run_id TEXT NOT NULL,cycle_id TEXT NOT NULL,status TEXT NOT NULL,current_node TEXT NOT NULL,state_json TEXT NOT NULL,started_at TEXT NOT NULL,updated_at TEXT NOT NULL,error TEXT,PRIMARY KEY(run_id,cycle_id));
+    CREATE INDEX IF NOT EXISTS ix_workflow_runs_status ON workflow_runs(status,updated_at);
+    CREATE TABLE IF NOT EXISTS workflow_checkpoints(id INTEGER PRIMARY KEY AUTOINCREMENT,run_id TEXT NOT NULL,cycle_id TEXT NOT NULL,node TEXT NOT NULL,phase TEXT NOT NULL,attempt INTEGER NOT NULL,state_json TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(run_id,cycle_id,node,phase,attempt));
+    CREATE INDEX IF NOT EXISTS ix_workflow_checkpoints_cycle ON workflow_checkpoints(run_id,cycle_id,id);
+    CREATE TABLE IF NOT EXISTS runtime_events(event_id TEXT PRIMARY KEY,sequence INTEGER NOT NULL,correlation_id TEXT NOT NULL,causation_id TEXT,event_type TEXT NOT NULL,source TEXT NOT NULL,payload_json TEXT NOT NULL,occurred_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS ix_runtime_events_correlation ON runtime_events(correlation_id,sequence);
+    CREATE TABLE IF NOT EXISTS runtime_leases(name TEXT PRIMARY KEY,owner_id TEXT NOT NULL,expires_at TEXT NOT NULL,heartbeat_at TEXT NOT NULL);
+    INSERT OR IGNORE INTO workflow_runs(run_id,cycle_id,status,current_node,state_json,started_at,updated_at,error)
+        SELECT 'legacy',id,'RUNNING','Observation','{}',started_at,started_at,'Migrated from pre-checkpoint runtime' FROM cycles WHERE status='RUNNING';
     """;q.ExecuteNonQuery();}
     public async Task StartCycleAsync(string id,EvidencePack e,string brain,CancellationToken ct){await Exec("INSERT OR REPLACE INTO cycles(id,started_at,status,completeness,evidence_json,brain) VALUES($i,$t,'RUNNING',$c,$e,$b)",ct,("$i",id),("$t",DateTime.UtcNow.ToString("O")),("$c",e.Completeness),("$e",JsonSerializer.Serialize(e)),("$b",brain));}
     public async Task CompleteCycleAsync(string id,DecisionPlan d,string risk,string? request,string? response,CancellationToken ct){await Exec("UPDATE cycles SET completed_at=$t,status='COMPLETED',decision_json=$d,risk_result=$r,brain_request=$q,brain_response=$b WHERE id=$i",ct,("$i",id),("$t",DateTime.UtcNow.ToString("O")),("$d",JsonSerializer.Serialize(d)),("$r",risk),("$q",request??""),("$b",response??""));}
@@ -119,5 +129,34 @@ public sealed class AgentSqliteStore
         var count=0;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT decision_json FROM cycles WHERE status='COMPLETED' ORDER BY completed_at DESC LIMIT 20";await using var r=await q.ExecuteReaderAsync(ct);
         while(await r.ReadAsync(ct)){try{var d=JsonSerializer.Deserialize<DecisionPlan>(r.GetString(0));if(d?.Action!=DecisionAction.Hold)break;count++;}catch(JsonException){break;}}return count;
     }
+    public Task BeginWorkflowRunAsync(string runId,string cycleId,string stateJson,CancellationToken ct)=>Exec("INSERT INTO workflow_runs(run_id,cycle_id,status,current_node,state_json,started_at,updated_at) VALUES($r,$c,'RUNNING',$n,$s,$t,$t)",ct,("$r",runId),("$c",cycleId),("$n",WorkflowNode.Observation.ToString()),("$s",stateJson),("$t",DateTime.UtcNow.ToString("O")));
+    public async Task SaveWorkflowCheckpointAsync(WorkflowCheckpoint checkpoint,CancellationToken ct)
+    {
+        await Exec("INSERT OR REPLACE INTO workflow_checkpoints(run_id,cycle_id,node,phase,attempt,state_json,created_at) VALUES($r,$c,$n,$p,$a,$s,$t)",ct,("$r",checkpoint.RunId),("$c",checkpoint.CycleId),("$n",checkpoint.Node.ToString()),("$p",checkpoint.Phase.ToString()),("$a",checkpoint.Attempt),("$s",checkpoint.StateJson),("$t",checkpoint.CreatedAtUtc.ToString("O")));
+        await Exec("UPDATE workflow_runs SET current_node=$n,state_json=$s,updated_at=$t WHERE run_id=$r AND cycle_id=$c",ct,("$r",checkpoint.RunId),("$c",checkpoint.CycleId),("$n",checkpoint.Node.ToString()),("$s",checkpoint.StateJson),("$t",checkpoint.CreatedAtUtc.ToString("O")));
+    }
+    public Task CompleteWorkflowRunAsync(string runId,string cycleId,string status,string? error,CancellationToken ct)=>Exec("UPDATE workflow_runs SET status=$s,updated_at=$t,error=$e WHERE run_id=$r AND cycle_id=$c",ct,("$r",runId),("$c",cycleId),("$s",status),("$t",DateTime.UtcNow.ToString("O")),("$e",error));
+    public async Task<IReadOnlyList<WorkflowRecovery>> GetInterruptedWorkflowsAsync(CancellationToken ct)
+    {
+        var list=new List<WorkflowRecovery>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT run_id,cycle_id,current_node,state_json,updated_at FROM workflow_runs WHERE status IN ('RUNNING','RECOVERY_PENDING') ORDER BY updated_at";await using var r=await q.ExecuteReaderAsync(ct);
+        while(await r.ReadAsync(ct)){var node=Enum.TryParse<WorkflowNode>(r.GetString(2),true,out var parsed)?parsed:WorkflowNode.Observation;list.Add(new(r.GetString(0),r.GetString(1),node,CheckpointPhase.Entered,r.GetString(3),DateTime.Parse(r.GetString(4),null,DateTimeStyles.RoundtripKind),node==WorkflowNode.Execution?"RECONCILE_EXECUTION":"RESTART_OBSERVATION"));}return list;
+    }
+    public async Task MarkWorkflowRecoveredAsync(WorkflowRecovery recovery,string action,CancellationToken ct)
+    {
+        var state=JsonSerializer.Serialize(new{recovery.LastNode,action,recoveredAtUtc=DateTime.UtcNow});
+        await SaveWorkflowCheckpointAsync(new(recovery.RunId,recovery.CycleId,recovery.LastNode,CheckpointPhase.Recovered,state,DateTime.UtcNow),ct);
+        await CompleteWorkflowRunAsync(recovery.RunId,recovery.CycleId,"RECOVERED",action,ct);
+        await Exec("UPDATE cycles SET completed_at=$t,status='RECOVERED',risk_result=$a WHERE id=$c AND status='RUNNING'",ct,("$c",recovery.CycleId),("$t",DateTime.UtcNow.ToString("O")),("$a",action));
+    }
+    public Task RecordRuntimeEventAsync(AgentRuntimeEvent value,CancellationToken ct)=>Exec("INSERT OR IGNORE INTO runtime_events(event_id,sequence,correlation_id,causation_id,event_type,source,payload_json,occurred_at) VALUES($i,$q,$c,$a,$e,$s,$p,$t)",ct,("$i",value.EventId),("$q",value.Sequence),("$c",value.CorrelationId),("$a",value.CausationId),("$e",value.EventType),("$s",value.Source),("$p",value.PayloadJson),("$t",value.OccurredAtUtc.ToString("O")));
+    public async Task<bool> TryAcquireRuntimeLeaseAsync(string name,string ownerId,TimeSpan ttl,CancellationToken ct)
+    {
+        var now=DateTime.UtcNow;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="INSERT INTO runtime_leases(name,owner_id,expires_at,heartbeat_at) VALUES($n,$o,$e,$h) ON CONFLICT(name) DO UPDATE SET owner_id=excluded.owner_id,expires_at=excluded.expires_at,heartbeat_at=excluded.heartbeat_at WHERE runtime_leases.owner_id=$o OR runtime_leases.expires_at<$h; SELECT changes();";q.Parameters.AddWithValue("$n",name);q.Parameters.AddWithValue("$o",ownerId);q.Parameters.AddWithValue("$e",now.Add(ttl).ToString("O"));q.Parameters.AddWithValue("$h",now.ToString("O"));return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)>0;
+    }
+    public async Task<bool> RenewRuntimeLeaseAsync(string name,string ownerId,TimeSpan ttl,CancellationToken ct)
+    {
+        var now=DateTime.UtcNow;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="UPDATE runtime_leases SET expires_at=$e,heartbeat_at=$h WHERE name=$n AND owner_id=$o; SELECT changes();";q.Parameters.AddWithValue("$n",name);q.Parameters.AddWithValue("$o",ownerId);q.Parameters.AddWithValue("$e",now.Add(ttl).ToString("O"));q.Parameters.AddWithValue("$h",now.ToString("O"));return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)>0;
+    }
+    public Task ReleaseRuntimeLeaseAsync(string name,string ownerId,CancellationToken ct)=>Exec("DELETE FROM runtime_leases WHERE name=$n AND owner_id=$o",ct,("$n",name),("$o",ownerId));
     private async Task Exec(string sql,CancellationToken ct,params (string,object?)[] args){await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText=sql;foreach(var a in args)q.Parameters.AddWithValue(a.Item1,a.Item2??DBNull.Value);await q.ExecuteNonQueryAsync(ct);}
 }

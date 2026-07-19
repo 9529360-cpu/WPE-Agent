@@ -41,6 +41,7 @@
                     <Border Style="{StaticResource StatusPill}"><StackPanel Orientation="Horizontal"><Ellipse Width="7" Height="7" Fill="#35E6A0" Margin="0,0,7,0"/><TextBlock x:Name="BrainStatusText" Text="{DynamicResource Status.BrainReady}" FontSize="11"/></StackPanel></Border>
                     <Border Style="{StaticResource StatusPill}"><StackPanel Orientation="Horizontal"><Ellipse Width="7" Height="7" Fill="#18D8F2" Margin="0,0,7,0"/><TextBlock Text="{DynamicResource Status.Testnet}" FontSize="11"/></StackPanel></Border>
                     <Border Style="{StaticResource StatusPill}"><StackPanel Orientation="Horizontal"><Ellipse Width="7" Height="7" Fill="#35E6A0" Margin="0,0,7,0"/><TextBlock Text="{DynamicResource Status.MemoryLoaded}" FontSize="11"/></StackPanel></Border>
+                    <Border Style="{StaticResource StatusPill}"><StackPanel Orientation="Horizontal"><Ellipse x:Name="RuntimeDot" Width="7" Height="7" Fill="#FFAA4C" Margin="0,0,7,0"/><TextBlock x:Name="RuntimeStatusText" Text="{DynamicResource Status.RuntimeStandby}" FontSize="11"/></StackPanel></Border>
                     <Border Style="{StaticResource StatusPill}"><TextBlock Text="{DynamicResource Status.SkillsOnline}" FontSize="11" Foreground="#8BCDE2"/></Border>
                     <Border Style="{StaticResource StatusPill}"><TextBlock x:Name="UserStatusText" FontSize="11" Foreground="#8BCDE2"/></Border>
                     <Border Style="{StaticResource StatusPill}"><TextBlock x:Name="ExchangeStatusText" FontSize="11"/></Border>

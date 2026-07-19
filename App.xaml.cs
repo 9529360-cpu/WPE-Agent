@@ -62,6 +62,15 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
+        if (e.Args.Any(x => string.Equals(x, "--architecture-test", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await ArchitectureTestRunner.RunAsync();
+            Log.Information("Runtime architecture tests completed. Success={Success}; Report={Report}",result.Success,result.ReportPath);
+            Shutdown(result.Success?0:14);
+            return;
+        }
+
         // Configure dependency injection
         var services = new ServiceCollection();
         ServiceProvider = ServiceConfiguration.ConfigureServices(services);

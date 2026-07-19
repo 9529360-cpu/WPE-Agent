@@ -103,6 +103,10 @@ public class SystemState
     public bool ApiTradePermission { get; set; }
     public bool RiskReady { get; set; }
     public DateTime? LastAccessCheckAtUtc { get; set; }
+    public string RuntimeRunId { get; set; } = string.Empty;
+    public DateTime? RuntimeHeartbeatAtUtc { get; set; }
+    public string RuntimeRecoveryStatus { get; set; } = "NOT_STARTED";
+    public long RuntimeEventSequence { get; set; }
 }
 
 
