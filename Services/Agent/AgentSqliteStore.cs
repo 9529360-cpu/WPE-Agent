@@ -178,6 +178,11 @@ public sealed class AgentSqliteStore
     {
         var list=new List<string>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT completed_at,'DECISION' AS source,COALESCE(decision_json,risk_result,error,'') AS content FROM cycles WHERE completed_at IS NOT NULL UNION ALL SELECT occurred_at,'STRATEGY_LIFECYCLE',reason FROM strategy_lifecycle_events UNION ALL SELECT collected_at,'NEWS',title||' · '||body_summary FROM news_documents ORDER BY completed_at DESC LIMIT $l";q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,300));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var content=r.IsDBNull(2)?string.Empty:r.GetString(2);if(content.Length>260)content=content[..260]+"...";list.Add($"{r.GetString(0)}  [{r.GetString(1)}]\n{content}");}return list;
     }
+    public async Task<IReadOnlyList<string>> GetMemoryExplorerAsync(int limit,string? filter,CancellationToken ct)
+    {
+        var all=await GetMemoryExplorerAsync(Math.Clamp(limit,1,300),ct);var value=(filter??string.Empty).Trim();
+        return value.Length==0?all:all.Where(x=>x.Contains(value,StringComparison.OrdinalIgnoreCase)).ToArray();
+    }
     public async Task<bool> TryAcquireRuntimeLeaseAsync(string name,string ownerId,TimeSpan ttl,CancellationToken ct)
     {
         var now=DateTime.UtcNow;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="INSERT INTO runtime_leases(name,owner_id,expires_at,heartbeat_at) VALUES($n,$o,$e,$h) ON CONFLICT(name) DO UPDATE SET owner_id=excluded.owner_id,expires_at=excluded.expires_at,heartbeat_at=excluded.heartbeat_at WHERE runtime_leases.owner_id=$o OR runtime_leases.expires_at<$h; SELECT changes();";q.Parameters.AddWithValue("$n",name);q.Parameters.AddWithValue("$o",ownerId);q.Parameters.AddWithValue("$e",now.Add(ttl).ToString("O"));q.Parameters.AddWithValue("$h",now.ToString("O"));return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)>0;

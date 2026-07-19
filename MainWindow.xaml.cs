@@ -400,7 +400,8 @@ public partial class MainWindow : Window
         }
         DashboardPage.Visibility = Visibility.Collapsed;
         SecondaryPage.Visibility = Visibility.Visible;
-        EventFilters.Visibility = tag == "LOGS" ? Visibility.Visible : Visibility.Collapsed;
+        EventFilters.Visibility = tag is "LOGS" or "BRAIN" ? Visibility.Visible : Visibility.Collapsed;
+        EventFilterBox.Text = string.Empty;
         var state = ServiceLocator.SystemState;
         var memory = tag == "BRAIN" ? await new AgentSqliteStore().GetMemoryExplorerAsync(40, CancellationToken.None) : Array.Empty<string>();
         (SecondaryTitle.Text, SecondarySubtitle.Text, SecondaryContent.Text) = tag switch
@@ -432,11 +433,13 @@ public partial class MainWindow : Window
     private async void EventRefresh_Click(object sender, RoutedEventArgs e)
     {
         if (_activePage == "LOGS") SecondaryContent.Text = await ReadRuntimeEventsAsync(EventFilterBox.Text);
+        else if (_activePage == "BRAIN") SecondaryContent.Text = await ReadMemoryAsync(EventFilterBox.Text);
     }
 
     private async void EventFilter_Changed(object sender, TextChangedEventArgs e)
     {
-        if (_activePage == "LOGS" && IsLoaded) SecondaryContent.Text = await ReadRuntimeEventsAsync(EventFilterBox.Text);
+        if (IsLoaded && _activePage == "LOGS") SecondaryContent.Text = await ReadRuntimeEventsAsync(EventFilterBox.Text);
+        else if (IsLoaded && _activePage == "BRAIN") SecondaryContent.Text = await ReadMemoryAsync(EventFilterBox.Text);
     }
 
     private static async Task<string> ReadRuntimeEventsAsync(string? filter = null)
@@ -449,6 +452,16 @@ public partial class MainWindow : Window
             return timeline.Count == 0 ? output : $"WORKFLOW TIMELINE\n{string.Join(Environment.NewLine + Environment.NewLine, timeline)}\n\nRUNTIME EVENTS\n{output}";
         }
         catch { return ReadLogTail(); }
+    }
+
+    private static async Task<string> ReadMemoryAsync(string? filter)
+    {
+        try
+        {
+            var memory = await new AgentSqliteStore().GetMemoryExplorerAsync(80, filter, CancellationToken.None);
+            return memory.Count == 0 ? I18n.T("Log.Empty") : "MEMORY EXPLORER\n" + string.Join(Environment.NewLine + Environment.NewLine, memory);
+        }
+        catch { return I18n.T("Log.Empty"); }
     }
 
     private void Card_MouseDown(object sender, MouseButtonEventArgs e) { _dragStart = e.GetPosition(null); _dragCard = sender as Border; }
