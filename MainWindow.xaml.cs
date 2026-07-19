@@ -304,7 +304,8 @@ public partial class MainWindow : Window
         WorkflowStateText.Text = state.WorkflowNode == "IDLE" ? I18n.T("Workflow.Idle") : state.WorkflowNode;
         var llm = LlmRequestGovernor.Shared.GetTodaySnapshot();
         LlmModeText.Text = llm.Calls == 0 ? "LOCAL" : llm.TopProvider.ToUpperInvariant();
-        LlmModeText.ToolTip = $"Provider: {llm.TopProvider}\nTop purpose: {llm.TopPurpose}\nCalls: {llm.Calls:N0}\nTokens: {llm.Tokens:N0}\nCost: ${llm.CostUsd:0.00}";
+        var breakdown = LlmRequestGovernor.Shared.GetTodayBreakdown();
+        LlmModeText.ToolTip = $"Provider: {llm.TopProvider}\nTop purpose: {llm.TopPurpose}\nCalls: {llm.Calls:N0}\nTokens: {llm.Tokens:N0}\nCost: ${llm.CostUsd:0.00}\nTop agent: {breakdown.TopAgent} ({breakdown.TopAgentCalls:N0})\nTop tool: {breakdown.TopTool} ({breakdown.TopToolCalls:N0})";
         LlmModeText.Foreground = llm.BudgetBlocks > 0 ? _red : _green;
         LlmCallsText.Text = llm.Calls.ToString("N0", I18n.Culture);
         LlmTokensText.Text = llm.Tokens.ToString("N0", I18n.Culture);

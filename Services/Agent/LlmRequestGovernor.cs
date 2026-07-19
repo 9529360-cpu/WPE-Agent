@@ -15,6 +15,7 @@ public sealed record LlmUsagePolicy(int DailyCallLimit = 100, int DailyTokenLimi
 
 public sealed record LlmCallAudit(DateTime AtUtc, string Provider, string Model, string Purpose, string PromptHash, bool CacheHit, bool Allowed, int EstimatedInputTokens, int EstimatedOutputTokens, decimal EstimatedCostUsd, long DurationMs, string Outcome, string AgentId = "core", string ToolId = "assistant");
 public sealed record LlmUsageSnapshot(int Calls, int Tokens, decimal CostUsd, int CacheHits, int BudgetBlocks, string TopProvider, string TopPurpose);
+public sealed record LlmUsageBreakdown(string TopAgent, int TopAgentCalls, string TopTool, int TopToolCalls);
 
 /// <summary>Mandatory boundary for every optional remote assistant request.</summary>
 public sealed class LlmRequestGovernor
@@ -47,6 +48,20 @@ public sealed class LlmRequestGovernor
         _snapshot = new(billable.Length, billable.Sum(x => x.EstimatedInputTokens + x.EstimatedOutputTokens), billable.Sum(x => x.EstimatedCostUsd), rows.Count(x => x.CacheHit), rows.Count(x => !x.Allowed), billable.GroupBy(x => x.Provider).OrderByDescending(x => x.Count()).FirstOrDefault()?.Key ?? "LOCAL", billable.GroupBy(x => x.Purpose).OrderByDescending(x => x.Count()).FirstOrDefault()?.Key ?? "NONE");
         _snapshotAtUtc = DateTime.UtcNow;
         return _snapshot;
+    }
+
+    public LlmUsageBreakdown GetTodayBreakdown()
+    {
+        try
+        {
+            if (!File.Exists(_auditPath)) return new("core", 0, "assistant", 0);
+            var rows = File.ReadLines(_auditPath).Select(line => { try { return JsonSerializer.Deserialize<LlmCallAudit>(line); } catch (JsonException) { return null; } })
+                .Where(x => x is not null && x.AtUtc.Date == DateTime.UtcNow.Date && x.Allowed && !x.CacheHit).Select(x => x!).ToArray();
+            var agent = rows.GroupBy(x => string.IsNullOrWhiteSpace(x.AgentId) ? "core" : x.AgentId).OrderByDescending(x => x.Count()).FirstOrDefault();
+            var tool = rows.GroupBy(x => string.IsNullOrWhiteSpace(x.ToolId) ? "assistant" : x.ToolId).OrderByDescending(x => x.Count()).FirstOrDefault();
+            return new(agent?.Key ?? "core", agent?.Count() ?? 0, tool?.Key ?? "assistant", tool?.Count() ?? 0);
+        }
+        catch { return new("core", 0, "assistant", 0); }
     }
 
     public async Task<HttpResponseMessage> SendAsync(string provider, string model, string purpose, string prompt, Func<CancellationToken, Task<HttpResponseMessage>> send, CancellationToken ct, string agentId = "core", string toolId = "assistant")
