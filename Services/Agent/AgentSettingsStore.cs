@@ -56,6 +56,12 @@ public sealed class AgentSettingsStore
         settings.Risk.MaximumSlippageBps=Math.Clamp(settings.Risk.MaximumSlippageBps,2,50);
         settings.Risk.MinimumRiskReward=Math.Clamp(settings.Risk.MinimumRiskReward,1.2,4.0);
         settings.Risk.ApiFailureThreshold=Math.Clamp(settings.Risk.ApiFailureThreshold,2,10);
+        settings.Risk.MaxPortfolioVaR99=Math.Clamp(settings.Risk.MaxPortfolioVaR99,.005,.10);
+        settings.Risk.MaxPortfolioCVaR99=Math.Clamp(settings.Risk.MaxPortfolioCVaR99,.01,.15);
+        settings.Risk.MaxLargestPositionShare=Math.Clamp(settings.Risk.MaxLargestPositionShare,.30,1);
+        settings.Risk.MaxCorrelatedExposure=Math.Clamp(settings.Risk.MaxCorrelatedExposure,.10,.60);
+        settings.Risk.MinimumHistoricalDays=Math.Clamp(settings.Risk.MinimumHistoricalDays,90,1095);
+        settings.Risk.MinimumBacktestTrades=Math.Clamp(settings.Risk.MinimumBacktestTrades,10,200);
         settings.Risk.MarginTiers=settings.Risk.MarginTiers?.Where(x=>x>0).Select(x=>Math.Min(x,settings.Risk.MaxMargin)).Distinct().OrderBy(x=>x).Take(3).ToArray()??[];if(settings.Risk.MarginTiers.Length==0)settings.Risk.MarginTiers=[.10m,.20m,.35m];
         return settings;
     }

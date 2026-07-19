@@ -39,7 +39,7 @@ public sealed record RiskHistorySnapshot(decimal DailyRealizedPnl,int Consecutiv
 public sealed class IndependentRiskManagerSkill
 {
     public IndependentRiskReview Review(DecisionPlan decision, EvidencePack evidence, MarketDecisionAssessment? assessment,
-        IReadOnlyList<ExecutionIntent> intents, RiskLimits limits, RiskHistorySnapshot history, ResearchValidationResult? research)
+        IReadOnlyList<ExecutionIntent> intents,RiskLimits limits,RiskHistorySnapshot history,ResearchValidationResult? research,PortfolioRiskAssessment? portfolio=null)
     {
         var checks=new List<string>();var blocks=new List<string>();var increasing=DeterministicPlanSkill.IsRiskIncreasing(decision.Action);
         if(!increasing)return new(){Approved=true,RiskLevel="LOW",PlannedQuantity=intents.Sum(x=>x.Quantity),Checks=["risk_reducing_action"],Summary=L("RiskReview.Reducing")};
@@ -55,7 +55,9 @@ public sealed class IndependentRiskManagerSkill
         Check(equity<=0||history.DailyRealizedPnl>-equity*limits.MaxDailyLoss,"daily_loss",L("RiskReview.DailyLoss",history.DailyRealizedPnl));
         Check(history.ApiFailures<limits.ApiFailureThreshold,"api_health",L("RiskReview.ApiFailures",history.ApiFailures));
         Check(!history.OrderStateUncertain,"order_state",L("RiskReview.OrderUncertain"));
-        if(research is{SampleSize:>=200,Trades:>=5})Check(research.Approved&&research.QualityScore>=.45,"research_gate",L("RiskReview.Research",research.QualityScore));
+        Check(research is not null&&research.CoverageDays>=limits.MinimumHistoricalDays,"historical_coverage",L("RiskReview.History",research?.CoverageDays??0,limits.MinimumHistoricalDays));
+        Check(research is{Promoted:true,Approved:true},"research_gate",L("RiskReview.Research",research?.QualityScore??0));
+        Check(portfolio is{Approved:true},"portfolio_risk",L("RiskReview.Portfolio",portfolio?.Summary??"unavailable"));
         var newNotional=intents.Where(x=>!x.ReduceOnly).Sum(x=>x.Quantity*(x.ExpectedPrice>0?x.ExpectedPrice:decision.EntryPrice));var reducedNotional=intents.Where(x=>x.ReduceOnly).Sum(x=>x.Quantity*(x.ExpectedPrice>0?x.ExpectedPrice:decision.EntryPrice));var currentNotional=evidence.Positions.Sum(x=>x.Quantity*x.MarkPrice);var postNotional=Math.Max(0,currentNotional+newNotional-reducedNotional);var exposure=equity>0?postNotional/equity:1;var currentSymbol=evidence.Positions.Where(x=>x.Symbol==decision.Instrument).Sum(x=>x.Quantity*x.MarkPrice);var symbolExposure=equity>0?Math.Max(0,currentSymbol+newNotional-reducedNotional)/equity:1;
         Check(equity>0&&evidence.Account.AvailableBalance>0,"balance",L("RiskReview.Balance"));
         Check(symbolExposure<=limits.MaxSymbolExposure,"symbol_exposure",L("RiskReview.Exposure",symbolExposure,limits.MaxSymbolExposure));
@@ -63,7 +65,7 @@ public sealed class IndependentRiskManagerSkill
         var riskAmount=intents.Sum(x=>x.Quantity*Math.Abs((x.ExpectedPrice>0?x.ExpectedPrice:decision.EntryPrice)-x.StopLoss));
         Check(equity>0&&riskAmount<=equity*limits.MaxRiskPerTrade,"trade_risk",L("RiskReview.TradeRisk",riskAmount,equity*limits.MaxRiskPerTrade));
         var approved=blocks.Count==0;var level=!approved?"BLOCKED":exposure>.20m||riskAmount>equity*.0075m?"ELEVATED":"NORMAL";
-        return new(){Approved=approved,RiskLevel=level,PlannedQuantity=intents.Sum(x=>x.Quantity),RiskAmount=riskAmount,ExposureAfter=exposure,BlockingReasons=blocks,Checks=checks,Summary=approved?L("RiskReview.Approved",level,riskAmount,exposure):L("RiskReview.Blocked",string.Join("; ",blocks))};
+        return new(){Approved=approved,RiskLevel=level,PlannedQuantity=intents.Sum(x=>x.Quantity),RiskAmount=riskAmount,ExposureAfter=portfolio is null?exposure:equity>0?portfolio.GrossExposure/equity:1,BlockingReasons=blocks,Checks=checks,Summary=approved?L("RiskReview.Approved",level,riskAmount,exposure):L("RiskReview.Blocked",string.Join("; ",blocks))};
         void Check(bool condition,string name,string failure){if(condition)checks.Add(name);else blocks.Add(failure);}
     }
     private static string L(string key,params object?[] args)=>LocalizationService.Current.T(key,args);

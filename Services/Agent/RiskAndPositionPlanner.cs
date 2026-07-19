@@ -15,9 +15,6 @@ public sealed class RiskAndPositionPlanner
         if(!e.Markets.TryGetValue(d.Instrument,out var m))return(Array.Empty<ExecutionIntent>(),L("Risk.MarketMissing"));
         if(d.Action==DecisionAction.Hold)return(Array.Empty<ExecutionIntent>(),"HOLD");
 
-        var symbols=e.Positions.Select(x=>x.Symbol).Distinct().ToArray();
-        if(symbols.Length>1&&riskIncreasing)return(Array.Empty<ExecutionIntent>(),L("Risk.MultiAsset"));
-        if(symbols.Length==1&&symbols[0]!=d.Instrument&&riskIncreasing)return(Array.Empty<ExecutionIntent>(),L("Risk.OtherAsset"));
         var positions=e.Positions.Where(x=>x.Symbol==d.Instrument).ToArray();
         var effectiveLeverage=Math.Max(1,Math.Min(limits.Leverage,rule.MaxLeverage));
         var entry=d.EntryPrice>0?d.EntryPrice:m.Price;

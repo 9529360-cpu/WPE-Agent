@@ -88,6 +88,15 @@ public class SystemState
     public string MissingConditions { get; set; } = string.Empty;
     public string DecisionAuditSummary { get; set; } = string.Empty;
     public bool CircuitBreakerActive { get; set; }
+    public string RealtimeStatus { get; set; } = "STOPPED";
+    public int HistoricalCoverageDays { get; set; }
+    public double PortfolioVaR99 { get; set; }
+    public double PortfolioCVaR99 { get; set; }
+    public double PortfolioConcentration { get; set; }
+    public double PortfolioCorrelation { get; set; }
+    public string PortfolioRiskSummary { get; set; } = string.Empty;
+    public int NewsFullTextDocuments { get; set; }
+    public int NewsCorroboratingSources { get; set; }
 }
 
 

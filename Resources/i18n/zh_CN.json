@@ -1,8 +1,9 @@
 {
   "__code": "zh_CN", "__culture": "zh-CN", "__name": "简体中文", "__aiLanguage": "简体中文",
+  "Stage.HistoricalSync":"Research：同步长期历史数据","RiskReview.History":"历史覆盖 {0} 天，低于要求 {1} 天","RiskReview.Portfolio":"组合风险未通过：{0}","Audit.Realtime":"实时行情连接","Audit.FullTextNews":"新闻全文文档","Audit.NewsSources":"最大交叉来源","Audit.HistoricalCoverage":"历史覆盖","Audit.VaR99":"组合 VaR 99%","Audit.CVaR99":"组合 CVaR 99%","Audit.Concentration":"最大集中度","Audit.Correlation":"最大相关性",
   "Format.DateTime": "yyyy-MM-dd HH:mm",
   "App.Title": "WPE // AI 智能体指挥中心", "Brand.Name": "WPE // SENTINEL", "Brand.Subtitle": "AI 交易智能体指挥中心",
-  "Language.Button": "🌐 语言", "Status.AiOnline": "AI 在线", "Status.AiStandby": "AI 待命", "Status.BrainReady": "Brain 就绪", "Status.BrainConnected": "{0} 已连接", "Status.Testnet": "测试网", "Status.MemoryLoaded": "Memory 已加载", "Status.SkillsOnline": "18 个 Skills 在线",
+  "Language.Button": "🌐 语言", "Status.AiOnline": "AI 在线", "Status.AiStandby": "AI 待命", "Status.BrainReady": "Brain 就绪", "Status.BrainConnected": "{0} 已连接", "Status.Testnet": "测试网", "Status.MemoryLoaded": "Memory 已加载", "Status.SkillsOnline": "22 个 Skills 在线",
   "Command.Initialize": "启动智能体", "Command.Running": "运行中", "Command.Pause": "暂停", "Command.Resume": "继续", "Command.Stop": "停止", "Command.EmergencyClose": "紧急平仓",
   "Label.LastDecision": "最近决策", "Label.Market": "市场", "Label.Reflection": "Reflection（反思）", "Label.NextCycle": "下一周期", "Label.Thinking": "Brain 正在思考",
   "Nav.Kicker": "指挥控制台", "Nav.CommandCenter": "◈  智能体指挥中心", "Nav.MarketPulse": "⌁  市场脉冲", "Nav.Positions": "◎  持仓矩阵", "Nav.Risk": "△  风险矩阵", "Nav.BrainMemory": "◉  Brain 与 Memory", "Nav.Events": "≡  事件流",

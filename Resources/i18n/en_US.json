@@ -1,8 +1,9 @@
 {
   "__code": "en_US", "__culture": "en-US", "__name": "English", "__aiLanguage": "English",
+  "Stage.HistoricalSync":"Research: synchronizing long-range history","RiskReview.History":"Historical coverage {0} days is below {1} days","RiskReview.Portfolio":"Portfolio risk rejected: {0}","Audit.Realtime":"REALTIME STREAM","Audit.FullTextNews":"FULL-TEXT NEWS","Audit.NewsSources":"MAX CORROBORATION","Audit.HistoricalCoverage":"HISTORY COVERAGE","Audit.VaR99":"PORTFOLIO VaR 99%","Audit.CVaR99":"PORTFOLIO CVaR 99%","Audit.Concentration":"MAX CONCENTRATION","Audit.Correlation":"MAX CORRELATION",
   "Format.DateTime": "MMM d, yyyy h:mm tt",
   "App.Title": "WPE // AI AGENT COMMAND CENTER", "Brand.Name": "WPE // SENTINEL", "Brand.Subtitle": "AI TRADING AGENT COMMAND CENTER",
-  "Language.Button": "🌐 Language", "Status.AiOnline": "AI ONLINE", "Status.AiStandby": "AI STANDBY", "Status.BrainReady": "BRAIN READY", "Status.BrainConnected": "{0} CONNECTED", "Status.Testnet": "TESTNET", "Status.MemoryLoaded": "MEMORY LOADED", "Status.SkillsOnline": "18 SKILLS ONLINE",
+  "Language.Button": "🌐 Language", "Status.AiOnline": "AI ONLINE", "Status.AiStandby": "AI STANDBY", "Status.BrainReady": "BRAIN READY", "Status.BrainConnected": "{0} CONNECTED", "Status.Testnet": "TESTNET", "Status.MemoryLoaded": "MEMORY LOADED", "Status.SkillsOnline": "22 SKILLS ONLINE",
   "Command.Initialize": "INITIALIZE", "Command.Running": "RUNNING", "Command.Pause": "PAUSE", "Command.Resume": "RESUME", "Command.Stop": "STOP", "Command.EmergencyClose": "EMERGENCY CLOSE",
   "Label.LastDecision": "LAST DECISION", "Label.Market": "MARKET", "Label.Reflection": "REFLECTION", "Label.NextCycle": "NEXT CYCLE", "Label.Thinking": "THINKING",
   "Nav.Kicker": "COMMAND DECK", "Nav.CommandCenter": "◈  COMMAND CENTER", "Nav.MarketPulse": "⌁  MARKET PULSE", "Nav.Positions": "◎  POSITIONS", "Nav.Risk": "△  RISK MATRIX", "Nav.BrainMemory": "◉  BRAIN & MEMORY", "Nav.Events": "≡  EVENT STREAM",

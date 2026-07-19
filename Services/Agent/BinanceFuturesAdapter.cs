@@ -52,6 +52,11 @@ public sealed class BinanceFuturesAdapter : IExchangeAdapter
             DateTimeOffset.FromUnixTimeMilliseconds(k[0].GetInt64()).UtcDateTime,
             Decimal(k[1]),Decimal(k[2]),Decimal(k[3]),Decimal(k[4]),Decimal(k[5]),Decimal(k[7]),k[8].GetInt64(),Decimal(k[9]))).ToArray();
     }
+    public async Task<IReadOnlyList<CandleEvidence>> GetCandlesRangeAsync(string symbol,string interval,DateTime start,DateTime end,int limit,CancellationToken ct)
+    {
+        var query=new Dictionary<string,string?>{{"symbol",symbol},{"interval",interval},{"limit",Math.Clamp(limit,20,1000).ToString(CultureInfo.InvariantCulture)},{"startTime",new DateTimeOffset(start.ToUniversalTime()).ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture)},{"endTime",new DateTimeOffset(end.ToUniversalTime()).ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture)}};
+        using var document=JsonDocument.Parse(await _api.GetPublicRawAsync("/fapi/v1/klines",query,ct));return document.RootElement.EnumerateArray().Select(k=>new CandleEvidence(DateTimeOffset.FromUnixTimeMilliseconds(k[0].GetInt64()).UtcDateTime,Decimal(k[1]),Decimal(k[2]),Decimal(k[3]),Decimal(k[4]),Decimal(k[5]),Decimal(k[7]),k[8].GetInt64(),Decimal(k[9]))).ToArray();
+    }
     public async Task SetLeverageAsync(string symbol,int leverage,CancellationToken ct)=>_ = await _api.PostSignedRawAsync("/fapi/v1/leverage",new Dictionary<string,string?>{{"symbol",symbol},{"leverage",leverage.ToString()}},ct);
     public async Task SetMarginModeAsync(string symbol,bool isolated,CancellationToken ct) { try { _=await _api.PostSignedRawAsync("/fapi/v1/marginType",new Dictionary<string,string?>{{"symbol",symbol},{"marginType",isolated?"ISOLATED":"CROSSED"}},ct); } catch(HttpRequestException ex) when(ex.Message.Contains("400")){} }
     public async Task SetHedgeModeAsync(bool enabled,CancellationToken ct) { try { _=await _api.PostSignedRawAsync("/fapi/v1/positionSide/dual",new Dictionary<string,string?>{{"dualSidePosition",enabled?"true":"false"}},ct); } catch(HttpRequestException ex) when(ex.Message.Contains("400")){} }

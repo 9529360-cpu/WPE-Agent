@@ -27,7 +27,7 @@ public sealed class HttpBrainProvider : IBrainProvider
         var compactEvidence=new
         {
             e.CollectedAt,e.Account,e.Positions,e.Markets,e.MissingSources,e.Completeness,
-            News=e.News.OrderByDescending(x=>x.PublishedAt).Take(12).Select(x=>new{x.Source,x.Title,x.PublishedAt,x.Reliability,x.AffectedAssets})
+            News=e.News.OrderByDescending(x=>x.PublishedAt).Take(12).Select(x=>new{x.Source,x.Title,x.PublishedAt,x.Reliability,x.AffectedAssets,x.Confidence,x.CorroboratingSources,x.EventType,x.IsBreaking,x.Sentiment,BodySummary=x.BodySummary.Length>500?x.BodySummary[..500]+"…":x.BodySummary})
         };
         var prompt=JsonSerializer.Serialize(new{instruction,outputLanguage=LocalizationService.Current.CurrentLanguage.AiLanguage,evidence=compactEvidence,marketAssessments=c.MarketAssessments,context=new{c.BrainName,c.CircuitBreakerActive,c.ActiveSymbol,c.PreviousOutcomes,c.ConsecutiveHolds}});string raw="";
         try{using var r=await BuildAndSend(prompt,ct);raw=await r.Content.ReadAsStringAsync(ct);if(!r.IsSuccessStatusCode)throw new BrainCallException($"{Name} HTTP {(int)r.StatusCode}",prompt,raw);var content=ExtractProviderText(raw);var json=ExtractJson(content);var opt=new JsonSerializerOptions{PropertyNameCaseInsensitive=true};opt.Converters.Add(new JsonStringEnumConverter());opt.Converters.Add(new FlexibleStringListConverter());var decision=JsonSerializer.Deserialize<DecisionPlan>(json,opt)??new DecisionPlan{Reason=LocalizationService.Current.T("Provider.EmptyResponse")};decision.MissingConditions??=[];decision.EvidenceReferences??=[];return new(decision,prompt,raw);}

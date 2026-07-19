@@ -1,42 +1,22 @@
-using System.Net.Http;
-using System.Xml.Linq;
 using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人.Services.Agent;
 
 public sealed class EvidenceCollector
 {
-    private static readonly (string Source,string Url,string Reliability)[] Feeds=
-    [
-        ("SEC","https://www.sec.gov/news/pressreleases.rss","official"),("CFTC","https://www.cftc.gov/RSS/RSSENF.xml","official"),
-        ("CoinDesk","https://www.coindesk.com/arc/outboundfeeds/rss/","mainstream"),("Cointelegraph","https://cointelegraph.com/rss","mainstream")
-    ];
-    private readonly IExchangeAdapter _exchange;private readonly IReadOnlyList<string> _symbols;
-    public EvidenceCollector(IExchangeAdapter exchange,IEnumerable<string>? symbols=null){_exchange=exchange;_symbols=(symbols??["BTCUSDT","ETHUSDT"]).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();}
+    private readonly IExchangeAdapter _exchange;private readonly IReadOnlyList<string> _symbols;private readonly RealTimeMarketHub? _realtime;private readonly NewsResearchService _news;
+    public EvidenceCollector(IExchangeAdapter exchange,IEnumerable<string>? symbols=null,RealTimeMarketHub? realtime=null,NewsResearchService? news=null){_exchange=exchange;_symbols=(symbols??["BTCUSDT","ETHUSDT"]).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();_realtime=realtime;_news=news??new();}
     public async Task<EvidencePack> CollectAsync(CancellationToken ct)
     {
-        var missing=new List<string>();var markets=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase);var news=new List<NewsEvidence>();var successfulNewsSources=0;
+        var missing=new List<string>();var markets=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase);
         var account=await _exchange.GetAccountAsync(ct);var positions=await _exchange.GetPositionsAsync(ct);
-        foreach(var symbol in _symbols)try{markets[symbol]=await _exchange.GetMarketAsync(symbol,ct);}catch{missing.Add(symbol+":market_derivatives");}
-        using var http=new HttpClient{Timeout=TimeSpan.FromSeconds(8)};http.DefaultRequestHeaders.UserAgent.ParseAdd("WPE-Agent/2.0");
-        foreach(var feed in Feeds)try
-        {
-            await using var stream=await http.GetStreamAsync(feed.Url,ct);var doc=await XDocument.LoadAsync(stream,LoadOptions.None,ct);
-            foreach(var item in doc.Descendants().Where(x=>x.Name.LocalName is "item" or "entry").Take(20))
-            {
-                string V(string n)=>item.Elements().FirstOrDefault(x=>x.Name.LocalName==n)?.Value??"";var title=V("title");var link=V("link");
-                if(string.IsNullOrWhiteSpace(link))link=item.Elements().FirstOrDefault(x=>x.Name.LocalName=="link")?.Attribute("href")?.Value??"";
-                DateTime? published=DateTimeOffset.TryParse(V("pubDate")+V("published")+V("updated"),out var dt)?dt.UtcDateTime:null;
-                var group=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(title.ToLowerInvariant())))[..16];
-                var assets=new List<string>();if(title.Contains("bitcoin",StringComparison.OrdinalIgnoreCase)||title.Contains("btc",StringComparison.OrdinalIgnoreCase))assets.Add("BTC");if(title.Contains("ethereum",StringComparison.OrdinalIgnoreCase)||title.Contains("eth",StringComparison.OrdinalIgnoreCase))assets.Add("ETH");
-                news.Add(new(feed.Source,title,link,published,DateTime.UtcNow,feed.Reliability,group,assets));
-            }successfulNewsSources++;
-        }catch{missing.Add(feed.Source);}
-        news=news.GroupBy(x=>x.DuplicateGroup).Select(x=>x.First()).OrderByDescending(x=>x.PublishedAt).Take(50).ToList();
+        foreach(var symbol in _symbols)try{var market=await _exchange.GetMarketAsync(symbol,ct);markets[symbol]=_realtime?.Enrich(market)??market;}catch{missing.Add(symbol+":market_derivatives");}
+        if(_realtime is not null&&!_realtime.Healthy)missing.Add("realtime_stream_unhealthy:"+_realtime.Status);
+        var newsResult=await _news.CollectAsync(_symbols,ct);missing.AddRange(newsResult.MissingSources);var news=newsResult.Items;
         foreach(var market in markets.Values)foreach(var anomaly in market.Quality.Anomalies)missing.Add($"{market.Symbol}:{anomaly}");
         var marketScore=_symbols.Count==0?0:(int)Math.Round(markets.Count/(double)_symbols.Count*35);var qualityScore=markets.Count==0?0:(int)Math.Round(markets.Values.Average(x=>x.Quality.QualityScore)*.25);
-        var derivScore=markets.Count==0?0:(int)Math.Round(markets.Count(x=>x.Value.Derivatives.OpenInterest>0||x.Value.Derivatives.FundingRate!=0)/(double)markets.Count*15);var newsScore=successfulNewsSources*4;
-        return new EvidencePack{Account=account,Positions=positions,Markets=markets,News=news,MissingSources=missing.Distinct().ToArray(),Completeness=Math.Min(100,10+marketScore+qualityScore+derivScore+newsScore)};
+        var derivScore=markets.Count==0?0:(int)Math.Round(markets.Count(x=>x.Value.Derivatives.OpenInterest>0||x.Value.Derivatives.FundingRate!=0)/(double)markets.Count*15);var newsScore=Math.Min(12,newsResult.SuccessfulSources+(newsResult.FullTextDocuments>0?3:0));var realtimeScore=_realtime is null?4:_realtime.Healthy?8:0;
+        return new EvidencePack{Account=account,Positions=positions,Markets=markets,News=news,MissingSources=missing.Distinct().ToArray(),Completeness=Math.Min(100,10+marketScore+qualityScore+derivScore+newsScore+realtimeScore)};
     }
 }
 
