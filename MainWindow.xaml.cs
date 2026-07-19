@@ -315,7 +315,7 @@ public partial class MainWindow : Window
         if (sender is Button { Tag: string tag }) ShowPage(tag);
     }
 
-    private void ShowPage(string tag)
+    private async void ShowPage(string tag)
     {
         _activePage = tag;
         if (tag == "HOME")
@@ -333,7 +333,7 @@ public partial class MainWindow : Window
             "POSITIONS" => (I18n.T("Secondary.PositionsTitle"), I18n.T("Secondary.PositionsSubtitle"), $"{I18n.T("Portfolio.Equity")}  {I18n.Number(state.WalletBalance)} USDT\n{I18n.T("Portfolio.Available")}  {I18n.Number(state.AvailableBalance)} USDT\n\n{state.PositionsSummary}\n\n{state.OrdersSummary}"),
             "RISK" => (I18n.T("Secondary.RiskTitle"), I18n.T("Secondary.RiskSubtitle"), $"{state.RiskSummary}\n{state.PortfolioRiskSummary}\n\n{I18n.T("Audit.DataQuality")}  {state.DataQualityScore}/100\n{I18n.T("Audit.Liquidity")}  {state.LiquidityScore:0}%\n{I18n.T("Audit.Volatility")}  {state.VolatilityPercent:0.00}%\n{I18n.T("Audit.Research")}  {state.ResearchScore:0}%\n{I18n.T("Audit.HistoricalCoverage")}  {state.HistoricalCoverageDays} d\n{I18n.T("Audit.VaR99")}  {state.PortfolioVaR99:0.00}%\n{I18n.T("Audit.CVaR99")}  {state.PortfolioCVaR99:0.00}%\n{I18n.T("Audit.Concentration")}  {state.PortfolioConcentration:0.0}%\n{I18n.T("Audit.Correlation")}  {state.PortfolioCorrelation:0.00}\n{I18n.T("Brain.RiskLoad")}  {state.RiskLoad:0}%\n{I18n.T("Brain.ConflictRate")}  {state.ConflictRate:0}%\n\n{I18n.T("Audit.Reviewer")}  {AuditStatus(state.ReviewerStatus)}\n{I18n.T("Audit.RiskApproval")}  {AuditStatus(state.RiskApprovalStatus)}\n{I18n.T("Audit.ExecutionApproval")}  {AuditStatus(state.ExecutionApprovalStatus)}\n{I18n.T("Audit.CircuitBreaker")}  {I18n.T(state.CircuitBreakerActive?"Audit.Status.ACTIVE":"Audit.Status.CLEAR")}\n\n{I18n.T("Audit.Missing")}\n{state.MissingConditions}"),
             "BRAIN" => (I18n.T("Secondary.BrainTitle"), I18n.T("Secondary.BrainSubtitle"), $"Brain  {state.BrainName}\n{state.Status}\n{I18n.T("Brain.Confidence")}  {state.BrainConfidence:0}%\n{I18n.T("Label.Market")}  {state.MarketRegime}\n{I18n.T("Label.Reflection")}  {state.ReflectionStatus}\n\n{I18n.T("Audit.Entry")}  {I18n.Number(state.PlannedEntry)}\n{I18n.T("Audit.Stop")}  {I18n.Number(state.PlannedStop)}\n{I18n.T("Audit.TakeProfit")}  {I18n.Number(state.PlannedTakeProfit)}\n{I18n.T("Audit.Quantity")}  {I18n.Number(state.PlannedQuantity)}\n{I18n.T("Audit.RiskReward")}  {state.RiskRewardRatio:0.00}\n\n{state.DecisionAuditSummary}\n\n{state.LastReason}"),
-            "LOGS" => (I18n.T("Secondary.EventsTitle"), I18n.T("Secondary.EventsSubtitle"), ReadLogTail()),
+            "LOGS" => (I18n.T("Secondary.EventsTitle"), I18n.T("Secondary.EventsSubtitle"), await ReadRuntimeEventsAsync()),
             _ => (I18n.T("Secondary.Module"), I18n.T("Secondary.NoTelemetry"), state.LastMessage)
         };
     }
@@ -350,6 +350,16 @@ public partial class MainWindow : Window
             return file is null ? I18n.T("Log.Empty") : string.Join(Environment.NewLine, File.ReadLines(file).TakeLast(180));
         }
         catch (Exception ex) { return I18n.T("Log.Unavailable", ex.Message); }
+    }
+
+    private static async Task<string> ReadRuntimeEventsAsync()
+    {
+        try
+        {
+            var events = await new AgentSqliteStore().GetRecentRuntimeEventsAsync(80, CancellationToken.None);
+            return events.Count > 0 ? string.Join(Environment.NewLine + Environment.NewLine, events) : ReadLogTail();
+        }
+        catch { return ReadLogTail(); }
     }
 
     private void Card_MouseDown(object sender, MouseButtonEventArgs e) { _dragStart = e.GetPosition(null); _dragCard = sender as Border; }
