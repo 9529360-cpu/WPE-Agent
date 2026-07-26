@@ -177,11 +177,15 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
         var store=Store();var item=await Succeeded(store,"backfill-missing");await SeedConfirmedIntent(store,item.Artifact!);
         var gateway=new SuccessfulGateway();var processor=new AutomaticExecutionProcessor(store,new ValidRuntime(),gateway,()=>Now);
 
+        var candidates=await store.GetAutomaticExecutionObservationPageAsync(0,100,CancellationToken.None);
+        Assert.Single(candidates);
+        Assert.Equal(item.ExecutionId,candidates[0].Item.ExecutionId);
+
         var first=await processor.BackfillObservationsAsync(CancellationToken.None);
         var second=await processor.BackfillObservationsAsync(CancellationToken.None);
 
         Assert.Equal(1,first.Written);Assert.Equal(0,first.Failed);
-        Assert.Equal(1,second.Skipped);Assert.Equal(0,second.Written);
+        Assert.Equal(0,second.Examined);Assert.Equal(0,second.Written);
         Assert.Equal(1,gateway.ObservationCount);
         Assert.Equal(3,(await store.GetModelOffCanonicalAuditsAsync(item.ExecutionId,CancellationToken.None)).Count);
     }
@@ -202,6 +206,52 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
         Assert.Equal(6,audits.Count);
         Assert.Contains(audits,x=>x.OutputId.Contains("-unknown-",StringComparison.Ordinal));
         Assert.Contains(audits,x=>x.OutputId.Contains("-confirmed-",StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ObservationPagesResumeAfterLastGlobalEventCursor()
+    {
+        var store=Store();
+        await Executing(store,"page-a");await Executing(store,"page-b");await Executing(store,"page-c");
+
+        var first=await store.GetAutomaticExecutionObservationPageAsync(0,2,CancellationToken.None);
+        var second=await store.GetAutomaticExecutionObservationPageAsync(first[^1].EventCursor,2,CancellationToken.None);
+
+        Assert.Equal(2,first.Count);Assert.Single(second);
+        Assert.True(first[^1].EventCursor<second[0].EventCursor);
+        Assert.Equal(3,first.Concat(second).Select(x=>x.Item.ExecutionId).Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Fact]
+    public async Task LaterTransitionOnOldExecutionAppearsAfterSavedCursor()
+    {
+        var store=Store();var old=await Executing(store,"transition-old");
+        var before=Assert.Single(await store.GetAutomaticExecutionObservationPageAsync(0,10,CancellationToken.None));
+        await Executing(store,"transition-new");
+        Assert.True((await store.TryTransitionAutomaticExecutionAsync(old.ExecutionId,
+            AutomaticExecutionQueueStatus.Executing,AutomaticExecutionQueueStatus.Succeeded,
+            "worker","automatic.succeeded",CancellationToken.None)).Succeeded);
+
+        var after=await store.GetAutomaticExecutionObservationPageAsync(before.EventCursor,10,CancellationToken.None);
+
+        Assert.Contains(after,x=>x.Item.ExecutionId==old.ExecutionId&&x.Item.Status==AutomaticExecutionQueueStatus.Succeeded);
+    }
+
+    [Fact]
+    public async Task StateEventMismatchDoesNotAdvanceBackfillCursor()
+    {
+        var store=Store();var item=await Executing(store,"backfill-failure");
+        await using(var connection=new SqliteConnection($"Data Source={DatabasePath}"))
+        {
+            await connection.OpenAsync();await using var command=connection.CreateCommand();
+            command.CommandText="UPDATE automatic_execution_queue SET status='Succeeded' WHERE execution_id=$id";
+            command.Parameters.AddWithValue("$id",item.ExecutionId);Assert.Equal(1,await command.ExecuteNonQueryAsync());
+        }
+        var failed=await new AutomaticExecutionProcessor(store,new ValidRuntime(),new SuccessfulGateway(),()=>Now)
+            .BackfillObservationsAsync(CancellationToken.None);
+
+        Assert.Equal(1,failed.Failed);
+        Assert.Null(await store.GetStateAsync("model-off.execution-backfill.event-cursor",CancellationToken.None));
     }
 
     private AgentSqliteStore Store() => new(DatabasePath, () => Now);
@@ -279,4 +329,5 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
                     confirmed?"confirmed":"unknown",confirmed?"FILLED":"none",confirmed?x.Quantity:0)).ToArray()));
         }
     }
+
 }

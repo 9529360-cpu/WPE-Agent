@@ -96,6 +96,10 @@ public static class ModelOffExecutionRecoveryContractV1
 public sealed class AutomaticExecutionProcessor
 {
     private static readonly TimeSpan LeaseLifetime=TimeSpan.FromSeconds(30);
+    private const int BackfillPageSize=100;
+    private const int MaximumBackfillPages=10;
+    private const string BackfillCursorKey="model-off.execution-backfill.event-cursor";
+    private const string EvidenceRetryCursorKey="model-off.execution-evidence-retry.event-cursor";
     private readonly AgentSqliteStore _store;
     private readonly IAutomaticExecutionReadOnlyValidator _validator;
     private readonly IAutomaticExecutionGateway _gateway;
@@ -154,36 +158,60 @@ public sealed class AutomaticExecutionProcessor
     internal async Task<ModelOffExecutionBackfillResultV1> BackfillObservationsAsync(CancellationToken ct)
     {
         var examined=0;var written=0;var skipped=0;var failed=0;
-        foreach(var status in Enum.GetValues<AutomaticExecutionQueueStatus>())
-        foreach(var item in await _store.GetAutomaticExecutionQueueAsync(status,100,ct))
+        var cursorText=await _store.GetStateAsync(BackfillCursorKey,ct);
+        var cursor=long.TryParse(cursorText,System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out var parsed)&&parsed>=0?parsed:0;
+        var retryCursorText=await _store.GetStateAsync(EvidenceRetryCursorKey,ct);
+        var retryCursor=long.TryParse(retryCursorText,System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out var retryParsed)&&retryParsed>=0?retryParsed:0;
+        var observedThisRun=new HashSet<string>(StringComparer.Ordinal);
+        var evidenceRetry=await _store.GetAutomaticExecutionEvidenceRetryPageAsync(retryCursor,BackfillPageSize,ct);
+        foreach(var candidate in evidenceRetry)
         {
-            examined++;try
+            var result=await ObserveCandidateAsync(candidate,ct);examined++;
+            if(result==BackfillCandidateResult.Written)written++;
+            else if(result==BackfillCandidateResult.Skipped)skipped++;
+            else{failed++;break;}
+            observedThisRun.Add(candidate.Item.ExecutionId);
+            retryCursor=candidate.EventCursor;
+        }
+        await _store.SetStateAsync(EvidenceRetryCursorKey,(evidenceRetry.Count<BackfillPageSize?0:retryCursor).ToString(System.Globalization.CultureInfo.InvariantCulture),ct);
+        if(failed>0)return new(examined,written,skipped,failed,"execution-backfill.degraded");
+        for(var pageNumber=0;pageNumber<MaximumBackfillPages;pageNumber++)
+        {
+            var page=await _store.GetAutomaticExecutionObservationPageAsync(cursor,BackfillPageSize,ct);
+            if(page.Count==0)break;var pageFailed=false;
+            foreach(var candidate in page)
             {
-                var events=await _store.GetAutomaticExecutionEventsAsync(item.ExecutionId,100,ct);
-                if(events.Count==0||events[^1].ToStatus!=item.Status){failed++;continue;}
-                var writer=new ModelOffExecutionObservationWriterV1(_store);
-                ModelOffExchangeOrderEvidenceV1? evidence=null;
-                if(item.Status==AutomaticExecutionQueueStatus.Succeeded)
-                {
-                    var confirmedIdentity=ModelOffExecutionObservationWriterV1.ObservationIdentity(item,events,
-                        ModelOffExchangeOrderEvidenceContractV1.Create(item.ExecutionId,ModelOffExchangeOrderEvidenceStateV1.Confirmed,
-                            item.Artifact?.Intents.Count??0,item.Artifact?.Intents.Count??0,_utcNow().ToUniversalTime(),[]));
-                    if(await writer.ObservationCompleteAsync(confirmedIdentity,ct)){skipped++;continue;}
-                    evidence=await ReadExchangeEvidenceAsync(item,ct);
-                }
-                var identity=ModelOffExecutionObservationWriterV1.ObservationIdentity(item,events,evidence);
-                if(await writer.ObservationCompleteAsync(identity,ct)){skipped++;continue;}
-                var result=await writer.WriteAsync(item,events,evidence,_utcNow().ToUniversalTime(),ct);
-                if(result.Persisted)written++;else failed++;
+                if(observedThisRun.Contains(candidate.Item.ExecutionId)){cursor=candidate.EventCursor;continue;}
+                examined++;var result=await ObserveCandidateAsync(candidate,ct);
+                if(result==BackfillCandidateResult.Written)written++;
+                else if(result==BackfillCandidateResult.Skipped)skipped++;
+                else{failed++;pageFailed=true;break;}
+                cursor=candidate.EventCursor;
             }
-            catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
-            catch(Exception ex)
-            {
-                failed++;try{await _store.RecordErrorAsync("ModelOffExecutionBackfill",ex,CancellationToken.None);}catch{}
-            }
+            await _store.SetStateAsync(BackfillCursorKey,cursor.ToString(System.Globalization.CultureInfo.InvariantCulture),ct);
+            if(pageFailed||page.Count<BackfillPageSize)break;
         }
         return new(examined,written,skipped,failed,failed==0?"execution-backfill.completed":"execution-backfill.degraded");
     }
+
+    private async Task<BackfillCandidateResult> ObserveCandidateAsync(AutomaticExecutionObservationCandidate candidate,CancellationToken ct)
+    {
+        try
+        {
+            var item=candidate.Item;var events=await _store.GetAutomaticExecutionEventsAsync(item.ExecutionId,100,ct);
+            if(events.Count==0||events[^1].ToStatus!=item.Status)return BackfillCandidateResult.Failed;
+            var writer=new ModelOffExecutionObservationWriterV1(_store);ModelOffExchangeOrderEvidenceV1? evidence=null;
+            if(item.Status==AutomaticExecutionQueueStatus.Succeeded)evidence=await ReadExchangeEvidenceAsync(item,ct);
+            var identity=ModelOffExecutionObservationWriterV1.ObservationIdentity(item,events,evidence);
+            if(await writer.ObservationCompleteAsync(identity,ct))return BackfillCandidateResult.Skipped;
+            return (await writer.WriteAsync(item,events,evidence,_utcNow().ToUniversalTime(),ct)).Persisted
+                ?BackfillCandidateResult.Written:BackfillCandidateResult.Failed;
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch(Exception ex){try{await _store.RecordErrorAsync("ModelOffExecutionBackfill",ex,CancellationToken.None);}catch{}return BackfillCandidateResult.Failed;}
+    }
+
+    private enum BackfillCandidateResult{Written,Skipped,Failed}
 
     private static bool ValidArtifactAndReceipt(PersistedAutomaticExecution item,DateTimeOffset now)
     {

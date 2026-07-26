@@ -438,6 +438,45 @@ public sealed class AgentSqliteStore
         var result=new List<PersistedAutomaticExecution>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=AutomaticQueueReadCommand(c,"WHERE status=$status",Math.Clamp(limit,1,100));q.Parameters.AddWithValue("$status",status.ToString());await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))result.Add(ReadAutomaticExecution(r));return result;
     }
 
+    internal async Task<IReadOnlyList<AutomaticExecutionObservationCandidate>> GetAutomaticExecutionObservationPageAsync(long afterEventId,int limit,CancellationToken ct)
+    {
+        if(afterEventId<0)throw new ArgumentOutOfRangeException(nameof(afterEventId));var result=new List<AutomaticExecutionObservationCandidate>();
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
+            SELECT q.execution_id,q.correlation_id,q.contract_version,q.artifact_bytes,q.artifact_hash,q.intent_hash,
+                   q.risk_receipt_bytes,q.risk_receipt_hash,q.provider_id,q.environment,q.strategy_id,q.strategy_version,
+                   q.market_collected_at,q.market_data_version,q.created_at,q.expires_at,q.status,q.attempt_count,
+                   q.lease_owner,q.lease_expires_at,q.last_code,q.updated_at,e.event_cursor
+            FROM automatic_execution_queue q
+            JOIN (SELECT execution_id,MAX(id) AS event_cursor FROM automatic_execution_events GROUP BY execution_id) e
+              ON e.execution_id=q.execution_id
+            WHERE e.event_cursor>$after
+            ORDER BY e.event_cursor,q.execution_id
+            LIMIT $limit
+            """;q.Parameters.AddWithValue("$after",afterEventId);q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,100));
+        await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))result.Add(new(ReadAutomaticExecution(r),r.GetInt64(22)));return result;
+    }
+
+    internal async Task<IReadOnlyList<AutomaticExecutionObservationCandidate>> GetAutomaticExecutionEvidenceRetryPageAsync(long afterEventId,int limit,CancellationToken ct)
+    {
+        if(afterEventId<0)throw new ArgumentOutOfRangeException(nameof(afterEventId));var result=new List<AutomaticExecutionObservationCandidate>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
+            SELECT q.execution_id,q.correlation_id,q.contract_version,q.artifact_bytes,q.artifact_hash,q.intent_hash,
+                   q.risk_receipt_bytes,q.risk_receipt_hash,q.provider_id,q.environment,q.strategy_id,q.strategy_version,
+                   q.market_collected_at,q.market_data_version,q.created_at,q.expires_at,q.status,q.attempt_count,
+                   q.lease_owner,q.lease_expires_at,q.last_code,q.updated_at,e.event_cursor
+            FROM automatic_execution_queue q
+            JOIN (SELECT execution_id,MAX(id) AS event_cursor,MAX(sequence) AS event_sequence FROM automatic_execution_events GROUP BY execution_id) e
+              ON e.execution_id=q.execution_id
+            WHERE q.status='Succeeded'
+              AND e.event_cursor>$after
+              AND NOT EXISTS(
+                  SELECT 1 FROM model_off_canonical_audits a
+                  WHERE a.output_id=q.execution_id||'-observation-'||e.event_sequence||'-succeeded-confirmed-execution')
+            ORDER BY e.event_cursor,q.execution_id
+            LIMIT $limit
+            """;q.Parameters.AddWithValue("$after",afterEventId);q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,100));
+        await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))result.Add(new(ReadAutomaticExecution(r),r.GetInt64(22)));return result;
+    }
+
     public async Task<AutomaticExecutionClaimResult> TryClaimAutomaticExecutionAsync(string executionId,string leaseOwner,TimeSpan leaseLifetime,CancellationToken ct)
         =>await TryClaimAutomaticAsync(executionId,leaseOwner,leaseLifetime,AutomaticExecutionQueueStatus.RiskApproved,AutomaticExecutionQueueStatus.Claimed,"automatic.claimed",ct);
 
@@ -1308,6 +1347,7 @@ public sealed record PersistedAutomaticExecution(
     bool ArtifactValid,
     bool RiskReceiptValid);
 public sealed record PersistedAutomaticExecutionEvent(string ExecutionId,int Sequence,DateTimeOffset OccurredAtUtc,AutomaticExecutionQueueStatus? FromStatus,AutomaticExecutionQueueStatus ToStatus,string EventCode,string ActorKind);
+internal sealed record AutomaticExecutionObservationCandidate(PersistedAutomaticExecution Item,long EventCursor);
 public sealed record LegacyIntentIsolationMutationResult(bool Succeeded,string Code);
 public sealed record PersistedLegacyIntentIsolation(string ClientOrderId,string SourceStatus,string ProjectionStatus,string ReasonCode,DateTimeOffset IsolatedAtUtc);
 public sealed record PersistedLegacyIntentIsolationEvent(string ClientOrderId,int Sequence,DateTimeOffset OccurredAtUtc,string FromStatus,string ToStatus,string EventCode);
