@@ -54,6 +54,37 @@ public sealed class PositionReconciliationTests : IDisposable
         var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("PositionReconciliationServiceV1.Reconcile",source,StringComparison.Ordinal);Assert.Contains("&&positionReconciliation.AllowsRiskIncrease",source,StringComparison.Ordinal);Assert.Contains("ExecutePositionManagementRecoveryAsync",source,StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ExactLedgerHasNoExternalPositionAndIsCanonical()
+    {
+        var local=new[]{new ExecutionPositionLegV1("BTCUSDT",PositionSide.Long,1m)};var exchange=new[]{Position("BTCUSDT",PositionSide.Long,1m)};var first=ExternalPositionIsolationServiceV1.Evaluate(local,exchange,Now,Now);var second=ExternalPositionIsolationServiceV1.Evaluate(local,exchange,Now,Now);Assert.Equal(ExternalPositionIsolationStateV1.Clear,first.State);Assert.True(first.AllowsRiskIncrease);Assert.Empty(first.ExternalLegs);Assert.Equal(first.CanonicalSha256,second.CanonicalSha256);Assert.Equal(first.CanonicalBytes,second.CanonicalBytes);
+    }
+
+    [Fact]
+    public void ExternalOnlyAndExcessQuantitiesAreIsolatedWithoutClaimingThem()
+    {
+        var report=ExternalPositionIsolationServiceV1.Evaluate([new("BTCUSDT",PositionSide.Long,1m)],[Position("BTCUSDT",PositionSide.Long,1.25m),Position("ETHUSDT",PositionSide.Short,2m)],Now,Now);Assert.Equal(ExternalPositionIsolationStateV1.Isolated,report.State);Assert.False(report.AllowsRiskIncrease);Assert.Equal(2,report.ExternalLegs.Count);Assert.Equal(.25m,Assert.Single(report.ExternalLegs,x=>x.Symbol=="BTCUSDT").Quantity);Assert.Equal(2m,Assert.Single(report.ExternalLegs,x=>x.Symbol=="ETHUSDT").Quantity);Assert.Contains("external-position.isolated:BTCUSDT:long",report.ReasonCodes);Assert.Contains("external-position.isolated:ETHUSDT:short",report.ReasonCodes);
+    }
+
+    [Fact]
+    public void MissingExchangeQuantityIsNotMisclassifiedAsExternal()
+    {
+        var report=ExternalPositionIsolationServiceV1.Evaluate([new("BTCUSDT",PositionSide.Long,2m)],[Position("BTCUSDT",PositionSide.Long,1m)],Now,Now);Assert.Equal(ExternalPositionIsolationStateV1.Clear,report.State);Assert.Empty(report.ExternalLegs);Assert.False(PositionReconciliationServiceV1.Reconcile([new("BTCUSDT",PositionSide.Long,2m)],[Position("BTCUSDT",PositionSide.Long,1m)],Now,Now).AllowsRiskIncrease);
+    }
+
+    [Fact]
+    public async Task ExternalPositionIsolationFailsClosedAndPersistsCanonicalAudit()
+    {
+        var invalid=ExternalPositionIsolationServiceV1.Evaluate([], [Position("BTCUSDT",PositionSide.Long,1m),Position("BTCUSDT",PositionSide.Long,1m)],Now,Now);Assert.Equal(ExternalPositionIsolationStateV1.Invalid,invalid.State);Assert.False(invalid.AllowsRiskIncrease);var stale=ExternalPositionIsolationServiceV1.Evaluate([],[],Now-ExternalPositionIsolationServiceV1.MaximumAge-TimeSpan.FromMilliseconds(1),Now);Assert.Equal(ExternalPositionIsolationStateV1.Stale,stale.State);Assert.False(stale.AllowsRiskIncrease);
+        var store=new AgentSqliteStore(Database);var report=ExternalPositionIsolationServiceV1.Evaluate([], [Position("ETHUSDT",PositionSide.Short,2m)],Now,Now);Assert.True(await store.SaveExternalPositionIsolationAsync(report,default));Assert.False(await new AgentSqliteStore(Database).SaveExternalPositionIsolationAsync(report,default));await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveExternalPositionIsolationAsync(report with{CanonicalBytes=[..report.CanonicalBytes,0]},default));await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveExternalPositionIsolationAsync(report with{State=ExternalPositionIsolationStateV1.Clear,AllowsRiskIncrease=true},default));
+    }
+
+    [Fact]
+    public void ProductionGateConsumesExternalIsolationWithoutAddingMutationPath()
+    {
+        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("ExternalPositionIsolationServiceV1.Evaluate",source,StringComparison.Ordinal);Assert.Contains("&&externalPositionIsolation.AllowsRiskIncrease",source,StringComparison.Ordinal);var contract=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","Agent","PositionReconciliationV1.cs"));var isolation=contract[contract.IndexOf("public static class ExternalPositionIsolationServiceV1",StringComparison.Ordinal)..];foreach(var forbidden in new[]{"PlaceMarketAsync","PlaceLimitAsync","PlaceProtectionAsync","CancelOrderAsync","SetLeverageAsync","SetMarginModeAsync"})Assert.DoesNotContain(forbidden,isolation,StringComparison.Ordinal);
+    }
+
     private static ManagedPosition Position(string symbol,PositionSide side,decimal quantity)=>new(symbol,side,quantity,100m,101m,1m,2m,true,50m);
     private static ExecutionIntent Intent(string id,bool reduceOnly,decimal quantity)=>new("BTCUSDT",PositionSide.Long,quantity,reduceOnly,90m,120m,id,"test",reduceOnly?DecisionAction.ReduceLong:DecisionAction.OpenLong,ExpectedPrice:100m);
     private static ExchangeOrder Order(ExecutionIntent intent,string status,decimal quantity)=>new(intent.Symbol,"order-"+intent.ClientOrderId,intent.ClientOrderId,status,quantity,100m,"MARKET",intent.Side,false,DateTime.UtcNow);
