@@ -118,6 +118,49 @@ public sealed class ModelOffLiveCycleInputComposerTests
         var shadow = source.IndexOf("RunModelOffProductionShadowAsync(Db,cycle", risk, StringComparison.Ordinal);
         var authorization = source.IndexOf("if(intents.Count>0&&tradingRule is not null)", shadow, StringComparison.Ordinal);
         Assert.True(risk >= 0 && shadow > risk && authorization > shadow);
+        Assert.Contains("ApplyModelOffProductionRiskIncreaseGate(intents,modelOffCycle)", source[shadow..authorization], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RiskIncreaseGateRequiresCompletePersistedSevenAgentCycle()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "wpe-live-gate-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var request = Request();
+            var ready = await AutoTradingAgent.RunModelOffProductionShadowAsync(
+                new AgentSqliteStore(Path.Combine(directory, "ready.db"), () => Now), request.CycleId,
+                request.EvaluationTimeUtc, request.Evidence, request.Research, request.Assessments,
+                request.DecisionReview, request.RiskReview, CancellationToken.None);
+            var blocked = await AutoTradingAgent.RunModelOffProductionShadowAsync(
+                new AgentSqliteStore(Path.Combine(directory, "blocked.db"), () => Now), request.CycleId + "-blocked",
+                request.EvaluationTimeUtc, request.Evidence, request.Research, request.Assessments,
+                request.DecisionReview, Risk(false), CancellationToken.None);
+
+            Assert.True(AutoTradingAgent.ModelOffProductionGateAllowsRiskIncrease(ready));
+            Assert.False(AutoTradingAgent.ModelOffProductionGateAllowsRiskIncrease(blocked));
+            Assert.False(AutoTradingAgent.ModelOffProductionGateAllowsRiskIncrease(null));
+            Assert.False(AutoTradingAgent.ModelOffProductionGateAllowsRiskIncrease(ready! with { Handoffs = [] }));
+            var tamperedDocuments = ready!.Documents.ToDictionary(x => x.Key, x => x.Value);
+            tamperedDocuments[ModelOffAgentV1.Market] = tamperedDocuments[ModelOffAgentV1.Market] with { Sha256 = new string('a', 64) };
+            Assert.False(AutoTradingAgent.ModelOffProductionGateAllowsRiskIncrease(ready with { Documents = tamperedDocuments }));
+            Assert.False(AutoTradingAgent.ModelOffProductionGateAllowsRiskIncrease(ready with { AuditCoverage = new Dictionary<ModelOffAgentV1, string>() }));
+            var tamperedHandoffs = ready.Handoffs.ToArray();
+            tamperedHandoffs[0] = tamperedHandoffs[0] with { Sha256 = new string('b', 64) };
+            Assert.False(AutoTradingAgent.ModelOffProductionGateAllowsRiskIncrease(ready with { Handoffs = tamperedHandoffs }));
+
+            var increase = new ExecutionIntent("BTCUSDT", PositionSide.Long, .01m, false, 98_000m, 104_000m, "increase", "test");
+            var reduce = new ExecutionIntent("BTCUSDT", PositionSide.Short, .01m, true, 0, 0, "reduce", "test");
+            Assert.Equal(new[] { reduce }, AutoTradingAgent.ApplyModelOffProductionRiskIncreaseGate([increase, reduce], blocked));
+            Assert.Equal(new[] { increase, reduce }, AutoTradingAgent.ApplyModelOffProductionRiskIncreaseGate([increase, reduce], ready));
+            Assert.Equal(new[] { reduce }, AutoTradingAgent.ApplyModelOffProductionRiskIncreaseGate([reduce], null));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try { Directory.Delete(directory, true); } catch (IOException) { }
+        }
     }
 
     private static ModelOffLiveCycleInputRequestV1 Request() => new(

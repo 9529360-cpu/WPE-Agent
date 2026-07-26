@@ -11,6 +11,7 @@ using WpeAgent.Notifications;
 using WpeAgent.TradingAuthorization;
 using WpeAgent.FinancialEvidence;
 using WpeAgent.ModelOff;
+using System.Security.Cryptography;
 using 币安量化机器人.Services.Access;
 
 namespace 币安量化机器人.Services;
@@ -271,7 +272,14 @@ public static class AutoTradingAgent
                 else if(intents.Count==0)state.ExecutionApprovalStatus="NO_ORDER";
                 else state.ExecutionApprovalStatus="READY";
 
-                await RunModelOffProductionShadowAsync(Db,cycle,DateTimeOffset.UtcNow,evidence,research,assessments,review,riskReview,ct);
+                var modelOffCycle=await RunModelOffProductionShadowAsync(Db,cycle,DateTimeOffset.UtcNow,evidence,research,assessments,review,riskReview,ct);
+                var gatedIntents=ApplyModelOffProductionRiskIncreaseGate(intents,modelOffCycle);
+                if(gatedIntents.Count!=intents.Count)
+                {
+                    intents=gatedIntents;result="model-off.production-gate-blocked";
+                    state.RiskApprovalStatus="BLOCKED";state.ExecutionApprovalStatus=intents.Count>0?"RISK_REDUCING_ONLY":"BLOCKED";
+                    state.CircuitBreakerActive=true;state.RiskSummary=result;
+                }
 
                 if(intents.Count>0&&tradingRule is not null)
                 {
@@ -383,6 +391,42 @@ public static class AutoTradingAgent
             try{await auditStore.RecordErrorAsync("ModelOffProductionShadow",ex,CancellationToken.None);}catch{/* Shadow audit must not alter execution. */}
             return null;
         }
+    }
+
+    internal static bool ModelOffProductionGateAllowsRiskIncrease(ModelOffProductionCycleResultV1? result) =>
+        result is {EligibleForRiskIncrease:true,Code:"model-off.production-cycle-ready"}
+        &&result.Outputs.Count==7&&result.Documents.Count==7&&result.AuditCoverage.Count==7&&result.Handoffs.Count==6
+        &&Enum.GetValues<ModelOffAgentV1>().All(role=>CanonicalRoleMatches(result,role))
+        &&result.Handoffs.All(CanonicalDocumentHashMatches);
+
+    internal static IReadOnlyList<ExecutionIntent> ApplyModelOffProductionRiskIncreaseGate(
+        IReadOnlyList<ExecutionIntent> intents,ModelOffProductionCycleResultV1? result)
+    {
+        ArgumentNullException.ThrowIfNull(intents);
+        return intents.Any(x=>!x.ReduceOnly)&&!ModelOffProductionGateAllowsRiskIncrease(result)
+            ?intents.Where(x=>x.ReduceOnly).ToArray():intents;
+    }
+
+    private static bool CanonicalRoleMatches(ModelOffProductionCycleResultV1 result,ModelOffAgentV1 role)
+    {
+        if(!result.Outputs.TryGetValue(role,out var output)||!result.Documents.TryGetValue(role,out var document)
+           ||!result.AuditCoverage.TryGetValue(role,out var coverageHash)
+           ||!string.Equals(coverageHash,document.Sha256,StringComparison.Ordinal))return false;
+        try
+        {
+            var canonical=ModelOffCanonicalSerializerV1.Serialize(output);
+            return ModelOffEligibilityV1.IsEligibleForDownstream(output)
+                &&string.Equals(canonical.Sha256,document.Sha256,StringComparison.Ordinal)
+                &&CryptographicOperations.FixedTimeEquals(canonical.Utf8Bytes,document.Utf8Bytes);
+        }
+        catch(InvalidOperationException){return false;}
+    }
+
+    private static bool CanonicalDocumentHashMatches(ModelOffCanonicalDocumentV1 document)
+    {
+        if(document.Utf8Bytes is not {Length:>0}||string.IsNullOrWhiteSpace(document.Sha256))return false;
+        var hash=Convert.ToHexString(SHA256.HashData(document.Utf8Bytes)).ToLowerInvariant();
+        return string.Equals(hash,document.Sha256,StringComparison.Ordinal);
     }
 
     private static async Task<IReadOnlyList<ManagedPosition>> ReadPositionsAsync(IExchangeAdapter exchange,CancellationToken ct)
