@@ -7,10 +7,15 @@ public sealed class DeterministicMemoryService(AgentSqliteStore database)
             ? DeterministicResearchCapabilityProducerV1.Produce(input)
             : throw new ArgumentException("News producer requires the news capability.", nameof(input));
 
-    public static WpeAgent.ModelOff.ModelOffAgentOutputV1 ProduceUnsupportedModelOff(ModelOffResearchInputV1 input)
-        => input.Capability is ModelOffResearchCapabilityV1.Macro or ModelOffResearchCapabilityV1.Fundamental
+    public static WpeAgent.ModelOff.ModelOffAgentOutputV1 ProduceMacroModelOff(ModelOffResearchInputV1 input)
+        => input.Capability == ModelOffResearchCapabilityV1.Macro
             ? DeterministicResearchCapabilityProducerV1.Produce(input)
-            : throw new ArgumentException("Unsupported producer is limited to macro and fundamental capabilities.", nameof(input));
+            : throw new ArgumentException("Macro producer requires the macro capability.", nameof(input));
+
+    public static WpeAgent.ModelOff.ModelOffAgentOutputV1 ProduceUnsupportedModelOff(ModelOffResearchInputV1 input)
+        => input.Capability == ModelOffResearchCapabilityV1.Fundamental
+            ? DeterministicResearchCapabilityProducerV1.Produce(input)
+            : throw new ArgumentException("Unsupported producer is limited to the fundamental capability.", nameof(input));
 
     public Task<bool> RememberAsync(MemoryEvidence evidence,CancellationToken ct)=>database.SaveMemoryAsync(evidence,ct);
     public Task<IReadOnlyList<PersistedMemory>> RetrieveAsync(MemoryQuery query,CancellationToken ct)=>database.SearchMemoriesAsync(query,ct);

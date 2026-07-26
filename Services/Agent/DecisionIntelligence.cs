@@ -217,7 +217,7 @@ public static class DeterministicResearchCapabilityProducerV1
             throw new ArgumentException("Research facts must be an explicit JSON object.", nameof(input));
 
         var reasons = RefusalReasons(input).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
-        var supported = input.Capability is not ModelOffResearchCapabilityV1.Macro and not ModelOffResearchCapabilityV1.Fundamental;
+        var supported = input.Capability is not ModelOffResearchCapabilityV1.Fundamental;
         var succeeded = supported && reasons.Length == 0;
         var missing = reasons.Where(reason => reason.StartsWith("research.missing", StringComparison.Ordinal)).ToArray();
         var canonicalSources = input.Sources.Where(IsCanonicalSourceMetadata).ToArray();
@@ -241,7 +241,7 @@ public static class DeterministicResearchCapabilityProducerV1
 
     private static IEnumerable<string> RefusalReasons(ModelOffResearchInputV1 input)
     {
-        if (input.Capability is ModelOffResearchCapabilityV1.Macro or ModelOffResearchCapabilityV1.Fundamental)
+        if (input.Capability == ModelOffResearchCapabilityV1.Fundamental)
             yield return $"research.unsupported.{input.Capability.ToString().ToLowerInvariant()}";
         if (input.Sources.Count == 0)
             yield return "research.missing.sources";
@@ -251,12 +251,17 @@ public static class DeterministicResearchCapabilityProducerV1
         var requiredKind = input.Capability switch
         {
             ModelOffResearchCapabilityV1.News => ModelOffSourceKindV1.News,
+            ModelOffResearchCapabilityV1.Macro => ModelOffSourceKindV1.Macro,
             ModelOffResearchCapabilityV1.Technical => ModelOffSourceKindV1.Market,
             ModelOffResearchCapabilityV1.Backtest => ModelOffSourceKindV1.Strategy,
             _ => (ModelOffSourceKindV1?)null
         };
         if (requiredKind.HasValue && !input.Sources.Any(source => source.Kind == requiredKind.Value))
             yield return $"research.missing.{requiredKind.Value.ToString().ToLowerInvariant()}_source";
+
+        if (input.Capability == ModelOffResearchCapabilityV1.Macro)
+            foreach (var reason in ValidateMacroFacts(input))
+                yield return reason;
 
         foreach (var source in input.Sources)
         {
@@ -267,6 +272,43 @@ public static class DeterministicResearchCapabilityProducerV1
             if (source.Status != ModelOffSourceStatusV1.Available)
                 yield return $"research.source.{source.Status.ToString().ToLowerInvariant()}";
         }
+    }
+
+    private static IEnumerable<string> ValidateMacroFacts(ModelOffResearchInputV1 input)
+    {
+        var facts = input.Facts;
+        if (!StringFact(facts, "schema", out var schema) || !string.Equals(schema, "wpe.macro-facts/1.0", StringComparison.Ordinal))
+            yield return "research.invalid.macro_schema";
+        foreach (var name in new[] { "indicatorId", "geography", "frequency", "unit" })
+            if (!StringFact(facts, name, out _))
+                yield return $"research.missing.macro_{name.ToLowerInvariant()}";
+
+        if (!facts.TryGetProperty("value", out var value) || value.ValueKind != JsonValueKind.Number || !value.TryGetDecimal(out _))
+            yield return "research.invalid.macro_value";
+
+        var observed = UtcFact(facts, "observationAtUtc", out var observedAt);
+        var released = UtcFact(facts, "releasedAtUtc", out var releasedAt);
+        if (!observed) yield return "research.invalid.macro_observation_time";
+        if (!released) yield return "research.invalid.macro_release_time";
+        if (!observed || !released) yield break;
+        if (observedAt > releasedAt) yield return "research.invalid.macro_temporal_order";
+        if (releasedAt > input.EvaluationTimeUtc) yield return "research.invalid.macro_future_release";
+        if (!input.Sources.Any(source => source.Kind == ModelOffSourceKindV1.Macro && source.AsOfUtc >= releasedAt))
+            yield return "research.invalid.macro_source_asof";
+    }
+
+    private static bool StringFact(JsonElement facts, string name, out string value)
+    {
+        value = string.Empty;
+        return facts.TryGetProperty(name, out var element) && element.ValueKind == JsonValueKind.String &&
+               !string.IsNullOrWhiteSpace(value = element.GetString() ?? string.Empty);
+    }
+
+    private static bool UtcFact(JsonElement facts, string name, out DateTimeOffset value)
+    {
+        value = default;
+        return facts.TryGetProperty(name, out var element) && element.ValueKind == JsonValueKind.String &&
+               element.TryGetDateTimeOffset(out value) && value.Offset == TimeSpan.Zero;
     }
 
     private static void RequireToken(string value, string name)

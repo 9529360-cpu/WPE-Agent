@@ -31,11 +31,10 @@ public sealed class ModelOffResearchCapabilityTests
         Assert.DoesNotContain("caus", firstDocument.Json, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Theory]
-    [InlineData(ModelOffResearchCapabilityV1.Macro)]
-    [InlineData(ModelOffResearchCapabilityV1.Fundamental)]
-    public void UnsupportedCapabilitiesAbstainWithoutInventingFacts(ModelOffResearchCapabilityV1 capability)
+    [Fact]
+    public void UnsupportedFundamentalCapabilityAbstainsWithoutInventingFacts()
     {
+        var capability = ModelOffResearchCapabilityV1.Fundamental;
         var output = DeterministicMemoryService.ProduceUnsupportedModelOff(Input(capability, [Source(ModelOffSourceKindV1.Config)]));
 
         Assert.Equal(ModelOffOutputStatusV1.Abstained, output.Status);
@@ -43,6 +42,59 @@ public sealed class ModelOffResearchCapabilityTests
         Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(output));
         Assert.Contains($"research.unsupported.{capability.ToString().ToLowerInvariant()}", output.Decision.ReasonCodes);
         Assert.Equal("observed", output.Facts.GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public void MacroFactsProduceCanonicalRepeatableOutputWithoutModelInference()
+    {
+        var input = MacroInput();
+
+        var first = DeterministicMemoryService.ProduceMacroModelOff(input);
+        var second = DeterministicMemoryService.ProduceMacroModelOff(input);
+        var firstDocument = ModelOffCanonicalSerializerV1.Serialize(first);
+        var secondDocument = ModelOffCanonicalSerializerV1.Serialize(second);
+
+        Assert.Equal(ModelOffOutputStatusV1.Succeeded, first.Status);
+        Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(first));
+        Assert.Equal("record_research", first.Decision.Action);
+        Assert.Equal("CPI_ALL_ITEMS", first.Facts.GetProperty("indicatorId").GetString());
+        Assert.Equal(firstDocument.Sha256, secondDocument.Sha256);
+        Assert.DoesNotContain("forecast", firstDocument.Json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("caus", firstDocument.Json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("missing-source")]
+    [InlineData("wrong-source")]
+    [InlineData("wrong-schema")]
+    [InlineData("missing-indicator")]
+    [InlineData("invalid-value")]
+    [InlineData("non-utc")]
+    [InlineData("future-release")]
+    [InlineData("temporal-order")]
+    [InlineData("source-before-release")]
+    public void InvalidMacroFactsAbstainAndRemainIneligible(string fixture)
+    {
+        var input = MacroInput();
+        input = fixture switch
+        {
+            "missing-source" => input with { Sources = [] },
+            "wrong-source" => input with { Sources = [Source(ModelOffSourceKindV1.News)] },
+            "wrong-schema" => input with { Facts = MacroFacts(schema: "wpe.macro-facts/2.0") },
+            "missing-indicator" => input with { Facts = MacroFacts(indicatorId: " ") },
+            "invalid-value" => input with { Facts = MacroFacts(value: "not-a-number") },
+            "non-utc" => input with { Facts = MacroFacts(releasedAt: Now.ToOffset(TimeSpan.FromHours(9)).AddMinutes(-3)) },
+            "future-release" => input with { Facts = MacroFacts(releasedAt: Now.AddMinutes(1)) },
+            "temporal-order" => input with { Facts = MacroFacts(observedAt: Now.AddMinutes(-1), releasedAt: Now.AddMinutes(-3)) },
+            "source-before-release" => input with { Sources = [Source(ModelOffSourceKindV1.Macro) with { AsOfUtc = Now.AddMinutes(-4) }] },
+            _ => throw new ArgumentOutOfRangeException(nameof(fixture))
+        };
+
+        var output = DeterministicMemoryService.ProduceMacroModelOff(input);
+
+        Assert.Equal(ModelOffOutputStatusV1.Abstained, output.Status);
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(output));
+        Assert.NotEmpty(output.Decision.ReasonCodes);
     }
 
     [Theory]
@@ -143,6 +195,7 @@ public sealed class ModelOffResearchCapabilityTests
         var news = Input(ModelOffResearchCapabilityV1.News, [Source(ModelOffSourceKindV1.News)]);
         Assert.Throws<ArgumentException>(() => StrategyResearchAgent.ProduceTechnicalModelOff(news));
         Assert.Throws<ArgumentException>(() => StrategyResearchAgent.ProduceBacktestModelOff(news));
+        Assert.Throws<ArgumentException>(() => DeterministicMemoryService.ProduceMacroModelOff(news));
         Assert.Throws<ArgumentException>(() => DeterministicMemoryService.ProduceUnsupportedModelOff(news));
     }
 
@@ -152,10 +205,12 @@ public sealed class ModelOffResearchCapabilityTests
         var technical = Input(ModelOffResearchCapabilityV1.Technical, [Source(ModelOffSourceKindV1.Market)]);
         var backtest = Input(ModelOffResearchCapabilityV1.Backtest, [Source(ModelOffSourceKindV1.Strategy)]);
         var news = Input(ModelOffResearchCapabilityV1.News, [Source(ModelOffSourceKindV1.News)]);
+        var macro = MacroInput();
 
         Assert.Equal(ModelOffOutputStatusV1.Succeeded, StrategyResearchAgent.ProduceTechnicalModelOff(technical).Status);
         Assert.Equal(ModelOffOutputStatusV1.Succeeded, StrategyResearchAgent.ProduceBacktestModelOff(backtest).Status);
         Assert.Equal(ModelOffOutputStatusV1.Succeeded, DeterministicMemoryService.ProduceNewsModelOff(news).Status);
+        Assert.Equal(ModelOffOutputStatusV1.Succeeded, DeterministicMemoryService.ProduceMacroModelOff(macro).Status);
     }
 
     private static ModelOffResearchInputV1 Input(ModelOffResearchCapabilityV1 capability, IReadOnlyList<ModelOffSourceV1> sources) => new(
@@ -165,4 +220,26 @@ public sealed class ModelOffResearchCapabilityTests
 
     private static ModelOffSourceV1 Source(ModelOffSourceKindV1 kind) =>
         new("fixture", kind, Now.AddMinutes(-2), Now.AddMinutes(-1), ModelOffSourceStatusV1.Available, "aa");
+
+    private static ModelOffResearchInputV1 MacroInput() => new(
+        ModelOffResearchCapabilityV1.Macro, "macro-output", "cycle-1", Now,
+        "wpe.research-input/1.0", "wpe.macro-method", "1.0",
+        [Source(ModelOffSourceKindV1.Macro)], MacroFacts(), []);
+
+    private static JsonElement MacroFacts(
+        string schema = "wpe.macro-facts/1.0",
+        string indicatorId = "CPI_ALL_ITEMS",
+        object? value = null,
+        DateTimeOffset? observedAt = null,
+        DateTimeOffset? releasedAt = null) => JsonSerializer.SerializeToElement(new
+        {
+            schema,
+            indicatorId,
+            geography = "US",
+            frequency = "monthly",
+            unit = "index",
+            observationAtUtc = observedAt ?? Now.AddDays(-30),
+            releasedAtUtc = releasedAt ?? Now.AddMinutes(-3),
+            value = value ?? 319.7m
+        });
 }
