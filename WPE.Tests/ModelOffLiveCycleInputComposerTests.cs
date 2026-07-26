@@ -87,6 +87,38 @@ public sealed class ModelOffLiveCycleInputComposerTests
     }
 
     [Theory]
+    [InlineData("missing-assessment")]
+    [InlineData("stale-assessment")]
+    [InlineData("direction-conflict")]
+    [InlineData("bad-stop")]
+    [InlineData("bad-take")]
+    [InlineData("bad-rr")]
+    public void StrategyAgentIndependentlyRejectsInvalidExecutablePlan(string defect)
+    {
+        var request=Request();var assessments=request.Assessments;var review=request.DecisionReview;
+        if(defect=="missing-assessment")assessments=[];
+        if(defect=="stale-assessment")assessments=[Assessment(fresh:false)];
+        if(defect=="direction-conflict")assessments=[Assessment(recommended:DecisionAction.OpenShort)];
+        if(defect=="bad-stop")review=Review(true,stop:101000m);
+        if(defect=="bad-take")review=Review(true,take:99000m);
+        if(defect=="bad-rr")review=Review(true,riskReward:0);
+        var strategy=ModelOffLiveCycleInputComposerV1.Compose(request with{Assessments=assessments,DecisionReview=review}).Single(x=>x.Output.Agent==ModelOffAgentV1.Strategy).Output;Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(strategy));Assert.Contains(strategy.Decision.ReasonCodes,reason=>reason.StartsWith("live.strategy.",StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("zero-quantity")]
+    [InlineData("zero-risk")]
+    [InlineData("zero-exposure")]
+    [InlineData("no-checks")]
+    [InlineData("duplicate-checks")]
+    [InlineData("approved-with-blocks")]
+    [InlineData("blocked-level")]
+    public void RiskAgentRejectsInternallyInconsistentApproval(string defect)
+    {
+        var risk=Risk(true);risk=defect switch{"zero-quantity"=>CopyRisk(risk,quantity:0),"zero-risk"=>CopyRisk(risk,riskAmount:0),"zero-exposure"=>CopyRisk(risk,exposure:0),"no-checks"=>CopyRisk(risk,checks:[]),"duplicate-checks"=>CopyRisk(risk,checks:["risk-gate","risk-gate"]),"approved-with-blocks"=>CopyRisk(risk,blocks:["unexpected"]),"blocked-level"=>CopyRisk(risk,level:"BLOCKED"),_=>risk};var output=ModelOffLiveCycleInputComposerV1.Compose(Request() with{RiskReview=risk}).Last().Output;Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(output));Assert.Contains(output.Decision.ReasonCodes,reason=>reason.StartsWith("live.risk.",StringComparison.Ordinal));
+    }
+
+    [Theory]
     [InlineData("stale")]
     [InlineData("empty-market")]
     [InlineData("review-blocked")]
@@ -228,8 +260,7 @@ public sealed class ModelOffLiveCycleInputComposerTests
         {
             ["ETHUSDT"] = Research("ETHUSDT"), ["BTCUSDT"] = Research("BTCUSDT")
         },
-        [new MarketDecisionAssessment { Symbol = "BTCUSDT", Fresh = true, EntryReady = true,
-            RecommendedAction = DecisionAction.OpenLong, Confidence = .8 }], Review(true), Risk(true));
+        [Assessment()], Review(true), Risk(true));
 
     private static EvidencePack Evidence(DateTime collectedAt) => new()
     {
@@ -247,13 +278,15 @@ public sealed class ModelOffLiveCycleInputComposerTests
     private static ResearchValidationResult Research(string symbol) => new()
     { Symbol = symbol, StrategyVersion = "strategy-v1", SampleSize = 200, Trades = 30, QualityScore = .8, Approved = true, Promoted = true, CoverageDays = 90 };
     private static ResearchValidationResult CopyResearch(ResearchValidationResult value,bool? approved=null,bool? promoted=null,double? qualityScore=null)=>new(){Symbol=value.Symbol,StrategyVersion=value.StrategyVersion,SampleSize=value.SampleSize,Trades=value.Trades,WinRate=value.WinRate,ProfitFactor=value.ProfitFactor,Expectancy=value.Expectancy,MaxDrawdown=value.MaxDrawdown,Sharpe=value.Sharpe,OutOfSampleReturn=value.OutOfSampleReturn,WalkForwardScore=value.WalkForwardScore,MonteCarloLossProbability=value.MonteCarloLossProbability,QualityScore=qualityScore??value.QualityScore,Approved=approved??value.Approved,Promoted=promoted??value.Promoted,CoverageDays=value.CoverageDays,OutOfSampleTrades=value.OutOfSampleTrades,StrategyReturn=value.StrategyReturn,BenchmarkReturn=value.BenchmarkReturn,RegimeReturns=value.RegimeReturns,Summary=value.Summary};
-    private static DecisionReview Review(bool accepted) => new()
+    private static MarketDecisionAssessment Assessment(bool fresh=true,DecisionAction recommended=DecisionAction.OpenLong)=>new(){Symbol="BTCUSDT",Fresh=fresh,EntryReady=true,RecommendedAction=recommended,Confidence=.8,NetScore=.5,ConflictRatio=.1};
+    private static DecisionReview Review(bool accepted,decimal stop=98000m,decimal take=104000m,double riskReward=2) => new()
     {
         Accepted = accepted,
         Decision = new DecisionPlan { Action = DecisionAction.OpenLong, Instrument = "BTCUSDT", Confidence = .8,
-            EntryPrice = 100000m, StopLossPrice = 98000m, TakeProfitPrice = 104000m, RiskRewardRatio = 2 }
+            EntryPrice = 100000m, StopLossPrice = stop, TakeProfitPrice = take, RiskRewardRatio = riskReward }
     };
     private static IndependentRiskReview Risk(bool approved) => new()
-    { Approved = approved, RiskLevel = approved ? "LOW" : "BLOCKED", PlannedQuantity = approved ? .01m : 0, Checks = ["risk-gate"] };
+    { Approved = approved, RiskLevel = approved ? "NORMAL" : "BLOCKED", PlannedQuantity = approved ? .01m : 0, RiskAmount=approved ? 10m : 0, ExposureAfter=approved ? .1m : 0, Checks = ["risk-gate"] };
+    private static IndependentRiskReview CopyRisk(IndependentRiskReview value,decimal? quantity=null,decimal? riskAmount=null,decimal? exposure=null,IReadOnlyList<string>? checks=null,IReadOnlyList<string>? blocks=null,string? level=null)=>new(){Approved=value.Approved,RiskLevel=level??value.RiskLevel,PlannedQuantity=quantity??value.PlannedQuantity,RiskAmount=riskAmount??value.RiskAmount,ExposureAfter=exposure??value.ExposureAfter,Checks=checks??value.Checks,BlockingReasons=blocks??value.BlockingReasons,Summary=value.Summary};
     private static string ProjectRoot() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 }

@@ -96,6 +96,13 @@ internal static class ModelOffLiveCycleInputComposerV1
         if (!request.DecisionReview.Accepted) strategyReasons.Add("live.strategy.review-blocked");
         if (!SafeToken(decision.Instrument)) strategyReasons.Add("live.strategy.instrument-invalid");
         if (!Finite(decision.Confidence) || !Finite(decision.RiskRewardRatio)) strategyReasons.Add("live.strategy.numeric-invalid");
+        var assessmentMatches=request.Assessments.Where(x=>string.Equals(x.Symbol,decision.Instrument,StringComparison.OrdinalIgnoreCase)).ToArray();
+        var targetAssessment=assessmentMatches.Length==1?assessmentMatches[0]:null;
+        if(assessmentMatches.Length==0)strategyReasons.Add("live.strategy.assessment-missing");
+        if(assessmentMatches.Length>1)strategyReasons.Add("live.strategy.assessment-conflicting");
+        if(targetAssessment is not null&&(!targetAssessment.Fresh||!targetAssessment.EntryReady||!Finite(targetAssessment.Confidence)||!Finite(targetAssessment.NetScore)||!Finite(targetAssessment.ConflictRatio)))strategyReasons.Add("live.strategy.assessment-ineligible");
+        if(targetAssessment is not null&&!RecommendationMatches(decision.Action,targetAssessment.RecommendedAction))strategyReasons.Add("live.strategy.direction-conflict");
+        if(DeterministicPlanSkill.IsRiskIncreasing(decision.Action)&&!ValidPlanGeometry(decision))strategyReasons.Add("live.strategy.plan-geometry-invalid");
         if (!ModelOffEligibilityV1.IsEligibleForDownstream(research)) strategyReasons.Add("live.strategy.research-invalid");
         var strategy = Output(ModelOffAgentV1.Strategy, request,
             [UpstreamSource(research, outputs[^1].Document, request.EvaluationTimeUtc)], strategyReasons.Count == 0,
@@ -104,20 +111,28 @@ internal static class ModelOffLiveCycleInputComposerV1
                 instrument = SafeToken(decision.Instrument) ? decision.Instrument : "unknown",
                 decision.TargetTier, decision.Confidence, decision.EntryPrice, decision.StopLossPrice,
                 decision.TakeProfitPrice, decision.RiskRewardRatio, order_type = decision.OrderType.ToString().ToLowerInvariant(),
-                assessment_count = request.Assessments.Count });
+                strategy_version=targetResearchValid?targetResearch!.StrategyVersion:"unknown",
+                assessment_count = request.Assessments.Count, target_assessment_present=targetAssessment is not null });
         outputs.Add(Input(strategy));
 
         var riskReasons = new List<string>();
         if (!request.RiskReview.Approved) riskReasons.Add("live.risk.not-approved");
         if (request.RiskReview.PlannedQuantity < 0 || request.RiskReview.RiskAmount < 0 || request.RiskReview.ExposureAfter < 0)
             riskReasons.Add("live.risk.numeric-invalid");
+        var riskIncreasing=DeterministicPlanSkill.IsRiskIncreasing(decision.Action);
+        if(riskIncreasing&&request.RiskReview.Approved&&(request.RiskReview.PlannedQuantity<=0||request.RiskReview.RiskAmount<=0||request.RiskReview.ExposureAfter<=0))riskReasons.Add("live.risk.approval-inconsistent");
+        if(request.RiskReview.Approved&&request.RiskReview.BlockingReasons.Count>0)riskReasons.Add("live.risk.approval-has-blocks");
+        var checks=request.RiskReview.Checks.Where(x=>!string.IsNullOrWhiteSpace(x)).ToArray();
+        if(checks.Length==0||checks.Any(x=>!SafeIdentityToken(x))||checks.Distinct(StringComparer.Ordinal).Count()!=checks.Length)riskReasons.Add("live.risk.checks-invalid");
+        if(!SafeIdentityToken(request.RiskReview.RiskLevel)||request.RiskReview.Approved&&string.Equals(request.RiskReview.RiskLevel,"BLOCKED",StringComparison.OrdinalIgnoreCase))riskReasons.Add("live.risk.level-invalid");
         if (!ModelOffEligibilityV1.IsEligibleForDownstream(strategy)) riskReasons.Add("live.risk.strategy-invalid");
         var risk = Output(ModelOffAgentV1.Risk, request,
             [UpstreamSource(strategy, outputs[^1].Document, request.EvaluationTimeUtc)], riskReasons.Count == 0,
             riskReasons.Count == 0 ? "risk_approved" : "block", riskReasons,
             new { request.RiskReview.Approved, RiskLevel = SafeToken(request.RiskReview.RiskLevel) ? request.RiskReview.RiskLevel : "UNKNOWN",
                 request.RiskReview.PlannedQuantity, request.RiskReview.RiskAmount,
-                request.RiskReview.ExposureAfter, check_count = request.RiskReview.Checks.Count,
+                request.RiskReview.ExposureAfter, check_count = checks.Length,
+                check_set_hash=Hash(checks.Order(StringComparer.Ordinal).ToArray()),
                 blocking_reason_count = request.RiskReview.BlockingReasons.Count,
                 result_state = request.RiskReview.Approved ? "approved" : "blocked" });
         outputs.Add(Input(risk));
@@ -165,6 +180,12 @@ internal static class ModelOffLiveCycleInputComposerV1
     private static bool ValidResearch(ResearchValidationResult value)=>SafeToken(value.Symbol)&&SafeIdentityToken(value.StrategyVersion)&&value.SampleSize>0&&value.Trades>0&&value.CoverageDays>0&&value.OutOfSampleTrades>=0&&
         new[]{value.WinRate,value.ProfitFactor,value.Expectancy,value.MaxDrawdown,value.Sharpe,value.OutOfSampleReturn,value.WalkForwardScore,value.MonteCarloLossProbability,value.QualityScore,value.StrategyReturn,value.BenchmarkReturn}.All(Finite);
     private static bool SafeIdentityToken(string? value)=>!string.IsNullOrWhiteSpace(value)&&value.Length<=64&&value.All(character=>char.IsAsciiLetterOrDigit(character)||character is '.' or '_' or '-');
+    private static bool RecommendationMatches(DecisionAction action,DecisionAction recommendation)=>action switch{DecisionAction.OpenLong or DecisionAction.AddLong or DecisionAction.ReverseToLong=>recommendation==DecisionAction.OpenLong,DecisionAction.OpenShort or DecisionAction.AddShort or DecisionAction.ReverseToShort=>recommendation==DecisionAction.OpenShort,DecisionAction.Lock=>recommendation is DecisionAction.OpenLong or DecisionAction.OpenShort,_=>true};
+    private static bool ValidPlanGeometry(DecisionPlan value)
+    {
+        if(value.EntryPrice<=0||value.StopLossPrice<=0||value.TakeProfitPrice<=0||value.RiskRewardRatio<=0||!Enum.IsDefined(value.OrderType))return false;
+        return value.Action switch{DecisionAction.OpenLong or DecisionAction.AddLong or DecisionAction.ReverseToLong=>value.StopLossPrice<value.EntryPrice&&value.EntryPrice<value.TakeProfitPrice,DecisionAction.OpenShort or DecisionAction.AddShort or DecisionAction.ReverseToShort=>value.TakeProfitPrice<value.EntryPrice&&value.EntryPrice<value.StopLossPrice,DecisionAction.Lock=>value.StopLossPrice!=value.EntryPrice&&value.TakeProfitPrice!=value.EntryPrice&&Math.Sign(value.StopLossPrice-value.EntryPrice)!=Math.Sign(value.TakeProfitPrice-value.EntryPrice),_=>true};
+    }
     private static bool ValidMacro(PersistedMacroObservation value,DateTimeOffset now)=>
         SafeToken(value.IndicatorId)&&value.Revision>0&&!string.IsNullOrWhiteSpace(value.Geography)&&!string.IsNullOrWhiteSpace(value.Frequency)&&!string.IsNullOrWhiteSpace(value.Unit)&&value.ObservationAtUtc.Offset==TimeSpan.Zero&&value.FirstObservedAtUtc.Offset==TimeSpan.Zero&&value.ObservationAtUtc<=value.FirstObservedAtUtc&&value.FirstObservedAtUtc<=now&&value.SourceArtifactHash.Length==64&&value.SourceArtifactHash.All(Uri.IsHexDigit);
     private static string[] Sorted(IEnumerable<string> values) =>
