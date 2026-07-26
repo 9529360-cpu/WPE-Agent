@@ -70,7 +70,11 @@ public sealed class BlsMacroDataClient(IBlsMacroDataTransport transport)
         int startYear,
         int endYear,
         DateTimeOffset fetchedAtUtc,
-        CancellationToken ct = default)
+        CancellationToken ct = default)=>await FetchLatestAsync(seriesId,startYear,endYear,fetchedAtUtc,null,ct);
+
+    public async Task<BlsMacroFetchResult> FetchLatestAsync(
+        string seriesId,int startYear,int endYear,DateTimeOffset fetchedAtUtc,
+        BlsReleaseCalendarSnapshotV1? releaseCalendar,CancellationToken ct = default)
     {
         if (!Series.TryGetValue(seriesId ?? string.Empty, out var definition))
             return Fail(BlsMacroFetchStatus.Unsupported, "macro.bls.series-unsupported");
@@ -101,6 +105,8 @@ public sealed class BlsMacroDataClient(IBlsMacroDataTransport transport)
             if (observations.Length == 0)
                 return Fail(BlsMacroFetchStatus.Unsupported, "macro.bls.observation-unavailable");
             var latest = observations[0];
+            var observationAt=new DateTimeOffset(latest.Year,latest.Month,1,0,0,0,TimeSpan.Zero);
+            var release=BlsReleaseCalendarClient.Resolve(releaseCalendar,seriesId!,observationAt,fetchedAtUtc);
             var facts = JsonSerializer.SerializeToElement(new
             {
                 schema = "wpe.macro-facts/1.0",
@@ -108,9 +114,11 @@ public sealed class BlsMacroDataClient(IBlsMacroDataTransport transport)
                 geography = definition.Geography,
                 frequency = definition.Frequency,
                 unit = definition.Unit,
-                observationAtUtc = new DateTimeOffset(latest.Year, latest.Month, 1, 0, 0, 0, TimeSpan.Zero),
-                releasedAtUtc = fetchedAtUtc,
-                releaseTimeBasis = "official-endpoint-first-observed",
+                observationAtUtc = observationAt,
+                releasedAtUtc = release?.ScheduledAtUtc??fetchedAtUtc,
+                releaseTimeBasis = release is null?"official-endpoint-first-observed":"official-release-calendar",
+                releaseCalendarArtifactHash=release is null?null:releaseCalendar!.ArtifactHash,
+                releaseCalendarEventId=release?.EventId,
                 value = latest.Value
             });
             var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(response))).ToLowerInvariant();

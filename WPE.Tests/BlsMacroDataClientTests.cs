@@ -26,6 +26,18 @@ public sealed class BlsMacroDataClientTests
         Assert.Equal(64, observation.Source.ArtifactHash!.Length);
     }
 
+    [Fact]
+    public async Task OfficialCalendarUpgradesReleaseTimeProvenance()
+    {
+        var calendar=(await new BlsReleaseCalendarClient(new CalendarTransport()).FetchAsync(Now)).Snapshot;
+        var result=await new BlsMacroDataClient(new FakeTransport(Response(("2026","M06","333.952")))).FetchLatestAsync("CUUR0000SA0",2025,2026,Now,calendar);
+        var facts=Assert.IsType<BlsMacroObservationV1>(result.Observation).Facts;
+        Assert.Equal("official-release-calendar",facts.GetProperty("releaseTimeBasis").GetString());
+        Assert.Equal(new DateTimeOffset(2026,7,14,12,30,0,TimeSpan.Zero),facts.GetProperty("releasedAtUtc").GetDateTimeOffset());
+        Assert.Equal(calendar!.ArtifactHash,facts.GetProperty("releaseCalendarArtifactHash").GetString());
+        Assert.Equal("cpi-202607@bls.gov",facts.GetProperty("releaseCalendarEventId").GetString());
+    }
+
     [Theory]
     [InlineData("UNKNOWN", 2025, 2026, "macro.bls.series-unsupported")]
     [InlineData("CUUR0000SA0", 2026, 2025, "macro.bls.request-invalid")]
@@ -109,4 +121,6 @@ public sealed class BlsMacroDataClientTests
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") });
         }
     }
+    private sealed class CalendarTransport:IBlsReleaseCalendarTransport
+    {public Task<string> GetAsync(Uri endpoint,CancellationToken ct)=>Task.FromResult(BlsReleaseCalendarClientTests.Calendar());}
 }

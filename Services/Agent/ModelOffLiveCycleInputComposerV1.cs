@@ -112,7 +112,7 @@ internal static class ModelOffLiveCycleInputComposerV1
                 news_evidence_count=newsValid?news.Length:0,
                 news_target_count=newsValid?news.Count(x=>NewsTargets(x,target)):0,
                 news_evidence_hash=newsValid?Hash(news.Select(x=>NewsCanonicalFact(x,NewsTimestamp(x))).ToArray()):Hash(new{state="invalid"}),
-                macro_observations=macro.OrderBy(x=>x.IndicatorId,StringComparer.Ordinal).Select(x=>new{x.IndicatorId,x.ObservationAtUtc,x.Revision,x.Geography,x.Frequency,x.Unit,x.Value,x.SourceArtifactHash,x.FirstObservedAtUtc}).ToArray() });
+                macro_observations=macro.OrderBy(x=>x.IndicatorId,StringComparer.Ordinal).Select(x=>new{x.IndicatorId,x.ObservationAtUtc,x.Revision,x.Geography,x.Frequency,x.Unit,x.Value,x.SourceArtifactHash,x.FirstObservedAtUtc,x.ReleasedAtUtc,x.ReleaseTimeBasis,x.ReleaseCalendarArtifactHash,x.ReleaseCalendarEventId}).ToArray() });
         outputs.Add(Input(research));
 
         var decision = request.DecisionReview.Decision;
@@ -268,8 +268,13 @@ internal static class ModelOffLiveCycleInputComposerV1
         if(value.EntryPrice<=0||value.StopLossPrice<=0||value.TakeProfitPrice<=0||value.RiskRewardRatio<=0||!Enum.IsDefined(value.OrderType))return false;
         return value.Action switch{DecisionAction.OpenLong or DecisionAction.AddLong or DecisionAction.ReverseToLong=>value.StopLossPrice<value.EntryPrice&&value.EntryPrice<value.TakeProfitPrice,DecisionAction.OpenShort or DecisionAction.AddShort or DecisionAction.ReverseToShort=>value.TakeProfitPrice<value.EntryPrice&&value.EntryPrice<value.StopLossPrice,DecisionAction.Lock=>value.StopLossPrice!=value.EntryPrice&&value.TakeProfitPrice!=value.EntryPrice&&Math.Sign(value.StopLossPrice-value.EntryPrice)!=Math.Sign(value.TakeProfitPrice-value.EntryPrice),_=>true};
     }
-    private static bool ValidMacro(PersistedMacroObservation value,DateTimeOffset now)=>
-        SafeToken(value.IndicatorId)&&value.Revision>0&&!string.IsNullOrWhiteSpace(value.Geography)&&!string.IsNullOrWhiteSpace(value.Frequency)&&!string.IsNullOrWhiteSpace(value.Unit)&&value.ObservationAtUtc.Offset==TimeSpan.Zero&&value.FirstObservedAtUtc.Offset==TimeSpan.Zero&&value.ObservationAtUtc<=value.FirstObservedAtUtc&&value.FirstObservedAtUtc<=now&&value.SourceArtifactHash.Length==64&&value.SourceArtifactHash.All(Uri.IsHexDigit);
+    private static bool ValidMacro(PersistedMacroObservation value,DateTimeOffset now)
+    {
+        var formal=value.ReleaseTimeBasis=="official-release-calendar";
+        var observed=value.ReleaseTimeBasis=="official-endpoint-first-observed";
+        return SafeToken(value.IndicatorId)&&value.Revision>0&&!string.IsNullOrWhiteSpace(value.Geography)&&!string.IsNullOrWhiteSpace(value.Frequency)&&!string.IsNullOrWhiteSpace(value.Unit)&&value.ObservationAtUtc.Offset==TimeSpan.Zero&&value.FirstObservedAtUtc.Offset==TimeSpan.Zero&&value.ObservationAtUtc<=value.FirstObservedAtUtc&&value.FirstObservedAtUtc<=now&&value.SourceArtifactHash.Length==64&&value.SourceArtifactHash.All(Uri.IsHexDigit)&&
+               (observed&&value.ReleaseCalendarArtifactHash is null&&value.ReleaseCalendarEventId is null||formal&&value.ReleasedAtUtc.HasValue&&value.ReleasedAtUtc.Value.Offset==TimeSpan.Zero&&value.ObservationAtUtc<=value.ReleasedAtUtc.Value&&value.ReleasedAtUtc.Value<=value.FirstObservedAtUtc&&value.ReleaseCalendarArtifactHash is {Length:64} hash&&hash.All(Uri.IsHexDigit)&&SafeIdentityToken(value.ReleaseCalendarEventId));
+    }
     private static string[] Sorted(IEnumerable<string> values) =>
         values.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
 

@@ -31,7 +31,7 @@
     { "id": "orchestrator", "name": "Orchestrator/control", "core": true, "lifecycle": "current", "aggregate_ids": ["market", "research", "strategy", "risk", "execution", "recovery", "audit"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
     { "id": "market-data", "name": "Market Data", "core": true, "lifecycle": "current", "aggregate_ids": ["market"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
     { "id": "news", "name": "News", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
-    { "id": "macro", "name": "Macro", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "no", "implemented": false, "accepted": false, "acceptance_scope": null },
+    { "id": "macro", "name": "Macro", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
     { "id": "technical", "name": "Technical", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
     { "id": "fundamental", "name": "Fundamental", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "no", "implemented": false, "accepted": false, "acceptance_scope": null },
     { "id": "strategy", "name": "Strategy", "core": true, "lifecycle": "current", "aggregate_ids": ["strategy"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },

@@ -28,15 +28,45 @@ public sealed class MacroResearchPersistenceTests : IDisposable
     }
 
     [Fact]
+    public async Task FormalCalendarEvidenceAppendsProvenanceUpgradeAcrossRestart()
+    {
+        var store=new AgentSqliteStore(DatabasePath);var first=await store.SaveMacroObservationAsync(Observation(333.952m,"aa"),CancellationToken.None);
+        var calendar=(await new BlsReleaseCalendarClient(new CalendarTransport()).FetchAsync(Now)).Snapshot;
+        var formal=(await new BlsMacroDataClient(new SeriesTransport()).FetchLatestAsync("CUUR0000SA0",2025,2026,Now,calendar)).Observation!;
+        var upgraded=await new AgentSqliteStore(DatabasePath).SaveMacroObservationAsync(formal,CancellationToken.None);
+        var history=await new AgentSqliteStore(DatabasePath).GetMacroObservationRevisionsAsync("CUUR0000SA0",new(2026,6,1,0,0,0,TimeSpan.Zero),CancellationToken.None);
+        Assert.Equal(1,first.Revision);Assert.Equal(2,upgraded.Revision);Assert.False(upgraded.Idempotent);Assert.Equal(2,history.Count);
+        var latest=history[^1];Assert.Equal("official-release-calendar",latest.ReleaseTimeBasis);Assert.Equal(new DateTimeOffset(2026,7,14,12,30,0,TimeSpan.Zero),latest.ReleasedAtUtc);Assert.Equal(calendar!.ArtifactHash,latest.ReleaseCalendarArtifactHash);Assert.Equal("cpi-202607@bls.gov",latest.ReleaseCalendarEventId);
+    }
+
+    [Fact]
     public async Task SchedulerCollectsBothOfficialSeriesAndPublishesHealth()
     {
         var store=new AgentSqliteStore(DatabasePath);var client=new BlsMacroDataClient(new SeriesTransport());
-        var count=await new MacroResearchScheduler(client,store,()=>Now).CollectOnceAsync(CancellationToken.None);
+        var count=await new MacroResearchScheduler(client,store,()=>Now,new(new CalendarTransport())).CollectOnceAsync(CancellationToken.None);
 
         Assert.Equal(2,count);var health=await store.GetStateAsync("macro-research:health",CancellationToken.None);
-        Assert.Contains("READY",health,StringComparison.Ordinal);
+        Assert.Contains("READY",health,StringComparison.Ordinal);Assert.Contains("\"formallyCorrelated\":2",health,StringComparison.Ordinal);
         var latest=await store.GetLatestMacroObservationsAsync(8,CancellationToken.None);
         Assert.Equal(new[]{"CUUR0000SA0","LNS14000000"},latest.Select(x=>x.IndicatorId));
+        Assert.All(latest,x=>{Assert.Equal("official-release-calendar",x.ReleaseTimeBasis);Assert.NotNull(x.ReleasedAtUtc);Assert.NotNull(x.ReleaseCalendarArtifactHash);});
+    }
+
+    [Fact]
+    public async Task SchedulerNeverReportsReadyWhenOneSeriesLacksCalendarCorrelation()
+    {
+        const string cpiOnly="""
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:cpi-202607@bls.gov
+DTSTART;TZID=America/New_York:20260714T083000
+SUMMARY:Consumer Price Index
+END:VEVENT
+END:VCALENDAR
+""";
+        var store=new AgentSqliteStore(DatabasePath);var count=await new MacroResearchScheduler(new(new SeriesTransport()),store,()=>Now,new(new CalendarTransport(cpiOnly))).CollectOnceAsync(CancellationToken.None);
+        var health=await store.GetStateAsync("macro-research:health",CancellationToken.None);Assert.Equal(2,count);Assert.Contains("DEGRADED",health,StringComparison.Ordinal);Assert.Contains("\"formallyCorrelated\":1",health,StringComparison.Ordinal);
     }
 
     [Fact]
@@ -46,6 +76,8 @@ public sealed class MacroResearchPersistenceTests : IDisposable
         { Facts=JsonSerializer.SerializeToElement(new{schema="other",indicatorId="CUUR0000SA0"}) };
         var result=await store.SaveMacroObservationAsync(invalid,CancellationToken.None);
         Assert.False(result.Succeeded);Assert.Equal("macro.persistence.invalid",result.Code);
+        var invalidCalendar=Observation(333.952m,"aa") with{Facts=JsonSerializer.SerializeToElement(new{schema="wpe.macro-facts/1.0",indicatorId="CUUR0000SA0",geography="US",frequency="monthly",unit="index",observationAtUtc=new DateTimeOffset(2026,6,1,0,0,0,TimeSpan.Zero),releasedAtUtc=Now.AddDays(-10),releaseTimeBasis="official-release-calendar",releaseCalendarArtifactHash="bad",releaseCalendarEventId="cpi-202607@bls.gov",value=333.952m})};
+        Assert.False((await store.SaveMacroObservationAsync(invalidCalendar,CancellationToken.None)).Succeeded);
     }
 
     [Fact]
@@ -54,6 +86,7 @@ public sealed class MacroResearchPersistenceTests : IDisposable
         var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));
         Assert.Contains("MacroResearchScheduler",source,StringComparison.Ordinal);
         Assert.Contains("macroScheduler.StartAsync(ct)",source,StringComparison.Ordinal);
+        Assert.Contains("HttpBlsReleaseCalendarTransport",source,StringComparison.Ordinal);
     }
 
     private static BlsMacroObservationV1 Observation(decimal value,string hash)=>new(JsonSerializer.SerializeToElement(new
@@ -72,4 +105,6 @@ public sealed class MacroResearchPersistenceTests : IDisposable
             return Task.FromResult(JsonSerializer.Serialize(new{status="REQUEST_SUCCEEDED",Results=new{series=new[]{new{seriesID=id,data=new[]{new{year="2026",period="M06",value=id=="LNS14000000"?"4.1":"333.952"}}}}}}));
         }
     }
+    private sealed class CalendarTransport(string? response=null):IBlsReleaseCalendarTransport
+    {public Task<string> GetAsync(Uri endpoint,CancellationToken ct)=>Task.FromResult(response??BlsReleaseCalendarClientTests.Calendar());}
 }
