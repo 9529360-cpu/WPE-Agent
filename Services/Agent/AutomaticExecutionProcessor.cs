@@ -123,6 +123,16 @@ public sealed class AutomaticExecutionProcessor
     private async Task<AutomaticExecutionProcessorResult> Complete(string id,bool handled,string code,ModelOffRecoveryHandoffV1? handoff,CancellationToken ct)
     {
         var events=await _store.GetAutomaticExecutionEventsAsync(id,100,ct);
+        var item=await _store.GetAutomaticExecutionAsync(id,ct);
+        if(item is not null&&events.Count>0)
+        {
+            try{await new ModelOffExecutionObservationWriterV1(_store).WriteAsync(item,events,_utcNow().ToUniversalTime(),ct);}
+            catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+            catch(Exception ex)
+            {
+                try{await _store.RecordErrorAsync("ModelOffExecutionObservation",ex,CancellationToken.None);}catch{/* Observation failure must not change the persisted execution result. */}
+            }
+        }
         return new(handled,code,ModelOffExecutionRecoveryContractV1.Timeline(id,events),handoff);
     }
     private static AutomaticExecutionProcessorResult Result(bool handled,string code)=>new(handled,code);
