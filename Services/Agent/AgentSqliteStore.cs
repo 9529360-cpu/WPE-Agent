@@ -9,12 +9,15 @@ using 币安量化机器人.Core.Runtime;
 using 币安量化机器人.Core.Strategy;
 using WpeAgent.TradingAuthorization;
 using WpeAgent.ModelOff;
+using WpeAgent.AgentServices;
 
 namespace 币安量化机器人.Services.Agent;
 
 public sealed record IntentStatusCount(string Status,int Count);
 public sealed record IntentStateSummary(int TotalCount,int RecoverableCount,int UnknownCount,DateTimeOffset? LatestUpdatedAtUtc,IReadOnlyList<IntentStatusCount> Statuses);
 public sealed record ModelOffAuditPersistenceResult(bool Succeeded,bool Idempotent,string Code);
+public sealed record MacroObservationPersistenceResult(bool Succeeded,bool Idempotent,int Revision,string Code);
+public sealed record PersistedMacroObservation(string IndicatorId,DateTimeOffset ObservationAtUtc,int Revision,string Geography,string Frequency,string Unit,decimal Value,string SourceId,string SourceArtifactHash,DateTimeOffset FirstObservedAtUtc);
 public sealed record PersistedModelOffAudit(
     string OutputId,string CycleId,string Schema,string TemplateVersion,string CanonicalSha256,
     string Status,string OutputKind,string SourcesJson,DateTimeOffset AsOfUtc,DateTimeOffset RecordedAtUtc,
@@ -40,6 +43,10 @@ public sealed class AgentSqliteStore
     CREATE TRIGGER IF NOT EXISTS legacy_intent_isolation_events_no_delete BEFORE DELETE ON legacy_intent_isolation_events BEGIN SELECT RAISE(ABORT,'legacy intent isolation events are append-only'); END;
     CREATE TABLE IF NOT EXISTS snapshots(id INTEGER PRIMARY KEY AUTOINCREMENT,collected_at TEXT,account_json TEXT,positions_json TEXT,orders_json TEXT);
     CREATE TABLE IF NOT EXISTS news(duplicate_group TEXT PRIMARY KEY,source TEXT,title TEXT,url TEXT,published_at TEXT,collected_at TEXT,reliability TEXT,assets TEXT);
+    CREATE TABLE IF NOT EXISTS macro_observation_revisions(indicator_id TEXT NOT NULL,observation_at TEXT NOT NULL,revision INTEGER NOT NULL,geography TEXT NOT NULL,frequency TEXT NOT NULL,unit TEXT NOT NULL,value TEXT NOT NULL,source_id TEXT NOT NULL,source_artifact_hash TEXT NOT NULL,first_observed_at TEXT NOT NULL,PRIMARY KEY(indicator_id,observation_at,revision));
+    CREATE INDEX IF NOT EXISTS ix_macro_observation_latest ON macro_observation_revisions(indicator_id,observation_at DESC,revision DESC);
+    CREATE TRIGGER IF NOT EXISTS macro_observation_revisions_no_update BEFORE UPDATE ON macro_observation_revisions BEGIN SELECT RAISE(ABORT,'macro observations are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS macro_observation_revisions_no_delete BEFORE DELETE ON macro_observation_revisions BEGIN SELECT RAISE(ABORT,'macro observations are append-only'); END;
     CREATE TABLE IF NOT EXISTS errors(id INTEGER PRIMARY KEY AUTOINCREMENT,occurred_at TEXT,stage TEXT,message TEXT,details TEXT);
     CREATE TABLE IF NOT EXISTS agent_state(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT);
     CREATE TABLE IF NOT EXISTS daily_risk(day TEXT PRIMARY KEY,equity_high TEXT NOT NULL,updated_at TEXT NOT NULL);
@@ -692,6 +699,24 @@ public sealed class AgentSqliteStore
     public async Task SaveNewsAsync(IEnumerable<NewsEvidence> news,CancellationToken ct)
     {
         foreach(var n in news){await Exec("INSERT OR REPLACE INTO news(duplicate_group,source,title,url,published_at,collected_at,reliability,assets) VALUES($g,$s,$t,$u,$p,$c,$r,$a)",ct,("$g",n.DuplicateGroup),("$s",n.Source),("$t",n.Title),("$u",n.Url),("$p",n.PublishedAt?.ToString("O")),("$c",n.CollectedAt.ToString("O")),("$r",n.Reliability),("$a",JsonSerializer.Serialize(n.AffectedAssets)));await Exec("INSERT INTO news_documents(duplicate_group,source,title,url,published_at,collected_at,reliability,assets,body_summary,confidence,corroborating_sources,event_type,is_breaking,sentiment) VALUES($g,$s,$t,$u,$p,$c,$r,$a,$b,$q,$n,$e,$i,$m) ON CONFLICT(duplicate_group) DO UPDATE SET source=excluded.source,title=excluded.title,url=excluded.url,published_at=excluded.published_at,collected_at=excluded.collected_at,reliability=excluded.reliability,assets=excluded.assets,body_summary=excluded.body_summary,confidence=excluded.confidence,corroborating_sources=excluded.corroborating_sources,event_type=excluded.event_type,is_breaking=excluded.is_breaking,sentiment=excluded.sentiment",ct,("$g",n.DuplicateGroup),("$s",n.Source),("$t",n.Title),("$u",n.Url),("$p",n.PublishedAt?.ToString("O")),("$c",n.CollectedAt.ToString("O")),("$r",n.Reliability),("$a",JsonSerializer.Serialize(n.AffectedAssets)),("$b",n.BodySummary),("$q",n.Confidence),("$n",n.CorroboratingSources),("$e",n.EventType),("$i",n.IsBreaking?1:0),("$m",n.Sentiment));}
+    }
+
+    public async Task<MacroObservationPersistenceResult> SaveMacroObservationAsync(BlsMacroObservationV1 observation,CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(observation);var facts=observation.Facts;var source=observation.Source;
+        if(facts.ValueKind!=JsonValueKind.Object||source.Kind!=ModelOffSourceKindV1.Macro||source.Status!=ModelOffSourceStatusV1.Available||source.AsOfUtc is null||source.AsOfUtc.Value.Offset!=TimeSpan.Zero||string.IsNullOrWhiteSpace(source.SourceId)||string.IsNullOrWhiteSpace(source.ArtifactHash)||source.ArtifactHash.Length!=64||!source.ArtifactHash.All(Uri.IsHexDigit))return new(false,false,0,"macro.persistence.invalid");
+        string schema,indicator,geography,frequency,unit;DateTimeOffset observed,released;decimal value;
+        try{schema=facts.GetProperty("schema").GetString()??"";indicator=facts.GetProperty("indicatorId").GetString()??"";geography=facts.GetProperty("geography").GetString()??"";frequency=facts.GetProperty("frequency").GetString()??"";unit=facts.GetProperty("unit").GetString()??"";observed=facts.GetProperty("observationAtUtc").GetDateTimeOffset();released=facts.GetProperty("releasedAtUtc").GetDateTimeOffset();value=facts.GetProperty("value").GetDecimal();}catch{return new(false,false,0,"macro.persistence.invalid");}
+        if(schema!="wpe.macro-facts/1.0"||string.IsNullOrWhiteSpace(indicator)||string.IsNullOrWhiteSpace(geography)||string.IsNullOrWhiteSpace(frequency)||string.IsNullOrWhiteSpace(unit)||observed.Offset!=TimeSpan.Zero||released.Offset!=TimeSpan.Zero||observed>released||source.AsOfUtc.Value<released)return new(false,false,0,"macro.persistence.invalid");
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);var revision=1;
+        await using(var read=c.CreateCommand()){read.Transaction=tx;read.CommandText="SELECT revision,value,geography,frequency,unit FROM macro_observation_revisions WHERE indicator_id=$id AND observation_at=$at ORDER BY revision DESC LIMIT 1";AddParameters(read,("$id",indicator),("$at",DbInstant(observed)));await using var r=await read.ExecuteReaderAsync(ct);if(await r.ReadAsync(ct)){revision=r.GetInt32(0);var same=decimal.Parse(r.GetString(1),CultureInfo.InvariantCulture)==value&&r.GetString(2)==geography&&r.GetString(3)==frequency&&r.GetString(4)==unit;if(same){await tx.RollbackAsync(ct);return new(true,true,revision,"macro.persistence.idempotent");}revision=checked(revision+1);}}
+        await using(var insert=c.CreateCommand()){insert.Transaction=tx;insert.CommandText="INSERT INTO macro_observation_revisions(indicator_id,observation_at,revision,geography,frequency,unit,value,source_id,source_artifact_hash,first_observed_at) VALUES($id,$at,$revision,$geo,$frequency,$unit,$value,$source,$hash,$seen)";AddParameters(insert,("$id",indicator),("$at",DbInstant(observed)),("$revision",revision),("$geo",geography),("$frequency",frequency),("$unit",unit),("$value",value.ToString(CultureInfo.InvariantCulture)),("$source",source.SourceId),("$hash",source.ArtifactHash),("$seen",DbInstant(source.AsOfUtc.Value)));await insert.ExecuteNonQueryAsync(ct);}
+        await tx.CommitAsync(ct);return new(true,false,revision,revision==1?"macro.persistence.inserted":"macro.persistence.revised");
+    }
+
+    public async Task<IReadOnlyList<PersistedMacroObservation>> GetMacroObservationRevisionsAsync(string indicatorId,DateTimeOffset observationAtUtc,CancellationToken ct)
+    {
+        var result=new List<PersistedMacroObservation>();if(string.IsNullOrWhiteSpace(indicatorId)||observationAtUtc.Offset!=TimeSpan.Zero)return result;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT revision,geography,frequency,unit,value,source_id,source_artifact_hash,first_observed_at FROM macro_observation_revisions WHERE indicator_id=$id AND observation_at=$at ORDER BY revision";AddParameters(q,("$id",indicatorId),("$at",DbInstant(observationAtUtc)));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))result.Add(new(indicatorId,observationAtUtc,r.GetInt32(0),r.GetString(1),r.GetString(2),r.GetString(3),decimal.Parse(r.GetString(4),CultureInfo.InvariantCulture),r.GetString(5),r.GetString(6),Instant(r.GetString(7))));return result;
     }
     public async Task<IReadOnlyList<NewsEvidence>> SearchNewsAsync(string query,int limit,CancellationToken ct)
     {

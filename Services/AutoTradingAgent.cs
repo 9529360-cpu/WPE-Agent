@@ -2,6 +2,7 @@ using 币安量化机器人.Core.Models;
 using 币安量化机器人.Services.Agent;
 using 币安量化机器人.Services.Localization;
 using System.Diagnostics;
+using System.Net.Http;
 using 币安量化机器人.Services.Exchange;
 using 币安量化机器人.Core.Runtime;
 using 币安量化机器人.Infrastructure.Runtime;
@@ -216,7 +217,7 @@ public static class AutoTradingAgent
         async Task RefreshCapabilitySnapshot(CancellationToken token)=>await RefreshCapabilitiesAsync(exchange,settings.Symbols,capabilitySnapshot,token);
         await RefreshCapabilitySnapshot(ct);_activeCapabilityRefresh=RefreshCapabilitySnapshot;
         await using var realtime=exchange.CreateRealtimeFeed(settings.Symbols,Db)??new PollingRealtimeFeed();await realtime.StartAsync(ct);
-        var newsResearch=new NewsResearchService();var collector=new EvidenceCollector(exchange,settings.Symbols,realtime,newsResearch);var executor=new ReliableOrderExecutor(exchange,Db,settings.Risk,SystemOrderPollScheduler.Instance,capabilitySnapshot,true);var recoveryServices=await ProductionRecoveryComposition.CreateAsync(exchange,executor,Db,ProductionRecoveryComposition.DefaultKeyPath(),ct:ct);var executionGateway=recoveryServices.Gateway;var planner=new RiskAndPositionPlanner();var aggregator=new SignalAggregationSkill();var governance=new DecisionGovernanceSkill();var deterministic=new DeterministicPlanSkill();var independentRisk=new IndependentRiskManagerSkill();var longResearch=new LongHorizonResearchSkill();var portfolioRiskSkill=new PortfolioRiskSkill();var historicalData=new HistoricalDataService(exchange,Db);var positionManager=new PositionManagementSkill();var strategyResearch=new StrategyResearchAgent(Db,runtimeBacktests:ServiceLocator.RuntimeBacktests);var strategyScheduler=new StrategyResearchScheduler(strategyResearch,Db);var strategySchedulerTask=strategyScheduler.StartAsync(settings.Symbols,settings.Risk,ct);var nextStrategyResearch=DateTime.UtcNow.AddYears(100);
+        var newsResearch=new NewsResearchService();var collector=new EvidenceCollector(exchange,settings.Symbols,realtime,newsResearch);var executor=new ReliableOrderExecutor(exchange,Db,settings.Risk,SystemOrderPollScheduler.Instance,capabilitySnapshot,true);var recoveryServices=await ProductionRecoveryComposition.CreateAsync(exchange,executor,Db,ProductionRecoveryComposition.DefaultKeyPath(),ct:ct);var executionGateway=recoveryServices.Gateway;var planner=new RiskAndPositionPlanner();var aggregator=new SignalAggregationSkill();var governance=new DecisionGovernanceSkill();var deterministic=new DeterministicPlanSkill();var independentRisk=new IndependentRiskManagerSkill();var longResearch=new LongHorizonResearchSkill();var portfolioRiskSkill=new PortfolioRiskSkill();var historicalData=new HistoricalDataService(exchange,Db);var positionManager=new PositionManagementSkill();var strategyResearch=new StrategyResearchAgent(Db,runtimeBacktests:ServiceLocator.RuntimeBacktests);var strategyScheduler=new StrategyResearchScheduler(strategyResearch,Db);var strategySchedulerTask=strategyScheduler.StartAsync(settings.Symbols,settings.Risk,ct);var macroHttp=new HttpClient{Timeout=TimeSpan.FromSeconds(20)};var macroScheduler=new WpeAgent.AgentServices.MacroResearchScheduler(new(new WpeAgent.AgentServices.HttpBlsMacroDataTransport(macroHttp)),Db);var macroSchedulerTask=macroScheduler.StartAsync(ct);var nextStrategyResearch=DateTime.UtcNow.AddYears(100);
         _activeExecutionGateway=executionGateway;_activeRuntimeSessionId=runtime.RunId;
         var automaticGateway=new TradingAutomaticExecutionGateway(executionGateway,exchange,Db);
         var automaticValidator=new ProductionAutomaticExecutionValidator(SettingsStore,exchangeProfile,exchange,capabilitySnapshot,()=>ReferenceEquals(_activeExchange,exchange)&&string.Equals(_activeRuntimeSessionId,runtime.RunId,StringComparison.Ordinal));
@@ -308,6 +309,7 @@ public static class AutoTradingAgent
         finally
         {
             if(automaticWorkerTask is not null)try{await automaticWorkerTask;}catch(OperationCanceledException)when(ct.IsCancellationRequested){}
+            try{await macroSchedulerTask;}catch(OperationCanceledException)when(ct.IsCancellationRequested){}finally{macroHttp.Dispose();}
         }
     }
 
