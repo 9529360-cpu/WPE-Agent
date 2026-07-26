@@ -11,6 +11,9 @@ public sealed class AutomaticExecutionWorker
     public async Task RunAsync(string workerId,TimeSpan interval,CancellationToken ct)
     {
         if(interval<TimeSpan.FromMilliseconds(500)||interval>TimeSpan.FromSeconds(5))throw new ArgumentOutOfRangeException(nameof(interval));
+        try{await _processor.BackfillObservationsAsync(ct);}
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch{/* Observation repair failure must not disable execution/recovery processing. */}
         while(true){ct.ThrowIfCancellationRequested();await RunOnceAsync(workerId,ct);await Task.Delay(interval,ct);}
     }
 }

@@ -71,6 +71,7 @@ public sealed record ModelOffExecutionTimelineEntryV1(int Sequence,string From,s
 public sealed record ModelOffExecutionTimelineV1(int ContractVersion,string ExecutionId,string TimelineSha256,IReadOnlyList<ModelOffExecutionTimelineEntryV1> Entries);
 public sealed record ModelOffRecoveryHandoffV1(int ContractVersion,string ExecutionId,string State,string ReasonCode,bool Quarantined,bool ResubmitAllowed,string ArtifactHash,string IntentHash,string HandoffSha256);
 public sealed record AutomaticExecutionProcessorResult(bool Handled,string Code,ModelOffExecutionTimelineV1? Timeline=null,ModelOffRecoveryHandoffV1? RecoveryHandoff=null);
+public sealed record ModelOffExecutionBackfillResultV1(int Examined,int Written,int Skipped,int Failed,string Code);
 
 public static class ModelOffExecutionRecoveryContractV1
 {
@@ -150,6 +151,40 @@ public sealed class AutomaticExecutionProcessor
         return Result(false,"automatic.no-reconciliation-work");
     }
 
+    internal async Task<ModelOffExecutionBackfillResultV1> BackfillObservationsAsync(CancellationToken ct)
+    {
+        var examined=0;var written=0;var skipped=0;var failed=0;
+        foreach(var status in Enum.GetValues<AutomaticExecutionQueueStatus>())
+        foreach(var item in await _store.GetAutomaticExecutionQueueAsync(status,100,ct))
+        {
+            examined++;try
+            {
+                var events=await _store.GetAutomaticExecutionEventsAsync(item.ExecutionId,100,ct);
+                if(events.Count==0||events[^1].ToStatus!=item.Status){failed++;continue;}
+                var writer=new ModelOffExecutionObservationWriterV1(_store);
+                ModelOffExchangeOrderEvidenceV1? evidence=null;
+                if(item.Status==AutomaticExecutionQueueStatus.Succeeded)
+                {
+                    var confirmedIdentity=ModelOffExecutionObservationWriterV1.ObservationIdentity(item,events,
+                        ModelOffExchangeOrderEvidenceContractV1.Create(item.ExecutionId,ModelOffExchangeOrderEvidenceStateV1.Confirmed,
+                            item.Artifact?.Intents.Count??0,item.Artifact?.Intents.Count??0,_utcNow().ToUniversalTime(),[]));
+                    if(await writer.ObservationCompleteAsync(confirmedIdentity,ct)){skipped++;continue;}
+                    evidence=await ReadExchangeEvidenceAsync(item,ct);
+                }
+                var identity=ModelOffExecutionObservationWriterV1.ObservationIdentity(item,events,evidence);
+                if(await writer.ObservationCompleteAsync(identity,ct)){skipped++;continue;}
+                var result=await writer.WriteAsync(item,events,evidence,_utcNow().ToUniversalTime(),ct);
+                if(result.Persisted)written++;else failed++;
+            }
+            catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+            catch(Exception ex)
+            {
+                failed++;try{await _store.RecordErrorAsync("ModelOffExecutionBackfill",ex,CancellationToken.None);}catch{}
+            }
+        }
+        return new(examined,written,skipped,failed,failed==0?"execution-backfill.completed":"execution-backfill.degraded");
+    }
+
     private static bool ValidArtifactAndReceipt(PersistedAutomaticExecution item,DateTimeOffset now)
     {
         if(!item.ArtifactValid||!item.RiskReceiptValid||item.Artifact is null||item.RiskReceipt is null)return false;var artifact=item.Artifact;var receipt=item.RiskReceipt;var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);
@@ -162,13 +197,8 @@ public sealed class AutomaticExecutionProcessor
         var item=await _store.GetAutomaticExecutionAsync(id,ct);
         if(item is not null&&events.Count>0)
         {
-            ModelOffExchangeOrderEvidenceV1? exchangeEvidence=null;
-            if(item.Artifact is not null&&_gateway is IAutomaticExecutionOrderEvidenceReader reader)
-            {
-                try{exchangeEvidence=await reader.ObserveOrdersAsync(item.Artifact,ct);}
-                catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
-                catch{exchangeEvidence=null;}
-            }
+            var exchangeEvidence=item.Status==AutomaticExecutionQueueStatus.Succeeded
+                ?await ReadExchangeEvidenceAsync(item,ct):null;
             try{await new ModelOffExecutionObservationWriterV1(_store).WriteAsync(item,events,exchangeEvidence,_utcNow().ToUniversalTime(),ct);}
             catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
             catch(Exception ex)
@@ -177,6 +207,13 @@ public sealed class AutomaticExecutionProcessor
             }
         }
         return new(handled,code,ModelOffExecutionRecoveryContractV1.Timeline(id,events),handoff);
+    }
+    private async Task<ModelOffExchangeOrderEvidenceV1?> ReadExchangeEvidenceAsync(PersistedAutomaticExecution item,CancellationToken ct)
+    {
+        if(item.Artifact is null||_gateway is not IAutomaticExecutionOrderEvidenceReader reader)return null;
+        try{return await reader.ObserveOrdersAsync(item.Artifact,ct);}
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch{return null;}
     }
     private static AutomaticExecutionProcessorResult Result(bool handled,string code)=>new(handled,code);
 }

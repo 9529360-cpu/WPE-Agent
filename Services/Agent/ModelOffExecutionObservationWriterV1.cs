@@ -37,6 +37,7 @@ internal sealed class ModelOffExecutionObservationWriterV1
             throw new ArgumentException("Execution events must be non-empty and belong to the execution.", nameof(events));
 
         var timeline = ModelOffExecutionRecoveryContractV1.Timeline(item.ExecutionId, events);
+        if(timeline.Entries[^1].To!=item.Status.ToString())throw new InvalidOperationException("Execution timeline and persisted state are inconsistent.");
         var persistedIntents = await _store.GetIntentsByCycleAsync(item.Artifact?.CorrelationId ?? item.ExecutionId,100,ct);
         var correlation = Correlate(item.Artifact,persistedIntents);
         var exchangeConfirmed=exchangeEvidence is {State:ModelOffExchangeOrderEvidenceStateV1.Confirmed}
@@ -49,7 +50,7 @@ internal sealed class ModelOffExecutionObservationWriterV1
         var latestSequence = timeline.Entries.Max(x => x.Sequence);
         var cycleId = item.Artifact?.CorrelationId ?? item.ExecutionId;
         var stateToken = item.Status.ToString().ToLowerInvariant();
-        var identity = $"{item.ExecutionId}-observation-{latestSequence}-{stateToken}";
+        var identity = ObservationIdentity(item,events,exchangeEvidence);
         var sourceStatus = item.ArtifactValid ? ModelOffSourceStatusV1.Available : ModelOffSourceStatusV1.Invalid;
         var executionSucceeded = item.Status == AutomaticExecutionQueueStatus.Succeeded && item.ArtifactValid && correlation.Valid && exchangeConfirmed;
         var executionReasons = ExecutionReasons(item).Concat(
@@ -111,6 +112,19 @@ internal sealed class ModelOffExecutionObservationWriterV1
         }
         return new(execution, recovery, audit, documents, true, "execution-observation.persisted");
     }
+
+    internal static string ObservationIdentity(PersistedAutomaticExecution item,
+        IReadOnlyList<PersistedAutomaticExecutionEvent> events,ModelOffExchangeOrderEvidenceV1? exchangeEvidence)
+    {
+        var sequence=events.Count==0?0:events.Max(x=>x.Sequence);
+        var evidence=(exchangeEvidence?.State??ModelOffExchangeOrderEvidenceStateV1.Unknown).ToString().ToLowerInvariant();
+        return $"{item.ExecutionId}-observation-{sequence}-{item.Status.ToString().ToLowerInvariant()}-{evidence}";
+    }
+
+    internal async Task<bool> ObservationCompleteAsync(string identity,CancellationToken ct) =>
+        await _store.HasModelOffCanonicalAuditAsync(identity+"-execution",ct)
+        &&await _store.HasModelOffCanonicalAuditAsync(identity+"-recovery",ct)
+        &&await _store.HasModelOffCanonicalAuditAsync(identity+"-audit",ct);
 
     private static ModelOffAgentOutputV1 Output(
         ModelOffAgentV1 role, string outputId, string cycleId, DateTimeOffset at,

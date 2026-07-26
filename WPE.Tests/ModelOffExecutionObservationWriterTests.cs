@@ -148,6 +148,8 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
         Assert.DoesNotContain("TradingExecutionGateway", source, StringComparison.Ordinal);
         var processor = File.ReadAllText(Path.Combine(ProjectRoot(), "Services", "Agent", "AutomaticExecutionProcessor.cs"));
         Assert.Contains("new ModelOffExecutionObservationWriterV1(_store).WriteAsync", processor, StringComparison.Ordinal);
+        var worker=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","Agent","AutomaticExecutionWorker.cs"));
+        Assert.True(worker.IndexOf("BackfillObservationsAsync",StringComparison.Ordinal)<worker.IndexOf("while(true)",StringComparison.Ordinal));
     }
 
     [Fact]
@@ -167,6 +169,39 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
         var audits = await store.GetModelOffCanonicalAuditsAsync(artifact.CorrelationId, CancellationToken.None);
         Assert.Equal(3, audits.Count);
         Assert.Equal(new[] { "audit", "execution", "recovery" }, audits.Select(x => x.OutputKind).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task StartupBackfillRepairsMissingObservationAndThenSkipsIdempotently()
+    {
+        var store=Store();var item=await Succeeded(store,"backfill-missing");await SeedConfirmedIntent(store,item.Artifact!);
+        var gateway=new SuccessfulGateway();var processor=new AutomaticExecutionProcessor(store,new ValidRuntime(),gateway,()=>Now);
+
+        var first=await processor.BackfillObservationsAsync(CancellationToken.None);
+        var second=await processor.BackfillObservationsAsync(CancellationToken.None);
+
+        Assert.Equal(1,first.Written);Assert.Equal(0,first.Failed);
+        Assert.Equal(1,second.Skipped);Assert.Equal(0,second.Written);
+        Assert.Equal(1,gateway.ObservationCount);
+        Assert.Equal(3,(await store.GetModelOffCanonicalAuditsAsync(item.ExecutionId,CancellationToken.None)).Count);
+    }
+
+    [Fact]
+    public async Task BackfillAppendsConfirmedEvidenceAfterEarlierUnknownObservation()
+    {
+        var store=Store();var item=await Succeeded(store,"backfill-upgrade");await SeedConfirmedIntent(store,item.Artifact!);
+        var unknown=new AutomaticExecutionProcessor(store,new ValidRuntime(),
+            new SuccessfulGateway(ModelOffExchangeOrderEvidenceStateV1.Unknown),()=>Now);
+        Assert.Equal(1,(await unknown.BackfillObservationsAsync(CancellationToken.None)).Written);
+        var confirmed=new AutomaticExecutionProcessor(store,new ValidRuntime(),new SuccessfulGateway(),()=>Now);
+
+        var upgraded=await confirmed.BackfillObservationsAsync(CancellationToken.None);
+
+        Assert.Equal(1,upgraded.Written);Assert.Equal(0,upgraded.Failed);
+        var audits=await store.GetModelOffCanonicalAuditsAsync(item.ExecutionId,CancellationToken.None);
+        Assert.Equal(6,audits.Count);
+        Assert.Contains(audits,x=>x.OutputId.Contains("-unknown-",StringComparison.Ordinal));
+        Assert.Contains(audits,x=>x.OutputId.Contains("-confirmed-",StringComparison.Ordinal));
     }
 
     private AgentSqliteStore Store() => new(DatabasePath, () => Now);
@@ -222,8 +257,11 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
             state==ModelOffExchangeOrderEvidenceStateV1.Confirmed?expected:0,Now,entries);
     }
 
-    private sealed class SuccessfulGateway : IAutomaticExecutionGateway, IAutomaticExecutionOrderEvidenceReader
+    private sealed class SuccessfulGateway(
+        ModelOffExchangeOrderEvidenceStateV1 evidenceState=ModelOffExchangeOrderEvidenceStateV1.Confirmed)
+        : IAutomaticExecutionGateway, IAutomaticExecutionOrderEvidenceReader
     {
+        public int ObservationCount{get;private set;}
         public bool IsTestnet => true;
         public Task<AutomaticGatewayExecutionResult> ExecuteAsync(DurableExecutionArtifactV2 artifact,
             DeterministicRiskReceipt receipt, CancellationToken ct) =>
@@ -231,9 +269,14 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
         public Task<AutomaticGatewayReconciliationResult> ReconcileAsync(DurableExecutionArtifactV2 artifact,
             CancellationToken ct) =>
             Task.FromResult(new AutomaticGatewayReconciliationResult(AutomaticGatewayReconciliationState.Succeeded, "automatic.reconcile-succeeded"));
-        public Task<ModelOffExchangeOrderEvidenceV1> ObserveOrdersAsync(DurableExecutionArtifactV2 artifact,CancellationToken ct) =>
-            Task.FromResult(ModelOffExchangeOrderEvidenceContractV1.Create(artifact.CorrelationId,
-                ModelOffExchangeOrderEvidenceStateV1.Confirmed,artifact.Intents.Count,artifact.Intents.Count,Now,
-                artifact.Intents.Select(x=>new ModelOffExchangeOrderEvidenceEntryV1(x.Sequence,"confirmed","FILLED",x.Quantity)).ToArray()));
+        public Task<ModelOffExchangeOrderEvidenceV1> ObserveOrdersAsync(DurableExecutionArtifactV2 artifact,CancellationToken ct)
+        {
+            ObservationCount++;
+            var confirmed=evidenceState==ModelOffExchangeOrderEvidenceStateV1.Confirmed;
+            return Task.FromResult(ModelOffExchangeOrderEvidenceContractV1.Create(artifact.CorrelationId,
+                evidenceState,artifact.Intents.Count,confirmed?artifact.Intents.Count:0,Now,
+                artifact.Intents.Select(x=>new ModelOffExchangeOrderEvidenceEntryV1(x.Sequence,
+                    confirmed?"confirmed":"unknown",confirmed?"FILLED":"none",confirmed?x.Quantity:0)).ToArray()));
+        }
     }
 }
