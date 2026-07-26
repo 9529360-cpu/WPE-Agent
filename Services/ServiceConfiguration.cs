@@ -1,152 +1,27 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Services;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Services;
 
-using System;
 using System.IO;
 using Microsoft.Extensions.DependencyInjection;
-using Serilog;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Data;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Strategy;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Execution;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Risk;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Persistence;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Application.ClosedLoopOrchestration;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Infrastructure.Data;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Infrastructure.Persistence;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Application.Services;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Application.Services;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Data;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Persistence;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Risk;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Strategy;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Infrastructure.Data;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Infrastructure.Persistence;
 
-/// <summary>
-/// ·şÎñÅäÖÃÀà
-/// ¸ºÔğ×¢²áËùÓĞÒÀÀµ×¢Èë£¨DI£©·şÎñ
-/// </summary>
 public static class ServiceConfiguration
 {
-    /// <summary>
-    /// ÅäÖÃÒÀÀµ×¢ÈëÈİÆ÷
-    /// </summary>
-    /// <param name="services">·şÎñ¼¯ºÏ</param>
-    /// <returns>·şÎñÌá¹©Õß</returns>
     public static ServiceProvider ConfigureServices(IServiceCollection services)
-    {
-        // ============ »ù´¡ÉèÊ©·şÎñ ============
-        RegisterInfrastructureServices(services);
-
-        // ============ Core Layer - Êı¾İ²É¼¯ ============
-        RegisterDataServices(services);
-
-        // ============ Core Layer - ²ßÂÔ ============
-        RegisterStrategyServices(services);
-
-        // ============ Core Layer - Ö´ĞĞ ============
-        RegisterExecutionServices(services);
-
-        // ============ Core Layer - ·çÏÕ¹ÜÀí ============
-        RegisterRiskServices(services);
-
-        // ============ Core Layer - ³Ö¾Ã»¯ ============
-        RegisterPersistenceServices(services);
-
-        // ============ Application Layer - ±Õ»·±àÅÅ ============
-        RegisterOrchestrationServices(services);
-
-        return services.BuildServiceProvider();
-    }
-
-    /// <summary>
-    /// ×¢²á»ù´¡ÉèÊ©·şÎñ
-    /// </summary>
-    private static void RegisterInfrastructureServices(IServiceCollection services)
-    {
-        // ×¢²á Binance API ¿Í»§¶Ë
-        services.AddSingleton<BinanceApiClient>();
-
-        // ×¢²áÏÖÓĞµÄ»ù´¡ÉèÊ©·şÎñ
-        if (services.FirstOrDefault(x => x.ServiceType == typeof(BinanceApiClient)) == null)
-        {
-            services.AddSingleton<BinanceApiClient>();
-        }
-    }
-
-    /// <summary>
-    /// ×¢²áÊı¾İ²É¼¯·şÎñ
-    /// </summary>
-    private static void RegisterDataServices(IServiceCollection services)
-    {
-        services.AddSingleton<IDataCollectionService, BinanceDataCollectionService>();
-    }
-
-    /// <summary>
-    /// ×¢²á²ßÂÔ·şÎñ
-    /// </summary>
-    private static void RegisterStrategyServices(IServiceCollection services)
     {
         services.AddScoped<IStrategyEvaluationService, StrategyEvaluationService>();
         services.AddScoped<IStrategyFilterService, StrategyFilterService>();
-    }
-
-    /// <summary>
-    /// ×¢²áÖ´ĞĞ·şÎñ
-    /// </summary>
-    private static void RegisterExecutionServices(IServiceCollection services)
-    {
-        // ×¢²á¶©µ¥Ö´ĞĞºÍ´íÎó»Ö¸´µÄÊµÏÖ (Week 4)
-        services.AddSingleton<IOrderExecutor, RobustOrderExecutor>();
-        services.AddSingleton<IErrorRecoveryHandler, ErrorRecoveryHandler>();
-    }
-
-    /// <summary>
-    /// ×¢²á·çÏÕ¹ÜÀí·şÎñ
-    /// </summary>
-    private static void RegisterRiskServices(IServiceCollection services)
-    {
-        // ×¢²á²ÖÎ»¹ÜÀíºÍ¸Ü¸Ë¿ØÖÆµÄÊµÏÖ (Week 4)
         services.AddSingleton<IPositionManager, PositionManager>();
         services.AddSingleton<ILeverageController, LeverageController>();
-    }
-
-    /// <summary>
-    /// ×¢²á³Ö¾Ã»¯·şÎñ
-    /// </summary>
-    private static void RegisterPersistenceServices(IServiceCollection services)
-    {
-        // ×¢²á½»Ò×¼ÇÂ¼Æ÷µÄÊµÏÖ (Week 5)
-        services.AddSingleton<ITradingRecorder>(provider =>
-        {
-            var dbPath = Path.Combine(AppContext.BaseDirectory, "Data", "trading.db");
-            return new SqliteTradingRecorder(dbPath);
-        });
-
-        // ×¢²á½»Ò×²Ö´¢ (Week 5)
+        services.AddSingleton<ITradingRecorder>(_ =>
+            new SqliteTradingRecorder(AppDataPaths.File("trading.db")));
         services.AddSingleton<ITradeRepository>(provider =>
-        {
-            var recorder = provider.GetRequiredService<ITradingRecorder>();
-            return new TradeRepository(recorder);
-        });
-    }
-
-    /// <summary>
-    /// ×¢²á±Õ»·±àÅÅ·şÎñ
-    /// </summary>
-    private static void RegisterOrchestrationServices(IServiceCollection services)
-    {
-        // ×¢²á×Ô¶¯»¯½»Ò×ÒıÇæµÄÊµÏÖ (Week 5)
-        services.AddSingleton<IAutomatedTradingEngine>(provider =>
-        {
-            var dataCollection = provider.GetRequiredService<IDataCollectionService>();
-            var strategyEvaluation = provider.GetRequiredService<IStrategyEvaluationService>();
-            var strategyFilter = provider.GetRequiredService<IStrategyFilterService>();
-            var orderExecutor = provider.GetRequiredService<IOrderExecutor>();
-            var positionManager = provider.GetRequiredService<IPositionManager>();
-            var leverageController = provider.GetRequiredService<ILeverageController>();
-            var tradingRecorder = provider.GetRequiredService<ITradingRecorder>();
-
-            return new AutomatedTradingEngine(
-                dataCollection,
-                strategyEvaluation,
-                strategyFilter,
-                orderExecutor,
-                positionManager,
-                leverageController,
-                tradingRecorder);
-        });
+            new TradeRepository(provider.GetRequiredService<ITradingRecorder>()));
+        return services.BuildServiceProvider();
     }
 }

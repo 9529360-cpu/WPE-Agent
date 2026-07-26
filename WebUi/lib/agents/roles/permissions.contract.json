@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RolePermissionContract",
+  "type": "object",
+  "required": ["version", "localOnly", "privateTestnetPerOrderHumanApproval", "roles"],
+  "properties": {
+    "version": { "type": "string" },
+    "localOnly": { "type": "boolean", "const": true },
+    "privateTestnetPerOrderHumanApproval": { "type": "boolean", "const": false },
+    "roles": {
+      "type": "array",
+      "minItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "mode", "runtime", "optionalLlm", "deterministicFallback", "allowedActions", "forbiddenActions", "typedAuthorization", "inputs", "outputs"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "mode": { "type": "string", "enum": ["deterministic", "optional-llm"] },
+          "runtime": { "type": "string", "enum": ["local"] },
+          "optionalLlm": { "type": "boolean" },
+          "deterministicFallback": { "type": "string" },
+          "allowedActions": { "type": "array", "items": { "type": "string" } },
+          "forbiddenActions": { "type": "array", "items": { "type": "string" } },
+          "typedAuthorization": {
+            "type": "object",
+            "required": ["machineEvidenceGate", "machineRiskAuthorization", "machineExecutionEligibility", "automaticSafetyAction", "humanLifecycleGovernance", "humanExternalPublicationReview"],
+            "properties": {
+              "machineEvidenceGate": { "$ref": "#/$defs/actions" },
+              "machineRiskAuthorization": { "$ref": "#/$defs/actions" },
+              "machineExecutionEligibility": { "$ref": "#/$defs/actions" },
+              "automaticSafetyAction": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "type": "string", "enum": ["block", "halt", "degrade", "quarantine", "reduce-only-recovery"] }
+              },
+              "humanLifecycleGovernance": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "type": "string", "enum": ["promote", "retire", "rollback"] }
+              },
+              "humanExternalPublicationReview": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "type": "string", "enum": ["publish-report", "publish-external-content"] }
+              }
+            },
+            "additionalProperties": false
+          },
+          "inputs": { "$ref": "#/$defs/actions" },
+          "outputs": { "$ref": "#/$defs/actions" },
+          "mustRouteThrough": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "actions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "additionalProperties": false
+}

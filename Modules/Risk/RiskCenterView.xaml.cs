@@ -14,7 +14,8 @@ public partial class RiskCenterView : UserControl
     private readonly ObservableCollection<RiskMetrics> _metrics = new();
     private readonly ObservableCollection<StressTestResult> _stress = new();
     private readonly RiskEngine _riskEngine = ServiceLocator.Risk;
-    private readonly BinanceApiClient _api = ServiceLocator.Api;
+    private readonly IMarketDataReader _marketData = ServiceLocator.MarketData;
+    private readonly IAccountReader _accountReader = ServiceLocator.AccountReader;
 
     public RiskCenterView()
     {
@@ -28,7 +29,7 @@ public partial class RiskCenterView : UserControl
     {
         try
         {
-            var symbols = await _api.GetMiniTickersAsync();
+            var symbols = await _marketData.GetMiniTickersAsync();
             BenchmarkBox.ItemsSource = symbols.Select(s => s.Symbol).OrderBy(s => s).ToList();
             if (BenchmarkBox.Items.Count > 0)
                 BenchmarkBox.SelectedIndex = 0;
@@ -51,7 +52,7 @@ public partial class RiskCenterView : UserControl
         try
         {
             StatusText.Text = "状态：正在计算 VaR / CVaR";
-            var positions = await _api.GetPositionsAsync();
+            var positions = await _accountReader.GetPositionsAsync();
             var rules = new[]
             {
                 new RiskRule { Name = "VaR 限制", Threshold = 500, Comparator = ">", Action = "减少仓位", IsActive = true },

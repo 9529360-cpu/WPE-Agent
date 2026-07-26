@@ -7,9 +7,9 @@ public class RawStreamRecorder : IRawStreamRecorder
 {
     private readonly string _baseDir;
 
-    public RawStreamRecorder(string baseDir = null)
+    public RawStreamRecorder(string? baseDir = null)
     {
-        _baseDir = baseDir ?? Path.Combine(AppContext.BaseDirectory, "Logs", "RawStreams");
+        _baseDir = baseDir ?? Path.Combine(AppDataPaths.LogsDirectory, "RawStreams");
         Directory.CreateDirectory(_baseDir);
     }
 

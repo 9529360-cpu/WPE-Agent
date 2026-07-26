@@ -150,6 +150,20 @@ public sealed class PortfolioRiskAssessment
     public string Summary { get; init; } = string.Empty;
 }
 public sealed record AgentContext(string BrainName, bool CircuitBreakerActive, string? ActiveSymbol, IReadOnlyList<string> PreviousOutcomes, IReadOnlyList<MarketDecisionAssessment> MarketAssessments, int ConsecutiveHolds);
+public sealed record StructuredOutcomeMemory(
+    DateTime CycleStartedUtc,
+    string Mode,
+    string Exchange,
+    string Symbol,
+    string Timeframe,
+    string DecisionAction,
+    string DecisionSummary,
+    string RiskResult,
+    string RiskReasonCode,
+    bool ExecutionAttempted,
+    string ExecutionResult,
+    bool StateChanged,
+    string RecoveryHint);
 public sealed record BrainHealth(bool Healthy, string Message);
 public sealed record BrainDecisionResult(DecisionPlan Decision, string Request, string Response);
 public sealed class BrainCallException : Exception
@@ -217,4 +231,5 @@ public sealed class DecisionPolicy
 }
 public sealed record ExecutionIntent(string Symbol, PositionSide Side, decimal Quantity, bool ReduceOnly, decimal StopLoss, decimal TakeProfit, string ClientOrderId, string Reason, DecisionAction Action = DecisionAction.Hold, ExecutionOrderType OrderType = ExecutionOrderType.Market, decimal LimitPrice = 0, decimal ExpectedPrice = 0);
 public sealed record PersistedIntent(string CycleId, ExecutionIntent Intent, string Status, string? ExchangeOrderId);
+public sealed record PersistedBacktestRun(string Id,string StrategyId,string StrategyVersion,string Symbol,string Status,DateTime CompletedAtUtc,int CoverageDays,int Trades,double OutOfSampleReturn,double MaxDrawdown,double Sharpe);
 public sealed record RecoveryResult(bool SafeToIncreaseRisk, IReadOnlyList<string> Messages);

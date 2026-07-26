@@ -22,11 +22,12 @@ public partial class App : global::System.Windows.Application
 
     public App()
     {
-        // Initialize Serilog for basic file logging
+        var migration = AppDataPaths.MigrateLegacyPortableData();
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Information()
-            .WriteTo.File("logs\\app.log", rollingInterval: RollingInterval.Day)
+            .WriteTo.Sink(new SensitiveFileLogSink(AppDataPaths.LogFile("app.log")))
             .CreateLogger();
+        Log.Information("Portable data migration completed. Copied={Copied}; Skipped={Skipped}; Failed={Failed}", migration.Copied, migration.Skipped, migration.Failed);
     }
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -59,6 +60,15 @@ public partial class App : global::System.Windows.Application
             var result=await ExchangePublicTestRunner.RunAsync();
             Log.Information("Exchange public endpoint tests completed. Success={Success}; Report={Report}",result.Success,result.ReportPath);
             Shutdown(result.Success?0:13);
+            return;
+        }
+
+        if (e.Args.Any(x => string.Equals(x, "--provider-readonly-access", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await ProviderReadOnlyAccessRunner.RunConfiguredAsync();
+            Log.Information("Provider read-only access completed. Success={Success}; Report={Report}",result.Success,result.ReportPath);
+            Shutdown(result.Success?0:16);
             return;
         }
 
@@ -95,7 +105,7 @@ public partial class App : global::System.Windows.Application
         if (e.Args.Any(x => string.Equals(x, "--device-code", StringComparison.OrdinalIgnoreCase)))
         {
             ShutdownMode=ShutdownMode.OnExplicitShutdown;
-            var path=Path.Combine(AppContext.BaseDirectory,"Data","device-code.txt");Directory.CreateDirectory(Path.GetDirectoryName(path)!);await File.WriteAllTextAsync(path,DeviceLicenseService.GetCurrentDeviceCode());
+            var path=AppDataPaths.RuntimeFile("device-code.txt");await File.WriteAllTextAsync(path,DeviceLicenseService.GetCurrentDeviceCode());
             Shutdown(0);
             return;
         }
@@ -182,6 +192,8 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
+        _ = StartPublicMarketAsync();
+
         // 激活窗关闭后还要继续打开初始化向导或主控制台，不能让 WPF
         // 在两个窗口切换的间隙按“最后窗口关闭”自动终止应用。
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -198,6 +210,16 @@ public partial class App : global::System.Windows.Application
         var settings = settingsStore.Load();
         settings.ActiveUser = localIdentity;
         settingsStore.Save(settings);
+        var runtimeMode = RuntimeModePolicy.Resolve(settings);
+        var state = ServiceLocator.SystemState;
+        state.BrainMode = runtimeMode.RequestedMode;
+        state.BrainEffectiveMode = runtimeMode.EffectiveMode;
+        state.BrainRemoteAllowed = runtimeMode.AllowRemoteBrain;
+        state.BrainFallbackReason = runtimeMode.FallbackReason;
+        state.ActiveBrainProvider = runtimeMode.ProviderName;
+        state.ActiveBrainModel = runtimeMode.ModelName;
+        state.BrainName = runtimeMode.EffectiveMode == Core.Models.AiRuntimeMode.LocalOnly ? "WPE Local Brain" : runtimeMode.ProviderName;
+        state.LastUpdated = DateTime.UtcNow;
         if (!settings.SetupCompleted)
         {
             var setup = new SetupWindow(localIdentity);
@@ -208,6 +230,20 @@ public partial class App : global::System.Windows.Application
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         main.Show();
 
+        if (e.Args.Any(x => string.Equals(x, "--reference-ui", StringComparison.OrdinalIgnoreCase))
+            && File.Exists(Path.Combine(AppContext.BaseDirectory, "WebUi", "out", "index.html")))
+        {
+            var reference = new WpeAgent.ReferenceUiWindow(main.BuildRuntimeJson, () =>
+            {
+                var setup = new SetupWindow(main.UserName, true);
+                setup.ShowDialog();
+                _ = main.RefreshAccessForReferenceAsync();
+            });
+            MainWindow = reference;
+            main.Hide();
+            reference.Show();
+        }
+
         // Agent 由用户在总控台明确启动，应用打开时不自动下单。
     }
 
@@ -216,6 +252,7 @@ public partial class App : global::System.Windows.Application
         try
         {
             await AutoTradingAgent.StopAsync();
+            await ServiceLocator.DisposeAsync();
             if (ServiceProvider is IAsyncDisposable asyncDisposable)
             {
                 await asyncDisposable.DisposeAsync();
@@ -229,6 +266,18 @@ public partial class App : global::System.Windows.Application
         {
             Log.CloseAndFlush();
             base.OnExit(e);
+        }
+    }
+
+    private static async Task StartPublicMarketAsync()
+    {
+        try
+        {
+            await ServiceLocator.PublicMarket.StartAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Public market runtime failed to start and remains unavailable.");
         }
     }
 }

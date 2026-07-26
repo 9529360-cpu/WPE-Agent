@@ -18,7 +18,7 @@ namespace 币安量化机器人.Modules.Market;
 public partial class RealtimeView : UserControl
 {
     private readonly ObservableCollection<TickerQuote> _quotes = new();
-    private readonly BinanceApiClient _api = ServiceLocator.Api;
+    private readonly IMarketDataReader _marketData = ServiceLocator.MarketData;
     private readonly BinanceStreamClient _stream = ServiceLocator.Stream;
     private readonly AiForecastService _aiService = ServiceLocator.Ai;
     private ICollectionView? _view;
@@ -59,7 +59,7 @@ public partial class RealtimeView : UserControl
     private async Task LoadInitialAsync()
     {
         _quotes.Clear();
-        var tickers = await _api.GetMiniTickersAsync(cancellationToken: CancellationToken.None);
+        var tickers = await _marketData.GetMiniTickersAsync(cancellationToken: CancellationToken.None);
         foreach (var quote in tickers.OrderByDescending(q => q.Volume).Take(120))
         {
             quote.AddPricePoint(quote.LastPrice);

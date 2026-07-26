@@ -15,7 +15,7 @@ public static class AutonomyTestRunner
 {
     public static async Task<SmokeRunResult> RunAsync(CancellationToken ct=default)
     {
-        var report=new AutonomyTestReport();var dir=Path.Combine(AppContext.BaseDirectory,"Data","autonomy-tests");Directory.CreateDirectory(dir);var reportPath=Path.Combine(dir,$"autonomy-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");var dbPath=Path.Combine(dir,$"autonomy-{Guid.NewGuid():N}.db");
+        var report=new AutonomyTestReport();var dir=Path.Combine(AppDataPaths.TestArtifactsDirectory,"autonomy-tests");Directory.CreateDirectory(dir);var reportPath=Path.Combine(dir,$"autonomy-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");var dbPath=Path.Combine(dir,$"autonomy-{Guid.NewGuid():N}.db");
         try
         {
             await Case(report,"确定性计划补齐入场、保护与收益风险比",async()=>{var market=Market();var source=new DecisionPlan{Action=DecisionAction.OpenLong,Instrument="BTCUSDT",Confidence=.9,TargetTier=1};var plan=new DeterministicPlanSkill().Complete(source,market,null,new());Require(plan.EntryPrice>0&&plan.StopLossPrice<plan.EntryPrice&&plan.TakeProfitPrice>plan.EntryPrice,"计划保护参数无效");Require(plan.RiskRewardRatio>=1.8,"收益风险比未达到硬限制");return await Task.FromResult($"entry={plan.EntryPrice} stop={plan.StopLossPrice} take={plan.TakeProfitPrice} RR={plan.RiskRewardRatio:F2} type={plan.OrderType}");});
@@ -32,7 +32,7 @@ public static class AutonomyTestRunner
             report.Success=report.Cases.All(x=>x.Status=="PASSED");
         }
         catch(Exception ex){report.Cases.Add(new("测试运行中止","FAILED",0,ex.ToString()));report.Success=false;}
-        report.CompletedAtUtc=DateTime.UtcNow;await File.WriteAllTextAsync(reportPath,JsonSerializer.Serialize(report,new JsonSerializerOptions{WriteIndented=true}),ct);return new(report.Success,reportPath);
+        report.CompletedAtUtc=DateTime.UtcNow;await global::币安量化机器人.Services.SensitiveDataRedactor.WriteRedactedJsonAsync(reportPath,report,ct);return new(report.Success,reportPath);
     }
 
     private static async Task Case(AutonomyTestReport report,string name,Func<Task<string>> test){var sw=Stopwatch.StartNew();try{var detail=await test();report.Cases.Add(new(name,"PASSED",sw.ElapsedMilliseconds,detail));}catch(Exception ex){report.Cases.Add(new(name,"FAILED",sw.ElapsedMilliseconds,ex.Message));throw;}}

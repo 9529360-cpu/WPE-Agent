@@ -99,7 +99,7 @@ public static class ArchitectureTestRunner
 
         var reportPath = Path.Combine(AppDataPaths.DataDirectory, "architecture-test-report.json");
         var result = new ArchitectureTestResult(cases.All(x => x.Passed), reportPath, cases);
-        await File.WriteAllTextAsync(reportPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+        await global::币安量化机器人.Services.SensitiveDataRedactor.WriteRedactedJsonAsync(reportPath,result);
         try { Directory.Delete(root, true); } catch { }
         return result;
     }

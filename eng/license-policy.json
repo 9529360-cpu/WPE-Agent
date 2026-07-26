@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "wpe.license-policy.v1",
+  "allow": [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BlueOak-1.0.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "Python-2.0",
+    "Zlib"
+  ],
+  "review": [
+    "CC-BY-4.0",
+    "LGPL-2.0-only",
+    "LGPL-2.0-or-later",
+    "LGPL-2.1-only",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "MPL-2.0"
+  ],
+  "deny": [
+    "AGPL-1.0-only",
+    "AGPL-1.0-or-later",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "BUSL-1.1",
+    "Commons-Clause",
+    "GPL-1.0-only",
+    "GPL-1.0-or-later",
+    "GPL-2.0-only",
+    "GPL-2.0-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "SSPL-1.0"
+  ],
+  "commercialPolicy": {
+    "denyUnapprovedReview": true,
+    "denyNoAssertion": true,
+    "denyUnknownCustom": true
+  },
+  "notes": [
+    "Policy classification is an engineering release control, not legal advice.",
+    "An allow classification does not replace notice, attribution, or license-condition review.",
+    "Review overrides must be component/version-specific and approved outside this repository before commercial distribution."
+  ]
+}

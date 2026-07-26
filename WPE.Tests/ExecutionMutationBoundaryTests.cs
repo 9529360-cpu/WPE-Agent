@@ -1,0 +1,439 @@
+using Microsoft.Data.Sqlite;
+using WpeAgent.RuntimeContracts;
+using 币安量化机器人.Services.Agent;
+using 币安量化机器人.Services.Exchange;
+
+namespace WPE.Tests;
+
+public sealed class ExecutionMutationBoundaryTests : IDisposable
+{
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), "wpe-mutation-boundary-" + Guid.NewGuid().ToString("N"));
+
+    [Theory]
+    [InlineData(CapabilityStatus.Unsupported)]
+    [InlineData(CapabilityStatus.Stale)]
+    [InlineData(CapabilityStatus.Error)]
+    public async Task ReplaceProtection_UnavailableCapabilityRejectsBeforeProviderMutation(CapabilityStatus status)
+    {
+        var exchange = new RecordingExchange();
+        var executor = CreateExecutor(exchange, out _, status);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => executor.ReplaceProtectionAsync(
+            "cycle", new ProtectionAdjustment("SOLUSDT", PositionSide.Long, 140m, 160m, "test"), CancellationToken.None));
+
+        Assert.Contains("CapabilityBlocked", error.Message, StringComparison.Ordinal);
+        Assert.Equal(0, exchange.MutationCount);
+    }
+
+    [Theory]
+    [InlineData(CapabilityStatus.Unsupported)]
+    [InlineData(CapabilityStatus.Stale)]
+    [InlineData(CapabilityStatus.Error)]
+    public async Task Execute_UnavailableCapabilityRejectsBeforeProviderMutation(CapabilityStatus status)
+    {
+        var exchange=new RecordingExchange();
+        var executor=CreateExecutor(exchange,out _,status);
+        var intent=OpeningIntent() with { ReduceOnly=true,Action=DecisionAction.CloseLong };
+
+        var error=await Assert.ThrowsAsync<InvalidOperationException>(()=>executor.ExecuteAsync("cycle",intent,5,true,CancellationToken.None));
+
+        Assert.Contains("CapabilityBlocked",error.Message,StringComparison.Ordinal);
+        Assert.Equal(0,exchange.MutationCount);
+    }
+
+    [Fact]
+    public async Task ReplaceProtection_ExpiredAvailableCapabilityRejectsBeforeProviderMutation()
+    {
+        var exchange = new RecordingExchange();
+        var executor = CreateExecutor(exchange,out _,CapabilityStatus.Available,DateTimeOffset.UtcNow-ProviderCapabilityPrecondition.MaximumAge-TimeSpan.FromSeconds(1));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => executor.ReplaceProtectionAsync(
+            "cycle",new ProtectionAdjustment("SOLUSDT",PositionSide.Long,140m,160m,"test"),CancellationToken.None));
+
+        Assert.Contains("stale",error.Message,StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0,exchange.MutationCount);
+    }
+
+    [Fact]
+    public async Task RecoverPending_UnsupportedCapabilityDoesNotReplaceProtection()
+    {
+        var exchange = new RecordingExchange { FoundOrder = FilledOrder() };
+        var executor = CreateExecutor(exchange, out var store);
+        await store.SaveIntentAsync("cycle", OpeningIntent(), "FILLED", "order-1", CancellationToken.None);
+
+        var result = await executor.RecoverPendingAsync(CancellationToken.None);
+
+        Assert.False(result.SafeToIncreaseRisk);
+        Assert.Equal(0, exchange.MutationCount);
+    }
+
+    [Fact]
+    public async Task ProtectionAudit_UnsupportedCapabilityDoesNotRepairProtection()
+    {
+        var exchange = new RecordingExchange();
+        var executor = CreateExecutor(exchange, out var store);
+        await store.SaveIntentAsync("cycle", OpeningIntent(), "PROTECTED", "order-1", CancellationToken.None);
+        var position = new ManagedPosition("SOLUSDT", PositionSide.Long, 1m, 150m, 151m, 1m, 5m, true, 120m);
+
+        var result = await executor.AuditAndRepairProtectionAsync([position], [], CancellationToken.None);
+
+        Assert.False(result.SafeToIncreaseRisk);
+        Assert.Equal(0, exchange.MutationCount);
+    }
+
+    [Theory]
+    [InlineData(ReduceOnlyRecoveryResult.Unknown,"recovery.reconciliation-unknown")]
+    [InlineData(ReduceOnlyRecoveryResult.Stale,"recovery.reconciliation-stale")]
+    [InlineData(ReduceOnlyRecoveryResult.Conflicting,"recovery.reconciliation-conflicting")]
+    public async Task ReduceOnlyRecovery_UnverifiedReconciliationRejectsWithoutMutation(
+        ReduceOnlyRecoveryResult reconciliation,string expectedCode)
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out _,out var authority);
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(
+            RecoveryCommand(authority,reconciliation),CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal(expectedCode,result.Code);
+        Assert.Equal(0,executor.CallCount);
+    }
+
+    [Fact]
+    public async Task ReduceOnlyRecovery_MainnetRejectsWithoutMutation()
+    {
+        var executor=new RecordingMutationExecutor(false);
+        var gateway=CreateGateway(executor,out _,out var authority);
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(RecoveryCommand(authority),CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.testnet-required",result.Code);
+        Assert.Equal(0,executor.CallCount);
+    }
+
+    [Fact]
+    public async Task ReduceOnlyRecovery_StaleObservationRejectsWithoutMutation()
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out _,out var authority);
+        var command=RecoveryCommand(authority,observedAtUtc:DateTimeOffset.UtcNow-TradingExecutionGateway.MaximumRecoveryObservationAge-TimeSpan.FromSeconds(1));
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(command,CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.observation-stale",result.Code);
+        Assert.Equal(0,executor.CallCount);
+    }
+
+    [Theory]
+    [InlineData(10,true)]
+    [InlineData(5,false)]
+    public async Task ReduceOnlyRecovery_AccountSettingChangeRejectsWithoutMutation(int leverage,bool isolated)
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out _,out var authority);
+        var command=RecoveryCommand(authority,leverage:leverage,isolated:isolated);
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(command,CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.account-settings-conflict",result.Code);
+        Assert.Equal(0,executor.CallCount);
+    }
+
+    [Theory]
+    [InlineData(false,1,DecisionAction.CloseLong)]
+    [InlineData(true,2,DecisionAction.CloseLong)]
+    [InlineData(true,1,DecisionAction.CloseShort)]
+    public async Task ReduceOnlyRecovery_RiskIncreasingOrConflictingIntentRejectsWithoutMutation(
+        bool reduceOnly,int quantity,DecisionAction action)
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out _,out var authority);
+        var intent=RecoveryIntent() with { ReduceOnly=reduceOnly,Quantity=quantity,Action=action };
+        var command=RecoveryCommand(authority,intent:intent);
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(command,CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.reduction-invalid",result.Code);
+        Assert.Equal(0,executor.CallCount);
+    }
+
+    [Fact]
+    public async Task ReduceOnlyRecovery_VerifiedTestnetReductionExecutesWithoutApproval()
+    {
+        var exchange=new RecordingExchange();
+        var executor=CreateExecutor(exchange,out var store,CapabilityStatus.Available);
+        var authority=CreateAuthority();
+        var gateway=new TradingExecutionGateway(executor,store,null,authority.Verifier);
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(RecoveryCommand(authority),CancellationToken.None);
+
+        Assert.True(result.Executed);
+        Assert.Equal("recovery.reduce-only-submitted",result.Code);
+        Assert.Equal(1,exchange.MarketOrderSubmissions);
+        Assert.True(exchange.LastReduceOnly);
+        Assert.Equal(1,exchange.MutationCount);
+    }
+
+    [Fact]
+    public async Task ReduceOnlyRecovery_ExistingUnknownStateNeverResubmits()
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out var store,out var authority);
+        await store.SaveIntentAsync("prior-cycle",RecoveryIntent(),"UNKNOWN",null,CancellationToken.None);
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(RecoveryCommand(authority),CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.reconcile-existing",result.Code);
+        Assert.Equal(0,executor.CallCount);
+    }
+
+    [Fact]
+    public async Task ReduceOnlyRecovery_ForgedReceiptRejectsWithoutMutation()
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out _,out var authority);
+        var command=RecoveryCommand(authority);
+        command=command with{Receipt=command.Receipt! with{Signature=new string('0',64)}};
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(command,CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.receipt-invalid",result.Code);
+        Assert.Equal(0,executor.CallCount);
+    }
+
+    [Fact]
+    public async Task ReduceOnlyRecovery_CorrelationMismatchRejectsWithoutMutation()
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out _,out var authority);
+        var command=RecoveryCommand(authority);
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(
+            command with{CorrelationId="different-cycle"},CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.receipt-mismatch",result.Code);
+        Assert.Equal(0,executor.CallCount);
+    }
+
+    [Fact]
+    public async Task ReduceOnlyRecovery_UntrustedIssuerCannotCreateAcceptedReceipt()
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out _,out var trustedAuthority);
+        var untrustedAuthority=CreateAuthority(64);
+        var command=RecoveryCommand(untrustedAuthority);
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(command,CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.receipt-invalid",result.Code);
+        Assert.Equal(0,executor.CallCount);
+    }
+
+    [Theory]
+    [InlineData("provider")]
+    [InlineData("account")]
+    [InlineData("symbol")]
+    [InlineData("quantity")]
+    [InlineData("intent")]
+    public async Task ReduceOnlyRecovery_MismatchedReceiptRejectsWithoutMutation(string mismatch)
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out _,out var authority);
+        var command=RecoveryCommand(authority);
+        var receipt=command.Receipt!;
+        receipt=mismatch switch
+        {
+            "provider"=>authority.Issue("receipt","other","Testnet","local",command.ObservedPosition,receipt.ObservedAtUtc,receipt.IntentHash,receipt.Result,receipt.IssuedAtUtc,receipt.ExpiresAtUtc),
+            "account"=>authority.Issue("receipt","local","Testnet","other",command.ObservedPosition,receipt.ObservedAtUtc,receipt.IntentHash,receipt.Result,receipt.IssuedAtUtc,receipt.ExpiresAtUtc),
+            "symbol"=>authority.Issue("receipt","local","Testnet","local",command.ObservedPosition with{Symbol="BTCUSDT"},receipt.ObservedAtUtc,receipt.IntentHash,receipt.Result,receipt.IssuedAtUtc,receipt.ExpiresAtUtc),
+            "quantity"=>authority.Issue("receipt","local","Testnet","local",command.ObservedPosition with{Quantity=2m},receipt.ObservedAtUtc,receipt.IntentHash,receipt.Result,receipt.IssuedAtUtc,receipt.ExpiresAtUtc),
+            _=>authority.Issue("receipt","local","Testnet","local",command.ObservedPosition,receipt.ObservedAtUtc,new string('A',64),receipt.Result,receipt.IssuedAtUtc,receipt.ExpiresAtUtc)
+        };
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(command with{Receipt=receipt},CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.receipt-mismatch",result.Code);
+        Assert.Equal(0,executor.CallCount);
+    }
+
+    [Fact]
+    public async Task ReduceOnlyRecovery_ExpiredReceiptRejectsWithoutMutation()
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out _,out var authority);
+        var now=DateTimeOffset.UtcNow;
+        var command=RecoveryCommand(authority,observedAtUtc:now,issuedAtUtc:now-TimeSpan.FromSeconds(20),expiresAtUtc:now-TimeSpan.FromSeconds(1));
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(command,CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.receipt-expired",result.Code);
+        Assert.Equal(0,executor.CallCount);
+    }
+
+    [Fact]
+    public void LegacyConstructor_RejectsRealProviderWithoutCapabilityContext()
+    {
+        Directory.CreateDirectory(_directory);
+        var store=new AgentSqliteStore(Path.Combine(_directory,"legacy.db"));
+
+        var error=Assert.Throws<InvalidOperationException>(()=>new ReliableOrderExecutor(new RecordingProvider(),store));
+
+        Assert.Contains("capability-aware",error.Message,StringComparison.OrdinalIgnoreCase);
+    }
+
+    public void Dispose()
+    {
+        SqliteConnection.ClearAllPools();
+        if(Directory.Exists(_directory))Directory.Delete(_directory,true);
+    }
+
+    private ReliableOrderExecutor CreateExecutor(RecordingExchange exchange,out AgentSqliteStore store,CapabilityStatus status=CapabilityStatus.Unsupported,DateTimeOffset? checkedAt=null)
+    {
+        Directory.CreateDirectory(_directory);
+        store = new AgentSqliteStore(Path.Combine(_directory,Guid.NewGuid().ToString("N")+".db"));
+        var capability = new ExchangeCapability("binance","binance-futures","SOLUSDT","SOLUSDT",MarketType.Perpetual,
+            status,true,status==CapabilityStatus.Available,true,checkedAt??DateTimeOffset.UtcNow,"unavailable in test");
+        return new ReliableOrderExecutor(exchange,store,new RiskLimits(),SystemOrderPollScheduler.Instance,
+            new Dictionary<string,ExchangeCapability>(StringComparer.OrdinalIgnoreCase){{"SOLUSDT",capability}},true);
+    }
+
+    private TradingExecutionGateway CreateGateway(ITradingMutationExecutor executor,out AgentSqliteStore store,out TestRecoveryAuthority authority)
+    {
+        Directory.CreateDirectory(_directory);
+        store=new AgentSqliteStore(Path.Combine(_directory,Guid.NewGuid().ToString("N")+".db"));
+        authority=CreateAuthority();
+        return new TradingExecutionGateway(executor,store,null,authority.Verifier);
+    }
+
+    private static TestRecoveryAuthority CreateAuthority(int seed=0)=>new(Enumerable.Range(1,32).Select(x=>(byte)(x+seed)).ToArray());
+
+    private static ReduceOnlyRecoveryCommand RecoveryCommand(
+        TestRecoveryAuthority authority,
+        ReduceOnlyRecoveryResult result=ReduceOnlyRecoveryResult.Verified,
+        DateTimeOffset? observedAtUtc=null,DateTimeOffset? issuedAtUtc=null,DateTimeOffset? expiresAtUtc=null,
+        ExecutionIntent? intent=null,int leverage=5,bool isolated=true)
+    {
+        var position=new ManagedPosition("SOLUSDT",PositionSide.Long,1m,150m,151m,1m,5m,true,120m);
+        intent??=RecoveryIntent();
+        var issued=issuedAtUtc??DateTimeOffset.UtcNow;
+        var observed=observedAtUtc??issued;
+        var expires=expiresAtUtc??issued.AddSeconds(20);
+        var hash=TradingExecutionGateway.ComputeIntentHash([intent],leverage,isolated);
+        var receipt=authority.Issue("receipt","local","Testnet","local",position,observed,hash,result,issued,expires);
+        return new("recovery-cycle",receipt,position,intent,leverage,isolated);
+    }
+
+    private sealed class TestRecoveryAuthority
+    {
+        private readonly TestSigningKeyStore _keys;
+
+        internal TestRecoveryAuthority(byte[] key)
+        {
+            _keys=new TestSigningKeyStore(key);
+            Verifier=RecoveryReconciliationComposition.Create(_keys,new TestObservationSource()).Verifier;
+        }
+
+        internal IReduceOnlyRecoveryReceiptVerifier Verifier{get;}
+
+        internal ReduceOnlyRecoveryReceipt Issue(
+            string receiptId,string providerId,string environment,string accountId,ManagedPosition position,
+            DateTimeOffset observedAtUtc,string intentHash,ReduceOnlyRecoveryResult result,
+            DateTimeOffset issuedAtUtc,DateTimeOffset expiresAtUtc,string correlationId="recovery-cycle")
+        {
+            var unsigned=new ReduceOnlyRecoveryReceipt(receiptId,correlationId,providerId,environment,accountId,
+                position.Symbol,position.Side,position.Quantity,observedAtUtc,intentHash,result,issuedAtUtc,expiresAtUtc,string.Empty);
+            using var key=_keys.OpenCurrentSigningKey();
+            return unsigned with{Signature=RecoveryReceiptSignature.Sign(unsigned,key.Key)};
+        }
+    }
+
+    private sealed class TestSigningKeyStore(byte[] key):IRecoverySigningKeyStore
+    {
+        public RecoverySigningKeyLease OpenCurrentSigningKey()=>new(key);
+        public IReadOnlyList<RecoverySigningKeyLease> OpenVerificationKeys()=>[new(key)];
+    }
+
+    private sealed class TestObservationSource:ITrustedRecoveryObservationSource
+    {
+        public Task<TrustedRecoveryObservation> ObserveAsync(RecoveryReconciliationRequest request,CancellationToken ct)=>
+            throw new NotSupportedException();
+    }
+
+    private static ExecutionIntent RecoveryIntent()=>new("SOLUSDT",PositionSide.Long,1m,true,0m,0m,
+        "recover-sol","recovery",DecisionAction.CloseLong,ExecutionOrderType.Market,ExpectedPrice:150m);
+
+    private static ExecutionIntent OpeningIntent() => new("SOLUSDT",PositionSide.Long,1m,false,140m,160m,
+        "open-sol","test",DecisionAction.OpenLong,ExpectedPrice:150m);
+
+    private static ExchangeOrder FilledOrder() => new("SOLUSDT","order-1","open-sol","FILLED",1m,150m,
+        "MARKET",PositionSide.Long,false,DateTime.UtcNow);
+
+    private class RecordingExchange : IExchangeAdapter
+    {
+        public ExchangeEnvironment Environment => ExchangeEnvironment.Testnet;
+        public int MutationCount { get; private set; }
+        public int MarketOrderSubmissions { get; private set; }
+        public bool LastReduceOnly { get; private set; }
+        public ExchangeOrder? FoundOrder { get; init; }
+        public Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct) => Task.FromResult(FoundOrder);
+        public Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol,CancellationToken ct) => Task.FromResult<IReadOnlyList<ExchangeOrder>>([]);
+        public Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<ManagedPosition>>([]);
+        public Task SetHedgeModeAsync(bool enabled,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
+        public Task SetMarginModeAsync(string symbol,bool isolated,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
+        public Task SetLeverageAsync(string symbol,int leverage,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
+        public Task<ExchangeOrder> PlaceMarketAsync(string symbol,PositionSide side,decimal quantity,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;MarketOrderSubmissions++;LastReduceOnly=reduceOnly;return Task.FromResult(FilledOrder() with{ClientOrderId=clientOrderId,ExecutedQuantity=quantity,PositionSide=side});}
+        public Task<ExchangeOrder> PlaceLimitAsync(string symbol,PositionSide side,decimal quantity,decimal price,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;return Task.FromResult(FilledOrder());}
+        public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide sideToClose,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct){MutationCount++;return Task.FromResult(FilledOrder());}
+        public Task CancelOrderAsync(string symbol,string orderId,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
+        public Task<AccountSnapshot> GetAccountAsync(CancellationToken ct) => throw new NotSupportedException();
+        public Task<TradingRule> GetRulesAsync(string symbol,CancellationToken ct) => throw new NotSupportedException();
+        public Task<MarketEvidence> GetMarketAsync(string symbol,CancellationToken ct) => throw new NotSupportedException();
+        public Task<IReadOnlyList<DerivativesSnapshot>> GetDerivativeHistoryAsync(string symbol,CancellationToken ct) => throw new NotSupportedException();
+        public Task<IReadOnlyList<CandleEvidence>> GetCandlesAsync(string symbol,string interval,int limit,CancellationToken ct) => throw new NotSupportedException();
+        public Task<IReadOnlyList<CandleEvidence>> GetCandlesRangeAsync(string symbol,string interval,DateTime start,DateTime end,int limit,CancellationToken ct) => throw new NotSupportedException();
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class RecordingMutationExecutor(bool isTestnet):ITradingMutationExecutor
+    {
+        public bool IsTestnet{get;}=isTestnet;
+        public string ProviderId=>"local";
+        public string AccountId=>"local";
+        public int CallCount{get;private set;}
+        public Task<string> ExecutePlanAsync(string correlationId,IReadOnlyList<ExecutionIntent> intents,int leverage,bool isolated,CancellationToken ct)
+        {
+            CallCount++;
+            return Task.FromResult("submitted");
+        }
+        public Task<string> ExecuteReduceOnlyRecoveryAsync(string correlationId,ExecutionIntent intent,CancellationToken ct)
+        {
+            CallCount++;
+            return Task.FromResult("submitted");
+        }
+    }
+
+    private sealed class RecordingProvider : RecordingExchange,IExchangeProvider
+    {
+        public string ConnectionId=>"test-connection";
+        public string ProviderId=>"test-provider";
+        public ExchangeProviderDescriptor Descriptor=>new("test-provider","Test Provider",ExchangeAssetClass.CryptoCex,true,false,[],new HashSet<string>());
+        public ISymbolMapper Symbols=>new ConventionSymbolMapper(ProviderId);
+        public IMarketDataProvider MarketData=>throw new NotSupportedException();
+        public IBrokerProvider Broker=>throw new NotSupportedException();
+        public Task<bool> PingAsync(CancellationToken ct)=>Task.FromResult(true);
+        public Task<DateTime> GetServerTimeAsync(CancellationToken ct)=>Task.FromResult(DateTime.UtcNow);
+        public Task<ExchangePermissionSnapshot> CheckPermissionsAsync(CancellationToken ct)=>Task.FromResult(new ExchangePermissionSnapshot(true,true,false,"test",[]));
+        public Task<ExchangeHealthSnapshot> HealthCheckAsync(CancellationToken ct)=>Task.FromResult(new ExchangeHealthSnapshot(true,1,0,"ok",DateTime.UtcNow));
+        public IRealtimeMarketFeed? CreateRealtimeFeed(IEnumerable<string> canonicalSymbols,AgentSqliteStore database)=>null;
+    }
+}

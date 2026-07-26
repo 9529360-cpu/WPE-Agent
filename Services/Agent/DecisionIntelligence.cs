@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using WpeAgent.ModelOff;
 using 币安量化机器人.Core.Strategy;
 using 币安量化机器人.Services.Localization;
 
@@ -6,11 +8,27 @@ namespace 币安量化机器人.Services.Agent;
 
 public sealed class SignalAggregationSkill
 {
-    public IReadOnlyList<MarketDecisionAssessment> Analyze(EvidencePack evidence,DecisionPolicy policy,IReadOnlyDictionary<string,StrategySignal>? localSignals=null)
-        => evidence.Markets.Values.Select(m=>AnalyzeMarket(m,evidence.Completeness,policy,localSignals?.GetValueOrDefault(m.Symbol))).OrderByDescending(Quality).ToArray();
+    private readonly Func<DateTimeOffset> _evaluationClock;
 
-    private static MarketDecisionAssessment AnalyzeMarket(MarketEvidence market,int completeness,DecisionPolicy policy,StrategySignal? localSignal)
+    public SignalAggregationSkill():this(()=>DateTimeOffset.UtcNow){}
+    public SignalAggregationSkill(Func<DateTimeOffset> evaluationClock)=>
+        _evaluationClock=evaluationClock??throw new ArgumentNullException(nameof(evaluationClock));
+
+    public IReadOnlyList<MarketDecisionAssessment> Analyze(EvidencePack evidence,DecisionPolicy policy,IReadOnlyDictionary<string,StrategySignal>? localSignals=null)
+        =>Analyze(evidence,policy,_evaluationClock(),localSignals);
+
+    public IReadOnlyList<MarketDecisionAssessment> Analyze(EvidencePack evidence,DecisionPolicy policy,DateTimeOffset evaluationTimeUtc,IReadOnlyDictionary<string,StrategySignal>? localSignals=null)
     {
+        ArgumentNullException.ThrowIfNull(evidence);ArgumentNullException.ThrowIfNull(policy);
+        if(evaluationTimeUtc==default||evaluationTimeUtc.Offset!=TimeSpan.Zero)throw new ArgumentException("Signal evaluation time must be an explicit UTC instant.",nameof(evaluationTimeUtc));
+        if(evidence.Markets is null)throw new ArgumentException("Market evidence collection is required.",nameof(evidence));
+        return evidence.Markets.Values.Select(m=>m is null?InvalidMarket(null):AnalyzeMarket(m,evidence.Completeness,policy,evaluationTimeUtc,localSignals?.GetValueOrDefault(m.Symbol)))
+            .OrderByDescending(Quality).ThenBy(x=>x.Symbol,StringComparer.Ordinal).ToArray();
+    }
+
+    private static MarketDecisionAssessment AnalyzeMarket(MarketEvidence market,int completeness,DecisionPolicy policy,DateTimeOffset evaluationTimeUtc,StrategySignal? localSignal)
+    {
+        if(!ValidMarket(market))return InvalidMarket(market?.Symbol);
         var signals=new List<SignalContribution>();
         Add("trend_15m","15m",market.Trend15m,.17,.006);
         Add("trend_1h","1h",market.Trend1h,.19,.012);
@@ -30,7 +48,8 @@ public sealed class SignalAggregationSkill
         var score=signals.Sum(x=>x.WeightedScore);
         var conflict=gross<.0001?1:Math.Clamp(1-Math.Abs(score)/gross,0,1);
         var agreement=gross<.0001?0:Math.Max(positive,negative)/gross;
-        var fresh=DateTime.UtcNow-market.CollectedAt<=TimeSpan.FromMinutes(policy.MaximumEvidenceAgeMinutes);
+        var maximumAge=TimeSpan.FromMinutes(policy.MaximumEvidenceAgeMinutes);
+        var fresh=maximumAge>=TimeSpan.Zero&&market.CollectedAt.Kind==DateTimeKind.Utc&&market.CollectedAt<=evaluationTimeUtc.UtcDateTime&&evaluationTimeUtc.UtcDateTime-market.CollectedAt<=maximumAge;
         var confidence=Math.Clamp((Math.Abs(score)*.72+agreement*.28)*(completeness/100d)*(market.Quality.QualityScore/100d)*(fresh?1:.25),0,1);
         var regime=DetectRegime(market);
         var missing=new List<string>();
@@ -51,6 +70,16 @@ public sealed class SignalAggregationSkill
             signals.Add(new(name,horizon,raw,weight,weighted,weighted>.0001?"LONG":weighted<-.0001?"SHORT":"NEUTRAL",name));
         }
     }
+
+    private static bool ValidMarket(MarketEvidence? market)=>market is not null&&market.Derivatives is not null&&
+        !string.IsNullOrWhiteSpace(market.Symbol)&&market.Price>0&&market.CollectedAt!=default&&market.CollectedAt.Kind==DateTimeKind.Utc&&
+        Finite(market.Rsi,market.Trend15m,market.Trend1h,market.Trend4h,market.Quality.OrderBookImbalance,market.Quality.RelativeVolume,market.Quality.AtrPercent,market.Quality.LiquidationIntensity);
+    private static bool Finite(params double[] values)=>values.All(double.IsFinite);
+    private static MarketDecisionAssessment InvalidMarket(string? symbol)=>new()
+    {
+        Symbol=string.IsNullOrWhiteSpace(symbol)?"UNKNOWN":symbol,Regime=MarketRegime.Unknown,Fresh=false,EntryReady=false,
+        RecommendedAction=DecisionAction.Hold,MissingConditions=["signal.invalid-market-evidence"],Summary="signal.invalid-market-evidence"
+    };
 
     private static MarketRegime DetectRegime(MarketEvidence m)
     {
@@ -144,4 +173,115 @@ public sealed class AgentSkillRegistry
         new("RuntimeMonitor","Monitor","skill and error events","health status","read:telemetry",3,0,false,"recent heartbeat"),
         new("EmergencyClose","Safety","all open positions","flat account confirmation","testnet:trade",90,1,true,"no residual position")
     ];
+}
+
+public enum ModelOffResearchCapabilityV1 { News, Macro, Technical, Fundamental, Backtest }
+
+public sealed record ModelOffResearchInputV1(
+    ModelOffResearchCapabilityV1 Capability,
+    string OutputId,
+    string CycleId,
+    DateTimeOffset EvaluationTimeUtc,
+    string InputSchema,
+    string MethodId,
+    string MethodVersion,
+    IReadOnlyList<ModelOffSourceV1> Sources,
+    JsonElement Facts,
+    IReadOnlyList<JsonElement> Calculations);
+
+public static class DeterministicResearchCapabilityProducerV1
+{
+    public const string InputSchema = "wpe.research-input/1.0";
+    public const string MethodVersion = "1.0";
+    public const string TemplateVersion = ModelOffFixedTemplatesV1.SummaryVersion;
+
+    public static ModelOffAgentOutputV1 Produce(ModelOffResearchInputV1 input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        RequireToken(input.OutputId, nameof(input.OutputId));
+        RequireToken(input.CycleId, nameof(input.CycleId));
+        RequireToken(input.MethodId, nameof(input.MethodId));
+        RequireToken(input.MethodVersion, nameof(input.MethodVersion));
+        if (!string.Equals(input.InputSchema, InputSchema, StringComparison.Ordinal))
+            throw new ArgumentException("A versioned research input schema is required.", nameof(input));
+        if (!string.Equals(input.MethodId, ExpectedMethodId(input.Capability), StringComparison.Ordinal) ||
+            !string.Equals(input.MethodVersion, MethodVersion, StringComparison.Ordinal))
+            throw new ArgumentException("The capability method identity and version must match the frozen contract.", nameof(input));
+        if (input.EvaluationTimeUtc.Offset != TimeSpan.Zero)
+            throw new ArgumentException("Research evaluation time must be injected in UTC.", nameof(input));
+        if (input.Sources is null || input.Sources.Any(source => source is null))
+            throw new ArgumentException("Research sources cannot be null.", nameof(input));
+        if (input.Calculations is null)
+            throw new ArgumentException("Research calculations cannot be null.", nameof(input));
+        if (input.Facts.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException("Research facts must be an explicit JSON object.", nameof(input));
+
+        var reasons = RefusalReasons(input).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        var supported = input.Capability is not ModelOffResearchCapabilityV1.Macro and not ModelOffResearchCapabilityV1.Fundamental;
+        var succeeded = supported && reasons.Length == 0;
+        var missing = reasons.Where(reason => reason.StartsWith("research.missing", StringComparison.Ordinal)).ToArray();
+        var canonicalSources = input.Sources.Where(IsCanonicalSourceMetadata).ToArray();
+        return new ModelOffAgentOutputV1(
+            ModelOffAgentV1.Research,
+            input.OutputId,
+            input.CycleId,
+            input.EvaluationTimeUtc,
+            input.EvaluationTimeUtc,
+            input.InputSchema,
+            new ModelOffRuleSetV1(input.MethodId, input.MethodVersion),
+            canonicalSources,
+            succeeded ? ModelOffOutputStatusV1.Succeeded : ModelOffOutputStatusV1.Abstained,
+            new ModelOffUncertaintyV1(succeeded ? ModelOffUncertaintyLevelV1.None : ModelOffUncertaintyLevelV1.Unknown, reasons, missing),
+            input.Facts.Clone(),
+            input.Calculations.Select(value => value.Clone()).ToArray(),
+            new ModelOffDecisionV1(succeeded ? "record_research" : "abstain", succeeded, reasons),
+            Array.Empty<JsonElement>(),
+            TemplateVersion);
+    }
+
+    private static IEnumerable<string> RefusalReasons(ModelOffResearchInputV1 input)
+    {
+        if (input.Capability is ModelOffResearchCapabilityV1.Macro or ModelOffResearchCapabilityV1.Fundamental)
+            yield return $"research.unsupported.{input.Capability.ToString().ToLowerInvariant()}";
+        if (input.Sources.Count == 0)
+            yield return "research.missing.sources";
+        if (!input.Facts.EnumerateObject().Any())
+            yield return "research.missing.facts";
+
+        var requiredKind = input.Capability switch
+        {
+            ModelOffResearchCapabilityV1.News => ModelOffSourceKindV1.News,
+            ModelOffResearchCapabilityV1.Technical => ModelOffSourceKindV1.Market,
+            ModelOffResearchCapabilityV1.Backtest => ModelOffSourceKindV1.Strategy,
+            _ => (ModelOffSourceKindV1?)null
+        };
+        if (requiredKind.HasValue && !input.Sources.Any(source => source.Kind == requiredKind.Value))
+            yield return $"research.missing.{requiredKind.Value.ToString().ToLowerInvariant()}_source";
+
+        foreach (var source in input.Sources)
+        {
+            if (string.IsNullOrWhiteSpace(source.SourceId) || !source.AsOfUtc.HasValue || !source.ReceivedAtUtc.HasValue || string.IsNullOrWhiteSpace(source.ArtifactHash))
+                yield return "research.invalid.source_metadata";
+            if (source.AsOfUtc > input.EvaluationTimeUtc || source.ReceivedAtUtc > input.EvaluationTimeUtc)
+                yield return "research.invalid.future_source";
+            if (source.Status != ModelOffSourceStatusV1.Available)
+                yield return $"research.source.{source.Status.ToString().ToLowerInvariant()}";
+        }
+    }
+
+    private static void RequireToken(string value, string name)
+    {
+        if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("A non-empty deterministic identifier is required.", name);
+    }
+
+    private static bool IsCanonicalSourceMetadata(ModelOffSourceV1 source) =>
+        !string.IsNullOrWhiteSpace(source.SourceId) &&
+        Enum.IsDefined(source.Kind) &&
+        source.AsOfUtc.HasValue &&
+        source.ReceivedAtUtc.HasValue &&
+        Enum.IsDefined(source.Status) &&
+        !string.IsNullOrWhiteSpace(source.ArtifactHash);
+
+    private static string ExpectedMethodId(ModelOffResearchCapabilityV1 capability) =>
+        $"wpe.{capability.ToString().ToLowerInvariant()}-method";
 }

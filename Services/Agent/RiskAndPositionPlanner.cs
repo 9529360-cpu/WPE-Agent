@@ -4,6 +4,9 @@ namespace 币安量化机器人.Services.Agent;
 
 public sealed class RiskAndPositionPlanner
 {
+    public ModelOffStrategyRiskContractV1 EvaluateModelOffIntent(ModelOffStrategyIntentRequestV1 request) =>
+        ModelOffStrategyRiskEvaluatorV1.Evaluate(request);
+
     public (IReadOnlyList<ExecutionIntent> Intents,string Result) Plan(
         DecisionPlan d,EvidencePack e,TradingRule rule,RiskLimits limits,decimal dayHigh,
         bool safeToIncreaseRisk=true,string? safetyReason=null,PositionSide? lockedSide=null)

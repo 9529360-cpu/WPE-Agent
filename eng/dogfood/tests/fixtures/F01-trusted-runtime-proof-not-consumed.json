@@ -1,0 +1,9 @@
+{
+  "fixtureId": "DOR-0004-F01",
+  "expectedRejection": "runtime.proof-source-untrusted",
+  "attack": {
+    "probeExitCode": 0,
+    "trustedRuntimeProof": null,
+    "claim": "A successful package-local probe is not trusted runtime evidence."
+  }
+}

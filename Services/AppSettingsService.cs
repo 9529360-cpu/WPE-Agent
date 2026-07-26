@@ -54,9 +54,6 @@ public class AppSettings
     public bool UseFuturesTestnet { get; set; } = true;
     public int RefreshIntervalSeconds { get; set; } = 60;
     public string LogLevel { get; set; } = "Info";
-    public string? TelegramBotToken { get; set; }
-    public string? TelegramChatId { get; set; }
-    public string? DingTalkWebhook { get; set; }
     public decimal MaxOrderQuantity { get; set; } = 50m;
 }
 

@@ -340,6 +340,14 @@ ASALocalRun/
 
 # MSBuild Binary and Structured Log
 *.binlog
+*.tsbuildinfo
+
+# WPE generated verification and publish output
+.playwright-cli/
+**/.playwright-cli/
+output/
+**/output/
+publish-stage*/
 
 # NVidia Nsight GPU debugger configuration file
 *.nvuser

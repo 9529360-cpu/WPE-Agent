@@ -2,6 +2,7 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
+using CoreModels = global::币安量化机器人.Core.Models;
 
 namespace 币安量化机器人.Services.Agent;
 
@@ -18,15 +19,16 @@ public static class LlmGovernanceTestRunner
         try
         {
             var governor = new LlmRequestGovernor(new LlmUsagePolicy(1, 1000, 1m, TimeSpan.FromMinutes(5)), audit);
+            var context = new LlmRequestContext(CoreModels.AiRuntimeMode.Hybrid, "test-v1", 10, 1000, TimeSpan.FromSeconds(5));
             var sends = 0;
             Task<HttpResponseMessage> Send(CancellationToken _) { sends++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"ok\":true}") }); }
-            using var first = await governor.SendAsync("fake", "test-model", "summary", "same prompt", Send, default);
-            using var cached = await governor.SendAsync("fake", "test-model", "summary", "same prompt", Send, default);
+            using var first = await governor.SendAsync("fake", "test-model", "summary", "same prompt", context, Send, default);
+            using var cached = await governor.SendAsync("fake", "test-model", "summary", "same prompt", context, Send, default);
             Check("相同 Prompt 命中缓存", sends == 1);
             var restarted = new LlmRequestGovernor(new LlmUsagePolicy(10, 1000, 1m, TimeSpan.FromMinutes(5)), audit);
-            using var afterRestart = await restarted.SendAsync("fake", "test-model", "summary", "same prompt", Send, default);
+            using var afterRestart = await restarted.SendAsync("fake", "test-model", "summary", "same prompt", context, Send, default);
             Check("persistent cache survives a new governor instance", sends == 1);
-            var blocked = false; try { using var denied = await governor.SendAsync("fake", "test-model", "summary", "different prompt", Send, default); } catch (InvalidOperationException) { blocked = true; }
+            var blocked = false; try { using var denied = await governor.SendAsync("fake", "test-model", "summary", "different prompt", context, Send, default); } catch (InvalidOperationException) { blocked = true; }
             Check("达到每日调用预算后自动拒绝", blocked && sends == 1);
             var rows = File.ReadAllLines(audit).Select(x => JsonSerializer.Deserialize<LlmCallAudit>(x)).Where(x => x is not null).ToArray();
             Check("请求、缓存和拒绝均有审计", rows.Length == 4 && rows.Any(x => x!.CacheHit) && rows.Any(x => !x!.Allowed));
@@ -35,7 +37,7 @@ public static class LlmGovernanceTestRunner
         catch (Exception ex) { success = false; cases.Add("FAIL " + ex); }
         var report = AppDataPaths.File("llm-governance-test-report.json");
         var result = new LlmGovernanceTestResult(success, report, cases);
-        await File.WriteAllTextAsync(report, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+        await global::币安量化机器人.Services.SensitiveDataRedactor.WriteRedactedJsonAsync(report,result);
         try { Directory.Delete(root, true); } catch { }
         return result;
     }

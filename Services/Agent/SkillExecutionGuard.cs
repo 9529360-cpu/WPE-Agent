@@ -23,4 +23,18 @@ public sealed class SkillExecutionGuard
             throw new UnauthorizedAccessException($"Skill '{skillName}' requests a prohibited credential or withdrawal scope.");
         return skill;
     }
+
+    public void AuthorizePluginPermissions(IEnumerable<string> permissions, TradingMode mode)
+    {
+        ArgumentNullException.ThrowIfNull(permissions);
+        foreach (var permission in permissions)
+        {
+            if (permission.Contains("mainnet", StringComparison.OrdinalIgnoreCase) ||
+                permission.Contains("withdraw", StringComparison.OrdinalIgnoreCase) ||
+                permission.Contains("private-key", StringComparison.OrdinalIgnoreCase))
+                throw new UnauthorizedAccessException($"Plugin permission '{permission}' is prohibited.");
+            if (permission.Equals("exchange.testnet.trade", StringComparison.Ordinal) && mode != TradingMode.Testnet)
+                throw new UnauthorizedAccessException("Plugin trading permission is restricted to Testnet.");
+        }
+    }
 }

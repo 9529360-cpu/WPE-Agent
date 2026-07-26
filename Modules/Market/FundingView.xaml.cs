@@ -16,7 +16,7 @@ namespace 币安量化机器人.Modules.Market;
 public partial class FundingView : UserControl
 {
     private readonly ObservableCollection<FundingRateSnapshot> _items = new();
-    private readonly BinanceApiClient _api = ServiceLocator.Api;
+    private readonly IMarketDataReader _marketData = ServiceLocator.MarketData;
     private readonly DataCacheService _cache = ServiceLocator.Cache;
     private ICollectionView? _view;
     private bool _initialized;
@@ -41,7 +41,7 @@ public partial class FundingView : UserControl
         try
         {
             StatusText.Text = "状态：正在同步 Binance 资金费率...";
-            var data = await _api.GetFundingRatesAsync(limit: 96, cancellationToken: CancellationToken.None);
+            var data = await _marketData.GetFundingRatesAsync(limit: 96, cancellationToken: CancellationToken.None);
             await _cache.SaveFundingRatesAsync(data);
 
             _items.Clear();

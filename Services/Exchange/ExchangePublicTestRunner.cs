@@ -9,7 +9,7 @@ public static class ExchangePublicTestRunner
     public static async Task<ExchangeAdapterTestResult> RunAsync(CancellationToken ct=default)
     {
         var report=new ExchangeAdapterTestReport();
-        var directory=Path.Combine(AppContext.BaseDirectory,"Data","exchange-public-tests");
+        var directory=Path.Combine(AppDataPaths.TestArtifactsDirectory,"exchange-public-tests");
         Directory.CreateDirectory(directory);
         var path=Path.Combine(directory,$"exchange-public-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");
         var catalog=new ExchangeProviderCatalog();
@@ -19,7 +19,7 @@ public static class ExchangePublicTestRunner
         await Test(report,catalog,"gate","https://api-testnet.gateapi.io",new Dictionary<string,string>{{"apiKey","public-test"},{"secret","public-test"}},ct);
         report.Success=report.Cases.All(x=>x.Status=="PASSED");
         report.CompletedAtUtc=DateTime.UtcNow;
-        await File.WriteAllTextAsync(path,JsonSerializer.Serialize(report,new JsonSerializerOptions{WriteIndented=true}),CancellationToken.None);
+        await global::币安量化机器人.Services.SensitiveDataRedactor.WriteRedactedJsonAsync(path,report,CancellationToken.None);
         return new(report.Success,path);
     }
 

@@ -41,7 +41,7 @@ public static class StrategyLifecycleTestRunner
         var gatedMarket = new MarketEvidence("BTCUSDT", 100, 0, 0, 50, 0, 0, 0, new(0, 0, 1, 1, 1, 1, 0), DateTime.UtcNow);
         Check("研究心跳失效时策略信号强制中性", gatedResearch.GetSignal(gatedProfile, gatedMarket, Array.Empty<NewsEvidence>()).Direction == 0, "stale signal gated to hold");
         var report = new StrategyLifecycleTestResult(passed, AppDataPaths.File("strategy-lifecycle-test-report.json"), cases);
-        await File.WriteAllTextAsync(report.ReportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+        await global::币安量化机器人.Services.SensitiveDataRedactor.WriteRedactedJsonAsync(report.ReportPath,report);
         return report;
     }
 }

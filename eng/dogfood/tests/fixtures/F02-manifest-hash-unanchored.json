@@ -1,0 +1,8 @@
+{
+  "fixtureId": "DOR-0004-F02",
+  "expectedRejection": "candidate.manifest-hash-mismatch",
+  "attack": {
+    "rewriteManifestGate": "attacker-recomputed-gate",
+    "claim": "Rewriting a manifest and recomputing its local identity must not replace the caller anchor."
+  }
+}

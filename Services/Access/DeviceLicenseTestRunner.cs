@@ -11,6 +11,8 @@ public sealed class DeviceLicenseTestReport { public DateTime StartedAtUtc{get;i
 
 public static class DeviceLicenseTestRunner
 {
+    private static string SafeDetail(string? value,int maxLength=240)=>SensitiveDataRedactor.ForLog(value,maxLength);
+
     public static async Task<SmokeRunResult> RunAsync(CancellationToken ct=default)
     {
         var root=Path.Combine(AppContext.BaseDirectory,"Data","license-tests",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);var reportPath=Path.Combine(root,"device-license-report.json");var report=new DeviceLicenseTestReport();
@@ -25,9 +27,9 @@ public static class DeviceLicenseTestRunner
             await Case(report,"过期许可证被拒绝",()=>{var expired=new DeviceLicensePayload("WPE-AGENT","OLD-001",device,DateTime.UtcNow.AddDays(-2).Ticks,DateTime.UtcNow.AddDays(-1).Ticks,"Testnet");var result=DeviceLicenseCodec.Verify(DeviceLicenseCodec.Issue(expired,signer),publicKey,device,DateTime.UtcNow);Require(!result.Success&&result.Message=="Activation.Expired","过期码被接受");return result.Message;});
             report.Success=report.Cases.All(x=>x.Status=="PASSED");
         }
-        catch(Exception ex){report.Cases.Add(new("许可证测试中止","FAILED",0,ex.ToString()));report.Success=false;}
+        catch(Exception ex){report.Cases.Add(new("许可证测试中止","FAILED",0,SafeDetail(ex.ToString(),400)));report.Success=false;}
         report.CompletedAtUtc=DateTime.UtcNow;await File.WriteAllTextAsync(reportPath,JsonSerializer.Serialize(report,new JsonSerializerOptions{WriteIndented=true}),ct);return new(report.Success,reportPath);
     }
-    private static async Task Case(DeviceLicenseTestReport report,string name,Func<string> test){var sw=Stopwatch.StartNew();try{var detail=test();report.Cases.Add(new(name,"PASSED",sw.ElapsedMilliseconds,detail));}catch(Exception ex){report.Cases.Add(new(name,"FAILED",sw.ElapsedMilliseconds,ex.Message));throw;}await Task.CompletedTask;}
+    private static async Task Case(DeviceLicenseTestReport report,string name,Func<string> test){var sw=Stopwatch.StartNew();try{var detail=test();report.Cases.Add(new(name,"PASSED",sw.ElapsedMilliseconds,SafeDetail(detail)));}catch(Exception ex){report.Cases.Add(new(name,"FAILED",sw.ElapsedMilliseconds,SafeDetail(ex.Message)));throw;}await Task.CompletedTask;}
     private static void Require(bool condition,string message){if(!condition)throw new InvalidOperationException(message);}
 }

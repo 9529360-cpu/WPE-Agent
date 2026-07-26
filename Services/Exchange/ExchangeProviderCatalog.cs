@@ -36,11 +36,10 @@ public sealed class ExchangeProviderCatalog
 
 public static class ProviderTemplates
 {
-    private static readonly IReadOnlySet<string> StandardCapabilities=new HashSet<string>(["account","balance","positions","margin","candles","orderbook","trades","funding","open-interest","index-price","mark-price","place-order","cancel-order","query-order","health"]);
     private static readonly ExchangeCredentialField Key=new("apiKey","API Key",ExchangeCredentialKind.ApiKey);
     private static readonly ExchangeCredentialField Secret=new("secret","API Secret",ExchangeCredentialKind.Secret);
-    private static ExchangeProviderDescriptor PlannedProvider(string id,string name,ExchangeAssetClass assetClass=ExchangeAssetClass.CryptoCex,params ExchangeCredentialField[] extra)=>new(id,name,assetClass,true,true,[Key,Secret,..extra],StandardCapabilities,false,"ADAPTER NOT INSTALLED");
-    private static ExchangeProviderDescriptor PlannedDex(string id,string name)=>new(id,name,ExchangeAssetClass.CryptoDex,true,true,[new("wallet","Wallet Address",ExchangeCredentialKind.WalletAddress),new("privateKey","Signing Key",ExchangeCredentialKind.PrivateKey)],StandardCapabilities,false,"ADAPTER NOT INSTALLED");
+    private static ExchangeProviderDescriptor PlannedProvider(string id,string name,ExchangeAssetClass assetClass=ExchangeAssetClass.CryptoCex,params ExchangeCredentialField[] extra)=>new(id,name,assetClass,false,false,[Key,Secret,..extra],new HashSet<string>(),false,"ADAPTER NOT INSTALLED - CAPABILITIES UNVERIFIED");
+    private static ExchangeProviderDescriptor PlannedDex(string id,string name)=>new(id,name,ExchangeAssetClass.CryptoDex,false,false,[new("wallet","Wallet Address",ExchangeCredentialKind.WalletAddress),new("privateKey","Signing Key",ExchangeCredentialKind.PrivateKey)],new HashSet<string>(),false,"ADAPTER NOT INSTALLED - CAPABILITIES UNVERIFIED");
     public static IReadOnlyList<ExchangeProviderDescriptor> Planned { get; }=
     [
         PlannedProvider("okx","OKX",ExchangeAssetClass.CryptoCex,new ExchangeCredentialField("passphrase","Passphrase",ExchangeCredentialKind.Passphrase)),

@@ -12,7 +12,7 @@ namespace 币安量化机器人.Services;
 
 public class BinanceStreamClient : IAsyncDisposable
 {
-    private const string StreamEndpoint = "wss://fstream.binance.com/stream";
+    private readonly string _streamEndpoint;
     private static readonly TimeSpan[] RetrySchedule =
     {
         TimeSpan.FromSeconds(1),
@@ -34,9 +34,10 @@ public class BinanceStreamClient : IAsyncDisposable
     private readonly IRawStreamRecorder? _recorder;
 
     // Add optional recorder via constructor for testing / recording
-    public BinanceStreamClient(IRawStreamRecorder? recorder = null)
+    public BinanceStreamClient(IRawStreamRecorder? recorder = null, bool useTestnet = true)
     {
         _recorder = recorder;
+        _streamEndpoint = useTestnet ? "wss://stream.binancefuture.com/stream" : "wss://fstream.binance.com/stream";
     }
 
     public async Task ConnectMiniTickerAsync(IEnumerable<string> symbols, CancellationToken cancellationToken = default)
@@ -124,7 +125,7 @@ public class BinanceStreamClient : IAsyncDisposable
 
             var socket = new ClientWebSocket();
             var stream = string.Join('/', _currentSymbols.Select(s => $"{s}@miniTicker"));
-            var uri = new Uri($"{StreamEndpoint}?streams={stream}");
+            var uri = new Uri($"{_streamEndpoint}?streams={stream}");
             await socket.ConnectAsync(uri, cancellationToken).ConfigureAwait(false);
             _socket = socket;
             ConnectionStatusChanged?.Invoke("已连接 Binance 行情流");

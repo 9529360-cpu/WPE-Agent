@@ -13,7 +13,8 @@ public partial class PositionsOrdersView : UserControl
     private readonly ObservableCollection<PositionSnapshot> _positions = new();
     private readonly ObservableCollection<OrderResponse> _orders = new();
     private readonly ObservableCollection<TradeExecution> _trades = new();
-    private readonly BinanceApiClient _api = ServiceLocator.Api;
+    private readonly IAccountReader _accountReader = ServiceLocator.AccountReader;
+    private readonly IOrderQueryReader _orderQueries = ServiceLocator.OrderQueries;
 
     public PositionsOrdersView()
     {
@@ -29,9 +30,9 @@ public partial class PositionsOrdersView : UserControl
         try
         {
             StatusText.Text = "状态：获取账户数据...";
-            var positions = await _api.GetPositionsAsync();
-            var orders = await _api.GetOpenOrdersAsync();
-            var trades = await _api.GetRecentTradesAsync("BTCUSDT");
+            var positions = await _accountReader.GetPositionsAsync();
+            var orders = await _orderQueries.GetOpenOrdersAsync();
+            var trades = await _orderQueries.GetRecentTradesAsync("BTCUSDT");
 
             _positions.Clear();
             foreach (var p in positions)

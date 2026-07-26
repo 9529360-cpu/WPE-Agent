@@ -7,7 +7,7 @@ using 币安量化机器人.Services.Agent;
 
 namespace 币安量化机器人.Services.Exchange;
 
-public abstract class RestExchangeProviderBase:IExchangeProvider,IMarketDataProvider,IBrokerProvider
+public abstract class RestExchangeProviderBase:IExchangeProvider,IMarketDataProvider,IBrokerProvider,IProviderEnvironmentGuard
 {
     protected readonly ExchangeConnectionProfile Profile;
     protected readonly HttpClient Http;
@@ -19,6 +19,8 @@ public abstract class RestExchangeProviderBase:IExchangeProvider,IMarketDataProv
     public ISymbolMapper Symbols{get;}
     public IMarketDataProvider MarketData=>this;
     public IBrokerProvider Broker=>this;
+
+    public abstract ProviderEnvironmentValidation ValidateEnvironment(bool requireTestnet);
 
     protected RestExchangeProviderBase(ExchangeConnectionProfile profile)
     {
@@ -60,17 +62,22 @@ public abstract class RestExchangeProviderBase:IExchangeProvider,IMarketDataProv
     public abstract Task CancelOrderAsync(string canonicalSymbol,string orderId,CancellationToken ct);
     public virtual ValueTask DisposeAsync(){Http.Dispose();return ValueTask.CompletedTask;}
 
-    protected async Task<JsonDocument> SendAsync(Func<HttpRequestMessage> requestFactory,Func<JsonElement,string?> error,CancellationToken ct)=>await Policy.ExecuteAsync(async token=>
+    protected async Task<JsonDocument> SendAsync(Func<HttpRequestMessage> requestFactory,Func<JsonElement,string?> error,CancellationToken ct)
     {
-        using var request=requestFactory();using var response=await Http.SendAsync(request,token);var payload=await response.Content.ReadAsStringAsync(token);if(!response.IsSuccessStatusCode)throw new HttpRequestException($"{ProviderId} HTTP {(int)response.StatusCode}: {Safe(payload)}",null,response.StatusCode);var document=JsonDocument.Parse(payload);var message=error(document.RootElement);if(message is not null){document.Dispose();throw new InvalidOperationException($"{ProviderId}: {Safe(message)}");}return document;
-    },ct);
+        var environment=ValidateEnvironment(Profile.IsTestnet);
+        if(!environment.CanRead)throw new InvalidOperationException(environment.Failure??"Provider endpoint is not allowed.");
+        return await Policy.ExecuteAsync(async token=>
+        {
+            using var request=requestFactory();using var response=await Http.SendAsync(request,token);var payload=await response.Content.ReadAsStringAsync(token);if(!response.IsSuccessStatusCode)throw new HttpRequestException($"{ProviderId} HTTP {(int)response.StatusCode}: {Safe(payload)}",null,response.StatusCode);var document=JsonDocument.Parse(payload);var message=error(document.RootElement);if(message is not null){document.Dispose();throw new InvalidOperationException($"{ProviderId}: {Safe(message)}");}return document;
+        },ct);
+    }
     protected static HttpRequestMessage JsonRequest(HttpMethod method,string path,string? body=null){var request=new HttpRequestMessage(method,path);if(body is not null)request.Content=new StringContent(body,Encoding.UTF8,"application/json");return request;}
     protected static string Query(IEnumerable<KeyValuePair<string,string?>> values)=>string.Join("&",values.Where(x=>x.Value is not null).Select(x=>$"{Uri.EscapeDataString(x.Key)}={Uri.EscapeDataString(x.Value!)}"));
     protected static decimal Dec(JsonElement e,string name){if(!e.TryGetProperty(name,out var value))return 0;return decimal.TryParse(value.ValueKind==JsonValueKind.String?value.GetString():value.GetRawText(),NumberStyles.Any,CultureInfo.InvariantCulture,out var result)?result:0;}
     protected static string Str(JsonElement e,string name)=>e.TryGetProperty(name,out var value)?value.ValueKind==JsonValueKind.String?value.GetString()??string.Empty:value.GetRawText():string.Empty;
     protected static DateTime Millis(string value)=>long.TryParse(value,out var ms)?DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime:DateTime.UtcNow;
     protected static string F(decimal value)=>value.ToString(CultureInfo.InvariantCulture);
-    protected static string Safe(string value)=>value.Replace("\r"," ").Replace("\n"," ")[..Math.Min(value.Length,240)];
+    protected static string Safe(string value)=>global::币安量化机器人.Services.SensitiveDataRedactor.ForLog(value,240);
     private static double Trend(IReadOnlyList<CandleEvidence> candles,int lookback)
     {
         var referenceIndex=candles.Count-1-lookback;

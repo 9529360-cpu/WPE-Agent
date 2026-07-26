@@ -1,0 +1,77 @@
+{
+  "manifest_version": "0.1",
+  "name": "wpe-local-first-agent-suite",
+  "description": "Local-first multi-agent suite for WPE with deterministic core services and optional LLM augmentation.",
+  "agents": [
+    {
+      "name": "orchestrator",
+      "mode": "rule-first",
+      "capabilities": ["dispatch", "health-state", "degrade-control", "audit"]
+    },
+    {
+      "name": "news-ingest",
+      "mode": "deterministic-plus-llm-summary",
+      "capabilities": ["fetch", "parse", "dedupe", "entity-link"]
+    },
+    {
+      "name": "market-analysis",
+      "mode": "deterministic-plus-small-model",
+      "capabilities": ["feature-extract", "regime-detect", "anomaly-score"]
+    },
+    {
+      "name": "data-quality",
+      "mode": "deterministic",
+      "capabilities": ["schema-check", "freshness-check", "drift-check", "gate"]
+    },
+    {
+      "name": "strategy-research",
+      "mode": "llm-optional",
+      "capabilities": ["hypothesis", "proposal", "feature-note"]
+    },
+    {
+      "name": "backtest",
+      "mode": "deterministic",
+      "capabilities": ["replay", "metric", "stress-test", "report"]
+    },
+    {
+      "name": "strategy-review",
+      "mode": "rule-first",
+      "capabilities": ["approve", "reject", "register", "version"]
+    },
+    {
+      "name": "risk",
+      "mode": "deterministic",
+      "capabilities": ["limit-check", "halt", "exposure-control", "circuit-breaker"]
+    },
+    {
+      "name": "execution",
+      "mode": "deterministic",
+      "capabilities": ["submit", "cancel", "fill-monitor", "slippage-track"]
+    },
+    {
+      "name": "order-recovery",
+      "mode": "deterministic",
+      "capabilities": ["reconcile", "replay", "repair", "human-escalate"]
+    },
+    {
+      "name": "postmortem",
+      "mode": "llm-optional",
+      "capabilities": ["attribution", "summary", "action-items"]
+    },
+    {
+      "name": "monitoring",
+      "mode": "deterministic",
+      "capabilities": ["metrics", "alert", "sla", "incident"]
+    }
+  ],
+  "routing": {
+    "rules_first": true,
+    "small_model_for": ["classification", "ranking", "entity-resolution"],
+    "llm_for": ["research", "summarization", "narrative-review"]
+  },
+  "constraints": {
+    "llm_must_not": ["trade", "risk-approve", "order-reconcile-confirm", "data-gate"],
+    "audit_append_only": true,
+    "local_first": true
+  }
+}

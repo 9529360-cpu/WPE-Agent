@@ -33,7 +33,7 @@ public partial class DiagnosticsView : UserControl
         sb.AppendLine($"自动重连: {ServiceLocator.Settings.AutoReconnect}");
         EnvironmentText.Text = sb.ToString();
 
-        var logPath = Path.Combine(AppContext.BaseDirectory, "Data", "terminal.log");
+        var logPath = AppDataPaths.LogFile("terminal.log");
         if (File.Exists(logPath))
             LogBox.Text = File.ReadAllText(logPath);
         else

@@ -13,7 +13,7 @@ namespace 币安量化机器人.Modules.Account;
 public partial class AccountFundsView : UserControl
 {
     private readonly ObservableCollection<AccountBalance> _balances = new();
-    private readonly BinanceApiClient _api = ServiceLocator.Api;
+    private readonly IAccountReader _accountReader = ServiceLocator.AccountReader;
 
     public AccountFundsView()
     {
@@ -27,7 +27,7 @@ public partial class AccountFundsView : UserControl
         try
         {
             StatusText.Text = "状态：获取资产余额...";
-            var balances = await _api.GetAccountBalancesAsync();
+            var balances = await _accountReader.GetAccountBalancesAsync();
             _balances.Clear();
             foreach (var balance in balances.Where(b => b.WalletBalance != 0 || b.AvailableBalance != 0))
                 _balances.Add(balance);

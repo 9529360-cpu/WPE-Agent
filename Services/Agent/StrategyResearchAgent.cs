@@ -5,15 +5,27 @@ namespace 币安量化机器人.Services.Agent;
 
 public sealed class StrategyResearchAgent
 {
+    public static WpeAgent.ModelOff.ModelOffAgentOutputV1 ProduceTechnicalModelOff(ModelOffResearchInputV1 input)
+        => input.Capability == ModelOffResearchCapabilityV1.Technical
+            ? DeterministicResearchCapabilityProducerV1.Produce(input)
+            : throw new ArgumentException("Technical producer requires the technical capability.", nameof(input));
+
+    public static WpeAgent.ModelOff.ModelOffAgentOutputV1 ProduceBacktestModelOff(ModelOffResearchInputV1 input)
+        => input.Capability == ModelOffResearchCapabilityV1.Backtest
+            ? DeterministicResearchCapabilityProducerV1.Produce(input)
+            : throw new ArgumentException("Backtest producer requires the backtest capability.", nameof(input));
+
     private readonly AgentSqliteStore _database;
     private readonly StrategyGovernor _governor;
     private readonly HistoricalResearchEngine _engine = new();
+    private readonly WpeAgent.RuntimeServices.RuntimeBacktestStateStore? _runtimeBacktests;
     private volatile bool _schedulerHealthy;
 
-    public StrategyResearchAgent(AgentSqliteStore database, StrategyGovernor? governor = null)
+    public StrategyResearchAgent(AgentSqliteStore database, StrategyGovernor? governor = null, WpeAgent.RuntimeServices.RuntimeBacktestStateStore? runtimeBacktests = null)
     {
         _database = database;
         _governor = governor ?? new StrategyGovernor();
+        _runtimeBacktests = runtimeBacktests;
     }
 
     public bool SchedulerHealthy => _schedulerHealthy;
@@ -29,6 +41,9 @@ public sealed class StrategyResearchAgent
             var candles = await _database.LoadHistoricalCandlesAsync(profile.Symbol, "1h", 5000, ct);
             var validation = _engine.Validate(profile, candles, news, limits);
             await _database.SaveStrategyValidationAsync(validation, ct);
+            var validationCompletedAt = DateTime.UtcNow;
+            var coverageDays = candles.Count < 2 ? 0 : Math.Max(0, (int)Math.Floor((candles[^1].OpenTime.ToUniversalTime() - candles[0].OpenTime.ToUniversalTime()).TotalDays));
+            await _database.SaveBacktestRunAsync(new PersistedBacktestRun(Guid.NewGuid().ToString("N"),profile.Id,profile.Version,profile.Symbol,validation.Passed?"PASSED":"FAILED",validationCompletedAt,coverageDays,validation.Trades,validation.OutOfSampleReturn,validation.MaxDrawdown,validation.Sharpe),ct);
             var next = _governor.NextLifecycle(profile, validation);
             profile.QualityScore = validation.QualityScore; profile.Expectancy = validation.Expectancy;
             profile.MaxDrawdown = validation.MaxDrawdown; profile.Sharpe = validation.Sharpe; profile.ValidationTrades = validation.Trades;
@@ -37,6 +52,8 @@ public sealed class StrategyResearchAgent
             await _database.RecordStrategyLifecycleAsync(profile, validation.Summary, ct);
             validated++;
         }
+
+        if (_runtimeBacktests is not null) await _runtimeBacktests.RefreshAsync(ct);
 
         var snapshot = await _database.GetStrategySnapshotAsync(ct);
         var completedAt = DateTime.UtcNow;

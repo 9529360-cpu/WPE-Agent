@@ -33,6 +33,7 @@ public class RealTimeDataPipeline
 
     public async Task StartAsync(DataQuery query, CancellationToken cancellationToken = default)
     {
+        await Task.CompletedTask;
         foreach (var source in _sources)
         {
             _ = Task.Run(async () =>
@@ -50,7 +51,7 @@ public class RealTimeDataPipeline
                     await _channel.Writer.WriteAsync(new RawDataFrame("error", query.Symbol, DateTime.UtcNow, new Dictionary<string, object>
                     {
                         ["source"] = source.Name,
-                        ["error"] = ex.Message
+                        ["error"] = global::币安量化机器人.Services.SensitiveDataRedactor.ForLog(ex.Message, 240)
                     }), cancellationToken);
                 }
             }, cancellationToken);

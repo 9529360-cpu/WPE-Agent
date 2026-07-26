@@ -2,20 +2,42 @@ using Microsoft.Data.Sqlite;
 using System.Globalization;
 using System.Text.Json;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using 币安量化机器人.Services;
 using 币安量化机器人.Core.Runtime;
 using 币安量化机器人.Core.Strategy;
+using WpeAgent.TradingAuthorization;
+using WpeAgent.ModelOff;
 
 namespace 币安量化机器人.Services.Agent;
+
+public sealed record IntentStatusCount(string Status,int Count);
+public sealed record IntentStateSummary(int TotalCount,int RecoverableCount,int UnknownCount,DateTimeOffset? LatestUpdatedAtUtc,IReadOnlyList<IntentStatusCount> Statuses);
+public sealed record ModelOffAuditPersistenceResult(bool Succeeded,bool Idempotent,string Code);
+public sealed record PersistedModelOffAudit(
+    string OutputId,string CycleId,string Schema,string TemplateVersion,string CanonicalSha256,
+    string Status,string OutputKind,string SourcesJson,DateTimeOffset AsOfUtc,DateTimeOffset RecordedAtUtc,
+    byte[] CanonicalBytes);
 
 public sealed class AgentSqliteStore
 {
     private readonly string _cs;
-    public AgentSqliteStore(string? path=null) { path??=AppDataPaths.File("agent.db");Directory.CreateDirectory(Path.GetDirectoryName(path)!);_cs=$"Data Source={path}";Initialize(); }
+    private readonly Func<DateTimeOffset> _utcNow;
+    public AgentSqliteStore(string? path=null):this(path,null){}
+    internal AgentSqliteStore(string? path,Func<DateTimeOffset>? utcNow) { path??=AppDataPaths.File("agent.db");Directory.CreateDirectory(Path.GetDirectoryName(path)!);_cs=$"Data Source={path}";_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);Initialize(); }
     private void Initialize(){using var c=new SqliteConnection(_cs);c.Open();using var q=c.CreateCommand();q.CommandText="""
     PRAGMA journal_mode=WAL;
+    PRAGMA foreign_keys=ON;
+    PRAGMA busy_timeout=5000;
     CREATE TABLE IF NOT EXISTS cycles(id TEXT PRIMARY KEY,started_at TEXT NOT NULL,completed_at TEXT,status TEXT,completeness INTEGER,evidence_json TEXT,brain TEXT,brain_request TEXT,brain_response TEXT,decision_json TEXT,risk_result TEXT,error TEXT);
     CREATE TABLE IF NOT EXISTS order_intents(client_order_id TEXT PRIMARY KEY,cycle_id TEXT,symbol TEXT,side TEXT,quantity TEXT,status TEXT,exchange_order_id INTEGER,updated_at TEXT,details TEXT);
+    CREATE TABLE IF NOT EXISTS execution_submission_journal(submission_id TEXT PRIMARY KEY,client_order_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,environment TEXT NOT NULL,submitted_at TEXT NOT NULL,result_code TEXT NOT NULL,result_hash TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS legacy_intent_isolation(client_order_id TEXT PRIMARY KEY,source_status TEXT NOT NULL,projection_status TEXT NOT NULL CHECK(projection_status='Quarantined'),reason_code TEXT NOT NULL,isolated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS legacy_intent_isolation_events(id INTEGER PRIMARY KEY AUTOINCREMENT,client_order_id TEXT NOT NULL,sequence INTEGER NOT NULL,occurred_at TEXT NOT NULL,from_status TEXT NOT NULL,to_status TEXT NOT NULL,event_code TEXT NOT NULL,UNIQUE(client_order_id,sequence));
+    CREATE INDEX IF NOT EXISTS ix_legacy_intent_isolation_status ON legacy_intent_isolation(projection_status,isolated_at);
+    CREATE TRIGGER IF NOT EXISTS legacy_intent_isolation_events_no_update BEFORE UPDATE ON legacy_intent_isolation_events BEGIN SELECT RAISE(ABORT,'legacy intent isolation events are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS legacy_intent_isolation_events_no_delete BEFORE DELETE ON legacy_intent_isolation_events BEGIN SELECT RAISE(ABORT,'legacy intent isolation events are append-only'); END;
     CREATE TABLE IF NOT EXISTS snapshots(id INTEGER PRIMARY KEY AUTOINCREMENT,collected_at TEXT,account_json TEXT,positions_json TEXT,orders_json TEXT);
     CREATE TABLE IF NOT EXISTS news(duplicate_group TEXT PRIMARY KEY,source TEXT,title TEXT,url TEXT,published_at TEXT,collected_at TEXT,reliability TEXT,assets TEXT);
     CREATE TABLE IF NOT EXISTS errors(id INTEGER PRIMARY KEY AUTOINCREMENT,occurred_at TEXT,stage TEXT,message TEXT,details TEXT);
@@ -23,10 +45,18 @@ public sealed class AgentSqliteStore
     CREATE TABLE IF NOT EXISTS daily_risk(day TEXT PRIMARY KEY,equity_high TEXT NOT NULL,updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS decision_audits(cycle_id TEXT PRIMARY KEY,created_at TEXT NOT NULL,assessments_json TEXT NOT NULL,review_json TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS maturity_audits(cycle_id TEXT PRIMARY KEY,created_at TEXT NOT NULL,plan_json TEXT NOT NULL,review_json TEXT NOT NULL,risk_json TEXT NOT NULL,research_json TEXT,execution_result TEXT);
+    CREATE TABLE IF NOT EXISTS model_off_canonical_audits(output_id TEXT PRIMARY KEY,cycle_id TEXT NOT NULL,schema TEXT NOT NULL,template_version TEXT NOT NULL,canonical_sha256 TEXT NOT NULL,status TEXT NOT NULL,output_kind TEXT NOT NULL,sources_json TEXT NOT NULL,as_of_utc TEXT NOT NULL,recorded_at_utc TEXT NOT NULL,canonical_bytes BLOB NOT NULL);
+    CREATE INDEX IF NOT EXISTS ix_model_off_canonical_audits_cycle ON model_off_canonical_audits(cycle_id,as_of_utc,output_id);
     CREATE TABLE IF NOT EXISTS execution_events(id INTEGER PRIMARY KEY AUTOINCREMENT,cycle_id TEXT,client_order_id TEXT UNIQUE,symbol TEXT,side TEXT,action TEXT,reduce_only INTEGER,quantity TEXT,avg_price TEXT,status TEXT,occurred_at TEXT);
     CREATE TABLE IF NOT EXISTS trade_outcomes(id INTEGER PRIMARY KEY AUTOINCREMENT,cycle_id TEXT,symbol TEXT,side TEXT,entry_price TEXT,exit_price TEXT,quantity TEXT,gross_pnl TEXT,fees TEXT,net_pnl TEXT,return_pct TEXT,closed_at TEXT,strategy_version TEXT);
     CREATE TABLE IF NOT EXISTS research_validations(id INTEGER PRIMARY KEY AUTOINCREMENT,created_at TEXT,symbol TEXT,strategy_version TEXT,approved INTEGER,quality_score REAL,result_json TEXT);
     CREATE TABLE IF NOT EXISTS skill_calls(id INTEGER PRIMARY KEY AUTOINCREMENT,occurred_at TEXT,skill TEXT,status TEXT,duration_ms INTEGER,input_summary TEXT,output_summary TEXT,error TEXT);
+    CREATE TABLE IF NOT EXISTS runtime_skill_calls(id INTEGER PRIMARY KEY AUTOINCREMENT,source_skill_call_id INTEGER UNIQUE,occurred_at TEXT NOT NULL,skill TEXT NOT NULL,status TEXT NOT NULL,duration_ms INTEGER NOT NULL,mode TEXT,remote_llm INTEGER,tokens INTEGER,cost_usd TEXT);
+    CREATE INDEX IF NOT EXISTS ix_runtime_skill_calls_occurred ON runtime_skill_calls(occurred_at DESC);
+    CREATE TABLE IF NOT EXISTS agent_memories(id TEXT PRIMARY KEY,tier TEXT NOT NULL,occurred_at TEXT NOT NULL,expires_at TEXT NOT NULL,symbol TEXT,provider_id TEXT,strategy_id TEXT,result TEXT NOT NULL,source TEXT NOT NULL,summary TEXT NOT NULL,content_hash TEXT NOT NULL,UNIQUE(tier,source,content_hash));
+    CREATE INDEX IF NOT EXISTS ix_agent_memories_lookup ON agent_memories(tier,symbol,provider_id,strategy_id,occurred_at DESC);
+    CREATE TABLE IF NOT EXISTS memory_retrievals(id INTEGER PRIMARY KEY AUTOINCREMENT,retrieved_at TEXT NOT NULL,tier TEXT,symbol TEXT,provider_id TEXT,strategy_id TEXT,result TEXT,since_utc TEXT,result_count INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS ix_memory_retrievals_time ON memory_retrievals(retrieved_at DESC);
     CREATE TABLE IF NOT EXISTS realtime_events(id INTEGER PRIMARY KEY AUTOINCREMENT,occurred_at TEXT,event_type TEXT,symbol TEXT,status TEXT,summary TEXT,payload_hash TEXT);
     CREATE INDEX IF NOT EXISTS ix_realtime_events_time ON realtime_events(occurred_at);
     CREATE TABLE IF NOT EXISTS news_documents(id INTEGER PRIMARY KEY AUTOINCREMENT,duplicate_group TEXT UNIQUE,source TEXT,title TEXT,url TEXT,published_at TEXT,collected_at TEXT,reliability TEXT,assets TEXT,body_summary TEXT,confidence REAL,corroborating_sources INTEGER,event_type TEXT,is_breaking INTEGER,sentiment REAL);
@@ -42,31 +72,564 @@ public sealed class AgentSqliteStore
     CREATE INDEX IF NOT EXISTS ix_workflow_checkpoints_cycle ON workflow_checkpoints(run_id,cycle_id,id);
     CREATE TABLE IF NOT EXISTS runtime_events(event_id TEXT PRIMARY KEY,sequence INTEGER NOT NULL,correlation_id TEXT NOT NULL,causation_id TEXT,event_type TEXT NOT NULL,source TEXT NOT NULL,payload_json TEXT NOT NULL,occurred_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS ix_runtime_events_correlation ON runtime_events(correlation_id,sequence);
+    CREATE INDEX IF NOT EXISTS ix_cycles_completed_at ON cycles(completed_at DESC);
+    CREATE INDEX IF NOT EXISTS ix_decision_audits_created_at ON decision_audits(created_at DESC);
+    CREATE INDEX IF NOT EXISTS ix_maturity_audits_created_at ON maturity_audits(created_at DESC);
+    CREATE INDEX IF NOT EXISTS ix_execution_events_occurred_at ON execution_events(occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS ix_skill_calls_occurred_at ON skill_calls(occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS ix_workflow_checkpoints_created_at ON workflow_checkpoints(created_at DESC);
     CREATE TABLE IF NOT EXISTS runtime_leases(name TEXT PRIMARY KEY,owner_id TEXT NOT NULL,expires_at TEXT NOT NULL,heartbeat_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS strategy_registry(id TEXT PRIMARY KEY,version TEXT NOT NULL,symbol TEXT NOT NULL,family TEXT NOT NULL,lifecycle TEXT NOT NULL,parameters_json TEXT NOT NULL,built_in INTEGER NOT NULL,created_at TEXT NOT NULL,state_changed_at TEXT,quality_score REAL NOT NULL,expectancy REAL NOT NULL,max_drawdown REAL NOT NULL,sharpe REAL NOT NULL,validation_trades INTEGER NOT NULL,shadow_observations INTEGER NOT NULL,failure_streak INTEGER NOT NULL,last_reason TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS ix_strategy_registry_symbol_state ON strategy_registry(symbol,lifecycle,quality_score);
     CREATE TABLE IF NOT EXISTS strategy_validations(id INTEGER PRIMARY KEY AUTOINCREMENT,strategy_id TEXT NOT NULL,created_at TEXT NOT NULL,result_json TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS backtest_runs(id TEXT PRIMARY KEY,strategy_id TEXT NOT NULL,strategy_version TEXT NOT NULL,symbol TEXT NOT NULL,status TEXT NOT NULL,completed_at TEXT NOT NULL,coverage_days INTEGER NOT NULL,trades INTEGER NOT NULL,out_of_sample_return REAL NOT NULL,max_drawdown REAL NOT NULL,sharpe REAL NOT NULL);
+    CREATE INDEX IF NOT EXISTS ix_backtest_runs_completed ON backtest_runs(completed_at DESC);
+    CREATE TABLE IF NOT EXISTS equity_snapshots(id INTEGER PRIMARY KEY AUTOINCREMENT,observed_at TEXT NOT NULL,equity TEXT NOT NULL,available_balance TEXT NOT NULL,environment TEXT NOT NULL,provider_id TEXT NOT NULL);
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_equity_snapshots_source_time ON equity_snapshots(provider_id,environment,observed_at);
+    CREATE INDEX IF NOT EXISTS ix_equity_snapshots_observed ON equity_snapshots(observed_at DESC);
     CREATE TABLE IF NOT EXISTS strategy_observations(id INTEGER PRIMARY KEY AUTOINCREMENT,strategy_id TEXT NOT NULL,symbol TEXT NOT NULL,observed_at TEXT NOT NULL,direction INTEGER NOT NULL,price TEXT NOT NULL,confidence REAL NOT NULL);
     CREATE INDEX IF NOT EXISTS ix_strategy_observations_strategy_time ON strategy_observations(strategy_id,observed_at);
     CREATE TABLE IF NOT EXISTS strategy_lifecycle_events(id INTEGER PRIMARY KEY AUTOINCREMENT,strategy_id TEXT NOT NULL,from_state TEXT,to_state TEXT,occurred_at TEXT NOT NULL,reason TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS trading_approval_requests(request_id TEXT PRIMARY KEY,mode TEXT NOT NULL,correlation_id TEXT NOT NULL,intent_hash TEXT NOT NULL,artifact_hash TEXT,user_id TEXT NOT NULL,device_id TEXT NOT NULL,session_id TEXT NOT NULL,issued_at TEXT NOT NULL,expires_at TEXT NOT NULL,revoked_at TEXT,consumed_at TEXT);
+    CREATE INDEX IF NOT EXISTS ix_trading_approval_requests_state ON trading_approval_requests(consumed_at,revoked_at,expires_at);
+    CREATE TABLE IF NOT EXISTS trading_approval_receipts(receipt_id TEXT PRIMARY KEY,request_id TEXT NOT NULL,correlation_id TEXT NOT NULL,intent_hash TEXT NOT NULL,artifact_hash TEXT,user_id TEXT NOT NULL,device_id TEXT NOT NULL,session_id TEXT NOT NULL,approved INTEGER NOT NULL CHECK(approved IN (0,1)),issued_at TEXT NOT NULL,expires_at TEXT NOT NULL,revoked_at TEXT,consumed_at TEXT);
+    CREATE INDEX IF NOT EXISTS ix_trading_approval_receipts_request ON trading_approval_receipts(request_id,consumed_at,revoked_at,expires_at);
+    CREATE TABLE IF NOT EXISTS trading_review_execution_queue(
+        request_id TEXT PRIMARY KEY REFERENCES trading_approval_requests(request_id),
+        contract_version INTEGER NOT NULL,
+        artifact_bytes BLOB NOT NULL,
+        artifact_hash TEXT NOT NULL,
+        intent_hash TEXT NOT NULL,
+        provider_id TEXT NOT NULL,
+        environment TEXT NOT NULL,
+        strategy_id TEXT NOT NULL,
+        strategy_version TEXT NOT NULL,
+        market_collected_at TEXT NOT NULL,
+        market_data_version TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('Pending','Approved','Rejected','Revoked','Expired','Claimed','Executing','Reconciling','Succeeded','ArtifactInvalid','StrategyInvalid','MarketStale','PolicyBlocked','FailedTerminal')),
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
+        lease_owner TEXT,
+        lease_expires_at TEXT,
+        last_code TEXT NOT NULL,
+        updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS ix_trading_review_queue_state ON trading_review_execution_queue(status,expires_at,updated_at,request_id);
+    CREATE TABLE IF NOT EXISTS trading_review_queue_events(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_id TEXT NOT NULL REFERENCES trading_review_execution_queue(request_id),
+        sequence INTEGER NOT NULL,
+        occurred_at TEXT NOT NULL,
+        from_status TEXT,
+        to_status TEXT NOT NULL,
+        event_code TEXT NOT NULL,
+        actor_kind TEXT NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        UNIQUE(request_id,sequence));
+    CREATE INDEX IF NOT EXISTS ix_trading_review_events_request ON trading_review_queue_events(request_id,sequence);
+    CREATE TRIGGER IF NOT EXISTS trading_review_events_no_update BEFORE UPDATE ON trading_review_queue_events BEGIN SELECT RAISE(ABORT,'review queue events are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS trading_review_events_no_delete BEFORE DELETE ON trading_review_queue_events BEGIN SELECT RAISE(ABORT,'review queue events are append-only'); END;
+    CREATE TABLE IF NOT EXISTS automatic_execution_queue(
+        execution_id TEXT PRIMARY KEY,
+        correlation_id TEXT NOT NULL,
+        contract_version INTEGER NOT NULL,
+        artifact_bytes BLOB NOT NULL,
+        artifact_hash TEXT NOT NULL,
+        intent_hash TEXT NOT NULL,
+        risk_receipt_bytes BLOB,
+        risk_receipt_hash TEXT,
+        provider_id TEXT NOT NULL,
+        environment TEXT NOT NULL CHECK(environment='Testnet'),
+        strategy_id TEXT NOT NULL,
+        strategy_version TEXT NOT NULL,
+        market_collected_at TEXT NOT NULL,
+        market_data_version TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('Proposed','RiskApproved','RiskBlocked','Claimed','Executing','Reconciling','Succeeded','CapabilityUnavailable','MarketStale','StrategyInvalid','ArtifactInvalid','PolicyBlocked','UnknownOutcome','FailedTerminal')),
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
+        lease_owner TEXT,
+        lease_expires_at TEXT,
+        last_code TEXT NOT NULL,
+        updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS ix_automatic_execution_state ON automatic_execution_queue(status,updated_at,execution_id);
+    CREATE TABLE IF NOT EXISTS automatic_execution_events(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        execution_id TEXT NOT NULL REFERENCES automatic_execution_queue(execution_id),
+        sequence INTEGER NOT NULL,
+        occurred_at TEXT NOT NULL,
+        from_status TEXT,
+        to_status TEXT NOT NULL,
+        event_code TEXT NOT NULL,
+        actor_kind TEXT NOT NULL,
+        UNIQUE(execution_id,sequence));
+    CREATE INDEX IF NOT EXISTS ix_automatic_execution_events ON automatic_execution_events(execution_id,sequence);
+    CREATE TRIGGER IF NOT EXISTS automatic_execution_events_no_update BEFORE UPDATE ON automatic_execution_events BEGIN SELECT RAISE(ABORT,'automatic execution events are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS automatic_execution_events_no_delete BEFORE DELETE ON automatic_execution_events BEGIN SELECT RAISE(ABORT,'automatic execution events are append-only'); END;
+    CREATE TABLE IF NOT EXISTS trading_authorization_mode_audits(change_id TEXT PRIMARY KEY,old_mode TEXT NOT NULL,new_mode TEXT NOT NULL,user_id TEXT NOT NULL,device_id TEXT NOT NULL,changed_at TEXT NOT NULL,reason TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS ix_trading_authorization_mode_audits_time ON trading_authorization_mode_audits(changed_at DESC);
     INSERT OR IGNORE INTO workflow_runs(run_id,cycle_id,status,current_node,state_json,started_at,updated_at,error)
         SELECT 'legacy',id,'RUNNING','Observation','{}',started_at,started_at,'Migrated from pre-checkpoint runtime' FROM cycles WHERE status='RUNNING';
-    """;q.ExecuteNonQuery();}
+    """;q.ExecuteNonQuery();EnsureColumn(c,"trading_review_queue_events","reason","TEXT NOT NULL DEFAULT ''");EnsureColumn(c,"trading_approval_requests","artifact_hash","TEXT");EnsureColumn(c,"trading_approval_receipts","artifact_hash","TEXT");}
     public async Task StartCycleAsync(string id,EvidencePack e,string brain,CancellationToken ct){await Exec("INSERT OR REPLACE INTO cycles(id,started_at,status,completeness,evidence_json,brain) VALUES($i,$t,'RUNNING',$c,$e,$b)",ct,("$i",id),("$t",DateTime.UtcNow.ToString("O")),("$c",e.Completeness),("$e",JsonSerializer.Serialize(e)),("$b",brain));}
-    public async Task CompleteCycleAsync(string id,DecisionPlan d,string risk,string? request,string? response,CancellationToken ct){await Exec("UPDATE cycles SET completed_at=$t,status='COMPLETED',decision_json=$d,risk_result=$r,brain_request=$q,brain_response=$b WHERE id=$i",ct,("$i",id),("$t",DateTime.UtcNow.ToString("O")),("$d",JsonSerializer.Serialize(d)),("$r",risk),("$q",request??""),("$b",response??""));}
-    public async Task FailCycleAsync(string id,string stage,Exception ex,CancellationToken ct)=>await Exec("UPDATE cycles SET completed_at=$t,status='FAILED',risk_result=$s,error=$e WHERE id=$i",ct,("$i",id),("$t",DateTime.UtcNow.ToString("O")),("$s",stage),("$e",ex.ToString()));
+    public async Task<ModelOffAuditPersistenceResult> SaveModelOffCanonicalAuditAsync(ModelOffAgentOutputV1 output,ModelOffCanonicalDocumentV1 document,CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(output);ArgumentNullException.ThrowIfNull(document);
+        if(!Enum.IsDefined(output.Agent)||!Enum.IsDefined(output.Status)||!Enum.IsDefined(output.Uncertainty.Level))throw new InvalidOperationException("Canonical audit enum values must be known.");
+        if(string.IsNullOrWhiteSpace(output.TemplateVersion))throw new InvalidOperationException("Canonical audit template version is required.");
+        var canonical=ModelOffCanonicalSerializerV1.Serialize(output);
+        if(document.Utf8Bytes.Length==0||!CryptographicOperations.FixedTimeEquals(canonical.Utf8Bytes,document.Utf8Bytes)||!string.Equals(canonical.Sha256,document.Sha256,StringComparison.Ordinal))throw new InvalidOperationException("Canonical audit document bytes or hash do not match the output.");
+        var asOf=output.Sources.Select(x=>x.AsOfUtc).Where(x=>x.HasValue).Select(x=>x!.Value).DefaultIfEmpty().Max();
+        if(asOf==default)throw new InvalidOperationException("Canonical audit source as-of time is required.");
+        var sources=JsonSerializer.Serialize(output.Sources.OrderBy(x=>x.SourceId,StringComparer.Ordinal).Select(x=>new{x.SourceId,Kind=x.Kind.ToString().ToLowerInvariant(),AsOfUtc=x.AsOfUtc!.Value.ToUniversalTime().ToString("O",CultureInfo.InvariantCulture),Status=x.Status.ToString().ToLowerInvariant(),x.ArtifactHash}));
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);
+        await using(var q=c.CreateCommand()){q.Transaction=(SqliteTransaction)tx;q.CommandText="INSERT OR IGNORE INTO model_off_canonical_audits(output_id,cycle_id,schema,template_version,canonical_sha256,status,output_kind,sources_json,as_of_utc,recorded_at_utc,canonical_bytes) VALUES($o,$c,$s,$v,$h,$st,$k,$src,$a,$r,$b)";q.Parameters.AddWithValue("$o",output.OutputId);q.Parameters.AddWithValue("$c",output.CycleId);q.Parameters.AddWithValue("$s",ModelOffAgentOutputV1.Schema);q.Parameters.AddWithValue("$v",output.TemplateVersion);q.Parameters.AddWithValue("$h",canonical.Sha256);q.Parameters.AddWithValue("$st",output.Status.ToString().ToLowerInvariant());q.Parameters.AddWithValue("$k",output.Agent.ToString().ToLowerInvariant());q.Parameters.AddWithValue("$src",sources);q.Parameters.AddWithValue("$a",asOf.ToUniversalTime().ToString("O",CultureInfo.InvariantCulture));q.Parameters.AddWithValue("$r",_utcNow().ToUniversalTime().ToString("O",CultureInfo.InvariantCulture));q.Parameters.Add("$b",SqliteType.Blob).Value=canonical.Utf8Bytes;var inserted=await q.ExecuteNonQueryAsync(ct);if(inserted==1){await tx.CommitAsync(ct);return new(true,false,"audit.persisted");}}
+        await using(var q=c.CreateCommand()){q.Transaction=(SqliteTransaction)tx;q.CommandText="SELECT cycle_id,canonical_sha256,canonical_bytes FROM model_off_canonical_audits WHERE output_id=$o";q.Parameters.AddWithValue("$o",output.OutputId);await using var r=await q.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct))throw new InvalidOperationException("Canonical audit identity disappeared during persistence.");var identical=string.Equals(r.GetString(0),output.CycleId,StringComparison.Ordinal)&&string.Equals(r.GetString(1),canonical.Sha256,StringComparison.Ordinal)&&CryptographicOperations.FixedTimeEquals((byte[])r[2],canonical.Utf8Bytes);await tx.RollbackAsync(ct);return identical?new(true,true,"audit.idempotent"):new(false,false,"audit.identity-conflict");}
+    }
+    public async Task<IReadOnlyList<PersistedModelOffAudit>> GetModelOffCanonicalAuditsAsync(string cycleId,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(cycleId))throw new ArgumentException("Cycle id is required.",nameof(cycleId));
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT output_id,cycle_id,schema,template_version,canonical_sha256,status,output_kind,sources_json,as_of_utc,recorded_at_utc,canonical_bytes FROM model_off_canonical_audits WHERE cycle_id=$c ORDER BY as_of_utc,output_id";q.Parameters.AddWithValue("$c",cycleId);await using var r=await q.ExecuteReaderAsync(ct);var rows=new List<PersistedModelOffAudit>();while(await r.ReadAsync(ct))rows.Add(new(r.GetString(0),r.GetString(1),r.GetString(2),r.GetString(3),r.GetString(4),r.GetString(5),r.GetString(6),r.GetString(7),DateTimeOffset.Parse(r.GetString(8),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),DateTimeOffset.Parse(r.GetString(9),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),(byte[])r[10]));return rows;
+    }
+    public async Task CompleteCycleAsync(string id,DecisionPlan d,string risk,string? request,string? response,CancellationToken ct){await Exec("UPDATE cycles SET completed_at=$t,status='COMPLETED',decision_json=$d,risk_result=$r,brain_request=$q,brain_response=$b WHERE id=$i",ct,("$i",id),("$t",DateTime.UtcNow.ToString("O")),("$d",JsonSerializer.Serialize(d)),("$r",risk),("$q",request??""),("$b",response??""));await SaveMemoryAsync(new("episodic",DateTime.UtcNow,null,null,null,d.Action.ToString(),"cycle",$"cycle={id}; action={d.Action}; instrument={d.Instrument}; result={risk}"),ct);}
+    public async Task FailCycleAsync(string id,string stage,Exception ex,CancellationToken ct)=>await Exec("UPDATE cycles SET completed_at=$t,status='FAILED',risk_result=$s,error=$e WHERE id=$i",ct,("$i",id),("$t",DateTime.UtcNow.ToString("O")),("$s",SensitiveDataRedactor.ForLog(stage,120)),("$e",SensitiveDataRedactor.Redact(ex.ToString())));
     public async Task SaveSnapshotAsync(AccountSnapshot a,IReadOnlyList<ManagedPosition> p,IReadOnlyList<ExchangeOrder> o,CancellationToken ct)=>await Exec("INSERT INTO snapshots(collected_at,account_json,positions_json,orders_json) VALUES($t,$a,$p,$o)",ct,("$t",DateTime.UtcNow.ToString("O")),("$a",JsonSerializer.Serialize(a)),("$p",JsonSerializer.Serialize(p)),("$o",JsonSerializer.Serialize(o)));
     public async Task SaveIntentAsync(string cycle,ExecutionIntent i,string status,string? orderId,CancellationToken ct)=>await Exec("INSERT OR REPLACE INTO order_intents(client_order_id,cycle_id,symbol,side,quantity,status,exchange_order_id,updated_at,details) VALUES($id,$c,$s,$side,$q,$st,$oid,$t,$d)",ct,("$id",i.ClientOrderId),("$c",cycle),("$s",i.Symbol),("$side",i.Side.ToString()),("$q",i.Quantity.ToString(CultureInfo.InvariantCulture)),("$st",status),("$oid",orderId),("$t",DateTime.UtcNow.ToString("O")),("$d",JsonSerializer.Serialize(i)));
+    public async Task<TradingReviewQueueMutationResult> SaveTradingReviewQueueAsync(
+        TradingApprovalRequest request,
+        DurableReviewExecutionArtifactV1 artifact,
+        CancellationToken ct)
+    {
+        if(!ValidApprovalRequest(request)||request.Mode!=TradingAuthorizationMode.Review)
+            return new(false,"review.request-invalid");
+        byte[] artifactBytes;DurableReviewArtifactHashes hashes;
+        try{artifactBytes=DurableReviewArtifactCanonicalizer.Serialize(artifact);hashes=DurableReviewArtifactCanonicalizer.ComputeHashes(artifact);}
+        catch(ArgumentException){return new(false,"review.artifact-invalid");}
+        if(!FixedHashEquals(request.IntentHash,hashes.IntentHash)||request.IssuedAtUtc.ToUniversalTime()!=artifact.CreatedAtUtc||request.ExpiresAtUtc.ToUniversalTime()!=artifact.ExpiresAtUtc)
+            return new(false,"review.request-artifact-mismatch");
+        var now=_utcNow().ToUniversalTime();
+        try
+        {
+            await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await EnableQueuePragmasAsync(c,ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+            await using(var insertRequest=c.CreateCommand())
+            {
+                insertRequest.Transaction=tx;insertRequest.CommandText="""
+                    INSERT INTO trading_approval_requests(request_id,mode,correlation_id,intent_hash,artifact_hash,user_id,device_id,session_id,issued_at,expires_at,revoked_at,consumed_at)
+                    VALUES($request,'Review',$correlation,$hash,$artifactHash,$user,$device,$session,$issued,$expires,NULL,NULL)
+                    """;
+                AddParameters(insertRequest,("$request",request.RequestId),("$correlation",request.CorrelationId),("$hash",hashes.IntentHash),("$artifactHash",hashes.ArtifactHash),("$user",request.UserId),("$device",request.DeviceId),("$session",request.SessionId),("$issued",DbInstant(artifact.CreatedAtUtc)),("$expires",DbInstant(artifact.ExpiresAtUtc)));
+                if(await insertRequest.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"review.request-not-persisted");}
+            }
+            await using(var insertQueue=c.CreateCommand())
+            {
+                insertQueue.Transaction=tx;insertQueue.CommandText="""
+                    INSERT INTO trading_review_execution_queue(
+                        request_id,contract_version,artifact_bytes,artifact_hash,intent_hash,provider_id,environment,
+                        strategy_id,strategy_version,market_collected_at,market_data_version,created_at,expires_at,
+                        status,attempt_count,lease_owner,lease_expires_at,last_code,updated_at)
+                    VALUES($request,$version,$artifact,$artifactHash,$intentHash,$provider,$environment,$strategy,$strategyVersion,
+                        $marketAt,$marketVersion,$created,$expires,'Pending',0,NULL,NULL,'review.pending',$updated)
+                    """;
+                AddParameters(insertQueue,("$request",request.RequestId),("$version",artifact.ContractVersion),("$artifact",artifactBytes),("$artifactHash",hashes.ArtifactHash),("$intentHash",hashes.IntentHash),("$provider",artifact.ProviderId),("$environment",artifact.Environment),("$strategy",artifact.StrategyId),("$strategyVersion",artifact.StrategyVersion),("$marketAt",DbInstant(artifact.MarketCollectedAtUtc)),("$marketVersion",artifact.MarketDataVersion),("$created",DbInstant(artifact.CreatedAtUtc)),("$expires",DbInstant(artifact.ExpiresAtUtc)),("$updated",DbInstant(now)));
+                if(await insertQueue.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"review.queue-not-persisted");}
+            }
+            await AppendTradingReviewEventAsync(c,tx,request.RequestId,null,TradingReviewQueueStatus.Pending,"review.pending","system",now,ct);
+            await tx.CommitAsync(ct);return new(true,"review.queue-persisted");
+        }
+        catch(SqliteException){return new(false,"review.queue-persistence-failed");}
+    }
+
+    public async Task<PersistedTradingReviewQueueItem?> GetTradingReviewQueueItemAsync(string requestId,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(requestId))return null;
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=QueueReadCommand(c,"WHERE queue.request_id=$request",1,0);q.Parameters.AddWithValue("$request",requestId);
+        await using var r=await q.ExecuteReaderAsync(ct);return await r.ReadAsync(ct)?ReadTradingReviewQueueItem(r):null;
+    }
+
+    public async Task<IReadOnlyList<PersistedTradingReviewQueueItem>> GetTradingReviewQueueAsync(TradingReviewQueueStatus? status,int limit,int offset,CancellationToken ct)
+    {
+        var list=new List<PersistedTradingReviewQueueItem>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);
+        await using var q=QueueReadCommand(c,"WHERE ($status IS NULL OR queue.status=$status)",Math.Clamp(limit,1,100),Math.Clamp(offset,0,10_000));q.Parameters.AddWithValue("$status",status is null?DBNull.Value:status.Value.ToString());
+        await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))list.Add(ReadTradingReviewQueueItem(r));return list;
+    }
+
+    internal async Task<TradingReviewQueueMutationResult> TryApproveTradingReviewWithReceiptAsync(
+        string requestId,string userId,string deviceId,string sessionId,string providerId,string reason,CancellationToken ct)
+    {
+        var safeReason=SensitiveDataRedactor.ForLog(reason,240);
+        if(string.IsNullOrWhiteSpace(requestId)||!QueueIdentity(userId)||!QueueIdentity(deviceId)||!QueueIdentity(sessionId)||!QueueToken(providerId,64)||string.IsNullOrWhiteSpace(safeReason))return new(false,"review.approval-context-invalid");
+        var now=_utcNow().ToUniversalTime();
+        try
+        {
+            await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await EnableQueuePragmasAsync(c,ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+            PersistedTradingReviewQueueItem item;
+            await using(var read=QueueReadCommand(c,"WHERE queue.request_id=$request",1,0))
+            {
+                read.Transaction=tx;read.Parameters.AddWithValue("$request",requestId);await using var r=await read.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct)){await tx.RollbackAsync(ct);return new(false,"review.not-found");}item=ReadTradingReviewQueueItem(r);
+            }
+            if(item.Status!=TradingReviewQueueStatus.Pending){await tx.RollbackAsync(ct);return new(false,"review.not-pending");}
+            if(!item.ArtifactValid||item.Artifact is null){await tx.RollbackAsync(ct);return new(false,"review.artifact-invalid");}
+            var artifact=item.Artifact;
+            if(artifact.CreatedAtUtc>now){await tx.RollbackAsync(ct);return new(false,"review.not-yet-valid");}
+            if(artifact.ExpiresAtUtc<=now)
+            {
+                await using var expire=c.CreateCommand();expire.Transaction=tx;expire.CommandText="UPDATE trading_review_execution_queue SET status='Expired',last_code='review.expired',updated_at=$now WHERE request_id=$request AND status='Pending'";AddParameters(expire,("$now",DbInstant(now)),("$request",requestId));
+                if(await expire.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"review.not-pending");}
+                await AppendTradingReviewEventAsync(c,tx,requestId,TradingReviewQueueStatus.Pending,TradingReviewQueueStatus.Expired,"review.expired","system",now,ct);await tx.CommitAsync(ct);return new(false,"review.expired");
+            }
+            if(!string.Equals(artifact.Environment,"Testnet",StringComparison.Ordinal)) {await tx.RollbackAsync(ct);return new(false,"review.testnet-required");}
+            if(!string.Equals(artifact.ProviderId,providerId,StringComparison.OrdinalIgnoreCase)){await tx.RollbackAsync(ct);return new(false,"review.provider-mismatch");}
+            await using(var request=c.CreateCommand())
+            {
+                request.Transaction=tx;request.CommandText="SELECT mode,intent_hash,artifact_hash,user_id,device_id,session_id,issued_at,expires_at,revoked_at,consumed_at FROM trading_approval_requests WHERE request_id=$request";request.Parameters.AddWithValue("$request",requestId);await using var r=await request.ExecuteReaderAsync(ct);
+                if(!await r.ReadAsync(ct)||r.GetString(0)!="Review"||!FixedHashEquals(r.GetString(1),item.IntentHash)||r.IsDBNull(2)||!FixedHashEquals(r.GetString(2),item.ArtifactHash)||!string.Equals(r.GetString(3),userId,StringComparison.Ordinal)||!string.Equals(r.GetString(4),deviceId,StringComparison.Ordinal)||!string.Equals(r.GetString(5),sessionId,StringComparison.Ordinal)||Instant(r.GetString(6))!=artifact.CreatedAtUtc||Instant(r.GetString(7))!=artifact.ExpiresAtUtc||!r.IsDBNull(8)||!r.IsDBNull(9)){await tx.RollbackAsync(ct);return new(false,"review.approval-context-mismatch");}
+            }
+            var receiptId=Guid.NewGuid().ToString("N");
+            await using(var receipt=c.CreateCommand())
+            {
+                receipt.Transaction=tx;receipt.CommandText="""
+                    INSERT INTO trading_approval_receipts(receipt_id,request_id,correlation_id,intent_hash,artifact_hash,user_id,device_id,session_id,approved,issued_at,expires_at,revoked_at,consumed_at)
+                    SELECT $receipt,request.request_id,request.correlation_id,request.intent_hash,request.artifact_hash,request.user_id,request.device_id,request.session_id,1,$issued,request.expires_at,NULL,NULL
+                    FROM trading_approval_requests request JOIN trading_review_execution_queue queue ON queue.request_id=request.request_id
+                    WHERE request.request_id=$request AND queue.status='Pending' AND request.revoked_at IS NULL AND request.consumed_at IS NULL
+                    """;AddParameters(receipt,("$receipt",receiptId),("$issued",DbInstant(now)),("$request",requestId));
+                if(await receipt.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"review.receipt-not-persisted");}
+            }
+            await using(var approve=c.CreateCommand())
+            {
+                approve.Transaction=tx;approve.CommandText="UPDATE trading_review_execution_queue SET status='Approved',last_code='review.approved',updated_at=$now WHERE request_id=$request AND status='Pending' AND expires_at>$now";AddParameters(approve,("$now",DbInstant(now)),("$request",requestId));
+                if(await approve.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"review.not-pending");}
+            }
+            await AppendTradingReviewEventAsync(c,tx,requestId,TradingReviewQueueStatus.Pending,TradingReviewQueueStatus.Approved,"review.approved","desktop",now,ct,safeReason);await tx.CommitAsync(ct);return new(true,"review.approved");
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch(SqliteException){return new(false,"review.approval-persistence-failed");}
+    }
+
+    internal Task<TradingReviewQueueMutationResult> TryApproveTradingReviewAsync(string requestId,CancellationToken ct)
+        =>TryTradingReviewTransitionAsync(requestId,TradingReviewQueueStatus.Pending,TradingReviewQueueStatus.Approved,null,"review.approved","desktop",ct);
+    internal Task<TradingReviewQueueMutationResult> TryRejectTradingReviewAsync(string requestId,CancellationToken ct)
+        =>TryTradingReviewTransitionAsync(requestId,TradingReviewQueueStatus.Pending,TradingReviewQueueStatus.Rejected,null,"review.rejected","desktop",ct);
+    internal Task<TradingReviewQueueMutationResult> TryRevokeTradingReviewAsync(string requestId,TradingReviewQueueStatus expected,CancellationToken ct)
+        =>expected is TradingReviewQueueStatus.Pending or TradingReviewQueueStatus.Approved or TradingReviewQueueStatus.Claimed
+            ?TryTradingReviewTransitionAsync(requestId,expected,TradingReviewQueueStatus.Revoked,null,"review.revoked","desktop",ct)
+            :Task.FromResult(new TradingReviewQueueMutationResult(false,"review.transition-invalid"));
+    internal Task<TradingReviewQueueMutationResult> TryRejectTradingReviewAsync(string requestId,string reason,CancellationToken ct)
+        =>TryTradingReviewTransitionAsync(requestId,TradingReviewQueueStatus.Pending,TradingReviewQueueStatus.Rejected,null,"review.rejected","desktop",ct,reason:reason);
+    internal Task<TradingReviewQueueMutationResult> TryRevokeTradingReviewAsync(string requestId,TradingReviewQueueStatus expected,string reason,CancellationToken ct)
+        =>expected is TradingReviewQueueStatus.Pending or TradingReviewQueueStatus.Approved or TradingReviewQueueStatus.Claimed
+            ?TryTradingReviewTransitionAsync(requestId,expected,TradingReviewQueueStatus.Revoked,null,"review.revoked","desktop",ct,reason:reason)
+            :Task.FromResult(new TradingReviewQueueMutationResult(false,"review.transition-invalid"));
+
+    public async Task<TradingReviewQueueMutationResult> TryExpireTradingReviewAsync(string requestId,TradingReviewQueueStatus expected,CancellationToken ct)
+    {
+        if(expected is not (TradingReviewQueueStatus.Pending or TradingReviewQueueStatus.Approved or TradingReviewQueueStatus.Claimed))return new(false,"review.transition-invalid");
+        return await TryTradingReviewTransitionAsync(requestId,expected,TradingReviewQueueStatus.Expired,null,"review.expired","system",ct,requireExpired:true);
+    }
+
+    public async Task<TradingReviewQueueClaimResult> TryClaimTradingReviewAsync(string requestId,string leaseOwner,TimeSpan leaseLifetime,CancellationToken ct)
+    {
+        if(!QueueToken(leaseOwner,96)||leaseLifetime<=TimeSpan.Zero||leaseLifetime>TimeSpan.FromMinutes(5))return new(false,"review.claim-invalid",0);
+        var now=_utcNow().ToUniversalTime();
+        try
+        {
+            await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await EnableQueuePragmasAsync(c,ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+            TradingReviewQueueStatus current;int attempts;DateTimeOffset? leaseExpires;
+            await using(var read=QueueReadCommand(c,"WHERE queue.request_id=$request",1,0))
+            {
+                read.Transaction=tx;read.Parameters.AddWithValue("$request",requestId);
+                await using var r=await read.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct)){await tx.RollbackAsync(ct);return new(false,"review.not-claimable",0);}
+                var item=ReadTradingReviewQueueItem(r);if(!item.ArtifactValid||item.Artifact is null){await tx.RollbackAsync(ct);return new(false,"review.artifact-invalid",0);}
+                current=item.Status;attempts=item.AttemptCount;leaseExpires=item.LeaseExpiresAtUtc;var expires=item.Artifact.ExpiresAtUtc;
+                if(expires<=now||current!=TradingReviewQueueStatus.Approved&&!(current==TradingReviewQueueStatus.Claimed&&leaseExpires<=now)){await tx.RollbackAsync(ct);return new(false,"review.not-claimable",attempts);}
+            }
+            var nextAttempts=checked(attempts+1);var nextLease=now.Add(leaseLifetime);
+            await using(var update=c.CreateCommand())
+            {
+                update.Transaction=tx;update.CommandText="UPDATE trading_review_execution_queue SET status='Claimed',attempt_count=$attempts,lease_owner=$owner,lease_expires_at=$lease,last_code='review.claimed',updated_at=$now WHERE request_id=$request AND status=$status";
+                AddParameters(update,("$attempts",nextAttempts),("$owner",leaseOwner),("$lease",DbInstant(nextLease)),("$now",DbInstant(now)),("$request",requestId),("$status",current.ToString()));
+                if(await update.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"review.not-claimable",attempts);}
+            }
+            await AppendTradingReviewEventAsync(c,tx,requestId,current,TradingReviewQueueStatus.Claimed,"review.claimed","processor",now,ct);await tx.CommitAsync(ct);return new(true,"review.claimed",nextAttempts);
+        }
+        catch(SqliteException){return new(false,"review.claim-failed",0);}
+    }
+
+    public async Task<TradingReviewQueueClaimResult> TryClaimTradingReviewReconciliationAsync(string requestId,string leaseOwner,TimeSpan leaseLifetime,CancellationToken ct)
+    {
+        if(!QueueToken(leaseOwner,96)||leaseLifetime<=TimeSpan.Zero||leaseLifetime>TimeSpan.FromMinutes(5))return new(false,"review.reconcile-claim-invalid",0);var now=_utcNow().ToUniversalTime();
+        try
+        {
+            await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await EnableQueuePragmasAsync(c,ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);PersistedTradingReviewQueueItem item;
+            await using(var read=QueueReadCommand(c,"WHERE queue.request_id=$request",1,0)){read.Transaction=tx;read.Parameters.AddWithValue("$request",requestId);await using var r=await read.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct)){await tx.RollbackAsync(ct);return new(false,"review.not-reconcilable",0);}item=ReadTradingReviewQueueItem(r);}
+            if(!item.ArtifactValid||item.Artifact is null){await tx.RollbackAsync(ct);return new(false,"review.artifact-invalid",item.AttemptCount);}
+            if(item.Status!=TradingReviewQueueStatus.Executing||item.LeaseExpiresAtUtc is not null&&item.LeaseExpiresAtUtc>now){await tx.RollbackAsync(ct);return new(false,"review.not-reconcilable",item.AttemptCount);}
+            var attempts=checked(item.AttemptCount+1);await using(var update=c.CreateCommand()){update.Transaction=tx;update.CommandText="UPDATE trading_review_execution_queue SET status='Reconciling',attempt_count=$attempts,lease_owner=$owner,lease_expires_at=$lease,last_code='review.reconciling',updated_at=$now WHERE request_id=$request AND status='Executing'";AddParameters(update,("$attempts",attempts),("$owner",leaseOwner),("$lease",DbInstant(now.Add(leaseLifetime))),("$now",DbInstant(now)),("$request",requestId));if(await update.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"review.not-reconcilable",item.AttemptCount);}}
+            await AppendTradingReviewEventAsync(c,tx,requestId,TradingReviewQueueStatus.Executing,TradingReviewQueueStatus.Reconciling,"review.reconciling","processor",now,ct);await tx.CommitAsync(ct);return new(true,"review.reconciling",attempts);
+        }
+        catch(SqliteException){return new(false,"review.reconcile-claim-failed",0);}
+    }
+
+    public Task<TradingReviewQueueMutationResult> TryTransitionTradingReviewAsync(string requestId,TradingReviewQueueStatus expected,TradingReviewQueueStatus next,string? leaseOwner,string eventCode,CancellationToken ct)
+    {
+        if(!AllowedProcessorQueueTransition(expected,next)||!QueueToken(eventCode,120))return Task.FromResult(new TradingReviewQueueMutationResult(false,"review.transition-invalid"));
+        return TryTradingReviewTransitionAsync(requestId,expected,next,leaseOwner,eventCode,"processor",ct);
+    }
+
+    public async Task<IReadOnlyList<PersistedTradingReviewQueueEvent>> GetTradingReviewQueueEventsAsync(string requestId,int limit,CancellationToken ct)
+    {
+        var list=new List<PersistedTradingReviewQueueEvent>();if(string.IsNullOrWhiteSpace(requestId))return list;
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT sequence,occurred_at,from_status,to_status,event_code,actor_kind,reason FROM trading_review_queue_events WHERE request_id=$request ORDER BY sequence LIMIT $limit";q.Parameters.AddWithValue("$request",requestId);q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,100));
+        await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))list.Add(new(requestId,r.GetInt32(0),Instant(r.GetString(1)),r.IsDBNull(2)?null:Enum.Parse<TradingReviewQueueStatus>(r.GetString(2)),Enum.Parse<TradingReviewQueueStatus>(r.GetString(3)),r.GetString(4),r.GetString(5),r.GetString(6)));return list;
+    }
+
+    public async Task<AutomaticExecutionMutationResult> SaveAutomaticExecutionAsync(string executionId,DurableExecutionArtifactV2 artifact,CancellationToken ct)
+    {
+        if(!QueueToken(executionId,120))return new(false,"automatic.execution-id-invalid");
+        byte[] bytes;DurableExecutionArtifactHashesV2 hashes;
+        try{bytes=DurableExecutionArtifactCanonicalizerV2.Serialize(artifact);hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);}catch(ArgumentException){return new(false,"automatic.artifact-invalid");}
+        var now=_utcNow().ToUniversalTime();
+        try
+        {
+            await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await EnableQueuePragmasAsync(c,ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+            await using(var q=c.CreateCommand())
+            {
+                q.Transaction=tx;q.CommandText="""
+                    INSERT INTO automatic_execution_queue(execution_id,correlation_id,contract_version,artifact_bytes,artifact_hash,intent_hash,risk_receipt_bytes,risk_receipt_hash,provider_id,environment,strategy_id,strategy_version,market_collected_at,market_data_version,created_at,expires_at,status,attempt_count,lease_owner,lease_expires_at,last_code,updated_at)
+                    VALUES($id,$correlation,$version,$bytes,$artifactHash,$intentHash,NULL,NULL,$provider,'Testnet',$strategy,$strategyVersion,$marketAt,$marketVersion,$created,$expires,'Proposed',0,NULL,NULL,'automatic.proposed',$now)
+                    """;
+                AddParameters(q,("$id",executionId),("$correlation",artifact.CorrelationId),("$version",artifact.ContractVersion),("$bytes",bytes),("$artifactHash",hashes.ArtifactHash),("$intentHash",hashes.IntentHash),("$provider",artifact.ProviderId),("$strategy",artifact.StrategyId),("$strategyVersion",artifact.StrategyVersion),("$marketAt",DbInstant(artifact.MarketCollectedAtUtc)),("$marketVersion",artifact.MarketDataVersion),("$created",DbInstant(artifact.CreatedAtUtc)),("$expires",DbInstant(artifact.ExpiresAtUtc)),("$now",DbInstant(now)));
+                if(await q.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"automatic.not-persisted");}
+            }
+            await AppendAutomaticExecutionEventAsync(c,tx,executionId,null,AutomaticExecutionQueueStatus.Proposed,"automatic.proposed","producer",now,ct);await tx.CommitAsync(ct);return new(true,"automatic.persisted");
+        }
+        catch(SqliteException){return new(false,"automatic.persistence-failed");}
+    }
+
+    public async Task<AutomaticExecutionMutationResult> RecordAutomaticRiskDecisionAsync(string executionId,DeterministicRiskReceipt receipt,CancellationToken ct)
+    {
+        if(!QueueToken(executionId,120))return new(false,"automatic.execution-id-invalid");var now=_utcNow().ToUniversalTime();var item=await GetAutomaticExecutionAsync(executionId,ct);
+        if(item is null||item.Status!=AutomaticExecutionQueueStatus.Proposed)return new(false,"automatic.not-proposed");
+        var valid=ValidAutomaticRiskReceipt(receipt,item,now);var next=valid?AutomaticExecutionQueueStatus.RiskApproved:AutomaticExecutionQueueStatus.RiskBlocked;var code=valid?"automatic.risk-approved":"automatic.risk-blocked";
+        byte[] bytes;try{bytes=DurableExecutionArtifactCanonicalizerV2.SerializeRiskReceipt(receipt);}catch(ArgumentException){return new(false,"automatic.risk-receipt-invalid");}
+        var hash=DurableReviewArtifactCanonicalizer.Sha256Hex(bytes);
+        try
+        {
+            await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await EnableQueuePragmasAsync(c,ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+            await using(var q=c.CreateCommand()){q.Transaction=tx;q.CommandText="UPDATE automatic_execution_queue SET risk_receipt_bytes=$bytes,risk_receipt_hash=$hash,status=$next,last_code=$code,updated_at=$now WHERE execution_id=$id AND status='Proposed'";AddParameters(q,("$bytes",bytes),("$hash",hash),("$next",next.ToString()),("$code",code),("$now",DbInstant(now)),("$id",executionId));if(await q.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"automatic.not-proposed");}}
+            await AppendAutomaticExecutionEventAsync(c,tx,executionId,AutomaticExecutionQueueStatus.Proposed,next,code,"risk-gate",now,ct);await tx.CommitAsync(ct);return new(true,code);
+        }
+        catch(SqliteException){return new(false,"automatic.persistence-failed");}
+    }
+
+    public async Task<PersistedAutomaticExecution?> GetAutomaticExecutionAsync(string executionId,CancellationToken ct)
+    {
+        if(!QueueToken(executionId,120))return null;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=AutomaticQueueReadCommand(c,"WHERE execution_id=$id",1);q.Parameters.AddWithValue("$id",executionId);await using var r=await q.ExecuteReaderAsync(ct);return await r.ReadAsync(ct)?ReadAutomaticExecution(r):null;
+    }
+
+    public async Task<IReadOnlyList<PersistedAutomaticExecution>> GetAutomaticExecutionQueueAsync(AutomaticExecutionQueueStatus status,int limit,CancellationToken ct)
+    {
+        var result=new List<PersistedAutomaticExecution>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=AutomaticQueueReadCommand(c,"WHERE status=$status",Math.Clamp(limit,1,100));q.Parameters.AddWithValue("$status",status.ToString());await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))result.Add(ReadAutomaticExecution(r));return result;
+    }
+
+    public async Task<AutomaticExecutionClaimResult> TryClaimAutomaticExecutionAsync(string executionId,string leaseOwner,TimeSpan leaseLifetime,CancellationToken ct)
+        =>await TryClaimAutomaticAsync(executionId,leaseOwner,leaseLifetime,AutomaticExecutionQueueStatus.RiskApproved,AutomaticExecutionQueueStatus.Claimed,"automatic.claimed",ct);
+
+    public async Task<AutomaticExecutionClaimResult> TryClaimAutomaticReconciliationAsync(string executionId,string leaseOwner,TimeSpan leaseLifetime,CancellationToken ct)
+    {
+        var item=await GetAutomaticExecutionAsync(executionId,ct);if(item is null||item.Status is not (AutomaticExecutionQueueStatus.Executing or AutomaticExecutionQueueStatus.UnknownOutcome)||item.LeaseExpiresAtUtc is not null&&item.LeaseExpiresAtUtc>_utcNow().ToUniversalTime())return new(false,"automatic.not-reconcilable",item?.AttemptCount??0);
+        return await TryClaimAutomaticAsync(executionId,leaseOwner,leaseLifetime,item.Status,AutomaticExecutionQueueStatus.Reconciling,"automatic.reconciling",ct);
+    }
+
+    public async Task<AutomaticExecutionMutationResult> TryTransitionAutomaticExecutionAsync(string executionId,AutomaticExecutionQueueStatus expected,AutomaticExecutionQueueStatus next,string leaseOwner,string code,CancellationToken ct)
+    {
+        if(!AllowedAutomaticTransition(expected,next)||!QueueToken(leaseOwner,96)||!QueueToken(code,120))return new(false,"automatic.transition-invalid");var now=_utcNow().ToUniversalTime();
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await EnableQueuePragmasAsync(c,ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+        var keep=next is AutomaticExecutionQueueStatus.Executing or AutomaticExecutionQueueStatus.UnknownOutcome;
+        await using(var q=c.CreateCommand()){q.Transaction=tx;q.CommandText="UPDATE automatic_execution_queue SET status=$next,lease_owner=CASE WHEN $keep=1 THEN lease_owner ELSE NULL END,lease_expires_at=CASE WHEN $keep=1 THEN lease_expires_at ELSE NULL END,last_code=$code,updated_at=$now WHERE execution_id=$id AND status=$expected AND lease_owner=$owner";AddParameters(q,("$next",next.ToString()),("$keep",keep?1:0),("$code",code),("$now",DbInstant(now)),("$id",executionId),("$expected",expected.ToString()),("$owner",leaseOwner));if(await q.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"automatic.transition-not-applied");}}
+        await AppendAutomaticExecutionEventAsync(c,tx,executionId,expected,next,code,"processor",now,ct);await tx.CommitAsync(ct);return new(true,code);
+    }
+
+    public async Task<IReadOnlyList<PersistedAutomaticExecutionEvent>> GetAutomaticExecutionEventsAsync(string executionId,int limit,CancellationToken ct)
+    {
+        var result=new List<PersistedAutomaticExecutionEvent>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT sequence,occurred_at,from_status,to_status,event_code,actor_kind FROM automatic_execution_events WHERE execution_id=$id ORDER BY sequence LIMIT $limit";q.Parameters.AddWithValue("$id",executionId);q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,100));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))result.Add(new(executionId,r.GetInt32(0),Instant(r.GetString(1)),r.IsDBNull(2)?null:Enum.Parse<AutomaticExecutionQueueStatus>(r.GetString(2)),Enum.Parse<AutomaticExecutionQueueStatus>(r.GetString(3)),r.GetString(4),r.GetString(5)));return result;
+    }
+    public async Task<TradingApprovalPersistenceResult> SaveTradingApprovalRequestAsync(TradingApprovalRequest request,CancellationToken ct)
+    {
+        if(!ValidApprovalRequest(request))return new(false,"approval.request-invalid");
+        var rows=await ExecRows("""
+            INSERT OR IGNORE INTO trading_approval_requests(request_id,mode,correlation_id,intent_hash,artifact_hash,user_id,device_id,session_id,issued_at,expires_at,revoked_at,consumed_at)
+            VALUES($request,$mode,$correlation,$hash,$artifactHash,$user,$device,$session,$issued,$expires,$revoked,$consumed)
+            """,ct,
+            ("$request",request.RequestId),("$mode",request.Mode.ToString()),("$correlation",request.CorrelationId),("$hash",request.IntentHash),
+            ("$artifactHash",request.ArtifactHash),
+            ("$user",request.UserId),("$device",request.DeviceId),("$session",request.SessionId),("$issued",DbInstant(request.IssuedAtUtc)),
+            ("$expires",DbInstant(request.ExpiresAtUtc)),("$revoked",DbInstant(request.RevokedAtUtc)),("$consumed",DbInstant(request.ConsumedAtUtc)));
+        return rows==1?new(true,"approval.request-persisted"):new(false,"approval.request-not-persisted");
+    }
+    public async Task<TradingApprovalPersistenceResult> SaveTradingApprovalReceiptAsync(string requestId,TradingApprovalReceipt receipt,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(requestId)||!ValidApprovalReceipt(receipt))return new(false,"approval.receipt-invalid");
+        var rows=await ExecRows("""
+            INSERT OR IGNORE INTO trading_approval_receipts(receipt_id,request_id,correlation_id,intent_hash,artifact_hash,user_id,device_id,session_id,approved,issued_at,expires_at,revoked_at,consumed_at)
+            SELECT $receipt,$request,$correlation,$hash,$artifactHash,$user,$device,$session,$approved,$issued,$expires,$revoked,$consumed
+            FROM trading_approval_requests request
+            WHERE request.request_id=$request
+              AND request.correlation_id=$correlation AND request.intent_hash=$hash
+              AND ($artifactHash IS NULL OR request.artifact_hash=$artifactHash)
+              AND request.user_id=$user AND request.device_id=$device AND request.session_id=$session
+              AND request.revoked_at IS NULL AND request.consumed_at IS NULL
+              AND request.issued_at<=$issued AND request.expires_at>=$expires
+            """,ct,
+            ("$receipt",receipt.ReceiptId),("$request",requestId),("$correlation",receipt.CorrelationId),("$hash",receipt.IntentHash),
+            ("$artifactHash",receipt.ArtifactHash),
+            ("$user",receipt.UserId),("$device",receipt.DeviceId),("$session",receipt.SessionId),("$approved",receipt.Approved?1:0),
+            ("$issued",DbInstant(receipt.IssuedAtUtc)),("$expires",DbInstant(receipt.ExpiresAtUtc)),
+            ("$revoked",DbInstant(receipt.RevokedAtUtc)),("$consumed",DbInstant(receipt.ConsumedAtUtc)));
+        return rows==1?new(true,"approval.receipt-persisted"):new(false,"approval.receipt-not-persisted");
+    }
+    public async Task<TradingApprovalRequest?> GetTradingApprovalRequestAsync(string requestId,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(requestId))return null;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT mode,correlation_id,intent_hash,user_id,device_id,session_id,issued_at,expires_at,revoked_at,consumed_at,artifact_hash FROM trading_approval_requests WHERE request_id=$request";q.Parameters.AddWithValue("$request",requestId);await using var r=await q.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct))return null;
+        var mode=Enum.TryParse<TradingAuthorizationMode>(r.GetString(0),out var parsed)&&Enum.IsDefined(parsed)?parsed:TradingAuthorizationMode.Review;
+        return new(requestId,mode,r.GetString(1),r.GetString(2),r.GetString(3),r.GetString(4),r.GetString(5),Instant(r.GetString(6)),Instant(r.GetString(7)),NullableInstant(r,8),NullableInstant(r,9),r.IsDBNull(10)?null:r.GetString(10));
+    }
+    public async Task<PersistedTradingApprovalReceipt?> GetTradingApprovalReceiptAsync(string receiptId,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(receiptId))return null;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT request_id,correlation_id,intent_hash,user_id,device_id,session_id,approved,issued_at,expires_at,revoked_at,consumed_at,artifact_hash FROM trading_approval_receipts WHERE receipt_id=$receipt";q.Parameters.AddWithValue("$receipt",receiptId);await using var r=await q.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct))return null;
+        return new(r.GetString(0),new(receiptId,r.GetString(1),r.GetString(2),r.GetString(3),r.GetString(4),r.GetString(5),r.GetInt32(6)==1,Instant(r.GetString(7)),Instant(r.GetString(8)),NullableInstant(r,9),NullableInstant(r,10),r.IsDBNull(11)?null:r.GetString(11)));
+    }
+    public async Task<PersistedTradingApprovalReceipt?> GetTradingApprovalReceiptForRequestAsync(string requestId,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(requestId))return null;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT receipt_id,correlation_id,intent_hash,user_id,device_id,session_id,approved,issued_at,expires_at,revoked_at,consumed_at,artifact_hash FROM trading_approval_receipts WHERE request_id=$request ORDER BY issued_at DESC,receipt_id DESC LIMIT 1";q.Parameters.AddWithValue("$request",requestId);await using var r=await q.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct))return null;
+        return new(requestId,new(r.GetString(0),r.GetString(1),r.GetString(2),r.GetString(3),r.GetString(4),r.GetString(5),r.GetInt32(6)==1,Instant(r.GetString(7)),Instant(r.GetString(8)),NullableInstant(r,9),NullableInstant(r,10),r.IsDBNull(11)?null:r.GetString(11)));
+    }
+    public async Task<TradingApprovalConsumptionResult> TryConsumeTradingApprovalAsync(TradingApprovalConsumption consumption,CancellationToken ct)
+    {
+        if(!ValidApprovalConsumption(consumption))return new(false,"approval.consume-invalid");
+        var consumedAtUtc=_utcNow().ToUniversalTime();
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+        await using var receiptUpdate=c.CreateCommand();receiptUpdate.Transaction=tx;receiptUpdate.CommandText="""
+            UPDATE trading_approval_receipts SET consumed_at=$now
+            WHERE receipt_id=$receipt AND request_id=$request AND approved=1
+              AND consumed_at IS NULL AND revoked_at IS NULL AND issued_at<=$now AND expires_at>$now
+              AND correlation_id=$correlation AND intent_hash=$hash
+              AND ($artifactHash IS NULL OR artifact_hash=$artifactHash)
+              AND user_id=$user AND device_id=$device AND session_id=$session
+              AND EXISTS(
+                  SELECT 1 FROM trading_approval_requests request
+                  WHERE request.request_id=$request AND request.mode='Review'
+                    AND request.consumed_at IS NULL AND request.revoked_at IS NULL
+                    AND request.issued_at<=$now AND request.expires_at>$now
+                    AND request.correlation_id=$correlation AND request.intent_hash=$hash
+                    AND ($artifactHash IS NULL OR request.artifact_hash=$artifactHash)
+                    AND request.user_id=$user AND request.device_id=$device AND request.session_id=$session)
+              AND ($artifactHash IS NULL OR EXISTS(SELECT 1 FROM trading_review_execution_queue queue WHERE queue.request_id=$request AND queue.status='Executing' AND queue.artifact_hash=$artifactHash))
+            """;
+        AddApprovalConsumptionParameters(receiptUpdate,consumption,consumedAtUtc);var receiptRows=await receiptUpdate.ExecuteNonQueryAsync(ct);
+        if(receiptRows!=1){await tx.RollbackAsync(ct);return new(false,"approval.not-consumable");}
+        await using var requestUpdate=c.CreateCommand();requestUpdate.Transaction=tx;requestUpdate.CommandText="UPDATE trading_approval_requests SET consumed_at=$now WHERE request_id=$request AND consumed_at IS NULL AND revoked_at IS NULL AND ($artifactHash IS NULL OR artifact_hash=$artifactHash)";requestUpdate.Parameters.AddWithValue("$now",DbInstant(consumedAtUtc));requestUpdate.Parameters.AddWithValue("$request",consumption.RequestId);requestUpdate.Parameters.AddWithValue("$artifactHash",consumption.ArtifactHash is null?DBNull.Value:consumption.ArtifactHash);var requestRows=await requestUpdate.ExecuteNonQueryAsync(ct);
+        if(requestRows!=1){await tx.RollbackAsync(ct);return new(false,"approval.not-consumable");}
+        await tx.CommitAsync(ct);return new(true,"approval.consumed");
+    }
+    public async Task RecordTradingAuthorizationModeChangeAsync(TradingAuthorizationModeChangeAudit audit,CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(audit);
+        if(string.IsNullOrWhiteSpace(audit.ChangeId)||!Enum.IsDefined(audit.OldMode)||!Enum.IsDefined(audit.NewMode)||
+           string.IsNullOrWhiteSpace(audit.UserId)||string.IsNullOrWhiteSpace(audit.DeviceId)||string.IsNullOrWhiteSpace(audit.Reason))
+            throw new ArgumentException("Trading authorization mode audit is incomplete.",nameof(audit));
+        await Exec("INSERT INTO trading_authorization_mode_audits(change_id,old_mode,new_mode,user_id,device_id,changed_at,reason) VALUES($id,$old,$new,$user,$device,$at,$reason)",ct,
+            ("$id",audit.ChangeId),("$old",audit.OldMode.ToString()),("$new",audit.NewMode.ToString()),
+            ("$user",SensitiveDataRedactor.ForLog(audit.UserId,120)),("$device",SensitiveDataRedactor.ForLog(audit.DeviceId,120)),
+            ("$at",DbInstant(audit.ChangedAtUtc)),("$reason",SensitiveDataRedactor.ForLog(audit.Reason,240)));
+    }
+    public async Task<IReadOnlyList<TradingAuthorizationModeChangeAudit>> GetTradingAuthorizationModeChangesAsync(int limit,CancellationToken ct)
+    {
+        var list=new List<TradingAuthorizationModeChangeAudit>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="SELECT change_id,old_mode,new_mode,user_id,device_id,changed_at,reason FROM trading_authorization_mode_audits ORDER BY changed_at DESC LIMIT $limit";q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,100));
+        await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))
+        {
+            if(!Enum.TryParse<TradingAuthorizationMode>(r.GetString(1),out var oldMode)||!Enum.IsDefined(oldMode)||!Enum.TryParse<TradingAuthorizationMode>(r.GetString(2),out var newMode)||!Enum.IsDefined(newMode))continue;
+            list.Add(new(r.GetString(0),oldMode,newMode,r.GetString(3),r.GetString(4),Instant(r.GetString(5)),r.GetString(6)));
+        }
+        return list;
+    }
+    public async Task<IReadOnlyList<PersistedTradingApprovalSummary>> GetPendingTradingApprovalSummariesAsync(int limit,int offset,CancellationToken ct)
+    {
+        var list=new List<PersistedTradingApprovalSummary>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="""
+            SELECT request.request_id,request.issued_at,request.expires_at,request.revoked_at,
+                   cycle.decision_json,maturity.risk_json
+            FROM trading_approval_requests request
+            LEFT JOIN cycles cycle ON cycle.id=request.correlation_id
+            LEFT JOIN maturity_audits maturity ON maturity.cycle_id=request.correlation_id
+            WHERE request.mode='Review' AND request.consumed_at IS NULL
+            ORDER BY request.issued_at DESC,request.request_id DESC
+            LIMIT $limit OFFSET $offset
+            """;
+        q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,100));q.Parameters.AddWithValue("$offset",Math.Clamp(offset,0,10_000));
+        await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))
+        {
+            DecisionPlan? decision=null;IndependentRiskReview? risk=null;
+            try{if(!r.IsDBNull(4))decision=JsonSerializer.Deserialize<DecisionPlan>(r.GetString(4));}catch(JsonException){}
+            try{if(!r.IsDBNull(5))risk=JsonSerializer.Deserialize<IndependentRiskReview>(r.GetString(5));}catch(JsonException){}
+            list.Add(new(r.GetString(0),Instant(r.GetString(1)),Instant(r.GetString(2)),NullableInstant(r,3),decision,risk));
+        }
+        return list;
+    }
     public async Task<IReadOnlyList<PersistedIntent>> GetRecoverableIntentsAsync(CancellationToken ct)
     {
         var list=new List<PersistedIntent>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
-        q.CommandText="SELECT cycle_id,status,exchange_order_id,details FROM order_intents WHERE status NOT IN ('PROTECTED','PARTIALLY_FILLED_PROTECTED','PREFLIGHT_BLOCKED','COMPLETED','CANCELED','REJECTED','EXPIRED','EMERGENCY_CLOSED') ORDER BY updated_at";
+        q.CommandText="SELECT cycle_id,status,exchange_order_id,details FROM order_intents WHERE status NOT IN ('PROTECTED','PROTECTED_PARTIAL','PARTIALLY_FILLED_PROTECTED','PREFLIGHT_BLOCKED','COMPLETED','COMPLETED_PARTIAL','CANCELED','REJECTED','EXPIRED','EMERGENCY_CLOSED','LegacyUnresolved','Quarantined') ORDER BY updated_at";
         await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var intent=JsonSerializer.Deserialize<ExecutionIntent>(r.GetString(3));if(intent is not null)list.Add(new(r.IsDBNull(0)?"RECOVERY":r.GetString(0),intent,r.IsDBNull(1)?"UNKNOWN":r.GetString(1),r.IsDBNull(2)?null:r.GetValue(2).ToString()));}return list;
+    }
+    public async Task<IntentStateSummary> GetIntentStateSummaryAsync(CancellationToken ct)
+    {
+        var statuses=new List<IntentStatusCount>();var total=0;var recoverable=0;var unknown=0;DateTimeOffset? latest=null;
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="SELECT COALESCE(status,'UNKNOWN'),COUNT(*) FROM order_intents GROUP BY COALESCE(status,'UNKNOWN') ORDER BY COALESCE(status,'UNKNOWN')";
+        await using(var r=await q.ExecuteReaderAsync(ct))while(await r.ReadAsync(ct)){var status=r.GetString(0);var count=r.GetInt32(1);statuses.Add(new(status,count));total+=count;if(status.Contains("UNKNOWN",StringComparison.Ordinal))unknown+=count;}
+        await using var recoverableCommand=c.CreateCommand();recoverableCommand.CommandText="SELECT COUNT(*) FROM order_intents WHERE status NOT IN ('PROTECTED','PROTECTED_PARTIAL','PARTIALLY_FILLED_PROTECTED','PREFLIGHT_BLOCKED','COMPLETED','COMPLETED_PARTIAL','CANCELED','REJECTED','EXPIRED','EMERGENCY_CLOSED','LegacyUnresolved','Quarantined')";recoverable=Convert.ToInt32(await recoverableCommand.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture);
+        await using var latestCommand=c.CreateCommand();latestCommand.CommandText="SELECT MAX(updated_at) FROM order_intents";var value=await latestCommand.ExecuteScalarAsync(ct);if(value is string text&&DateTimeOffset.TryParse(text,CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var parsed))latest=parsed.ToUniversalTime();
+        return new(total,recoverable,unknown,latest,statuses);
     }
     public async Task<ExecutionIntent?> GetLatestOpeningIntentAsync(string symbol,PositionSide side,CancellationToken ct)
     {
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT details FROM order_intents WHERE symbol=$s AND side=$side ORDER BY updated_at DESC LIMIT 20";q.Parameters.AddWithValue("$s",symbol);q.Parameters.AddWithValue("$side",side.ToString());
         await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var intent=JsonSerializer.Deserialize<ExecutionIntent>(r.GetString(0));if(intent is{ReduceOnly:false,StopLoss:>0,TakeProfit:>0})return intent;}return null;
+    }
+    public async Task<string?> GetOrderIntentStatusAsync(string clientOrderId,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(clientOrderId))return null;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT status FROM order_intents WHERE client_order_id=$id";q.Parameters.AddWithValue("$id",clientOrderId);return (await q.ExecuteScalarAsync(ct))?.ToString();
+    }
+    public async Task<IReadOnlyList<PersistedIntent>> GetLegacyIntentIsolationCandidatesAsync(CancellationToken ct)
+    {
+        var list=new List<PersistedIntent>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT cycle_id,status,exchange_order_id,details FROM order_intents WHERE status='INTENT' ORDER BY updated_at,client_order_id";await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){try{var intent=JsonSerializer.Deserialize<ExecutionIntent>(r.GetString(3));if(intent is not null)list.Add(new(r.IsDBNull(0)?"LEGACY":r.GetString(0),intent,"INTENT",r.IsDBNull(2)?null:r.GetValue(2).ToString()));}catch(JsonException){}}return list;
+    }
+    public async Task<bool> HasExecutionSubmissionJournalAsync(string clientOrderId,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(clientOrderId))return true;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT EXISTS(SELECT 1 FROM execution_submission_journal WHERE client_order_id=$id)";q.Parameters.AddWithValue("$id",clientOrderId);return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1;
+    }
+    public async Task<LegacyIntentIsolationMutationResult> TryQuarantineLegacyIntentAsync(string clientOrderId,string reasonCode,CancellationToken ct)
+    {
+        if(!QueueToken(clientOrderId,120)||!QueueToken(reasonCode,120))return new(false,"legacy-isolation.invalid");var now=_utcNow().ToUniversalTime();
+        try
+        {
+            await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await EnableQueuePragmasAsync(c,ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+            await using(var projection=c.CreateCommand()){projection.Transaction=tx;projection.CommandText="INSERT INTO legacy_intent_isolation(client_order_id,source_status,projection_status,reason_code,isolated_at) SELECT client_order_id,'INTENT','Quarantined',$reason,$now FROM order_intents WHERE client_order_id=$id AND status='INTENT' AND NOT EXISTS(SELECT 1 FROM execution_submission_journal journal WHERE journal.client_order_id=$id)";AddParameters(projection,("$reason",reasonCode),("$now",DbInstant(now)),("$id",clientOrderId));if(await projection.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"legacy-isolation.not-applicable");}}
+            await using(var update=c.CreateCommand()){update.Transaction=tx;update.CommandText="UPDATE order_intents SET status='LegacyUnresolved',updated_at=$now WHERE client_order_id=$id AND status='INTENT'";AddParameters(update,("$now",DbInstant(now)),("$id",clientOrderId));if(await update.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"legacy-isolation.not-applicable");}}
+            await using(var audit=c.CreateCommand()){audit.Transaction=tx;audit.CommandText="INSERT INTO legacy_intent_isolation_events(client_order_id,sequence,occurred_at,from_status,to_status,event_code) SELECT $id,COALESCE(MAX(sequence),0)+1,$now,'INTENT','Quarantined',$reason FROM legacy_intent_isolation_events WHERE client_order_id=$id";AddParameters(audit,("$id",clientOrderId),("$now",DbInstant(now)),("$reason",reasonCode));if(await audit.ExecuteNonQueryAsync(ct)!=1)throw new SqliteException("legacy isolation audit append failed",1);}
+            await tx.CommitAsync(ct);return new(true,"legacy-isolation.quarantined");
+        }
+        catch(SqliteException){return new(false,"legacy-isolation.persistence-failed");}
+    }
+    public async Task<PersistedLegacyIntentIsolation?> GetLegacyIntentIsolationAsync(string clientOrderId,CancellationToken ct)
+    {
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT source_status,projection_status,reason_code,isolated_at FROM legacy_intent_isolation WHERE client_order_id=$id";q.Parameters.AddWithValue("$id",clientOrderId);await using var r=await q.ExecuteReaderAsync(ct);return await r.ReadAsync(ct)?new(clientOrderId,r.GetString(0),r.GetString(1),r.GetString(2),Instant(r.GetString(3))):null;
+    }
+    public async Task<IReadOnlyList<PersistedLegacyIntentIsolationEvent>> GetLegacyIntentIsolationEventsAsync(string clientOrderId,CancellationToken ct)
+    {
+        var list=new List<PersistedLegacyIntentIsolationEvent>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT sequence,occurred_at,from_status,to_status,event_code FROM legacy_intent_isolation_events WHERE client_order_id=$id ORDER BY sequence";q.Parameters.AddWithValue("$id",clientOrderId);await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))list.Add(new(clientOrderId,r.GetInt32(0),Instant(r.GetString(1)),r.GetString(2),r.GetString(3),r.GetString(4)));return list;
     }
     public async Task SaveNewsAsync(IEnumerable<NewsEvidence> news,CancellationToken ct)
     {
@@ -98,11 +661,74 @@ public sealed class AgentSqliteStore
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);await using var q=c.CreateCommand();q.Transaction=(SqliteTransaction)tx;q.CommandText="SELECT equity_high FROM daily_risk WHERE day=$d";q.Parameters.AddWithValue("$d",day.ToString("yyyy-MM-dd",CultureInfo.InvariantCulture));var stored=await q.ExecuteScalarAsync(ct);var high=stored is not null&&decimal.TryParse(stored.ToString(),NumberStyles.Any,CultureInfo.InvariantCulture,out var value)?Math.Max(value,equity):equity;
         q.Parameters.Clear();q.CommandText="INSERT OR REPLACE INTO daily_risk(day,equity_high,updated_at) VALUES($d,$h,$t)";q.Parameters.AddWithValue("$d",day.ToString("yyyy-MM-dd",CultureInfo.InvariantCulture));q.Parameters.AddWithValue("$h",high.ToString(CultureInfo.InvariantCulture));q.Parameters.AddWithValue("$t",DateTime.UtcNow.ToString("O"));await q.ExecuteNonQueryAsync(ct);await tx.CommitAsync(ct);return high;
     }
-    public async Task RecordErrorAsync(string stage,Exception ex,CancellationToken ct)=>await Exec("INSERT INTO errors(occurred_at,stage,message,details) VALUES($t,$s,$m,$d)",ct,("$t",DateTime.UtcNow.ToString("O")),("$s",stage),("$m",ex.Message),("$d",ex.ToString()));
+    public async Task RecordErrorAsync(string stage,Exception ex,CancellationToken ct)=>await Exec("INSERT INTO errors(occurred_at,stage,message,details) VALUES($t,$s,$m,$d)",ct,("$t",DateTime.UtcNow.ToString("O")),("$s",SensitiveDataRedactor.ForLog(stage,120)),("$m",SensitiveDataRedactor.ForLog(ex.Message)),("$d",SensitiveDataRedactor.Redact(ex.ToString())));
     public Task RecordDecisionAuditAsync(string cycle,IReadOnlyList<MarketDecisionAssessment> assessments,DecisionReview review,CancellationToken ct)=>Exec("INSERT OR REPLACE INTO decision_audits(cycle_id,created_at,assessments_json,review_json) VALUES($c,$t,$a,$r)",ct,("$c",cycle),("$t",DateTime.UtcNow.ToString("O")),("$a",JsonSerializer.Serialize(assessments)),("$r",JsonSerializer.Serialize(review)));
     public Task RecordMaturityAuditAsync(string cycle,DecisionPlan plan,DecisionReview review,IndependentRiskReview risk,ResearchValidationResult? research,string result,CancellationToken ct)=>Exec("INSERT OR REPLACE INTO maturity_audits(cycle_id,created_at,plan_json,review_json,risk_json,research_json,execution_result) VALUES($c,$t,$p,$r,$k,$s,$e)",ct,("$c",cycle),("$t",DateTime.UtcNow.ToString("O")),("$p",JsonSerializer.Serialize(plan)),("$r",JsonSerializer.Serialize(review)),("$k",JsonSerializer.Serialize(risk)),("$s",research is null?null:JsonSerializer.Serialize(research)),("$e",result));
     public Task SaveResearchAsync(ResearchValidationResult result,CancellationToken ct)=>Exec("INSERT INTO research_validations(created_at,symbol,strategy_version,approved,quality_score,result_json) VALUES($t,$s,$v,$a,$q,$j)",ct,("$t",DateTime.UtcNow.ToString("O")),("$s",result.Symbol),("$v",result.StrategyVersion),("$a",result.Approved?1:0),("$q",result.QualityScore),("$j",JsonSerializer.Serialize(result)));
-    public Task RecordSkillCallAsync(string skill,string status,long duration,string input,string output,string? error,CancellationToken ct)=>Exec("INSERT INTO skill_calls(occurred_at,skill,status,duration_ms,input_summary,output_summary,error) VALUES($t,$s,$st,$d,$i,$o,$e)",ct,("$t",DateTime.UtcNow.ToString("O")),("$s",skill),("$st",status),("$d",duration),("$i",input),("$o",output),("$e",error));
+    public async Task RecordSkillCallAsync(string skill,string status,long duration,string input,string output,string? error,CancellationToken ct,string? mode=null,bool? remoteLlmUsed=null,int? tokens=null,decimal? costUsd=null)
+    {
+        var occurred=DateTime.UtcNow;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);long sourceId;
+        await using(var q=c.CreateCommand()){q.Transaction=(SqliteTransaction)tx;q.CommandText="INSERT INTO skill_calls(occurred_at,skill,status,duration_ms,input_summary,output_summary,error) VALUES($t,$s,$st,$d,$i,$o,$e); SELECT last_insert_rowid();";q.Parameters.AddWithValue("$t",occurred.ToString("O"));q.Parameters.AddWithValue("$s",SensitiveDataRedactor.ForLog(skill,120));q.Parameters.AddWithValue("$st",SensitiveDataRedactor.ForLog(status,40));q.Parameters.AddWithValue("$d",Math.Max(0,duration));q.Parameters.AddWithValue("$i",SensitiveDataRedactor.ForLog(input));q.Parameters.AddWithValue("$o",SensitiveDataRedactor.ForLog(output));q.Parameters.AddWithValue("$e",error is null?DBNull.Value:SensitiveDataRedactor.ForLog(error));sourceId=Convert.ToInt64(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture);}
+        await using(var q=c.CreateCommand()){q.Transaction=(SqliteTransaction)tx;q.CommandText="INSERT INTO runtime_skill_calls(source_skill_call_id,occurred_at,skill,status,duration_ms,mode,remote_llm,tokens,cost_usd) VALUES($i,$t,$s,$st,$d,$m,$r,$n,$c)";q.Parameters.AddWithValue("$i",sourceId);q.Parameters.AddWithValue("$t",occurred.ToString("O"));q.Parameters.AddWithValue("$s",SensitiveDataRedactor.ForLog(skill,120));q.Parameters.AddWithValue("$st",SensitiveDataRedactor.ForLog(status,40));q.Parameters.AddWithValue("$d",Math.Max(0,duration));q.Parameters.AddWithValue("$m",mode is null?DBNull.Value:SensitiveDataRedactor.ForLog(mode,40));q.Parameters.AddWithValue("$r",remoteLlmUsed is null?DBNull.Value:remoteLlmUsed.Value?1:0);q.Parameters.AddWithValue("$n",(object?)tokens??DBNull.Value);q.Parameters.AddWithValue("$c",costUsd is null?DBNull.Value:costUsd.Value.ToString(CultureInfo.InvariantCulture));await q.ExecuteNonQueryAsync(ct);}await tx.CommitAsync(ct);await SaveMemoryAsync(new("working",occurred,null,null,null,status,"skill", $"skill={skill}; status={status}; durationMs={Math.Max(0,duration)}; mode={mode??"unknown"}"),ct);
+    }
+    public async Task<IReadOnlyList<PersistedRuntimeSkillCall>> GetRecentRuntimeSkillCallsAsync(int limit,CancellationToken ct)
+    {
+        var list=new List<PersistedRuntimeSkillCall>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT 'runtime:'||id,occurred_at,skill,status,duration_ms,mode,remote_llm,tokens,cost_usd FROM runtime_skill_calls UNION ALL SELECT 'legacy:'||s.id,s.occurred_at,s.skill,s.status,s.duration_ms,NULL,NULL,NULL,NULL FROM skill_calls s WHERE NOT EXISTS(SELECT 1 FROM runtime_skill_calls r WHERE r.source_skill_call_id=s.id) ORDER BY occurred_at DESC LIMIT $l";q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,500));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){decimal? cost=null;if(!r.IsDBNull(8)&&decimal.TryParse(r.GetString(8),NumberStyles.Number,CultureInfo.InvariantCulture,out var parsed))cost=parsed;list.Add(new(r.GetString(0),DateTime.Parse(r.GetString(1),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),r.GetString(2),r.GetString(3),Math.Max(0,r.GetInt64(4)),r.IsDBNull(5)?null:r.GetString(5),r.IsDBNull(6)?null:r.GetInt32(6)==1,r.IsDBNull(7)?null:r.GetInt32(7),cost));}return list;
+    }
+    public async Task<AgentOperationsEvidence> GetAgentOperationsEvidenceAsync(CancellationToken ct)
+    {
+        var activities=new Dictionary<string,PersistedAgentActivity>(StringComparer.OrdinalIgnoreCase);
+        foreach(var call in await GetRecentRuntimeSkillCallsAsync(300,ct))
+        {
+            var role=RoleForSkill(call.Skill);if(role is null||activities.ContainsKey(role))continue;
+            var status=call.Status.Contains("BLOCK",StringComparison.OrdinalIgnoreCase)?"blocked":call.Status.Contains("FAIL",StringComparison.OrdinalIgnoreCase)||call.Status.Contains("ERROR",StringComparison.OrdinalIgnoreCase)?"degraded":"idle";
+            activities[role]=new(role,status,call.OccurredAtUtc,$"Skill {SafeAuditToken(call.Skill,"unknown")} {SafeAuditToken(call.Status,"UNKNOWN")}",NormalizeAgentMode(call.Mode));
+        }
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);
+        await using(var q=c.CreateCommand())
+        {
+            q.CommandText="SELECT current_node,updated_at FROM workflow_runs WHERE status='RUNNING' ORDER BY updated_at DESC LIMIT 20";
+            await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))
+            {
+                var at=DateTime.Parse(r.GetString(1),null,DateTimeStyles.RoundtripKind).ToUniversalTime();if(DateTime.UtcNow-at>TimeSpan.FromMinutes(5))continue;
+                var role=RoleForNode(r.GetString(0));if(role is null)continue;activities[role]=new(role,"running",at,$"Workflow {SafeAuditToken(r.GetString(0),"unknown")} running",activities.GetValueOrDefault(role)?.Mode??"Local Only");
+            }
+        }
+        var handoffs=new List<PersistedAgentHandoff>();
+        await using(var q=c.CreateCommand())
+        {
+            q.CommandText="SELECT event_id,occurred_at,payload_json FROM runtime_events WHERE event_type='workflow.node.entered' ORDER BY sequence DESC LIMIT 100";
+            await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))
+            {
+                try
+                {
+                    using var doc=JsonDocument.Parse(r.GetString(2));var root=doc.RootElement;
+                    if(!root.TryGetProperty("Previous",out var previous)&&!root.TryGetProperty("previous",out previous))continue;
+                    if(!root.TryGetProperty("Node",out var node)&&!root.TryGetProperty("node",out node))continue;
+                    var source=RoleForNode(NodeName(previous));var target=RoleForNode(NodeName(node));if(source is null||target is null||source==target)continue;
+                    handoffs.Add(new(SafeAuditToken(r.GetString(0),"handoff"),DateTime.Parse(r.GetString(1),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),source,target,"entered"));
+                }
+                catch(JsonException) { }
+            }
+        }
+        var latest=activities.Values.Select(x=>x.OccurredAtUtc).Concat(handoffs.Select(x=>x.OccurredAtUtc)).DefaultIfEmpty(DateTime.UtcNow).Max();
+        return new(activities.Values.ToArray(),handoffs,latest);
+    }
+
+    private static string? RoleForSkill(string skill)=>skill switch
+    {
+        "EvidenceCollector" or "BrainPlanner" or "DeterministicPlan" or "DecisionCritic" or "DecisionReviewer" or "RuntimeMonitor"=>"orchestrator",
+        "DataQuality" or "SignalAggregation" or "MarketRegime"=>"data-quality",
+        "NewsResearch"=>"news-ingest",
+        "HistoricalData" or "StrategyResearch" or "ExperienceReplay"=>"strategy-research",
+        "PortfolioRisk" or "IndependentRiskManager" or "RiskAndPositionPlanner"=>"risk",
+        "ReliableOrderExecutor" or "PositionManagement" or "EmergencyClose"=>"execution",
+        "ProtectionRecovery" or "ProtectionAudit"=>"order-recovery",
+        _=>null
+    };
+    private static string? RoleForNode(string node)=>node.ToUpperInvariant() switch{"BOOT" or "RECOVERY" or "OBSERVATION" or "PLANNER" or "CRITIC" or "REVIEWER" or "WAITING" or "PAUSED"=>"orchestrator","RESEARCH" or "REFLECTION"=>"strategy-research","AGGREGATION"=>"data-quality","POSITIONMANAGEMENT" or "EXECUTION"=>"execution","SAFETYEXECUTION"=>"order-recovery","RISK"=>"risk",_=>null};
+    private static string NodeName(JsonElement value)=>value.ValueKind==JsonValueKind.Number&&value.TryGetInt32(out var number)&&Enum.IsDefined(typeof(WorkflowNode),number)?((WorkflowNode)number).ToString():value.ValueKind==JsonValueKind.String?value.GetString()??string.Empty:string.Empty;
+    private static string NormalizeAgentMode(string? mode)=>mode?.Replace("-",string.Empty,StringComparison.Ordinal).Replace(" ",string.Empty,StringComparison.Ordinal).ToUpperInvariant() switch{"HYBRID"=>"Hybrid","AIRESEARCH"=>"AI Research",_=>"Local Only"};
     public Task RecordRealtimeEventAsync(RealtimeAgentEvent value,CancellationToken ct)=>Exec("INSERT INTO realtime_events(occurred_at,event_type,symbol,status,summary,payload_hash) VALUES($t,$e,$s,$st,$m,$h)",ct,("$t",value.OccurredAt.ToString("O")),("$e",value.EventType),("$s",value.Symbol),("$st",value.Status),("$m",value.Summary),("$h",value.PayloadHash));
     public async Task RecordExecutionAsync(string cycle,ExecutionIntent intent,ExchangeOrder order,string strategyVersion,CancellationToken ct)
     {
@@ -128,12 +754,45 @@ public sealed class AgentSqliteStore
     }
     public async Task<IReadOnlyList<string>> RecentOutcomesAsync(CancellationToken ct)
     {
+        var recent=await RecentOutcomeMemoriesAsync(ct);
+        if(recent.Count>0)
+        {
+            var structuredGroups=new Dictionary<string,(StructuredOutcomeMemory Memory,int Count)>(StringComparer.OrdinalIgnoreCase);
+            foreach(var memory in recent)
+            {
+                var key=$"{memory.Mode}|{memory.Symbol}|{memory.DecisionAction}|{memory.RiskResult}|{memory.RiskReasonCode}|{memory.ExecutionResult}|{memory.StateChanged}|{memory.RecoveryHint}";
+                if(structuredGroups.TryGetValue(key,out var existing))structuredGroups[key]=(existing.Memory,existing.Count+1);else structuredGroups[key]=(memory,1);
+            }
+            return structuredGroups.Values.Take(6).Select(x=>FormatPlannerOutcome(x.Memory,x.Count)).ToArray();
+        }
         var groups=new Dictionary<string,(DecisionPlan Decision,string Risk,int Count)>(StringComparer.OrdinalIgnoreCase);await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT decision_json,risk_result FROM cycles WHERE status='COMPLETED' ORDER BY completed_at DESC LIMIT 20";await using var r=await q.ExecuteReaderAsync(ct);
         while(await r.ReadAsync(ct))
         {
             try{var d=JsonSerializer.Deserialize<DecisionPlan>(r.GetString(0));if(d is null)continue;var risk=r.GetString(1);var key=$"{d.Action}|{d.Instrument}|{Math.Round(d.Confidence,1):F1}|{risk}";if(groups.TryGetValue(key,out var old))groups[key]=(old.Decision,old.Risk,old.Count+1);else groups[key]=(d,risk,1);}catch(JsonException){}
         }
-        return groups.Values.Take(6).Select(x=>{var reason=x.Decision.Reason.Length>180?x.Decision.Reason[..180]+"…":x.Decision.Reason;return $"{x.Decision.Action} {x.Decision.Instrument} confidence={x.Decision.Confidence:F2} result={x.Risk} repeats={x.Count} latestReason={reason}";}).ToArray();
+        return groups.Values.Take(6).Select(x=>FormatLegacyPlannerOutcome(x.Decision,x.Risk,x.Count)).ToArray();
+    }
+    public async Task<IReadOnlyList<StructuredOutcomeMemory>> RecentOutcomeMemoriesAsync(CancellationToken ct)
+    {
+        var cycles=new List<(string CycleId,DateTime StartedAt,string? Brain,string DecisionJson,string Risk,string? EvidenceJson)>();
+        await using(var c=new SqliteConnection(_cs))
+        {
+            await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT id,started_at,brain,decision_json,risk_result,evidence_json FROM cycles WHERE status='COMPLETED' AND decision_json IS NOT NULL AND decision_json<>'' ORDER BY completed_at DESC LIMIT 20";await using var r=await q.ExecuteReaderAsync(ct);
+            while(await r.ReadAsync(ct))
+            {
+                if(!DateTime.TryParse(r.GetString(1),null,DateTimeStyles.RoundtripKind,out var startedAt))continue;
+                cycles.Add((r.GetString(0),startedAt.ToUniversalTime(),r.IsDBNull(2)?null:r.GetString(2),r.GetString(3),r.IsDBNull(4)?string.Empty:r.GetString(4),r.IsDBNull(5)?null:r.GetString(5)));
+            }
+        }
+        var executionByCycle=await LoadExecutionOutcomesAsync(cycles.Select(x=>x.CycleId).ToArray(),ct);var list=new List<StructuredOutcomeMemory>();
+        foreach(var cycle in cycles)
+        {
+            DecisionPlan? decision=null;try{decision=JsonSerializer.Deserialize<DecisionPlan>(cycle.DecisionJson);}catch(JsonException){}
+            if(decision is null)continue;var execution=executionByCycle.GetValueOrDefault(cycle.CycleId);var executionAttempted=execution is not null;var executionResult=NormalizeExecutionResult(execution?.Status);var riskResult=NormalizeRiskResult(cycle.Risk);var riskReasonCode=NormalizeRiskReasonCode(cycle.Risk);
+            list.Add(new(cycle.StartedAt,NormalizeMode(cycle.Brain),"unknown",NormalizeSymbol(decision.Instrument,cycle.EvidenceJson),string.Empty,decision.Action.ToString(),NormalizeDecisionSummary(decision.Reason),riskResult,riskReasonCode,executionAttempted,executionResult,executionAttempted&&(executionResult=="filled"||executionResult=="partial"),NormalizeRecoveryHint(riskReasonCode,executionAttempted,executionResult)));
+            if(list.Count>=6)break;
+        }
+        return list;
     }
     public async Task<int> ConsecutiveHoldCountAsync(CancellationToken ct)
     {
@@ -146,7 +805,7 @@ public sealed class AgentSqliteStore
         await Exec("INSERT OR REPLACE INTO workflow_checkpoints(run_id,cycle_id,node,phase,attempt,state_json,created_at) VALUES($r,$c,$n,$p,$a,$s,$t)",ct,("$r",checkpoint.RunId),("$c",checkpoint.CycleId),("$n",checkpoint.Node.ToString()),("$p",checkpoint.Phase.ToString()),("$a",checkpoint.Attempt),("$s",checkpoint.StateJson),("$t",checkpoint.CreatedAtUtc.ToString("O")));
         await Exec("UPDATE workflow_runs SET current_node=$n,state_json=$s,updated_at=$t WHERE run_id=$r AND cycle_id=$c",ct,("$r",checkpoint.RunId),("$c",checkpoint.CycleId),("$n",checkpoint.Node.ToString()),("$s",checkpoint.StateJson),("$t",checkpoint.CreatedAtUtc.ToString("O")));
     }
-    public Task CompleteWorkflowRunAsync(string runId,string cycleId,string status,string? error,CancellationToken ct)=>Exec("UPDATE workflow_runs SET status=$s,updated_at=$t,error=$e WHERE run_id=$r AND cycle_id=$c",ct,("$r",runId),("$c",cycleId),("$s",status),("$t",DateTime.UtcNow.ToString("O")),("$e",error));
+    public Task CompleteWorkflowRunAsync(string runId,string cycleId,string status,string? error,CancellationToken ct)=>Exec("UPDATE workflow_runs SET status=$s,updated_at=$t,error=$e WHERE run_id=$r AND cycle_id=$c",ct,("$r",runId),("$c",cycleId),("$s",SensitiveDataRedactor.ForLog(status,40)),("$t",DateTime.UtcNow.ToString("O")),("$e",error is null?null:SensitiveDataRedactor.Redact(error)));
     public async Task<IReadOnlyList<WorkflowRecovery>> GetInterruptedWorkflowsAsync(CancellationToken ct)
     {
         var list=new List<WorkflowRecovery>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT run_id,cycle_id,current_node,state_json,updated_at FROM workflow_runs WHERE status IN ('RUNNING','RECOVERY_PENDING') ORDER BY updated_at";await using var r=await q.ExecuteReaderAsync(ct);
@@ -169,6 +828,58 @@ public sealed class AgentSqliteStore
         var list=new List<string>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
         q.CommandText="SELECT occurred_at,event_type,source,sequence,payload_json FROM runtime_events WHERE ($f='' OR event_type LIKE $like OR source LIKE $like OR payload_json LIKE $like) ORDER BY sequence DESC LIMIT $l";
         var value=(filter??string.Empty).Trim();q.Parameters.AddWithValue("$f",value);q.Parameters.AddWithValue("$like",$"%{value}%");q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,500));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var payload=r.IsDBNull(4)?string.Empty:r.GetString(4);if(payload.Length>220)payload=payload[..220]+"...";list.Add($"{r.GetString(0)}  #{r.GetInt64(3)}  {r.GetString(1)}  [{r.GetString(2)}]\n{payload}");}return list;
+    }
+    public async Task<IReadOnlyList<PersistedRuntimeAuditEvent>> GetRecentAuditEventsAsync(int limit,CancellationToken ct)
+    {
+        var list=new List<PersistedRuntimeAuditEvent>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="""
+        SELECT event_id,occurred_at,category,source,correlation_id,status,item_a,item_b,duration_ms
+        FROM (
+            SELECT 'decision:'||d.cycle_id event_id,d.created_at occurred_at,'decision' category,'DecisionGovernance' source,d.cycle_id correlation_id,COALESCE(c.status,'RECORDED') status,'' item_a,'' item_b,0 duration_ms
+            FROM decision_audits d LEFT JOIN cycles c ON c.id=d.cycle_id
+            UNION ALL
+            SELECT 'risk:'||m.cycle_id,m.created_at,'risk','IndependentRiskManager',m.cycle_id,'RECORDED','','',0
+            FROM maturity_audits m
+            UNION ALL
+            SELECT 'execution:'||CAST(e.id AS TEXT),e.occurred_at,'execution','ReliableOrderExecutor',e.cycle_id,e.status,e.action,e.symbol,0
+            FROM execution_events e
+            UNION ALL
+            SELECT 'recovery:'||CAST(w.id AS TEXT),w.created_at,'recovery','AgentRuntimeSupervisor',w.cycle_id,w.phase,w.node,'',0
+            FROM workflow_checkpoints w WHERE w.phase='Recovered'
+            UNION ALL
+            SELECT 'system:skill:'||CAST(s.id AS TEXT),s.occurred_at,'system','SkillExecutionGuard','',s.status,s.skill,'',s.duration_ms
+            FROM skill_calls s
+        ) ORDER BY occurred_at DESC,event_id DESC LIMIT $l
+        """;
+        q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,200));await using var r=await q.ExecuteReaderAsync(ct);
+        while(await r.ReadAsync(ct))
+        {
+            var category=r.GetString(2);var a=SafeAuditToken(r.IsDBNull(6)?null:r.GetString(6),"unknown");var b=SafeAuditToken(r.IsDBNull(7)?null:r.GetString(7),"unknown");
+            var summary=category switch
+            {
+                "decision"=>"Decision audit recorded.",
+                "risk"=>"Independent risk review recorded.",
+                "execution"=>$"{a} {b} execution recorded.",
+                "recovery"=>$"{a} recovery checkpoint recorded.",
+                _=>$"{a} completed in {Math.Max(0,r.IsDBNull(8)?0:r.GetInt64(8))} ms."
+            };
+            list.Add(new(
+                SafeAuditToken(r.GetString(0),"audit-event"),
+                DateTime.Parse(r.GetString(1),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),
+                category,
+                SafeAuditToken(r.GetString(3),"WPE"),
+                r.IsDBNull(4)||string.IsNullOrWhiteSpace(r.GetString(4))?null:SafeAuditToken(r.GetString(4),"correlation"),
+                SafeAuditToken(r.IsDBNull(5)?null:r.GetString(5),"UNKNOWN"),
+                summary));
+        }
+        return list;
+    }
+
+    private static string SafeAuditToken(string? value,string fallback)
+    {
+        if(string.IsNullOrWhiteSpace(value))return fallback;
+        var safe=new string(value.Where(ch=>char.IsLetterOrDigit(ch)||ch is '-' or '_' or '.' or ':' or '/').Take(80).ToArray());
+        return string.IsNullOrWhiteSpace(safe)?fallback:safe;
     }
     public async Task<IReadOnlyList<string>> GetWorkflowTimelineAsync(int limit,CancellationToken ct)
     {
@@ -225,14 +936,366 @@ public sealed class AgentSqliteStore
     {
         var list=new List<StrategyProfile>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT id,version,symbol,family,lifecycle,parameters_json,built_in,created_at,state_changed_at,quality_score,expectancy,max_drawdown,sharpe,validation_trades,shadow_observations,failure_streak,last_reason FROM strategy_registry";await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var family=Enum.TryParse<StrategyFamily>(r.GetString(3),true,out var f)?f:StrategyFamily.TrendBreakout;var lifecycle=Enum.TryParse<StrategyLifecycle>(r.GetString(4),true,out var l)?l:StrategyLifecycle.Draft;list.Add(new(){Id=r.GetString(0),Version=r.GetString(1),Symbol=r.GetString(2),Family=family,Lifecycle=l,Parameters=JsonSerializer.Deserialize<LocalStrategyParameters>(r.GetString(5))??LocalStrategyParameters.For(family,0),BuiltIn=r.GetInt32(6)==1,CreatedAtUtc=DateTime.Parse(r.GetString(7),null,DateTimeStyles.RoundtripKind),StateChangedAtUtc=r.IsDBNull(8)?null:DateTime.Parse(r.GetString(8),null,DateTimeStyles.RoundtripKind),QualityScore=r.GetDouble(9),Expectancy=r.GetDouble(10),MaxDrawdown=r.GetDouble(11),Sharpe=r.GetDouble(12),ValidationTrades=r.GetInt32(13),ShadowObservations=r.GetInt32(14),FailureStreak=r.GetInt32(15),LastReason=r.GetString(16)});}return list;
     }
+    public async Task<IReadOnlyList<PersistedStrategyLifecycleEvent>> GetRecentStrategyLifecycleEventsAsync(int limit,CancellationToken ct)
+    {
+        var list=new List<PersistedStrategyLifecycleEvent>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT id,strategy_id,from_state,to_state,occurred_at,reason FROM strategy_lifecycle_events ORDER BY occurred_at DESC,id DESC LIMIT $l";q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,500));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))list.Add(new(r.GetInt64(0),r.GetString(1),r.GetString(2),r.GetString(3),DateTime.Parse(r.GetString(4),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),r.GetString(5)));return list;
+    }
     public Task SaveStrategyValidationAsync(StrategyValidation result,CancellationToken ct)=>Exec("INSERT INTO strategy_validations(strategy_id,created_at,result_json) VALUES($i,$t,$j)",ct,("$i",result.StrategyId),("$t",DateTime.UtcNow.ToString("O")),("$j",JsonSerializer.Serialize(result)));
+    public Task SaveBacktestRunAsync(PersistedBacktestRun run,CancellationToken ct)=>Exec("INSERT OR REPLACE INTO backtest_runs(id,strategy_id,strategy_version,symbol,status,completed_at,coverage_days,trades,out_of_sample_return,max_drawdown,sharpe) VALUES($i,$s,$v,$m,$t,$c,$d,$n,$r,$x,$h)",ct,("$i",run.Id),("$s",run.StrategyId),("$v",run.StrategyVersion),("$m",run.Symbol),("$t",run.Status),("$c",run.CompletedAtUtc.ToString("O")),("$d",run.CoverageDays),("$n",run.Trades),("$r",run.OutOfSampleReturn),("$x",run.MaxDrawdown),("$h",run.Sharpe));
+    public async Task<IReadOnlyList<PersistedBacktestRun>> GetRecentBacktestRunsAsync(int limit,CancellationToken ct)
+    {
+        var list=new List<PersistedBacktestRun>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT id,strategy_id,strategy_version,symbol,status,completed_at,coverage_days,trades,out_of_sample_return,max_drawdown,sharpe FROM backtest_runs ORDER BY completed_at DESC LIMIT $l";q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,500));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))list.Add(new(r.GetString(0),r.GetString(1),r.GetString(2),r.GetString(3),r.GetString(4),DateTime.Parse(r.GetString(5),null,DateTimeStyles.RoundtripKind),r.GetInt32(6),r.GetInt32(7),r.GetDouble(8),r.GetDouble(9),r.GetDouble(10)));return list;
+    }
+    public async Task<bool> SaveEquitySnapshotAsync(PersistedEquitySnapshot value,CancellationToken ct)
+    {
+        if(value.Equity<0||value.AvailableBalance<0)throw new ArgumentOutOfRangeException(nameof(value),"Equity values must be non-negative finite decimals.");
+        if(string.IsNullOrWhiteSpace(value.ProviderId)||string.IsNullOrWhiteSpace(value.Environment))throw new ArgumentException("Equity source identity is required.",nameof(value));
+        var observed=value.ObservedAtUtc.ToUniversalTime();
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);
+        await using(var latest=c.CreateCommand())
+        {
+            latest.Transaction=(SqliteTransaction)tx;
+            latest.CommandText="SELECT observed_at,equity,available_balance FROM equity_snapshots WHERE provider_id=$p AND environment=$n ORDER BY observed_at DESC LIMIT 1";
+            latest.Parameters.AddWithValue("$p",value.ProviderId.Trim());latest.Parameters.AddWithValue("$n",value.Environment.Trim());
+            await using var reader=await latest.ExecuteReaderAsync(ct);
+            if(await reader.ReadAsync(ct)&&DateTime.TryParse(reader.GetString(0),null,DateTimeStyles.RoundtripKind,out var previousAt)&&
+               decimal.TryParse(reader.GetString(1),NumberStyles.Number,CultureInfo.InvariantCulture,out var previousEquity)&&
+               decimal.TryParse(reader.GetString(2),NumberStyles.Number,CultureInfo.InvariantCulture,out var previousAvailable)&&
+               observed-previousAt.ToUniversalTime()<TimeSpan.FromMinutes(5)&&previousEquity==value.Equity&&previousAvailable==value.AvailableBalance)
+            {await tx.RollbackAsync(ct);return false;}
+        }
+        await using(var insert=c.CreateCommand())
+        {
+            insert.Transaction=(SqliteTransaction)tx;insert.CommandText="INSERT OR IGNORE INTO equity_snapshots(observed_at,equity,available_balance,environment,provider_id) VALUES($t,$e,$a,$n,$p)";
+            insert.Parameters.AddWithValue("$t",observed.ToString("O"));insert.Parameters.AddWithValue("$e",value.Equity.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$a",value.AvailableBalance.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$n",value.Environment.Trim());insert.Parameters.AddWithValue("$p",value.ProviderId.Trim());
+            if(await insert.ExecuteNonQueryAsync(ct)==0){await tx.RollbackAsync(ct);return false;}
+        }
+        await using(var pruneAge=c.CreateCommand()){pruneAge.Transaction=(SqliteTransaction)tx;pruneAge.CommandText="DELETE FROM equity_snapshots WHERE observed_at<$t";pruneAge.Parameters.AddWithValue("$t",DateTime.UtcNow.AddDays(-90).ToString("O"));await pruneAge.ExecuteNonQueryAsync(ct);}
+        await using(var pruneCount=c.CreateCommand()){pruneCount.Transaction=(SqliteTransaction)tx;pruneCount.CommandText="DELETE FROM equity_snapshots WHERE id IN (SELECT id FROM equity_snapshots WHERE provider_id=$p AND environment=$n ORDER BY observed_at DESC LIMIT -1 OFFSET 10000)";pruneCount.Parameters.AddWithValue("$p",value.ProviderId.Trim());pruneCount.Parameters.AddWithValue("$n",value.Environment.Trim());await pruneCount.ExecuteNonQueryAsync(ct);}
+        await tx.CommitAsync(ct);return true;
+    }
+    public async Task<IReadOnlyList<PersistedEquitySnapshot>> GetRecentEquitySnapshotsAsync(DateTime sinceUtc,int limit,CancellationToken ct)
+    {
+        var list=new List<PersistedEquitySnapshot>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="SELECT observed_at,equity,available_balance,environment,provider_id FROM equity_snapshots WHERE observed_at>=$s ORDER BY observed_at DESC,id DESC LIMIT $l";q.Parameters.AddWithValue("$s",sinceUtc.ToUniversalTime().ToString("O"));q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,2000));
+        await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))
+        {
+            if(!DateTime.TryParse(r.GetString(0),null,DateTimeStyles.RoundtripKind,out var time)||!decimal.TryParse(r.GetString(1),NumberStyles.Number,CultureInfo.InvariantCulture,out var equity)||!decimal.TryParse(r.GetString(2),NumberStyles.Number,CultureInfo.InvariantCulture,out var available)||equity<0||available<0)continue;
+            list.Add(new(time.ToUniversalTime(),equity,available,r.GetString(3),r.GetString(4)));
+        }
+        list.Reverse();return list;
+    }
     public Task RecordStrategyObservationAsync(string strategyId,string symbol,int direction,decimal price,double confidence,CancellationToken ct)=>Exec("INSERT INTO strategy_observations(strategy_id,symbol,observed_at,direction,price,confidence) VALUES($i,$s,$t,$d,$p,$c)",ct,("$i",strategyId),("$s",symbol),("$t",DateTime.UtcNow.ToString("O")),("$d",direction),("$p",price.ToString(CultureInfo.InvariantCulture)),("$c",confidence));
     public async Task<StrategyObservationPerformance> GetStrategyObservationPerformanceAsync(string strategyId,CancellationToken ct)
     {
         var rows=new List<(int Direction,decimal Price)>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT direction,price FROM strategy_observations WHERE strategy_id=$i ORDER BY observed_at";q.Parameters.AddWithValue("$i",strategyId);await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))rows.Add((r.GetInt32(0),decimal.Parse(r.GetString(1),CultureInfo.InvariantCulture)));if(rows.Count<2)return new(rows.Count,0,0,0,0,"shadow observations pending");var returns=new List<double>();foreach(var pair in rows.Zip(rows.Skip(1),(a,b)=>(double)a.Direction*(double)(b.Price/a.Price-1)))returns.Add(pair);var expectancy=returns.Average();var equity=1d;var high=1d;var dd=0d;var failures=0;foreach(var value in returns){equity*=Math.Max(.01,1+value);high=Math.Max(high,equity);dd=Math.Max(dd,(high-equity)/high);if(value<0)failures++;else failures=0;}var quality=Math.Clamp(.5+expectancy*50-dd,0,1);return new(rows.Count,expectancy,dd,quality,failures,$"observations={rows.Count} expectancy={expectancy:P2} drawdown={dd:P1}");
     }
-    public Task RecordStrategyLifecycleAsync(StrategyProfile profile,string reason,CancellationToken ct)=>Exec("INSERT INTO strategy_lifecycle_events(strategy_id,from_state,to_state,occurred_at,reason) VALUES($i,$f,$t,$o,$r)",ct,("$i",profile.Id),("$f",profile.Lifecycle.ToString()),("$t",profile.Lifecycle.ToString()),("$o",DateTime.UtcNow.ToString("O")),("$r",reason));
+    public async Task RecordStrategyLifecycleAsync(StrategyProfile profile,string reason,CancellationToken ct){var now=DateTime.UtcNow;await Exec("INSERT INTO strategy_lifecycle_events(strategy_id,from_state,to_state,occurred_at,reason) VALUES($i,$f,$t,$o,$r)",ct,("$i",profile.Id),("$f",profile.Lifecycle.ToString()),("$t",profile.Lifecycle.ToString()),("$o",now.ToString("O")),("$r",SensitiveDataRedactor.ForLog(reason)));await SaveMemoryAsync(new("long-term",now,profile.Symbol,null,profile.Id,profile.Lifecycle.ToString(),"strategy-lifecycle",$"strategy={profile.Id}; symbol={profile.Symbol}; lifecycle={profile.Lifecycle}; reason={reason}"),ct);}
+    public async Task<bool> SaveMemoryAsync(MemoryEvidence value,CancellationToken ct)
+    {
+        var tier=NormalizeTier(value.Tier);var now=value.OccurredAtUtc.ToUniversalTime();var ttl=tier=="working"?TimeSpan.FromHours(24):tier=="episodic"?TimeSpan.FromDays(30):TimeSpan.FromDays(365);var summary=UiDiagnostic.SafeText(value.Summary,320);if(string.IsNullOrWhiteSpace(summary)||summary=="[REDACTED DIAGNOSTIC TEXT]")return false;var source=SensitiveDataRedactor.ForLog(value.Source,80);var result=SensitiveDataRedactor.ForLog(value.Result,80);var symbol=Token(value.Symbol);var provider=Token(value.ProviderId);var strategy=Token(value.StrategyId);var hash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{tier}|{source}|{symbol}|{provider}|{strategy}|{result}|{summary}")));
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="DELETE FROM agent_memories WHERE expires_at<$now; INSERT OR IGNORE INTO agent_memories(id,tier,occurred_at,expires_at,symbol,provider_id,strategy_id,result,source,summary,content_hash) VALUES($id,$tier,$at,$exp,$symbol,$provider,$strategy,$result,$source,$summary,$hash); SELECT changes();";q.Parameters.AddWithValue("$now",DateTime.UtcNow.ToString("O"));q.Parameters.AddWithValue("$id",Guid.NewGuid().ToString("N"));q.Parameters.AddWithValue("$tier",tier);q.Parameters.AddWithValue("$at",now.ToString("O"));q.Parameters.AddWithValue("$exp",now.Add(ttl).ToString("O"));q.Parameters.AddWithValue("$symbol",(object?)symbol??DBNull.Value);q.Parameters.AddWithValue("$provider",(object?)provider??DBNull.Value);q.Parameters.AddWithValue("$strategy",(object?)strategy??DBNull.Value);q.Parameters.AddWithValue("$result",result);q.Parameters.AddWithValue("$source",source);q.Parameters.AddWithValue("$summary",summary);q.Parameters.AddWithValue("$hash",hash);var inserted=Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)>0;if(inserted)await Exec("DELETE FROM agent_memories WHERE id IN (SELECT id FROM agent_memories WHERE tier=$tier ORDER BY occurred_at DESC,id DESC LIMIT -1 OFFSET 5000)",ct,("$tier",tier));return inserted;
+    }
+    public async Task<IReadOnlyList<PersistedMemory>> SearchMemoriesAsync(MemoryQuery filter,CancellationToken ct)
+    {
+        var tier=string.IsNullOrWhiteSpace(filter.Tier)?null:NormalizeTier(filter.Tier);var symbol=Token(filter.Symbol);var provider=Token(filter.ProviderId);var strategy=Token(filter.StrategyId);var result=string.IsNullOrWhiteSpace(filter.Result)?null:SensitiveDataRedactor.ForLog(filter.Result,80);var since=filter.SinceUtc?.ToUniversalTime();var list=new List<PersistedMemory>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using(var q=c.CreateCommand()){q.CommandText="DELETE FROM agent_memories WHERE expires_at<$now; SELECT id,tier,occurred_at,expires_at,symbol,provider_id,strategy_id,result,source,summary FROM agent_memories WHERE ($tier IS NULL OR tier=$tier) AND ($symbol IS NULL OR symbol=$symbol) AND ($provider IS NULL OR provider_id=$provider) AND ($strategy IS NULL OR strategy_id=$strategy) AND ($result IS NULL OR result=$result) AND ($since IS NULL OR occurred_at>=$since) ORDER BY occurred_at DESC LIMIT $limit";q.Parameters.AddWithValue("$now",DateTime.UtcNow.ToString("O"));q.Parameters.AddWithValue("$tier",(object?)tier??DBNull.Value);q.Parameters.AddWithValue("$symbol",(object?)symbol??DBNull.Value);q.Parameters.AddWithValue("$provider",(object?)provider??DBNull.Value);q.Parameters.AddWithValue("$strategy",(object?)strategy??DBNull.Value);q.Parameters.AddWithValue("$result",(object?)result??DBNull.Value);q.Parameters.AddWithValue("$since",since is null?DBNull.Value:since.Value.ToString("O"));q.Parameters.AddWithValue("$limit",Math.Clamp(filter.Limit,1,100));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))list.Add(new(r.GetString(0),r.GetString(1),DateTime.Parse(r.GetString(2),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),DateTime.Parse(r.GetString(3),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),r.IsDBNull(4)?null:r.GetString(4),r.IsDBNull(5)?null:r.GetString(5),r.IsDBNull(6)?null:r.GetString(6),r.GetString(7),r.GetString(8),r.GetString(9)));}await Exec("INSERT INTO memory_retrievals(retrieved_at,tier,symbol,provider_id,strategy_id,result,since_utc,result_count) VALUES($t,$tier,$symbol,$provider,$strategy,$result,$since,$count)",ct,("$t",DateTime.UtcNow.ToString("O")),("$tier",tier),("$symbol",symbol),("$provider",provider),("$strategy",strategy),("$result",result),("$since",since?.ToString("O")),("$count",list.Count));return list;
+    }
+    public async Task<MemoryRuntimeSnapshot> GetMemoryRuntimeSnapshotAsync(CancellationToken ct)
+    {
+        var counts=new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase){{"working",0},{"episodic",0},{"long-term",0}};var recent=new List<PersistedMemoryRetrieval>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using(var q=c.CreateCommand()){q.CommandText="DELETE FROM agent_memories WHERE expires_at<$now; SELECT tier,COUNT(*) FROM agent_memories GROUP BY tier";q.Parameters.AddWithValue("$now",DateTime.UtcNow.ToString("O"));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))counts[r.GetString(0)]=r.GetInt32(1);}await using(var q=c.CreateCommand()){q.CommandText="SELECT id,retrieved_at,tier,symbol,provider_id,strategy_id,result,result_count FROM memory_retrievals ORDER BY retrieved_at DESC,id DESC LIMIT 20";await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))recent.Add(new(r.GetInt64(0),DateTime.Parse(r.GetString(1),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),r.IsDBNull(2)?null:r.GetString(2),r.IsDBNull(3)?null:r.GetString(3),r.IsDBNull(4)?null:r.GetString(4),r.IsDBNull(5)?null:r.GetString(5),r.IsDBNull(6)?null:r.GetString(6),r.GetInt32(7)));}return new(counts["working"],counts["episodic"],counts["long-term"],recent);
+    }
+    private sealed record ExecutionOutcomeRow(string Status);
+    private async Task<IReadOnlyDictionary<string,ExecutionOutcomeRow>> LoadExecutionOutcomesAsync(IReadOnlyCollection<string> cycleIds,CancellationToken ct)
+    {
+        var targets=cycleIds.Where(x=>!string.IsNullOrWhiteSpace(x)).ToHashSet(StringComparer.OrdinalIgnoreCase);var result=new Dictionary<string,ExecutionOutcomeRow>(StringComparer.OrdinalIgnoreCase);if(targets.Count==0)return result;
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT cycle_id,status FROM execution_events WHERE cycle_id IS NOT NULL AND cycle_id<>'' ORDER BY occurred_at DESC,id DESC LIMIT 200";await using var r=await q.ExecuteReaderAsync(ct);
+        while(await r.ReadAsync(ct))
+        {
+            var cycleId=r.GetString(0);if(!targets.Contains(cycleId)||result.ContainsKey(cycleId))continue;result[cycleId]=new(r.IsDBNull(1)?string.Empty:r.GetString(1));if(result.Count>=targets.Count)break;
+        }
+        return result;
+    }
+    private static string NormalizeMode(string? brain)=>string.IsNullOrWhiteSpace(brain)?"unknown":brain.Contains("Local",StringComparison.OrdinalIgnoreCase)?"local-only":"unknown";
+    private static string NormalizeSymbol(string? instrument,string? evidenceJson)
+    {
+        var symbol=Token(instrument);if(symbol is not null)return symbol;if(string.IsNullOrWhiteSpace(evidenceJson))return "unknown";
+        try{using var doc=JsonDocument.Parse(evidenceJson);if(doc.RootElement.TryGetProperty("Markets",out var markets))foreach(var item in markets.EnumerateObject())return Token(item.Name)??"unknown";}catch(JsonException) { }
+        return "unknown";
+    }
+    private static string NormalizeDecisionSummary(string? reason)=>SensitiveDataRedactor.ForLog(reason,120);
+    private static string NormalizeRiskResult(string? risk)
+    {
+        var value=(risk??string.Empty).Trim();if(value.Length==0)return "unknown";var lower=value.ToLowerInvariant();
+        if(lower.Contains("skip",StringComparison.Ordinal))return "skipped";
+        if(lower.Contains("block",StringComparison.Ordinal)||lower.Contains("reject",StringComparison.Ordinal))return "blocked";
+        if(lower.Contains("allow",StringComparison.Ordinal)||lower.Contains("approve",StringComparison.Ordinal)||lower.Contains("ok",StringComparison.Ordinal)||lower.Contains("execut",StringComparison.Ordinal)||lower.Contains("complet",StringComparison.Ordinal))return "allowed";
+        if(lower.Contains("fail",StringComparison.Ordinal)||lower.Contains("error",StringComparison.Ordinal)||lower.Contains("degrad",StringComparison.Ordinal)||lower.Contains("unknown",StringComparison.Ordinal)||lower.Contains("unavailable",StringComparison.Ordinal)||lower.Contains("provider",StringComparison.Ordinal)||lower.Contains("exchange",StringComparison.Ordinal)||lower.Contains("api",StringComparison.Ordinal))return "degraded";
+        return "unknown";
+    }
+    private static string NormalizeRiskReasonCode(string? risk)
+    {
+        var lower=(risk??string.Empty).Trim().ToLowerInvariant();if(lower.Length==0)return "unknown";
+        if(lower.Contains("capab",StringComparison.Ordinal))return "capability_stale";
+        if(lower.Contains("provider",StringComparison.Ordinal)||lower.Contains("exchange",StringComparison.Ordinal)||lower.Contains("api",StringComparison.Ordinal))return "provider_unavailable";
+        if(lower.Contains("valid",StringComparison.Ordinal))return "validation_rejected";
+        if(lower.Contains("block",StringComparison.Ordinal)||lower.Contains("reject",StringComparison.Ordinal))return "risk_gate_rejected";
+        return "unknown";
+    }
+    private static string NormalizeExecutionResult(string? status)
+    {
+        var value=(status??string.Empty).Trim().ToUpperInvariant();
+        return value switch
+        {
+            "" => "not_attempted",
+            "FILLED" => "filled",
+            "PARTIALLY_FILLED" => "partial",
+            "REJECTED" or "EXPIRED" or "CANCELED" or "CANCELLED" => "rejected",
+            "NEW" or "SUBMITTED" or "PENDING" or "UNKNOWN" or "EMERGENCY_UNKNOWN" => "unknown",
+            _ => "failed"
+        };
+    }
+    private static string NormalizeRecoveryHint(string riskReasonCode,bool executionAttempted,string executionResult)
+    {
+        if(riskReasonCode=="capability_stale")return "refresh_capabilities";
+        if(executionAttempted&&(executionResult=="unknown"||executionResult=="failed"))return "reconcile_open_orders";
+        if(riskReasonCode=="provider_unavailable")return "retry_later";
+        return "none";
+    }
+    private static string FormatPlannerOutcome(StructuredOutcomeMemory memory,int repeats)
+    {
+        var parts=new List<string>{memory.DecisionAction,memory.Symbol,$"mode={memory.Mode}",$"risk={memory.RiskResult}/{memory.RiskReasonCode}",$"exec={memory.ExecutionResult}",$"state={(memory.StateChanged?"yes":"no")}"};
+        if(memory.RecoveryHint!="none")parts.Add($"next={memory.RecoveryHint}");
+        if(repeats>1)parts.Add($"repeats={repeats}");
+        if(!string.IsNullOrWhiteSpace(memory.DecisionSummary))parts.Add($"note={memory.DecisionSummary}");
+        var line=string.Join(' ',parts);
+        return line.Length<=200?line:line[..200];
+    }
+    private static string FormatLegacyPlannerOutcome(DecisionPlan decision,string risk,int repeats)
+    {
+        var parts=new List<string>{$"{decision.Action} {Token(decision.Instrument)??"unknown"}",$"conf={decision.Confidence:F2}",$"result={SensitiveDataRedactor.ForLog(risk,40)}"};
+        if(repeats>1)parts.Add($"repeats={repeats}");
+        var note=SensitiveDataRedactor.ForLog(decision.Reason,100);
+        if(!string.IsNullOrWhiteSpace(note))parts.Add($"note={note}");
+        var line=string.Join(' ',parts);
+        return line.Length<=200?line:line[..200];
+    }
+    private static string NormalizeTier(string value)=>value.Trim().ToLowerInvariant() switch{"working"=>"working","episodic"=>"episodic","long-term"=>"long-term",_=>throw new ArgumentOutOfRangeException(nameof(value),"Unknown memory tier.")};
+    private static string? Token(string? value){if(string.IsNullOrWhiteSpace(value))return null;var safe=new string(value.Where(ch=>char.IsLetterOrDigit(ch)||ch is '-' or '_' or '.' or ':').Take(80).ToArray());return string.IsNullOrWhiteSpace(safe)?null:safe;}
     public async Task<StrategyResearchSnapshot> GetStrategySnapshotAsync(CancellationToken ct){var p=await GetStrategiesAsync(ct);var active=p.Where(x=>x.Lifecycle==StrategyLifecycle.Active).ToArray();return new("READY",p.Count(p=>p.Lifecycle!=StrategyLifecycle.Retired),p.Count(x=>x.Lifecycle==StrategyLifecycle.Shadow),active.Length,string.Join(',',active.Select(x=>$"{x.Symbol}:{x.Version}")),null,string.Empty);}
     public async Task<IReadOnlyList<NewsFeature>> GetRecentNewsFeaturesAsync(int hours,CancellationToken ct){var list=new List<NewsFeature>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT assets,sentiment,confidence,corroborating_sources,event_type,published_at FROM news_documents WHERE collected_at >= $t ORDER BY collected_at DESC LIMIT 200";q.Parameters.AddWithValue("$t",DateTime.UtcNow.AddHours(-Math.Clamp(hours,1,168)).ToString("O"));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var assets=JsonSerializer.Deserialize<string[]>(r.GetString(0))??[];foreach(var asset in assets)if(DateTime.TryParse(r.IsDBNull(5)?null:r.GetString(5),null,DateTimeStyles.RoundtripKind,out var published))list.Add(new(asset,r.GetDouble(1),r.GetDouble(2),r.GetInt32(3),r.GetString(4),published));}return list;}
-    private async Task Exec(string sql,CancellationToken ct,params (string,object?)[] args){await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText=sql;foreach(var a in args)q.Parameters.AddWithValue(a.Item1,a.Item2??DBNull.Value);await q.ExecuteNonQueryAsync(ct);}
+    private async Task<TradingReviewQueueMutationResult> TryTradingReviewTransitionAsync(
+        string requestId,
+        TradingReviewQueueStatus expected,
+        TradingReviewQueueStatus next,
+        string? leaseOwner,
+        string eventCode,
+        string actorKind,
+        CancellationToken ct,
+        bool requireExpired=false,
+        string reason="")
+    {
+        if(string.IsNullOrWhiteSpace(requestId)||!AllowedQueueTransition(expected,next)||!QueueToken(eventCode,120)||!QueueToken(actorKind,32))return new(false,"review.transition-invalid");
+        var processing=expected is TradingReviewQueueStatus.Claimed or TradingReviewQueueStatus.Executing or TradingReviewQueueStatus.Reconciling&&next is not (TradingReviewQueueStatus.Revoked or TradingReviewQueueStatus.Expired);
+        if(processing&&!QueueToken(leaseOwner,96))return new(false,"review.transition-invalid");
+        var now=_utcNow().ToUniversalTime();
+        try
+        {
+            await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await EnableQueuePragmasAsync(c,ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+            await using(var read=QueueReadCommand(c,"WHERE queue.request_id=$request",1,0))
+            {
+                read.Transaction=tx;read.Parameters.AddWithValue("$request",requestId);
+                await using var r=await read.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct)){await tx.RollbackAsync(ct);return new(false,"review.transition-not-applied");}
+                var item=ReadTradingReviewQueueItem(r);var requiresValidArtifact=next is TradingReviewQueueStatus.Approved or TradingReviewQueueStatus.Executing or TradingReviewQueueStatus.Reconciling or TradingReviewQueueStatus.Succeeded;
+                if(requiresValidArtifact&&!item.ArtifactValid){await tx.RollbackAsync(ct);return new(false,"review.artifact-invalid");}
+                if(item.Status!=expected||requireExpired&&(item.Artifact is null||item.Artifact.ExpiresAtUtc>now)||processing&&!string.Equals(item.LeaseOwner,leaseOwner,StringComparison.Ordinal)){await tx.RollbackAsync(ct);return new(false,"review.transition-not-applied");}
+            }
+            var keepLease=next is TradingReviewQueueStatus.Executing or TradingReviewQueueStatus.Reconciling;
+            await using(var update=c.CreateCommand())
+            {
+                update.Transaction=tx;update.CommandText="UPDATE trading_review_execution_queue SET status=$next,lease_owner=CASE WHEN $keep=1 THEN lease_owner ELSE NULL END,lease_expires_at=CASE WHEN $keep=1 THEN lease_expires_at ELSE NULL END,last_code=$code,updated_at=$now WHERE request_id=$request AND status=$expected";
+                AddParameters(update,("$next",next.ToString()),("$keep",keepLease?1:0),("$code",eventCode),("$now",DbInstant(now)),("$request",requestId),("$expected",expected.ToString()));
+                if(await update.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"review.transition-not-applied");}
+            }
+            if(next==TradingReviewQueueStatus.Revoked)
+            {
+                await using var revoke=c.CreateCommand();revoke.Transaction=tx;revoke.CommandText="UPDATE trading_approval_requests SET revoked_at=$now WHERE request_id=$request AND revoked_at IS NULL AND consumed_at IS NULL";AddParameters(revoke,("$now",DbInstant(now)),("$request",requestId));
+                if(await revoke.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"review.transition-not-applied");}
+                await using var revokeReceipts=c.CreateCommand();revokeReceipts.Transaction=tx;revokeReceipts.CommandText="UPDATE trading_approval_receipts SET revoked_at=$now WHERE request_id=$request AND revoked_at IS NULL AND consumed_at IS NULL";AddParameters(revokeReceipts,("$now",DbInstant(now)),("$request",requestId));await revokeReceipts.ExecuteNonQueryAsync(ct);
+            }
+            var safeReason=SensitiveDataRedactor.ForLog(reason,240);await AppendTradingReviewEventAsync(c,tx,requestId,expected,next,eventCode,actorKind,now,ct,safeReason);await tx.CommitAsync(ct);return new(true,eventCode);
+        }
+        catch(SqliteException){return new(false,"review.transition-failed");}
+    }
+
+    private static bool AllowedQueueTransition(TradingReviewQueueStatus from,TradingReviewQueueStatus to)=>from switch
+    {
+        TradingReviewQueueStatus.Pending=>to is TradingReviewQueueStatus.Approved or TradingReviewQueueStatus.Rejected or TradingReviewQueueStatus.Revoked or TradingReviewQueueStatus.Expired or TradingReviewQueueStatus.ArtifactInvalid or TradingReviewQueueStatus.PolicyBlocked,
+        TradingReviewQueueStatus.Approved=>to is TradingReviewQueueStatus.Claimed or TradingReviewQueueStatus.Revoked or TradingReviewQueueStatus.Expired or TradingReviewQueueStatus.ArtifactInvalid or TradingReviewQueueStatus.StrategyInvalid or TradingReviewQueueStatus.MarketStale or TradingReviewQueueStatus.PolicyBlocked or TradingReviewQueueStatus.FailedTerminal,
+        TradingReviewQueueStatus.Claimed=>to is TradingReviewQueueStatus.Executing or TradingReviewQueueStatus.Revoked or TradingReviewQueueStatus.Expired or TradingReviewQueueStatus.ArtifactInvalid or TradingReviewQueueStatus.StrategyInvalid or TradingReviewQueueStatus.MarketStale or TradingReviewQueueStatus.PolicyBlocked or TradingReviewQueueStatus.FailedTerminal,
+        TradingReviewQueueStatus.Executing=>to is TradingReviewQueueStatus.Reconciling or TradingReviewQueueStatus.Succeeded or TradingReviewQueueStatus.ArtifactInvalid or TradingReviewQueueStatus.StrategyInvalid or TradingReviewQueueStatus.MarketStale or TradingReviewQueueStatus.PolicyBlocked or TradingReviewQueueStatus.FailedTerminal,
+        TradingReviewQueueStatus.Reconciling=>to is TradingReviewQueueStatus.Succeeded or TradingReviewQueueStatus.ArtifactInvalid or TradingReviewQueueStatus.StrategyInvalid or TradingReviewQueueStatus.MarketStale or TradingReviewQueueStatus.PolicyBlocked or TradingReviewQueueStatus.FailedTerminal,
+        _=>false
+    };
+    private static bool AllowedProcessorQueueTransition(TradingReviewQueueStatus from,TradingReviewQueueStatus to)
+        =>AllowedQueueTransition(from,to)&&to is not (TradingReviewQueueStatus.Approved or TradingReviewQueueStatus.Rejected or TradingReviewQueueStatus.Revoked or TradingReviewQueueStatus.Expired or TradingReviewQueueStatus.Claimed);
+
+    private async Task<AutomaticExecutionClaimResult> TryClaimAutomaticAsync(string executionId,string leaseOwner,TimeSpan leaseLifetime,AutomaticExecutionQueueStatus expected,AutomaticExecutionQueueStatus next,string code,CancellationToken ct)
+    {
+        if(!QueueToken(executionId,120)||!QueueToken(leaseOwner,96)||leaseLifetime<=TimeSpan.Zero||leaseLifetime>TimeSpan.FromMinutes(5))return new(false,"automatic.claim-invalid",0);var now=_utcNow().ToUniversalTime();
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await EnableQueuePragmasAsync(c,ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+        var current=await GetAutomaticExecutionInTransactionAsync(c,tx,executionId,ct);if(current is null||current.Status!=expected||!current.ArtifactValid||expected==AutomaticExecutionQueueStatus.RiskApproved&&!current.RiskReceiptValid){await tx.RollbackAsync(ct);return new(false,"automatic.not-claimable",current?.AttemptCount??0);}
+        var attempts=checked(current.AttemptCount+1);await using(var q=c.CreateCommand()){q.Transaction=tx;q.CommandText="UPDATE automatic_execution_queue SET status=$next,attempt_count=$attempts,lease_owner=$owner,lease_expires_at=$lease,last_code=$code,updated_at=$now WHERE execution_id=$id AND status=$expected";AddParameters(q,("$next",next.ToString()),("$attempts",attempts),("$owner",leaseOwner),("$lease",DbInstant(now.Add(leaseLifetime))),("$code",code),("$now",DbInstant(now)),("$id",executionId),("$expected",expected.ToString()));if(await q.ExecuteNonQueryAsync(ct)!=1){await tx.RollbackAsync(ct);return new(false,"automatic.not-claimable",current.AttemptCount);}}
+        await AppendAutomaticExecutionEventAsync(c,tx,executionId,expected,next,code,"processor",now,ct);await tx.CommitAsync(ct);return new(true,code,attempts);
+    }
+
+    private static bool AllowedAutomaticTransition(AutomaticExecutionQueueStatus from,AutomaticExecutionQueueStatus to)=>from switch
+    {
+        AutomaticExecutionQueueStatus.Claimed=>to is AutomaticExecutionQueueStatus.Executing or AutomaticExecutionQueueStatus.CapabilityUnavailable or AutomaticExecutionQueueStatus.MarketStale or AutomaticExecutionQueueStatus.StrategyInvalid or AutomaticExecutionQueueStatus.ArtifactInvalid or AutomaticExecutionQueueStatus.PolicyBlocked or AutomaticExecutionQueueStatus.FailedTerminal,
+        AutomaticExecutionQueueStatus.Executing=>to is AutomaticExecutionQueueStatus.Succeeded or AutomaticExecutionQueueStatus.UnknownOutcome or AutomaticExecutionQueueStatus.FailedTerminal,
+        AutomaticExecutionQueueStatus.Reconciling=>to is AutomaticExecutionQueueStatus.Succeeded or AutomaticExecutionQueueStatus.UnknownOutcome or AutomaticExecutionQueueStatus.FailedTerminal or AutomaticExecutionQueueStatus.ArtifactInvalid,
+        _=>false
+    };
+
+    private static SqliteCommand AutomaticQueueReadCommand(SqliteConnection connection,string where,int limit)
+    {
+        var q=connection.CreateCommand();q.CommandText=$"SELECT execution_id,correlation_id,contract_version,artifact_bytes,artifact_hash,intent_hash,risk_receipt_bytes,risk_receipt_hash,provider_id,environment,strategy_id,strategy_version,market_collected_at,market_data_version,created_at,expires_at,status,attempt_count,lease_owner,lease_expires_at,last_code,updated_at FROM automatic_execution_queue {where} ORDER BY created_at,execution_id LIMIT $limit";q.Parameters.AddWithValue("$limit",limit);return q;
+    }
+
+    private static async Task<PersistedAutomaticExecution?> GetAutomaticExecutionInTransactionAsync(SqliteConnection c,SqliteTransaction tx,string executionId,CancellationToken ct)
+    {
+        await using var q=AutomaticQueueReadCommand(c,"WHERE execution_id=$id",1);q.Transaction=tx;q.Parameters.AddWithValue("$id",executionId);await using var r=await q.ExecuteReaderAsync(ct);return await r.ReadAsync(ct)?ReadAutomaticExecution(r):null;
+    }
+
+    private static PersistedAutomaticExecution ReadAutomaticExecution(SqliteDataReader r)
+    {
+        var bytes=(byte[])r.GetValue(3);var valid=DurableExecutionArtifactCanonicalizerV2.TryDeserializeCanonical(bytes,out var artifact,out _);var artifactHash=r.GetString(4);var intentHash=r.GetString(5);
+        if(valid&&artifact is not null){var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);valid=FixedHashEquals(artifactHash,hashes.ArtifactHash)&&FixedHashEquals(intentHash,hashes.IntentHash)&&r.GetString(1)==artifact.CorrelationId&&r.GetInt32(2)==artifact.ContractVersion&&r.GetString(8)==artifact.ProviderId&&r.GetString(9)==artifact.Environment&&r.GetString(10)==artifact.StrategyId&&r.GetString(11)==artifact.StrategyVersion&&Instant(r.GetString(12))==artifact.MarketCollectedAtUtc&&r.GetString(13)==artifact.MarketDataVersion&&Instant(r.GetString(14))==artifact.CreatedAtUtc&&Instant(r.GetString(15))==artifact.ExpiresAtUtc;}
+        DeterministicRiskReceipt? receipt=null;var receiptValid=false;if(!r.IsDBNull(6)&&!r.IsDBNull(7)){var receiptBytes=(byte[])r.GetValue(6);receiptValid=DurableExecutionArtifactCanonicalizerV2.TryDeserializeRiskReceipt(receiptBytes,out receipt)&&FixedHashEquals(r.GetString(7),DurableReviewArtifactCanonicalizer.Sha256Hex(receiptBytes));}
+        var status=Enum.TryParse<AutomaticExecutionQueueStatus>(r.GetString(16),out var parsed)&&Enum.IsDefined(parsed)?parsed:AutomaticExecutionQueueStatus.ArtifactInvalid;
+        return new(r.GetString(0),valid?artifact:null,valid?bytes:null,valid?artifactHash:string.Empty,valid?intentHash:string.Empty,receiptValid?receipt:null,status,r.GetInt32(17),r.IsDBNull(18)?null:r.GetString(18),NullableInstant(r,19),r.GetString(20),Instant(r.GetString(21)),valid,receiptValid);
+    }
+
+    private static bool ValidAutomaticRiskReceipt(DeterministicRiskReceipt receipt,PersistedAutomaticExecution item,DateTimeOffset now)
+        =>item.ArtifactValid&&item.Artifact is not null&&receipt.Approved&&receipt.RevokedAtUtc is null&&QueueToken(receipt.ReceiptId,120)&&receipt.IssuedAtUtc.Offset==TimeSpan.Zero&&receipt.ExpiresAtUtc.Offset==TimeSpan.Zero&&receipt.IssuedAtUtc<=now&&receipt.ExpiresAtUtc>now&&receipt.ExpiresAtUtc>receipt.IssuedAtUtc&&receipt.ExpiresAtUtc-receipt.IssuedAtUtc<=TimeSpan.FromMinutes(2)&&string.Equals(receipt.CorrelationId,item.Artifact.CorrelationId,StringComparison.Ordinal)&&FixedHashEquals(receipt.IntentHash,item.IntentHash)&&receipt.ArtifactHash is not null&&FixedHashEquals(receipt.ArtifactHash,item.ArtifactHash);
+
+    private static async Task AppendAutomaticExecutionEventAsync(SqliteConnection c,SqliteTransaction tx,string executionId,AutomaticExecutionQueueStatus? from,AutomaticExecutionQueueStatus to,string code,string actor,DateTimeOffset now,CancellationToken ct)
+    {
+        await using var q=c.CreateCommand();q.Transaction=tx;q.CommandText="INSERT INTO automatic_execution_events(execution_id,sequence,occurred_at,from_status,to_status,event_code,actor_kind) SELECT $id,COALESCE(MAX(sequence),0)+1,$at,$from,$to,$code,$actor FROM automatic_execution_events WHERE execution_id=$id";AddParameters(q,("$id",executionId),("$at",DbInstant(now)),("$from",from?.ToString()),("$to",to.ToString()),("$code",code),("$actor",actor));if(await q.ExecuteNonQueryAsync(ct)!=1)throw new SqliteException("automatic event append failed",1);
+    }
+
+    private static SqliteCommand QueueReadCommand(SqliteConnection connection,string where,int limit,int offset)
+    {
+        var command=connection.CreateCommand();command.CommandText=$"""
+            SELECT queue.request_id,queue.contract_version,queue.artifact_bytes,queue.artifact_hash,queue.intent_hash,
+                   queue.provider_id,queue.environment,queue.strategy_id,queue.strategy_version,queue.market_collected_at,
+                   queue.market_data_version,queue.created_at,queue.expires_at,queue.status,queue.attempt_count,
+                   queue.lease_owner,queue.lease_expires_at,queue.last_code,queue.updated_at,request.intent_hash
+            FROM trading_review_execution_queue queue
+            JOIN trading_approval_requests request ON request.request_id=queue.request_id
+            {where}
+            ORDER BY queue.created_at,queue.request_id
+            LIMIT $limit OFFSET $offset
+            """;command.Parameters.AddWithValue("$limit",limit);command.Parameters.AddWithValue("$offset",offset);return command;
+    }
+
+    private static PersistedTradingReviewQueueItem ReadTradingReviewQueueItem(SqliteDataReader reader)
+    {
+        var bytes=(byte[])reader.GetValue(2);var storedArtifactHash=reader.GetString(3);var storedIntentHash=reader.GetString(4);var valid=DurableReviewArtifactCanonicalizer.TryDeserializeCanonical(bytes,out var artifact,out _);
+        if(valid&&artifact is not null)
+        {
+            var hashes=DurableReviewArtifactCanonicalizer.ComputeHashes(artifact);
+            valid=FixedHashEquals(storedArtifactHash,hashes.ArtifactHash)&&FixedHashEquals(storedIntentHash,hashes.IntentHash)&&FixedHashEquals(reader.GetString(19),hashes.IntentHash)&&
+                  reader.GetInt32(1)==artifact.ContractVersion&&reader.GetString(5)==artifact.ProviderId&&reader.GetString(6)==artifact.Environment&&reader.GetString(7)==artifact.StrategyId&&reader.GetString(8)==artifact.StrategyVersion&&
+                  Instant(reader.GetString(9))==artifact.MarketCollectedAtUtc&&reader.GetString(10)==artifact.MarketDataVersion&&Instant(reader.GetString(11))==artifact.CreatedAtUtc&&Instant(reader.GetString(12))==artifact.ExpiresAtUtc;
+        }
+        var parsedStatus=Enum.TryParse<TradingReviewQueueStatus>(reader.GetString(13),out var status)&&Enum.IsDefined(status)?status:TradingReviewQueueStatus.ArtifactInvalid;
+        var lastCode=reader.GetString(17);if(!QueueToken(lastCode,120))lastCode="review.diagnostic-invalid";
+        return new(reader.GetString(0),valid?artifact:null,valid?bytes:null,valid?storedArtifactHash:string.Empty,valid?storedIntentHash:string.Empty,parsedStatus,reader.GetInt32(14),reader.IsDBNull(15)?null:reader.GetString(15),NullableInstant(reader,16),lastCode,Instant(reader.GetString(18)),valid,"review.artifact-"+(valid?"valid":"invalid"));
+    }
+
+    private static async Task AppendTradingReviewEventAsync(SqliteConnection connection,SqliteTransaction transaction,string requestId,TradingReviewQueueStatus? from,TradingReviewQueueStatus to,string eventCode,string actorKind,DateTimeOffset occurredAt,CancellationToken ct,string reason="")
+    {
+        await using var command=connection.CreateCommand();command.Transaction=transaction;command.CommandText="""
+            INSERT INTO trading_review_queue_events(request_id,sequence,occurred_at,from_status,to_status,event_code,actor_kind,reason)
+            SELECT $request,COALESCE(MAX(sequence),0)+1,$at,$from,$to,$code,$actor,$reason
+            FROM trading_review_queue_events WHERE request_id=$request
+            """;AddParameters(command,("$request",requestId),("$at",DbInstant(occurredAt)),("$from",from?.ToString()),("$to",to.ToString()),("$code",eventCode),("$actor",actorKind),("$reason",reason));
+        if(await command.ExecuteNonQueryAsync(ct)!=1)throw new SqliteException("review event append failed",1);
+    }
+
+    private static async Task EnableQueuePragmasAsync(SqliteConnection connection,CancellationToken ct){await using var command=connection.CreateCommand();command.CommandText="PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;";await command.ExecuteNonQueryAsync(ct);}
+    private static void EnsureColumn(SqliteConnection connection,string table,string column,string definition)
+    {
+        using var read=connection.CreateCommand();read.CommandText=$"PRAGMA table_info({table})";using var reader=read.ExecuteReader();while(reader.Read())if(string.Equals(reader.GetString(1),column,StringComparison.OrdinalIgnoreCase))return;reader.Close();using var alter=connection.CreateCommand();alter.CommandText=$"ALTER TABLE {table} ADD COLUMN {column} {definition}";alter.ExecuteNonQuery();
+    }
+    private static void AddParameters(SqliteCommand command,params (string Name,object? Value)[] values){foreach(var value in values)command.Parameters.AddWithValue(value.Name,value.Value??DBNull.Value);}
+    private static bool FixedHashEquals(string left,string right)
+    {
+        if(left.Length!=64||right.Length!=64)return false;
+        try{return CryptographicOperations.FixedTimeEquals(Convert.FromHexString(left),Convert.FromHexString(right));}catch(FormatException){return false;}
+    }
+    private static bool QueueToken(string? value,int maximum)=>!string.IsNullOrWhiteSpace(value)&&value.Length<=maximum&&value.All(character=>char.IsAsciiLetterOrDigit(character)||character is '-' or '_' or '.' or ':' or '#');
+    private static bool QueueIdentity(string? value)=>!string.IsNullOrWhiteSpace(value)&&value.Length<=120&&value.All(character=>!char.IsControl(character));
+    private static bool ValidApprovalRequest(TradingApprovalRequest value)=>!string.IsNullOrWhiteSpace(value.RequestId)&&Enum.IsDefined(value.Mode)&&!string.IsNullOrWhiteSpace(value.CorrelationId)&&!string.IsNullOrWhiteSpace(value.IntentHash)&&!string.IsNullOrWhiteSpace(value.UserId)&&!string.IsNullOrWhiteSpace(value.DeviceId)&&!string.IsNullOrWhiteSpace(value.SessionId)&&value.ExpiresAtUtc>value.IssuedAtUtc;
+    private static bool ValidApprovalReceipt(TradingApprovalReceipt value)=>!string.IsNullOrWhiteSpace(value.ReceiptId)&&!string.IsNullOrWhiteSpace(value.CorrelationId)&&!string.IsNullOrWhiteSpace(value.IntentHash)&&!string.IsNullOrWhiteSpace(value.UserId)&&!string.IsNullOrWhiteSpace(value.DeviceId)&&!string.IsNullOrWhiteSpace(value.SessionId)&&value.ExpiresAtUtc>value.IssuedAtUtc;
+    private static bool ValidApprovalConsumption(TradingApprovalConsumption value)=>!string.IsNullOrWhiteSpace(value.RequestId)&&!string.IsNullOrWhiteSpace(value.ReceiptId)&&!string.IsNullOrWhiteSpace(value.CorrelationId)&&!string.IsNullOrWhiteSpace(value.IntentHash)&&!string.IsNullOrWhiteSpace(value.UserId)&&!string.IsNullOrWhiteSpace(value.DeviceId)&&!string.IsNullOrWhiteSpace(value.SessionId)&&(value.ArtifactHash is null||value.ArtifactHash.Length==64);
+    private static void AddApprovalConsumptionParameters(SqliteCommand command,TradingApprovalConsumption value,DateTimeOffset consumedAtUtc){command.Parameters.AddWithValue("$now",DbInstant(consumedAtUtc));command.Parameters.AddWithValue("$receipt",value.ReceiptId);command.Parameters.AddWithValue("$request",value.RequestId);command.Parameters.AddWithValue("$correlation",value.CorrelationId);command.Parameters.AddWithValue("$hash",value.IntentHash);command.Parameters.AddWithValue("$artifactHash",value.ArtifactHash is null?DBNull.Value:value.ArtifactHash);command.Parameters.AddWithValue("$user",value.UserId);command.Parameters.AddWithValue("$device",value.DeviceId);command.Parameters.AddWithValue("$session",value.SessionId);}
+    private static string DbInstant(DateTimeOffset value)=>value.ToUniversalTime().ToString("O");
+    private static object? DbInstant(DateTimeOffset? value)=>value is null?null:DbInstant(value.Value);
+    private static DateTimeOffset Instant(string value)=>DateTimeOffset.Parse(value,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind);
+    private static DateTimeOffset? NullableInstant(SqliteDataReader reader,int ordinal)=>reader.IsDBNull(ordinal)?null:Instant(reader.GetString(ordinal));
+    private async Task<int> ExecRows(string sql,CancellationToken ct,params (string,object?)[] args){await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText=sql;foreach(var a in args)q.Parameters.AddWithValue(a.Item1,a.Item2??DBNull.Value);return await q.ExecuteNonQueryAsync(ct);}
+    private async Task Exec(string sql,CancellationToken ct,params (string,object?)[] args){_ = await ExecRows(sql,ct,args);}
 }
+
+public sealed record PersistedRuntimeAuditEvent(string Id,DateTime TimeUtc,string Category,string Source,string? CorrelationId,string Status,string Summary);
+public sealed record PersistedEquitySnapshot(DateTime ObservedAtUtc,decimal Equity,decimal AvailableBalance,string Environment,string ProviderId);
+public sealed record PersistedStrategyLifecycleEvent(long Id,string StrategyId,string FromState,string ToState,DateTime OccurredAtUtc,string Reason);
+public sealed record PersistedRuntimeSkillCall(string Id,DateTime OccurredAtUtc,string Skill,string Status,long DurationMs,string? Mode,bool? RemoteLlmUsed,int? Tokens,decimal? CostUsd);
+public sealed record PersistedAgentActivity(string RoleId,string Status,DateTime OccurredAtUtc,string Activity,string Mode);
+public sealed record PersistedTradingApprovalSummary(string RequestId,DateTimeOffset CreatedAtUtc,DateTimeOffset ExpiresAtUtc,DateTimeOffset? RevokedAtUtc,DecisionPlan? Decision,IndependentRiskReview? Risk);
+public sealed record TradingReviewQueueMutationResult(bool Succeeded,string Code);
+public sealed record TradingReviewQueueClaimResult(bool Claimed,string Code,int AttemptCount);
+public sealed record PersistedTradingReviewQueueItem(
+    string RequestId,
+    DurableReviewExecutionArtifactV1? Artifact,
+    byte[]? CanonicalArtifactBytes,
+    string ArtifactHash,
+    string IntentHash,
+    TradingReviewQueueStatus Status,
+    int AttemptCount,
+    string? LeaseOwner,
+    DateTimeOffset? LeaseExpiresAtUtc,
+    string LastCode,
+    DateTimeOffset UpdatedAtUtc,
+    bool ArtifactValid,
+    string DiagnosticCode);
+public sealed record PersistedTradingReviewQueueEvent(string RequestId,int Sequence,DateTimeOffset OccurredAtUtc,TradingReviewQueueStatus? FromStatus,TradingReviewQueueStatus ToStatus,string EventCode,string ActorKind,string Reason);
+public sealed record AutomaticExecutionMutationResult(bool Succeeded,string Code);
+public sealed record AutomaticExecutionClaimResult(bool Claimed,string Code,int AttemptCount);
+public sealed record PersistedAutomaticExecution(
+    string ExecutionId,
+    DurableExecutionArtifactV2? Artifact,
+    byte[]? CanonicalArtifactBytes,
+    string ArtifactHash,
+    string IntentHash,
+    DeterministicRiskReceipt? RiskReceipt,
+    AutomaticExecutionQueueStatus Status,
+    int AttemptCount,
+    string? LeaseOwner,
+    DateTimeOffset? LeaseExpiresAtUtc,
+    string LastCode,
+    DateTimeOffset UpdatedAtUtc,
+    bool ArtifactValid,
+    bool RiskReceiptValid);
+public sealed record PersistedAutomaticExecutionEvent(string ExecutionId,int Sequence,DateTimeOffset OccurredAtUtc,AutomaticExecutionQueueStatus? FromStatus,AutomaticExecutionQueueStatus ToStatus,string EventCode,string ActorKind);
+public sealed record LegacyIntentIsolationMutationResult(bool Succeeded,string Code);
+public sealed record PersistedLegacyIntentIsolation(string ClientOrderId,string SourceStatus,string ProjectionStatus,string ReasonCode,DateTimeOffset IsolatedAtUtc);
+public sealed record PersistedLegacyIntentIsolationEvent(string ClientOrderId,int Sequence,DateTimeOffset OccurredAtUtc,string FromStatus,string ToStatus,string EventCode);
+public sealed record PersistedAgentHandoff(string Id,DateTime OccurredAtUtc,string SourceRoleId,string TargetRoleId,string Result);
+public sealed record AgentOperationsEvidence(IReadOnlyList<PersistedAgentActivity> Activities,IReadOnlyList<PersistedAgentHandoff> Handoffs,DateTime UpdatedAtUtc);
+public sealed record MemoryEvidence(string Tier,DateTime OccurredAtUtc,string? Symbol,string? ProviderId,string? StrategyId,string Result,string Source,string Summary);
+public sealed record MemoryQuery(string? Tier=null,string? Symbol=null,string? ProviderId=null,string? StrategyId=null,string? Result=null,DateTime? SinceUtc=null,int Limit=50);
+public sealed record PersistedMemory(string Id,string Tier,DateTime OccurredAtUtc,DateTime ExpiresAtUtc,string? Symbol,string? ProviderId,string? StrategyId,string Result,string Source,string Summary);
+public sealed record PersistedMemoryRetrieval(long Id,DateTime RetrievedAtUtc,string? Tier,string? Symbol,string? ProviderId,string? StrategyId,string? Result,int ResultCount);
+public sealed record MemoryRuntimeSnapshot(int WorkingCount,int EpisodicCount,int LongTermCount,IReadOnlyList<PersistedMemoryRetrieval> RecentRetrievals);

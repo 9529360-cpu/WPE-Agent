@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using 币安量化机器人.Core.Runtime;
 using 币安量化机器人.Services.Agent;
+using 币安量化机器人.Services;
 
 namespace 币安量化机器人.Infrastructure.Runtime;
 
@@ -101,11 +102,12 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
     public async Task FailCycleAsync(string cycleId, Exception exception, CancellationToken cancellationToken)
     {
         var current = _nodes.GetValueOrDefault(cycleId, WorkflowNode.Observation);
-        var json = JsonSerializer.Serialize(new { exception.Message, Type = exception.GetType().Name });
+        var safeMessage=SensitiveDataRedactor.ForLog(exception.Message);
+        var json = JsonSerializer.Serialize(new { Message=safeMessage, Type = exception.GetType().Name });
         await _database.SaveWorkflowCheckpointAsync(new(RunId, cycleId, current, CheckpointPhase.Failed, json, DateTime.UtcNow), cancellationToken);
-        await _database.CompleteWorkflowRunAsync(RunId, cycleId, "FAILED", exception.ToString(), cancellationToken);
+        await _database.CompleteWorkflowRunAsync(RunId, cycleId, "FAILED", safeMessage, cancellationToken);
         _nodes.TryRemove(cycleId, out _);
-        await PublishAsync("workflow.cycle.failed", new { RunId, CycleId = cycleId, Node = current, exception.Message }, cancellationToken, cycleId);
+        await PublishAsync("workflow.cycle.failed", new { RunId, CycleId = cycleId, Node = current, Message=safeMessage }, cancellationToken, cycleId);
     }
 
     private async Task HeartbeatLoopAsync(CancellationToken cancellationToken)

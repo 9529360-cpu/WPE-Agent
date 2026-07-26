@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wpe.local/schemas/dogfood/defect-bundle.schema.json",
+  "title": "WPE sanitized dogfood defect bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "defectId", "bundleHash", "release", "diagnosticCode",
+    "failureClass", "severity", "routing", "observedAtUtc", "runtimeHealth",
+    "minimalInput", "expected", "observed", "boundedLogs", "evidenceReferences",
+    "screenshotReferences", "permanentRegression"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "wpe.dogfood-defect-bundle/1.0" },
+    "defectId": { "type": "string", "pattern": "^WPE-[A-F0-9]{16}$" },
+    "bundleHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "sourceIdentity", "manifestSha256", "environment"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "sourceIdentity": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,128}$" },
+        "manifestSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "environment": { "const": "Testnet" }
+      }
+    },
+    "diagnosticCode": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+){1,7}$" },
+    "failureClass": { "enum": ["safety", "authority", "runtime-bridge", "startup", "permission", "health", "data", "ui", "other"] },
+    "severity": { "enum": ["P0", "P1", "P2", "P3"] },
+    "routing": { "enum": ["immediate-rollback", "next-batch"] },
+    "observedAtUtc": { "type": "string", "format": "date-time" },
+    "runtimeHealth": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "minimalInput": { "type": "string", "maxLength": 2048 },
+    "expected": { "type": "string", "minLength": 1, "maxLength": 2048 },
+    "observed": { "type": "string", "minLength": 1, "maxLength": 2048 },
+    "boundedLogs": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 512 } },
+    "evidenceReferences": { "$ref": "#/$defs/references" },
+    "screenshotReferences": { "$ref": "#/$defs/references" },
+    "permanentRegression": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "regressionId"],
+      "properties": {
+        "required": { "const": true },
+        "regressionId": { "type": "string", "pattern": "^REG-WPE-[A-F0-9]{16}$" }
+      }
+    }
+  },
+  "$defs": {
+    "references": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$" }
+    }
+  }
+}

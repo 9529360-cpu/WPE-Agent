@@ -11,7 +11,7 @@ namespace 币安量化机器人.Modules.Research;
 
 public partial class BacktestView : UserControl
 {
-    private readonly BinanceApiClient _api = ServiceLocator.Api;
+    private readonly IMarketDataReader _marketData = ServiceLocator.MarketData;
 
     public BacktestView()
     {
@@ -24,7 +24,7 @@ public partial class BacktestView : UserControl
     {
         try
         {
-            var tickers = await _api.GetMiniTickersAsync();
+            var tickers = await _marketData.GetMiniTickersAsync();
             SymbolBox.ItemsSource = tickers.Select(t => t.Symbol).OrderBy(s => s).ToList();
             if (SymbolBox.Items.Count > 0)
                 SymbolBox.SelectedIndex = 0;
@@ -49,7 +49,7 @@ public partial class BacktestView : UserControl
             var fast = int.TryParse(FastPeriodBox.Text, out var f) ? Math.Max(2, f) : 9;
             var slow = int.TryParse(SlowPeriodBox.Text, out var s) ? Math.Max(fast + 1, s) : 26;
 
-            var closes = (await _api.GetKlineClosesAsync(symbol, interval, 600)).Select(Convert.ToDouble).ToArray();
+            var closes = (await _marketData.GetKlineClosesAsync(symbol, interval, 600)).Select(Convert.ToDouble).ToArray();
             if (closes.Length < slow)
                 throw new InvalidOperationException("历史数据不足以运行均线策略");
 

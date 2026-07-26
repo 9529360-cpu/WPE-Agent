@@ -16,6 +16,8 @@ public sealed class AccessTestReport
 
 public static class AccessTestRunner
 {
+    private static string SafeDetail(string? value,int maxLength=240)=>SensitiveDataRedactor.ForLog(value,maxLength);
+
     public static async Task<SmokeRunResult> RunLiveAsync(CancellationToken ct=default)
     {
         var root=Path.Combine(AppContext.BaseDirectory,"Data","access-tests");Directory.CreateDirectory(root);
@@ -82,13 +84,13 @@ public static class AccessTestRunner
             });
             report.Success=report.Cases.All(x=>x.Status=="PASSED");
         }
-        catch(Exception ex){report.Cases.Add(new("接入测试中止","FAILED",0,ex.ToString()));report.Success=false;}
+        catch(Exception ex){report.Cases.Add(new("接入测试中止","FAILED",0,SafeDetail(ex.ToString(),400)));report.Success=false;}
         report.CompletedAtUtc=DateTime.UtcNow;
         await File.WriteAllTextAsync(reportPath,JsonSerializer.Serialize(report,new JsonSerializerOptions{WriteIndented=true}),ct);
         return new(report.Success,reportPath);
     }
 
-    private static async Task Case(AccessTestReport report,string name,Func<string> test){var sw=Stopwatch.StartNew();try{var detail=test();report.Cases.Add(new(name,"PASSED",sw.ElapsedMilliseconds,detail));}catch(Exception ex){report.Cases.Add(new(name,"FAILED",sw.ElapsedMilliseconds,ex.Message));throw;}await Task.CompletedTask;}
-    private static async Task Case(AccessTestReport report,string name,Func<Task<string>> test){var sw=Stopwatch.StartNew();try{report.Cases.Add(new(name,"PASSED",sw.ElapsedMilliseconds,await test()));}catch(Exception ex){report.Cases.Add(new(name,"FAILED",sw.ElapsedMilliseconds,ex.Message));throw;}}
+    private static async Task Case(AccessTestReport report,string name,Func<string> test){var sw=Stopwatch.StartNew();try{var detail=test();report.Cases.Add(new(name,"PASSED",sw.ElapsedMilliseconds,SafeDetail(detail)));}catch(Exception ex){report.Cases.Add(new(name,"FAILED",sw.ElapsedMilliseconds,SafeDetail(ex.Message)));throw;}await Task.CompletedTask;}
+    private static async Task Case(AccessTestReport report,string name,Func<Task<string>> test){var sw=Stopwatch.StartNew();try{report.Cases.Add(new(name,"PASSED",sw.ElapsedMilliseconds,SafeDetail(await test())));}catch(Exception ex){report.Cases.Add(new(name,"FAILED",sw.ElapsedMilliseconds,SafeDetail(ex.Message)));throw;}}
     private static void Require(bool condition,string message){if(!condition)throw new InvalidOperationException(message);}
 }

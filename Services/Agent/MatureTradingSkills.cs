@@ -1,4 +1,7 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人.Services.Agent;
@@ -32,6 +35,55 @@ public sealed class DeterministicPlanSkill
         return source;
     }
     public static bool IsRiskIncreasing(DecisionAction action)=>action is DecisionAction.OpenLong or DecisionAction.OpenShort or DecisionAction.AddLong or DecisionAction.AddShort or DecisionAction.Lock or DecisionAction.ReverseToLong or DecisionAction.ReverseToShort;
+}
+
+public enum ModelOffInputStateV1 { Available, Missing, Stale, Unknown, Conflicting, Unsupported }
+public sealed record ModelOffInputFactV1(string Id, ModelOffInputStateV1 State, string ArtifactHash, DateTimeOffset AsOfUtc);
+public sealed record ModelOffStrategyIntentRequestV1(DecisionAction Action, string Instrument, DateTimeOffset EvaluationTimeUtc, TimeSpan MaximumAge, bool MainnetRequested, IReadOnlyList<ModelOffInputFactV1> Inputs);
+public sealed record ModelOffRiskRuleV1(string RuleId, bool Passed, string ReasonCode);
+public sealed record ModelOffStrategyRiskContractV1(string IntentSha256, string LedgerSha256, bool EligibleForRiskIncrease, IReadOnlyList<ModelOffRiskRuleV1> Rules);
+
+public static class ModelOffStrategyRiskEvaluatorV1
+{
+    public static ModelOffStrategyRiskContractV1 Evaluate(ModelOffStrategyIntentRequestV1 request)
+    {
+        var rules = new List<ModelOffRiskRuleV1>();
+        Add("environment.mainnet-disabled", !request.MainnetRequested, "risk.mainnet-disabled");
+        Add("intent.action-defined", Enum.IsDefined(request.Action), "risk.action-unknown");
+        Add("intent.instrument-required", !string.IsNullOrWhiteSpace(request.Instrument), "risk.instrument-missing");
+        Add("intent.evaluation-time-utc", request.EvaluationTimeUtc != default && request.EvaluationTimeUtc.Offset == TimeSpan.Zero, "risk.time-invalid");
+        Add("intent.maximum-age-positive", request.MaximumAge > TimeSpan.Zero, "risk.maximum-age-invalid");
+        Add("input.present", request.Inputs is { Count: > 0 }, "risk.input-missing");
+
+        foreach (var input in (request.Inputs ?? []).OrderBy(x => x?.Id, StringComparer.Ordinal))
+        {
+            if (input is null) { Add("input.null", false, "risk.input-malformed"); continue; }
+            var id = string.IsNullOrWhiteSpace(input.Id) ? "invalid" : input.Id;
+            Add($"input.{id}.identity", !string.IsNullOrWhiteSpace(input.Id) && IsSha256(input.ArtifactHash), "risk.input-malformed");
+            Add($"input.{id}.state", Enum.IsDefined(input.State) && input.State == ModelOffInputStateV1.Available, $"risk.input-{input.State.ToString().ToLowerInvariant()}");
+            var fresh = input.AsOfUtc != default && input.AsOfUtc.Offset == TimeSpan.Zero && input.AsOfUtc <= request.EvaluationTimeUtc && request.MaximumAge > TimeSpan.Zero && request.EvaluationTimeUtc - input.AsOfUtc <= request.MaximumAge;
+            Add($"input.{id}.freshness", fresh, "risk.input-stale");
+        }
+
+        var ordered = rules.OrderBy(x => x.RuleId, StringComparer.Ordinal).ThenBy(x => x.ReasonCode, StringComparer.Ordinal).ToArray();
+        var intentHash = Hash(JsonSerializer.Serialize(new
+        {
+            action = request.Action.ToString(), instrument = request.Instrument,
+            evaluationTimeUtc = request.EvaluationTimeUtc.ToUniversalTime(), maximumAgeTicks = request.MaximumAge.Ticks,
+            mainnetRequested = request.MainnetRequested,
+            inputs = (request.Inputs ?? []).Where(x => x is not null).OrderBy(x => x.Id, StringComparer.Ordinal).Select(x => new { x.Id, state = x.State.ToString(), x.ArtifactHash, x.AsOfUtc })
+        }));
+        var ledgerHash = Hash(JsonSerializer.Serialize(ordered));
+        var increasing = Enum.IsDefined(request.Action) && DeterministicPlanSkill.IsRiskIncreasing(request.Action);
+        var corePassed = ordered.Where(x => !x.RuleId.StartsWith("input.", StringComparison.Ordinal)).All(x => x.Passed);
+        var eligible = corePassed && (!increasing || ordered.All(x => x.Passed));
+        return new(intentHash, ledgerHash, eligible, ordered);
+
+        void Add(string id, bool passed, string reason) => rules.Add(new(id, passed, passed ? "ok" : reason));
+    }
+
+    private static bool IsSha256(string? value) => value is { Length: 71 } && value.StartsWith("sha256:", StringComparison.Ordinal) && value.AsSpan(7).ContainsAnyExcept("0123456789abcdef") == false;
+    private static string Hash(string value) => "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 }
 
 public sealed record RiskHistorySnapshot(decimal DailyRealizedPnl,int ConsecutiveLosses,int ApiFailures,bool OrderStateUncertain);

@@ -1,0 +1,23 @@
+# Decisions
+
+- WPF remains the authority for secrets and configuration writes.
+- Mainnet remains disabled by default; current autonomous execution is Testnet only.
+- UI environment and freshness must come from runtime truth, never hardcoded labels.
+- Build order is `pnpm build`, then `dotnet build`, tests, publish, and launch verification.
+- Preserve Shadow, Active, Degraded, and Retired strategy lifecycle semantics.
+- WebView host commands use an explicit allowlist. Currently only `open-settings` is accepted.
+- `Modules/Trade/TradeView` and `Services/Execution/ExecutionService` are legacy Binance-direct code and are not mounted by the current MainWindow/Web UI; do not reuse them for new trading flows.
+- Remote Brain token/cost attribution flows from `LlmRequestGovernor` into `runtime_skill_calls`; cache hits and blocked remote attempts record zero billable token/cost in skill audit views.
+- Token-reduction priority order is: `two-level planner prompt slimming` first, `structured short memory` second, and `runtime/UI governance visibility` in parallel as an observation baseline.
+- `structured short memory` must preserve Local Only behavior and fail-closed trading semantics; any compressed history contract that weakens risk, execution, or recovery context is rejected.
+- `two-level planner prompt slimming` is now landed in `BrainPromptComposer`: default market payload stays brief, while only `EntryReady` candidates or the active symbol may receive bounded detailed market context.
+- `structured short memory` will start as a store-side read contract, not a schema migration: add a bounded `StructuredOutcomeMemory[]` projection first, keep the old free-text path temporarily, and only switch `AutoTradingAgent` after the contract proves it preserves mode, risk, execution, and state-change signals.
+- For `structured short memory`, the non-negotiable fields are `CycleStartedUtc`, `Mode`, `Exchange`, `Symbol`, `DecisionAction`, `RiskResult`, `RiskReasonCode`, `ExecutionAttempted`, `ExecutionResult`, and `StateChanged`; missing or unknown values must degrade explicitly rather than being summarized away.
+- The first `structured short memory` validation batch stays narrow: prefer existing `SqlitePersistenceTests`, `LocalMemoryTests`, and `RuntimeSkillCallTests` before any broader suite or new test file.
+- `RecentOutcomesAsync` now adapts `StructuredOutcomeMemory[]` into bounded planner-history text so `AgentContext.PreviousOutcomes` stays stable while token-heavy free-text cycle summaries stop being the default planner input.
+- The planner-history adapter now prefers short field keys (`exec`, `state`, `next`, `note`) and a 200-character cap to reduce prompt overhead without dropping fail-closed mode/risk/execution/recovery signals.
+- The temporary legacy `RecentOutcomesAsync` fallback must stay redacted and bounded too; malformed or pre-contract rows are not allowed to reintroduce long free-text planner history.
+- In `BrainPromptComposer`, slim-mode news now stays headline-level only; `BodySummary` is reserved for detailed-mode prompts so token savings do not weaken market/risk/execution semantics.
+- In `BrainPromptComposer`, slim-mode assessment signals now keep only directional essentials (`Name`, `Horizon`, `WeightedScore`, `Direction`); raw values, weights, and explanations are reserved for detailed-mode prompts.
+- In `BrainPromptComposer`, `Markets` brief is now a bounded priority subset instead of the full market map; active/position/entry-ready/top-assessment symbols are preferred, and detailed-mode briefs avoid duplicating symbols already expanded in `detailedMarketContext` when possible.
+- The runtime/UI governance baseline is now surfaced directly on the monitoring page: aggregate LLM governance metrics stay visible, and recent persisted skill calls expose mode, remote usage, token, cost, and latency without requiring prompt/source inspection.

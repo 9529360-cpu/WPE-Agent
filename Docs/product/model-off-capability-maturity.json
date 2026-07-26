@@ -1,0 +1,45 @@
+{
+  "schema_version": "wpe.model-off-capability-maturity/1.0",
+  "authority": {
+    "id": "MO-01",
+    "status": "current",
+    "as_of": "2026-07-23",
+    "source": "QAA-0024",
+    "target": "private_autonomous_testnet",
+    "human_per_cycle_approval": false,
+    "mainnet": "disabled",
+    "teacher": "frozen_future"
+  },
+  "rules": {
+    "retained_capability_count": 13,
+    "aggregate_count": 7,
+    "aggregation_upgrades_maturity": false,
+    "core_no_or_partial_is_implemented": false,
+    "core_no_or_partial_is_accepted": false,
+    "yes_is_bounded_to_acceptance_scope": true
+  },
+  "aggregates": [
+    { "id": "market", "name": "Market", "maturity": "partial", "accepted": false },
+    { "id": "research", "name": "Research", "maturity": "partial", "accepted": false },
+    { "id": "strategy", "name": "Strategy", "maturity": "partial", "accepted": false },
+    { "id": "risk", "name": "Risk", "maturity": "partial", "accepted": false },
+    { "id": "execution", "name": "Execution", "maturity": "partial", "accepted": false },
+    { "id": "recovery", "name": "Recovery", "maturity": "partial", "accepted": false },
+    { "id": "audit", "name": "Audit", "maturity": "partial", "accepted": false }
+  ],
+  "capabilities": [
+    { "id": "orchestrator", "name": "Orchestrator/control", "core": true, "lifecycle": "current", "aggregate_ids": ["market", "research", "strategy", "risk", "execution", "recovery", "audit"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
+    { "id": "market-data", "name": "Market Data", "core": true, "lifecycle": "current", "aggregate_ids": ["market"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
+    { "id": "news", "name": "News", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
+    { "id": "macro", "name": "Macro", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "no", "implemented": false, "accepted": false, "acceptance_scope": null },
+    { "id": "technical", "name": "Technical", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
+    { "id": "fundamental", "name": "Fundamental", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "no", "implemented": false, "accepted": false, "acceptance_scope": null },
+    { "id": "strategy", "name": "Strategy", "core": true, "lifecycle": "current", "aggregate_ids": ["strategy"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
+    { "id": "backtest", "name": "Backtest", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "yes", "implemented": true, "accepted": true, "acceptance_scope": "basic deterministic backtest component only" },
+    { "id": "risk", "name": "Risk", "core": true, "lifecycle": "current", "aggregate_ids": ["risk"], "maturity": "yes", "implemented": true, "accepted": true, "acceptance_scope": "covered crypto Risk Gate only" },
+    { "id": "execution", "name": "Execution", "core": true, "lifecycle": "current", "aggregate_ids": ["execution"], "maturity": "yes", "implemented": true, "accepted": true, "acceptance_scope": "deterministic execution contract boundary only; no Testnet claim" },
+    { "id": "position", "name": "Position", "core": true, "lifecycle": "current", "aggregate_ids": ["execution", "recovery"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
+    { "id": "review-post-trade", "name": "Review/post-trade", "core": true, "lifecycle": "current", "aggregate_ids": ["audit"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
+    { "id": "teacher", "name": "Teacher", "core": false, "lifecycle": "frozen_future", "aggregate_ids": ["research"], "maturity": "no", "implemented": false, "accepted": false, "acceptance_scope": null }
+  ]
+}

@@ -1,11 +1,12 @@
 using 币安量化机器人.Models;
+using 币安量化机器人.Services.Exchange.Binance;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed class MarketStructureSkill
+internal sealed class MarketStructureSkill
 {
-    private readonly BinanceApiClient _exchange;
-    public MarketStructureSkill(BinanceApiClient exchange) => _exchange = exchange;
+    private readonly IBinancePublicMarketTransport _exchange;
+    internal MarketStructureSkill(IBinancePublicMarketTransport exchange) => _exchange = exchange;
 
     public async Task<MarketSkillSnapshot> ObserveAsync(string symbol, string interval, CancellationToken cancellationToken)
     {

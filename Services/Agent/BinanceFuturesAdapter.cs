@@ -5,11 +5,13 @@ using System.Collections.Concurrent;
 using 币安量化机器人.Models;
 using 币安量化机器人.Services.Exchange;
 using System.Diagnostics;
+using WpeAgent.RuntimeContracts;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvider,IBrokerProvider
+public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvider,IBrokerProvider,IProviderMarketCatalog,IProviderEnvironmentGuard,IRecentOrderProvider
 {
+    internal const long MaximumTradingClockSkewMilliseconds=1000;
     private readonly BinanceApiClient _api;
     private readonly ExchangeConnectionProfile _profile;
     private readonly string _streamApiKey;
@@ -29,10 +31,25 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
     {
         _profile=profile;_streamApiKey=key;Environment=profile.IsTestnet?ExchangeEnvironment.Testnet:ExchangeEnvironment.Mainnet;Symbols=new ConventionSymbolMapper(ProviderId,profile.SymbolMappings);_api=new BinanceApiClient(useTestnet:profile.IsTestnet,endpoint:profile.Endpoint,timeoutSeconds:profile.TimeoutSeconds,useProxy:profile.UseProxy,proxyUrl:profile.ProxyUrl,receiveWindow:profile.ReceiveWindow);_api.SetApiCredentials(key,secret);
     }
+    public ProviderEnvironmentValidation ValidateEnvironment(bool requireTestnet)
+    {
+        if(!requireTestnet||Environment!=ExchangeEnvironment.Testnet)return new(false,false,false,"Binance Mainnet execution is not enabled.");
+        if(!ProviderEndpointPolicy.IsOfficialHttpsOrigin(_profile.Endpoint,"testnet.binancefuture.com"))return new(false,false,false,"Binance Testnet requires the official https://testnet.binancefuture.com endpoint.");
+        return new(true,_profile.ExecutionEnabled,true,_profile.ExecutionEnabled?null:"Execution is disabled for this connection.");
+    }
     public async Task<bool> PingAsync(CancellationToken ct){_ = await GetServerTimeAsync(ct);return true;}
     public async Task<DateTime> GetServerTimeAsync(CancellationToken ct){using var d=JsonDocument.Parse(await _api.GetPublicRawAsync("/fapi/v1/time",null,ct));return DateTimeOffset.FromUnixTimeMilliseconds(d.RootElement.GetProperty("serverTime").GetInt64()).UtcDateTime;}
-    public async Task<ExchangePermissionSnapshot> CheckPermissionsAsync(CancellationToken ct){using var d=JsonDocument.Parse(await _api.GetSignedRawAsync("/fapi/v2/account",null,ct));var root=d.RootElement;var trade=!root.TryGetProperty("canTrade",out var t)||t.GetBoolean();var withdraw=root.TryGetProperty("canWithdraw",out var w)&&w.GetBoolean();var id=root.TryGetProperty("accountAlias",out var a)?a.GetString()??"Binance":"Binance";return new(true,trade,withdraw,id,withdraw?["Withdrawal permission should be disabled."]:Array.Empty<string>());}
-    public async Task<ExchangeHealthSnapshot> HealthCheckAsync(CancellationToken ct){var sw=Stopwatch.StartNew();try{var server=await GetServerTimeAsync(ct);var skew=(long)Math.Abs((DateTime.UtcNow-server).TotalMilliseconds);var permission=await CheckPermissionsAsync(ct);return new(permission.CanRead&&permission.CanTrade,sw.ElapsedMilliseconds,skew,$"{Descriptor.DisplayName} · read={permission.CanRead} trade={permission.CanTrade}",DateTime.UtcNow);}catch(Exception ex){return new(false,sw.ElapsedMilliseconds,0,ex.Message,DateTime.UtcNow);}}
+    public async Task<ExchangePermissionSnapshot> CheckPermissionsAsync(CancellationToken ct){var clock=await _api.SynchronizeClockAsync(ct);if(!clock.Trusted)return new(false,false,false,"Binance",[$"Exchange clock is unavailable ({clock.Code})."]);using var d=JsonDocument.Parse(await _api.GetSignedRawAsync("/fapi/v2/account",null,ct));return ParsePermissionSnapshot(d.RootElement);}
+    internal static ExchangePermissionSnapshot ParsePermissionSnapshot(JsonElement root){var trade=root.TryGetProperty("canTrade",out var t)&&t.ValueKind==JsonValueKind.True;var accountCanWithdraw=root.TryGetProperty("canWithdraw",out var w)&&w.ValueKind==JsonValueKind.True;var id=root.TryGetProperty("accountAlias",out var a)?a.GetString()??"Binance":"Binance";return new(true,trade,false,id,accountCanWithdraw?["Futures account withdrawal status is not API key permission evidence; Testnet withdrawals remain unavailable."]:Array.Empty<string>());}
+    internal static ExchangePermissionSnapshot ApplyClockSkew(ExchangePermissionSnapshot permission,DateTime serverTimeUtc,DateTime observedAtUtc)
+    {
+        var skew=Math.Abs((observedAtUtc.ToUniversalTime()-serverTimeUtc.ToUniversalTime()).TotalMilliseconds);
+        if(skew<=MaximumTradingClockSkewMilliseconds||!permission.CanTrade)return permission;
+        return permission with{CanTrade=false,Warnings=permission.Warnings.Concat(["Server clock skew exceeds 1000 ms; trading is disabled."]).ToArray()};
+    }
+    public Task<BinanceClockMeasurement> GetClockMeasurementAsync(CancellationToken ct)=>_api.SynchronizeClockAsync(ct);
+    public DateTimeOffset ExchangeAdjustedUtcNow=>_api.ExchangeAdjustedUtcNow;
+    public async Task<ExchangeHealthSnapshot> HealthCheckAsync(CancellationToken ct){var sw=Stopwatch.StartNew();try{var clock=await _api.SynchronizeClockAsync(ct);if(!clock.Trusted)return new(false,sw.ElapsedMilliseconds,clock.UncertaintyMilliseconds,$"{Descriptor.DisplayName} · {clock.Code}",DateTime.UtcNow);var permission=await CheckPermissionsAsync(ct);return new(permission.CanRead&&permission.CanTrade,sw.ElapsedMilliseconds,clock.UncertaintyMilliseconds,$"{Descriptor.DisplayName} · read={permission.CanRead} trade={permission.CanTrade}",_api.ExchangeAdjustedUtcNow.UtcDateTime);}catch(Exception ex){return new(false,sw.ElapsedMilliseconds,0,global::币安量化机器人.Services.SensitiveDataRedactor.ForLog(ex.Message,180),DateTime.UtcNow);}}
     public IRealtimeMarketFeed? CreateRealtimeFeed(IEnumerable<string> canonicalSymbols,AgentSqliteStore database)=>Environment==ExchangeEnvironment.Testnet?new RealTimeMarketHub(Environment,canonicalSymbols.Select(Symbols.ToNative),_streamApiKey,database):null;
     public async Task<AccountSnapshot> GetAccountAsync(CancellationToken ct) { var b=(await _api.GetAccountBalancesAsync(ct)).FirstOrDefault(x=>x.Asset=="USDT"); return new(b?.WalletBalance??0,b?.AvailableBalance??0,b?.MarginBalance??0,DateTime.UtcNow); }
     public async Task<MarginSnapshot> GetMarginAsync(CancellationToken ct){var account=await GetAccountAsync(ct);var used=Math.Max(0,account.Equity-account.AvailableBalance);return new(account.WalletBalance,account.AvailableBalance,used,0,account.Equity>0?used/account.Equity:0);}
@@ -47,6 +64,16 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
         foreach(var algo in algos)_algoOrderIds[algo.OrderId]=0;
         return standard.Concat(algos).ToArray();
     }
+    public async Task<IReadOnlyList<ExchangeOrder>> GetRecentOrdersAsync(string symbol,int limit,CancellationToken ct)
+    {
+        var query=new Dictionary<string,string?>
+        {
+            {"symbol",N(symbol)},
+            {"limit",Math.Clamp(limit,1,100).ToString(CultureInfo.InvariantCulture)}
+        };
+        using var document=JsonDocument.Parse(await _api.GetSignedRawAsync("/fapi/v1/allOrders",query,ct));
+        return DeduplicateOrderEvents(document.RootElement.EnumerateArray().Select(MapRaw));
+    }
     public async Task<TradingRule> GetRulesAsync(string symbol,CancellationToken ct)
     {
         var canonical=C(symbol);var native=N(canonical);
@@ -56,6 +83,20 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
         decimal step=0,tick=0,minQty=0,minNotional=5;
         foreach(var f in s.GetProperty("filters").EnumerateArray()) { var t=f.GetProperty("filterType").GetString(); if(t=="LOT_SIZE"){step=D(f,"stepSize");minQty=D(f,"minQty");} else if(t=="PRICE_FILTER")tick=D(f,"tickSize"); else if(t=="MIN_NOTIONAL")minNotional=D(f,"notional"); }
         return _rules[canonical]=new(canonical,step,tick,minQty,minNotional,125);
+    }
+    public async Task<ProviderMarketCatalog> DiscoverMarketCatalogAsync(CancellationToken ct)
+    {
+        var checkedAt = DateTimeOffset.UtcNow;
+        try
+        {
+            using var document = JsonDocument.Parse(await _api.GetPublicRawAsync("/fapi/v1/exchangeInfo", null, ct));
+            var entries = BinanceMarketCatalogParser.Parse(document.RootElement, Descriptor.Id, ProviderId, Symbols.ToCanonical, Descriptor.SupportsTestnet, Environment == ExchangeEnvironment.Testnet, checkedAt);
+            return new ProviderMarketCatalog(ProviderCatalogState.Available, entries, checkedAt);
+        }
+        catch (Exception ex)
+        {
+            return new ProviderMarketCatalog(ProviderCatalogState.Error,Array.Empty<ProviderMarketCatalogEntry>(),checkedAt,global::币安量化机器人.Services.SensitiveDataRedactor.ForLog(ex.Message,180));
+        }
     }
     public async Task<MarketEvidence> GetMarketAsync(string symbol,CancellationToken ct)
     {
@@ -107,7 +148,7 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
         catch { if(createdSl)await CancelOrderAsync(symbol,sl.OrderId,ct); throw; }
         return sl with { IsProtection=true };
     }
-    public async Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct) { var q=new Dictionary<string,string?>{{"symbol",N(symbol)},{"origClientOrderId",clientOrderId}}; try { using var d=JsonDocument.Parse(await _api.GetSignedRawAsync("/fapi/v1/order",q,ct)); return MapRaw(d.RootElement); } catch(HttpRequestException){return null;} }
+    public async Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct) { var q=new Dictionary<string,string?>{{"symbol",N(symbol)},{"origClientOrderId",clientOrderId}}; try { using var d=JsonDocument.Parse(await _api.GetSignedRawAsync("/fapi/v1/order",q,ct)); return MapRaw(d.RootElement); } catch(HttpRequestException ex)when(ex.Message.Contains("-2013",StringComparison.Ordinal)||ex.Message.Contains("Order does not exist",StringComparison.OrdinalIgnoreCase)){return null;} }
     public async Task CancelOrderAsync(string symbol,string id,CancellationToken ct)
     {
         if(_algoOrderIds.TryRemove(id,out _))
@@ -165,12 +206,36 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
     private static decimal D(JsonElement e,string n)=>e.TryGetProperty(n,out var p)&&decimal.TryParse(p.GetString(),NumberStyles.Any,CultureInfo.InvariantCulture,out var v)?v:0;
     private static decimal Decimal(JsonElement e)=>decimal.TryParse(e.GetString(),NumberStyles.Any,CultureInfo.InvariantCulture,out var v)?v:0;
     private static PositionSide ParseSide(PositionSnapshot p)=>p.PositionSide.Equals("SHORT",StringComparison.OrdinalIgnoreCase)||p.PositionAmt<0?PositionSide.Short:PositionSide.Long;
-    private ExchangeOrder Map(OrderResponse o){var type=o.Type.ToUpperInvariant();return new(C(o.Symbol),o.OrderId.ToString(CultureInfo.InvariantCulture),o.ClientOrderId,o.Status,o.ExecutedQuantity,o.AvgPrice,type,ParseSide(o.PositionSide),type is "STOP_MARKET" or "TAKE_PROFIT_MARKET",o.Time);}
-    private ExchangeOrder MapRaw(JsonElement e){var type=S(e,"type").ToUpperInvariant();return new(C(S(e,"symbol")),e.GetProperty("orderId").GetRawText().Trim('"'),S(e,"clientOrderId"),S(e,"status"),D(e,"executedQty"),D(e,"avgPrice"),type,ParseSide(S(e,"positionSide")),type is "STOP_MARKET" or "TAKE_PROFIT_MARKET",DateTime.UtcNow);}
+    private ExchangeOrder Map(OrderResponse o){var type=o.Type.ToUpperInvariant();return new(C(o.Symbol),o.OrderId.ToString(CultureInfo.InvariantCulture),o.ClientOrderId,NormalizeStandardOrderStatus(o.Status),o.ExecutedQuantity,o.AvgPrice,type,ParseSide(o.PositionSide),type is "STOP_MARKET" or "TAKE_PROFIT_MARKET",o.Time);}
+    private ExchangeOrder MapRaw(JsonElement e){var type=S(e,"type").ToUpperInvariant();return new(C(S(e,"symbol")),e.GetProperty("orderId").GetRawText().Trim('"'),S(e,"clientOrderId"),NormalizeStandardOrderStatus(S(e,"status")),D(e,"executedQty"),D(e,"avgPrice"),type,ParseSide(S(e,"positionSide")),type is "STOP_MARKET" or "TAKE_PROFIT_MARKET",DateTime.UtcNow);}
     private ExchangeOrder MapAlgo(JsonElement e){var type=S(e,"orderType").ToUpperInvariant();var updated=e.TryGetProperty("updateTime",out var u)&&u.TryGetInt64(out var ms)?DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime:DateTime.UtcNow;return new(C(S(e,"symbol")),e.GetProperty("algoId").GetRawText().Trim('"'),S(e,"clientAlgoId"),S(e,"algoStatus"),D(e,"actualQty"),D(e,"actualPrice"),type,ParseSide(S(e,"positionSide")),true,updated);}
     private string N(string symbol)=>Symbols.ToNative(symbol);
     private string C(string symbol)=>Symbols.ToCanonical(symbol);
     private static PositionSide? ParseSide(string? value)=>value?.ToUpperInvariant() switch{"LONG"=>PositionSide.Long,"SHORT"=>PositionSide.Short,_=>null};
+    internal static string NormalizeStandardOrderStatus(string? status)=>status?.Trim().ToUpperInvariant() switch
+    {
+        "NEW"=>"NEW",
+        "PARTIALLY_FILLED"=>"PARTIALLY_FILLED",
+        "FILLED"=>"FILLED",
+        "CANCELED"=>"CANCELED",
+        "REJECTED"=>"REJECTED",
+        "EXPIRED" or "EXPIRED_IN_MATCH"=>"EXPIRED",
+        _=>"UNKNOWN"
+    };
+    internal static IReadOnlyList<ExchangeOrder> DeduplicateOrderEvents(IEnumerable<ExchangeOrder> events)=>events
+        .GroupBy(x=>new{x.OrderId,x.ClientOrderId,x.Status,x.ExecutedQuantity,x.AvgPrice,x.UpdatedAt})
+        .Select(x=>x.First()).ToArray();
+    internal static BinanceProviderFailure ClassifyFailure(Exception error,params string?[] knownSecrets)
+    {
+        var state=error is TimeoutException or TaskCanceledException or JsonException?"Unavailable":"UNKNOWN";
+        if(error is BinanceHttpException classified)
+            state=classified.Outcome==BinanceHttpOutcome.Rejected?"Rejected":"Unavailable";
+        if(error is HttpRequestException http&&
+            (http.StatusCode==System.Net.HttpStatusCode.TooManyRequests||http.StatusCode==(System.Net.HttpStatusCode)418))state="Unavailable";
+        return new(state,global::币安量化机器人.Services.SensitiveDataRedactor.ForLog(error.Message,180,knownSecrets));
+    }
     private static string S(JsonElement e,string n)=>e.TryGetProperty(n,out var p)?p.GetString()??"":"";
     private static string ProtectionId(string groupId,string suffix){var max=36-suffix.Length-1;var stem=groupId.Length>max?groupId[..max]:groupId;return $"{stem}-{suffix}";}
 }
+
+internal sealed record BinanceProviderFailure(string State,string SafeMessage);

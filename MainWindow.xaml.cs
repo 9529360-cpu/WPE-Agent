@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using System.Diagnostics;
+using WpeAgent.RuntimeServices;
 using 币安量化机器人.Core.Models;
 using 币安量化机器人.Services;
 using 币安量化机器人.Services.Localization;
@@ -17,6 +18,8 @@ namespace 币安量化机器人;
 
 public partial class MainWindow : Window
 {
+    public string UserName => _user;
+    public Task RefreshAccessForReferenceAsync() => RefreshAccessAsync();
     private static LocalizationService I18n => LocalizationService.Current;
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly ObservableCollection<string> _thoughts = [];
@@ -37,6 +40,9 @@ public partial class MainWindow : Window
     public MainWindow(string user="")
     {
         InitializeComponent();
+        StartStatusPulse(AiDot, TimeSpan.FromSeconds(1.8));
+        StartStatusPulse(RuntimeDot, TimeSpan.FromSeconds(2.4));
+        PreviewKeyDown += MainWindow_PreviewKeyDown;
         InstallPluginNavigationButton();
         InstallThemeButton();
         ApplyTheme(_themeStore.Load());
@@ -51,6 +57,30 @@ public partial class MainWindow : Window
         AddThought(I18n.T("Thought.Initialized"));
         UpdateInterface();
         Loaded+=async(_,_)=>await InitializeAndStartAsync();
+    }
+
+    private static void StartStatusPulse(UIElement element, TimeSpan duration)
+    {
+        var animation = new DoubleAnimation
+        {
+            From = 0.45,
+            To = 1.0,
+            Duration = new Duration(duration),
+            AutoReverse = true,
+            RepeatBehavior = RepeatBehavior.Forever
+        };
+        element.BeginAnimation(OpacityProperty, animation);
+    }
+
+    private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.K && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            ShowPage("LOGS");
+            EventFilterBox.Focus();
+            EventFilterBox.SelectAll();
+            e.Handled = true;
+        }
     }
 
     private void InstallPluginNavigationButton()
@@ -78,6 +108,132 @@ public partial class MainWindow : Window
             _themeStore.Save(next); ApplyTheme(next);
         };
         toolbar.Children.Insert(Math.Max(0, toolbar.Children.Count - 5), _themeButton);
+        var referenceButton = new Button
+        {
+            Style = (Style)FindResource("CommandButton"),
+            Content = "Reference UI",
+            ToolTip = "Open the original desktop UI reference"
+        };
+        referenceButton.Click += (_, _) => new WpeAgent.ReferenceUiWindow(BuildRuntimeJson, OpenSetupWindow).Show();
+        toolbar.Children.Insert(Math.Max(0, toolbar.Children.Count - 5), referenceButton);
+    }
+
+    private void OpenSetupWindow()
+    {
+        var setup = new SetupWindow(_user, true);
+        setup.ShowDialog();
+        _ = RefreshAccessAsync();
+    }
+
+    public string BuildRuntimeJson()
+    {
+        ServiceLocator.RuntimeAudit.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+        ServiceLocator.RuntimeEquity.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+        ServiceLocator.RuntimeStrategyRegistry.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+        ServiceLocator.RuntimeSkillCalls.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+        ServiceLocator.RuntimeMemory.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+        ServiceLocator.RuntimeAgentOperations.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+        ServiceLocator.RuntimeNotifications.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+        ServiceLocator.RuntimeAuthorization.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+        ServiceLocator.RuntimeHistoricalCollections.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+        var snapshot = RuntimeSnapshotFactory.Create(
+            ServiceLocator.SystemState,
+            DateTime.UtcNow,
+            ServiceLocator.RuntimeMarkets.Read(),
+            ServiceLocator.RuntimeTrading.Read(),
+            ServiceLocator.RuntimeEquity.Read(),
+            ServiceLocator.RuntimeConnection.Read(),
+            ServiceLocator.RuntimeStrategyRegistry.Read(),
+            ServiceLocator.RuntimeSkillCalls.Read(),
+            ServiceLocator.RuntimeMemory.Read(),
+            ServiceLocator.RuntimeAgentOperations.Read(),
+            ServiceLocator.RuntimeBacktests.Read(),
+            ServiceLocator.RuntimeAudit.Read(),
+            LlmRequestGovernor.Shared.GetTodaySnapshot(),
+            LlmRequestGovernor.Shared.GetTodayBreakdown(),
+            ServiceLocator.PluginRegistry.List(),
+            ServiceLocator.RuntimeNotifications.Read(),
+            ServiceLocator.RuntimeAuthorization.Read(),
+            ServiceLocator.RuntimeEquityMarkets.Read(),
+            ServiceLocator.RuntimeHistoricalCollections.Read(),
+            ServiceLocator.RuntimeCrossAssetResearch.Read(),
+            ServiceLocator.RuntimeDistribution.Read(),
+            ServiceLocator.PublicMarket.Read(),
+            ServiceLocator.SecurityStorage.Read());
+        return System.Text.Json.JsonSerializer.Serialize(snapshot, new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase) }
+        });
+        /* Legacy fields moved to RuntimeSnapshotFactory so this bridge never exposes SystemState directly.
+        {
+            btcPrice = (double)state.BtcPrice,
+            ethPrice = (double)state.EthPrice,
+            btcTrend = state.BtcTrend,
+            ethTrend = state.EthTrend,
+            marketRegime = state.MarketRegime,
+            aiRuntimeMode = state.BrainMode.ToString(),
+            aiRuntimeEffectiveMode = state.BrainEffectiveMode.ToString(),
+            brainRemoteAllowed = state.BrainRemoteAllowed,
+            brainFallbackReason = state.BrainFallbackReason,
+            activeBrainProvider = state.ActiveBrainProvider,
+            activeBrainModel = state.ActiveBrainModel,
+            brainConfidence = state.BrainConfidence,
+            decisionScore = state.DecisionScore,
+            riskLoad = state.RiskLoad,
+            conflictRate = state.ConflictRate,
+            walletBalance = (double)state.WalletBalance,
+            availableBalance = (double)state.AvailableBalance,
+            positionQuantity = (double)state.PositionQuantity,
+            workflowNode = state.WorkflowNode,
+            status = state.Status.ToString(),
+            environment = state.Mode.ToString(),
+            runtimeFresh = DateTime.UtcNow - state.LastUpdated <= TimeSpan.FromSeconds(15),
+            runtimeAgeSeconds = Math.Max(0, (DateTime.UtcNow - state.LastUpdated).TotalSeconds),
+            thinkingProgress = state.ThinkingProgress,
+            reflectionStatus = state.ReflectionStatus,
+            reviewerStatus = state.ReviewerStatus,
+            riskApprovalStatus = state.RiskApprovalStatus,
+            executionApprovalStatus = state.ExecutionApprovalStatus,
+            dataQualityScore = state.DataQualityScore,
+            liquidityScore = state.LiquidityScore,
+            volatilityPercent = state.VolatilityPercent,
+            researchScore = state.ResearchScore,
+            historicalCoverageDays = state.HistoricalCoverageDays,
+            missingConditions = state.MissingConditions,
+            riskSummary = state.RiskSummary,
+            signalContributions = state.SignalContributions,
+            lastUpdated = state.LastUpdated,
+            lastDecision = state.LastDecision,
+            lastReason = state.LastReason,
+            decisionAuditSummary = state.DecisionAuditSummary,
+            strategyStatus = state.StrategyStatus,
+            strategySummary = state.StrategySummary,
+            strategyCandidates = state.StrategyCandidates,
+            plannedEntry = (double)state.PlannedEntry,
+            plannedStop = (double)state.PlannedStop,
+            plannedTakeProfit = (double)state.PlannedTakeProfit,
+            plannedQuantity = (double)state.PlannedQuantity,
+            riskRewardRatio = state.RiskRewardRatio,
+            exchangeConnected = state.ExchangeConnected,
+            brainConnected = state.BrainConnected,
+            apiTradePermission = state.ApiTradePermission,
+            riskReady = state.RiskReady,
+            loggedInUser = state.LoggedInUser,
+            realtimeStatus = state.RealtimeStatus,
+            runtimeRecoveryStatus = state.RuntimeRecoveryStatus,
+            newsFullTextDocuments = state.NewsFullTextDocuments,
+            newsCorroboratingSources = state.NewsCorroboratingSources,
+            positionsSummary = state.PositionsSummary,
+            ordersSummary = state.OrdersSummary,
+            marketSummary = state.MarketSummary,
+            newsSummary = state.NewsSummary,
+            decisionDiagnostics = state.DecisionDiagnostics,
+            dailyPnl = state.DailyPnl,
+            maxDrawdown = state.MaxDrawdown
+            ,runtimeEventSequence = state.RuntimeEventSequence
+            ,runtimeHeartbeatAtUtc = state.RuntimeHeartbeatAtUtc
+        }); */
     }
 
     private void ApplyTheme(ThemeMode mode)
@@ -118,7 +274,7 @@ public partial class MainWindow : Window
             ApplyAccess(access,settings);
             if(!settings.SetupCompleted||!access.Ready)
             {
-                MessageBox.Show(I18n.T("Access.StartBlocked",access.Summary),I18n.T("Dialog.InitFailed"),MessageBoxButton.OK,MessageBoxImage.Warning);
+                MessageBox.Show(UiDiagnostic.FormatText(access.Summary,"Access readiness check failed.",access.CheckedAtUtc),I18n.T("Dialog.InitFailed"),MessageBoxButton.OK,MessageBoxImage.Warning);
                 var setup=new SetupWindow(_user,true);setup.ShowDialog();UpdateInterface();return;
             }
             AutoTradingAgent.StartDefault();
@@ -127,7 +283,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, I18n.T("Dialog.InitFailed"), MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(UiDiagnostic.Format(ex,"Agent start failed."), I18n.T("Dialog.InitFailed"), MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally { if(!AutoTradingAgent.IsRunning)StartButton.IsEnabled=true; }
     }
@@ -143,12 +299,12 @@ public partial class MainWindow : Window
         if(settings.SetupCompleted&&access.Ready&&!AutoTradingAgent.IsRunning)
         {
             try{AutoTradingAgent.StartDefault();AddThought(I18n.T("Thought.Initializing"));}
-            catch(Exception ex){AddThought(ex.Message);}
+            catch(Exception ex){AddThought(UiDiagnostic.Format(ex,"Automatic start failed."));}
         }
         UpdateInterface();
     }
     private async Task RefreshAccessAsync(){try{var settings=_settingsStore.Load();var report=await _readiness.CheckAsync(settings);ApplyAccess(report,settings);UpdateInterface();}catch{}}
-    private static void ApplyAccess(AccessReadinessReport report,AgentSettings settings){var state=ServiceLocator.SystemState;state.ExchangeConnected=report.Checks.Any(x=>x.Key=="exchange"&&x.Passed);state.BrainConnected=report.Checks.Any(x=>x.Key=="brain"&&x.Passed);state.ApiTradePermission=report.Checks.Any(x=>x.Key=="trade_permission"&&x.Passed);state.RiskReady=report.Checks.Any(x=>x.Key=="risk"&&x.Passed);state.LastAccessCheckAtUtc=report.CheckedAtUtc;state.LoggedInUser=settings.ActiveUser;}
+    private static void ApplyAccess(AccessReadinessReport report,AgentSettings settings){ServiceLocator.RuntimeConnection.Publish(report,settings);var state=ServiceLocator.SystemState;var runtimeMode=RuntimeModePolicy.Resolve(settings);state.ExchangeConnected=report.Checks.Any(x=>x.Key=="exchange"&&x.Passed);state.BrainConnected=report.Checks.Any(x=>x.Key=="brain"&&x.Passed);state.ApiTradePermission=report.Checks.Any(x=>x.Key=="trade_permission"&&x.Passed);state.RiskReady=report.Checks.Any(x=>x.Key=="risk"&&x.Passed);state.BrainMode=runtimeMode.RequestedMode;state.BrainEffectiveMode=runtimeMode.EffectiveMode;state.BrainRemoteAllowed=runtimeMode.AllowRemoteBrain;state.BrainFallbackReason=runtimeMode.FallbackReason;state.ActiveBrainProvider=runtimeMode.ProviderName;state.ActiveBrainModel=runtimeMode.ModelName;state.BrainName=runtimeMode.EffectiveMode==AiRuntimeMode.LocalOnly?"WPE Local Brain":runtimeMode.ProviderName;state.LastAccessCheckAtUtc=report.CheckedAtUtc;state.LoggedInUser=settings.ActiveUser;}
 
     private void PauseAgent_Click(object sender, RoutedEventArgs e)
     {
@@ -184,13 +340,14 @@ public partial class MainWindow : Window
         EmergencyButton.IsEnabled = false;
         try
         {
-            var result = await AutoTradingAgent.EmergencyCloseAllAsync();
+            var confirmation = AutoTradingAgent.CreateEmergencyCloseConfirmation();
+            var result = await AutoTradingAgent.EmergencyCloseAllAsync(confirmation);
             AddThought(I18n.T("Dialog.EmergencyDone", result));
         }
         catch (Exception ex)
         {
-            AddThought(I18n.T("Dialog.EmergencyDegraded", ex.Message));
-            MessageBox.Show(ex.Message, I18n.T("Dialog.EmergencyTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
+            AddThought(UiDiagnostic.Format(ex,"Emergency close degraded."));
+            MessageBox.Show(UiDiagnostic.Format(ex,"Emergency close failed."), I18n.T("Dialog.EmergencyTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -283,8 +440,14 @@ public partial class MainWindow : Window
         MarketStateText.Text = I18n.T("Market.Regime", state.MarketRegime);
         BtcPriceText.Text = state.BtcPrice > 0 ? I18n.Number(state.BtcPrice) : "--";
         EthPriceText.Text = state.EthPrice > 0 ? I18n.Number(state.EthPrice) : "--";
+        BtcTickerText.Text = BtcPriceText.Text;
+        EthTickerText.Text = EthPriceText.Text;
         SetMarket(BtcDirection, BtcMetaText, state.BtcTrend, state.BtcRsi);
         SetMarket(EthDirection, EthMetaText, state.EthTrend, state.EthRsi);
+        BtcTickerText.Foreground = state.BtcTrend > .02 ? _green : state.BtcTrend < -.02 ? _red : _orange;
+        EthTickerText.Foreground = state.EthTrend > .02 ? _green : state.EthTrend < -.02 ? _red : _orange;
+        BtcTickerText.ToolTip = $"BTC / USDT\nRSI: {state.BtcRsi:0.0}\nTrend: {state.BtcTrend:+0.00%;-0.00%;0.00%}\n{I18n.T("Market.Regime", state.MarketRegime)}";
+        EthTickerText.ToolTip = $"ETH / USDT\nRSI: {state.EthRsi:0.0}\nTrend: {state.EthTrend:+0.00%;-0.00%;0.00%}\n{I18n.T("Market.Regime", state.MarketRegime)}";
         AccountSideText.Text = $"{I18n.Number(state.WalletBalance)} USDT";
         EquityText.Text = I18n.Number(state.WalletBalance);
         AvailableText.Text = I18n.Number(state.AvailableBalance);
@@ -427,11 +590,11 @@ public partial class MainWindow : Window
     {
         try
         {
-            var directory = Path.Combine(AppContext.BaseDirectory, "logs");
+            var directory = AppDataPaths.LogsDirectory;
             var file = Directory.Exists(directory) ? Directory.GetFiles(directory, "*.log").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault() : null;
             return file is null ? I18n.T("Log.Empty") : string.Join(Environment.NewLine, File.ReadLines(file).TakeLast(180));
         }
-        catch (Exception ex) { return I18n.T("Log.Unavailable", ex.Message); }
+        catch (Exception ex) { return UiDiagnostic.Format(ex,"Log view unavailable."); }
     }
 
     private async void EventRefresh_Click(object sender, RoutedEventArgs e)

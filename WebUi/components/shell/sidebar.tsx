@@ -1,0 +1,15 @@
+'use client'
+import Link from 'next/link'
+import {usePathname} from 'next/navigation'
+import {Hexagon,PanelLeftClose,PanelLeft} from 'lucide-react'
+import {useState} from 'react'
+import {navGroups} from '@/lib/nav'
+import {cn} from '@/lib/utils'
+import {StatusDot} from '@/components/ui/status-badge'
+import {useWpeRuntime} from '@/components/runtime-bridge'
+import {useI18n} from '@/lib/i18n/context'
+export function Sidebar(){const pathname=usePathname(),runtime=useWpeRuntime(),{t}=useI18n();const[collapsed,setCollapsed]=useState(false),fresh=runtime.runtimeFresh===true;return <aside className={cn('hidden shrink-0 flex-col border-r border-border bg-sidebar md:flex',collapsed?'w-16':'w-60')}>
+ <div className="flex h-14 items-center gap-2.5 border-b border-border px-4"><div className="flex size-8 items-center justify-center rounded-lg bg-info/15 text-info"><Hexagon className="size-4.5"/></div>{!collapsed&&<div className="flex flex-col leading-none"><span className="text-sm font-semibold">WPE Agent</span><span className="mt-0.5 font-mono text-[10px] text-muted-foreground">TRADING OS</span></div>}</div>
+ <nav className="scrollbar-thin flex-1 overflow-y-auto px-2 py-3">{navGroups.map(group=><div key={group.titleKey} className="mb-4">{!collapsed&&<div className="px-2 pb-1.5 font-mono text-[10px] tracking-widest text-muted-foreground uppercase">{t(group.titleKey)}</div>}<ul className="flex flex-col gap-0.5">{group.items.map(item=>{const active=pathname===item.href,Icon=item.icon;return <li key={item.href}><Link href={item.href} title={t(item.labelKey)} className={cn('group flex items-center gap-2.5 rounded-lg px-2 py-2 text-sm',active?'bg-accent text-foreground':'text-muted-foreground hover:bg-accent/60 hover:text-foreground',collapsed&&'justify-center')}><Icon className={cn('size-4.5 shrink-0',active&&'text-info')}/>{!collapsed&&<><span className="min-w-0 flex-1 break-words">{t(item.labelKey)}</span>{item.shortcut&&<kbd className="rounded border border-border px-1.5 font-mono text-[10px] opacity-0 group-hover:opacity-100">{item.shortcut}</kbd>}</>}</Link></li>})}</ul></div>)}</nav>
+ <div className="border-t border-border p-3"><div className={cn('mb-3 flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-2',collapsed&&'justify-center')}><StatusDot token={fresh?'success':'warning'} pulse={fresh}/>{!collapsed&&<div className="flex min-w-0 flex-col leading-tight"><span className="text-xs font-medium">{t(fresh?'shell.runtimeConnected':'shell.runtimeDisconnected')}</span><span className="break-words font-mono text-[10px] text-muted-foreground">{fresh?runtime.environment??t('shell.environmentUnknown'):t('shell.waitingHost')}</span></div>}</div><button type="button" aria-label={t(collapsed?'shell.expand':'shell.collapse')} onClick={()=>setCollapsed(value=>!value)} className="flex w-full items-center justify-center gap-2 rounded-lg px-2 py-2 text-xs text-muted-foreground hover:bg-accent/60">{collapsed?<PanelLeft className="size-4"/>:<><PanelLeftClose className="size-4"/> {t('shell.collapse')}</>}</button></div>
+ </aside>}

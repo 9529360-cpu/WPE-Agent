@@ -67,7 +67,7 @@ public sealed class StrategyResearchScheduler
                 retrying = true;
                 _research.SetSchedulerHealth(false);
                 try { await _database.RecordErrorAsync("STRATEGY_RESEARCH_SCHEDULER", ex, CancellationToken.None); } catch { }
-                try { await PublishHealthAsync("RETRY_WAIT", ex.Message, delay, CancellationToken.None); } catch { }
+                try { await PublishHealthAsync("RETRY_WAIT",SensitiveDataRedactor.ForLog(ex.Message,240),delay,CancellationToken.None); } catch { }
             }
         }
     }

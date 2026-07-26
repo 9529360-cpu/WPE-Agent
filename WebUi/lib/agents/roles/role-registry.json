@@ -1,0 +1,169 @@
+{
+  "version": "0.2.0",
+  "localOnly": true,
+  "privateTestnetPerOrderHumanApproval": false,
+  "roles": [
+    {
+      "id": "orchestrator",
+      "name": "Orchestrator",
+      "mode": "deterministic",
+      "runtime": "local",
+      "optionalLlm": true,
+      "deterministicFallback": "route-by-rules",
+      "allowedActions": ["dispatch", "prioritize", "degrade", "halt"],
+      "forbiddenActions": ["trade", "submitOrder", "bypassRiskGate", "bypassReliableOrderExecutor"],
+      "typedAuthorization": {
+        "machineEvidenceGate": [],
+        "machineRiskAuthorization": [],
+        "machineExecutionEligibility": [],
+        "automaticSafetyAction": ["degrade", "halt"],
+        "humanLifecycleGovernance": [],
+        "humanExternalPublicationReview": []
+      },
+      "inputs": ["agent-events", "runtime-health", "risk-signals"],
+      "outputs": ["dispatch-plan", "global-state", "escalation"],
+      "mustRouteThrough": ["Risk Gate", "ReliableOrderExecutor"]
+    },
+    {
+      "id": "data-quality",
+      "name": "Data Quality",
+      "mode": "deterministic",
+      "runtime": "local",
+      "optionalLlm": false,
+      "deterministicFallback": "schema-and-threshold-checks",
+      "allowedActions": ["validate", "flag", "block", "score"],
+      "forbiddenActions": ["trade", "submitOrder", "bypassRiskGate"],
+      "typedAuthorization": {
+        "machineEvidenceGate": [],
+        "machineRiskAuthorization": [],
+        "machineExecutionEligibility": [],
+        "automaticSafetyAction": ["block"],
+        "humanLifecycleGovernance": [],
+        "humanExternalPublicationReview": []
+      },
+      "inputs": ["news", "market-data", "features"],
+      "outputs": ["quality-report", "gate-decision"]
+    },
+    {
+      "id": "news-ingest",
+      "name": "News Ingest",
+      "mode": "deterministic",
+      "runtime": "local",
+      "optionalLlm": true,
+      "deterministicFallback": "cache-and-parse",
+      "allowedActions": ["fetch", "parse", "dedupe", "summarize"],
+      "forbiddenActions": ["trade", "submitOrder", "bypassRiskGate"],
+      "typedAuthorization": {
+        "machineEvidenceGate": [],
+        "machineRiskAuthorization": [],
+        "machineExecutionEligibility": [],
+        "automaticSafetyAction": [],
+        "humanLifecycleGovernance": [],
+        "humanExternalPublicationReview": []
+      },
+      "inputs": ["sources", "keywords", "time-window"],
+      "outputs": ["news-event", "source-hash"]
+    },
+    {
+      "id": "strategy-research",
+      "name": "Strategy Research",
+      "mode": "deterministic",
+      "runtime": "local",
+      "optionalLlm": true,
+      "deterministicFallback": "template-and-rules",
+      "allowedActions": ["propose", "score", "summarize", "promote"],
+      "forbiddenActions": ["trade", "submitOrder", "bypassRiskGate"],
+      "typedAuthorization": {
+        "machineEvidenceGate": [],
+        "machineRiskAuthorization": [],
+        "machineExecutionEligibility": [],
+        "automaticSafetyAction": [],
+        "humanLifecycleGovernance": ["promote"],
+        "humanExternalPublicationReview": []
+      },
+      "inputs": ["clean-data", "news", "market-features"],
+      "outputs": ["strategy-candidate", "research-note"]
+    },
+    {
+      "id": "backtest",
+      "name": "Backtest",
+      "mode": "deterministic",
+      "runtime": "local",
+      "optionalLlm": false,
+      "deterministicFallback": "replay-and-metrics",
+      "allowedActions": ["run", "score", "publish-report"],
+      "forbiddenActions": ["trade", "submitOrder", "bypassRiskGate"],
+      "typedAuthorization": {
+        "machineEvidenceGate": [],
+        "machineRiskAuthorization": [],
+        "machineExecutionEligibility": [],
+        "automaticSafetyAction": [],
+        "humanLifecycleGovernance": [],
+        "humanExternalPublicationReview": ["publish-report"]
+      },
+      "inputs": ["strategy-candidate", "history", "cost-model"],
+      "outputs": ["backtest-report", "metrics"]
+    },
+    {
+      "id": "risk",
+      "name": "Risk",
+      "mode": "deterministic",
+      "runtime": "local",
+      "optionalLlm": false,
+      "deterministicFallback": "rule-gate",
+      "allowedActions": ["allow", "block", "limit", "halt"],
+      "forbiddenActions": ["trade", "submitOrder", "bypassReliableOrderExecutor"],
+      "typedAuthorization": {
+        "machineEvidenceGate": [],
+        "machineRiskAuthorization": ["allow"],
+        "machineExecutionEligibility": [],
+        "automaticSafetyAction": ["block", "halt"],
+        "humanLifecycleGovernance": [],
+        "humanExternalPublicationReview": []
+      },
+      "inputs": ["strategy", "positions", "orders", "limits"],
+      "outputs": ["risk-decision", "limit-update"]
+    },
+    {
+      "id": "execution",
+      "name": "Execution",
+      "mode": "deterministic",
+      "runtime": "local",
+      "optionalLlm": false,
+      "deterministicFallback": "reliable-order-executor-only",
+      "allowedActions": ["prepare", "submit-via-executor", "cancel", "replace"],
+      "forbiddenActions": ["direct-exchange-submit", "bypassRiskGate"],
+      "typedAuthorization": {
+        "machineEvidenceGate": [],
+        "machineRiskAuthorization": [],
+        "machineExecutionEligibility": ["submit-via-executor"],
+        "automaticSafetyAction": [],
+        "humanLifecycleGovernance": [],
+        "humanExternalPublicationReview": []
+      },
+      "inputs": ["approved-orders", "risk-decision"],
+      "outputs": ["order-intent", "execution-report"],
+      "mustRouteThrough": ["Risk Gate", "ReliableOrderExecutor"]
+    },
+    {
+      "id": "order-recovery",
+      "name": "Order Recovery",
+      "mode": "deterministic",
+      "runtime": "local",
+      "optionalLlm": false,
+      "deterministicFallback": "ledger-reconcile",
+      "allowedActions": ["reconcile", "replay", "repair", "escalate"],
+      "forbiddenActions": ["trade", "submitOrder", "bypassRiskGate"],
+      "typedAuthorization": {
+        "machineEvidenceGate": ["replay"],
+        "machineRiskAuthorization": [],
+        "machineExecutionEligibility": [],
+        "automaticSafetyAction": [],
+        "humanLifecycleGovernance": [],
+        "humanExternalPublicationReview": []
+      },
+      "inputs": ["order-ledger", "exchange-replies", "disconnect-events"],
+      "outputs": ["recovery-plan", "reconciled-state"]
+    }
+  ]
+}

@@ -12,6 +12,33 @@ public sealed record NewsResearchResult(IReadOnlyList<NewsEvidence> Items,IReadO
 
 public sealed partial class NewsResearchService
 {
+    public static WpeAgent.FinancialEvidence.AuthorizedFixtureProjectionV1<NewsEvidence> CollectAuthorizedLocalFixtures(
+        IReadOnlyList<WpeAgent.FinancialEvidence.FinancialEvidenceRecordV1>? fixtures,
+        WpeAgent.FinancialEvidence.FinancialEvidenceRetrievalRequestV1 request)
+    {
+        var corpus = new WpeAgent.FinancialEvidence.AuthorizedLocalCorpusV1().Collect(fixtures, request);
+        if (!corpus.Accepted) return new(false, [], corpus.ReasonCodes);
+        try
+        {
+            var items = corpus.Records.Select(record =>
+            {
+                using var payload = System.Text.Json.JsonDocument.Parse(record.Draft.Payload);
+                var root = payload.RootElement;
+                var title = root.GetProperty("title").GetString();
+                var summary = root.GetProperty("bodySummary").GetString();
+                var reliability = root.GetProperty("reliability").GetString();
+                var assets = root.GetProperty("affectedAssets").EnumerateArray().Select(x => x.GetString()).ToArray();
+                if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(summary) || string.IsNullOrWhiteSpace(reliability) || assets.Any(string.IsNullOrWhiteSpace)) throw new System.Text.Json.JsonException();
+                return new NewsEvidence(record.Draft.SourceProvider, title, record.Draft.SourceUriOrDatasetId, record.ObservedAt.UtcDateTime, record.Draft.RecordedAt.UtcDateTime, reliability, record.ContentHash, assets.Select(x => x!).Order(StringComparer.Ordinal).ToArray(), summary);
+            }).OrderBy(x => x.Title, StringComparer.Ordinal).ToArray();
+            return new(true, items, []);
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or KeyNotFoundException)
+        {
+            return new(false, [], ["evidence.payload-malformed"]);
+        }
+    }
+
     private static readonly (string Source,string Url,string Reliability)[] Feeds=
     [
         ("SEC","https://www.sec.gov/news/pressreleases.rss","official"),("CFTC","https://www.cftc.gov/RSS/RSSENF.xml","official"),("Federal Reserve","https://www.federalreserve.gov/feeds/press_all.xml","official"),("ECB","https://www.ecb.europa.eu/rss/press.html","official"),

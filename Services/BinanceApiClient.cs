@@ -13,7 +13,23 @@ using 币安量化机器人.Models;
 
 namespace 币安量化机器人.Services;
 
-public class BinanceApiClient : IDisposable
+public sealed record BinanceClockMeasurement(
+    bool Trusted,string Code,DateTimeOffset MeasuredAtUtc,long OffsetMilliseconds,
+    long RawOsSkewMilliseconds,long MaximumRoundTripMilliseconds,long UncertaintyMilliseconds,int SampleCount);
+public enum BinanceHttpOutcome { Rejected,Uncertain }
+public sealed class BinanceHttpException:HttpRequestException
+{
+    public BinanceHttpException(BinanceHttpOutcome outcome,HttpStatusCode? statusCode,int? exchangeCode,int? retryAfterSeconds,Exception? inner=null)
+        :base(BuildMessage(outcome,statusCode,exchangeCode,retryAfterSeconds),null,statusCode)
+    {Outcome=outcome;ExchangeCode=exchangeCode;RetryAfterSeconds=retryAfterSeconds;}
+    public BinanceHttpOutcome Outcome{get;}
+    public int? ExchangeCode{get;}
+    public int? RetryAfterSeconds{get;}
+    private static string BuildMessage(BinanceHttpOutcome outcome,HttpStatusCode? status,int? code,int? retryAfter)=>
+        $"Binance request outcome={outcome}; status={(status is null?"none":((int)status).ToString(CultureInfo.InvariantCulture))}; code={(code?.ToString(CultureInfo.InvariantCulture)??"none")}; retryAfterSeconds={(retryAfter?.ToString(CultureInfo.InvariantCulture)??"none")}.";
+}
+
+internal sealed class BinanceApiClient : Services.Exchange.Binance.IBinancePublicMarketTransport, IDisposable
 {
     private const string MainnetEndpoint = "https://fapi.binance.com";
     private const string TestnetEndpoint = "https://testnet.binancefuture.com";
@@ -32,15 +48,24 @@ public class BinanceApiClient : IDisposable
     private string? _apiKey;
     private byte[]? _secretBytes;
     private readonly int _receiveWindow;
+    private readonly Func<DateTimeOffset> _utcNow;
+    private readonly bool _officialTestnetEndpoint;
+    private readonly SemaphoreSlim _clockGate=new(1,1);
+    private BinanceClockMeasurement _clock=new(false,"clock.not-measured",DateTimeOffset.MinValue,0,long.MaxValue,long.MaxValue,long.MaxValue,0);
+    internal const int RequiredClockSamples=3;
+    internal const long MaximumClockRoundTripMilliseconds=1500;
+    internal const long MaximumClockUncertaintyMilliseconds=750;
+    internal static readonly TimeSpan ClockMeasurementLifetime=TimeSpan.FromMinutes(5);
 
-    public BinanceApiClient(HttpClient? httpClient = null, bool useTestnet = true, string? endpoint = null, int timeoutSeconds = 20, bool useProxy = false, string? proxyUrl = null, int receiveWindow = 5000)
+    internal BinanceApiClient(HttpClient? httpClient = null, bool useTestnet = true, string? endpoint = null, int timeoutSeconds = 20, bool useProxy = false, string? proxyUrl = null, int receiveWindow = 5000, Func<DateTimeOffset>? utcNow = null)
     {
-        endpoint=string.IsNullOrWhiteSpace(endpoint)?useTestnet?TestnetEndpoint:MainnetEndpoint:endpoint.TrimEnd('/');var handler=new HttpClientHandler();if(useProxy&&Uri.TryCreate(proxyUrl,UriKind.Absolute,out var proxy)){handler.Proxy=new WebProxy(proxy);handler.UseProxy=true;}_httpClient=httpClient??new HttpClient(handler){BaseAddress=new Uri(endpoint),Timeout=TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds,5,120))};_receiveWindow=Math.Clamp(receiveWindow,1000,60000);
+        endpoint=string.IsNullOrWhiteSpace(endpoint)?useTestnet?TestnetEndpoint:MainnetEndpoint:endpoint.TrimEnd('/');var handler=new HttpClientHandler();if(useProxy&&Uri.TryCreate(proxyUrl,UriKind.Absolute,out var proxy)){handler.Proxy=new WebProxy(proxy);handler.UseProxy=true;}_httpClient=httpClient??new HttpClient(handler){BaseAddress=new Uri(endpoint),Timeout=TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds,5,120))};_receiveWindow=Math.Clamp(receiveWindow,1000,60000);_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);_officialTestnetEndpoint=useTestnet&&IsOfficialTestnetOrigin(_httpClient.BaseAddress);
     }
 
     public void SetApiCredentials(string apiKey, string secretKey)
     {
         _apiKey = apiKey;
+        if (_secretBytes is not null) CryptographicOperations.ZeroMemory(_secretBytes);
         _secretBytes = Encoding.UTF8.GetBytes(secretKey);
     }
 
@@ -176,6 +201,59 @@ public class BinanceApiClient : IDisposable
             .ToArray();
     }
 
+    public BinanceClockMeasurement ClockMeasurement=>_clock;
+    public DateTimeOffset ExchangeAdjustedUtcNow
+    {
+        get
+        {
+            var clock=_clock;
+            if(!IsFreshTrusted(clock,_utcNow()))throw new InvalidOperationException("Binance Testnet clock measurement is not trusted.");
+            return _utcNow().AddMilliseconds(clock.OffsetMilliseconds);
+        }
+    }
+    public async Task<BinanceClockMeasurement> SynchronizeClockAsync(CancellationToken cancellationToken=default)
+    {
+        if(!_officialTestnetEndpoint)return _clock=new(false,"clock.endpoint-untrusted",_utcNow(),0,long.MaxValue,long.MaxValue,long.MaxValue,0);
+        await _clockGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var now=_utcNow();
+            if(IsFreshTrusted(_clock,now))return _clock;
+            var samples=new List<(long Offset,long RoundTrip)>();
+            try
+            {
+                for(var i=0;i<RequiredClockSamples;i++)
+                {
+                    var before=_utcNow();
+                    var raw=await SendPublicAsync<string>(HttpMethod.Get,"/fapi/v1/time",null,cancellationToken).ConfigureAwait(false);
+                    var after=_utcNow();
+                    if(after<before)throw new InvalidOperationException("Local clock moved backwards during Binance clock measurement.");
+                    using var document=JsonDocument.Parse(raw);
+                    if(!document.RootElement.TryGetProperty("serverTime",out var value)||!value.TryGetInt64(out var serverMilliseconds))
+                        throw new JsonException("Binance server time payload is invalid.");
+                    var beforeMilliseconds=before.ToUnixTimeMilliseconds();
+                    var afterMilliseconds=after.ToUnixTimeMilliseconds();
+                    var roundTrip=afterMilliseconds-beforeMilliseconds;
+                    var midpoint=beforeMilliseconds+roundTrip/2;
+                    samples.Add((serverMilliseconds-midpoint,roundTrip));
+                }
+            }
+            catch(OperationCanceledException){throw;}
+            catch
+            {
+                return _clock=new(false,"clock.measurement-failed",_utcNow(),0,long.MaxValue,long.MaxValue,long.MaxValue,samples.Count);
+            }
+            var offsets=samples.Select(x=>x.Offset).Order().ToArray();
+            var medianOffset=offsets[offsets.Length/2];
+            var maximumRoundTrip=samples.Max(x=>x.RoundTrip);
+            var dispersion=samples.Max(x=>Math.Abs(x.Offset-medianOffset));
+            var uncertainty=(long)Math.Ceiling(maximumRoundTrip/2d)+dispersion;
+            var trusted=samples.Count==RequiredClockSamples&&maximumRoundTrip<=MaximumClockRoundTripMilliseconds&&uncertainty<=MaximumClockUncertaintyMilliseconds;
+            return _clock=new(trusted,trusted?"clock.ready":"clock.uncertain",_utcNow(),medianOffset,Math.Abs(medianOffset),maximumRoundTrip,uncertainty,samples.Count);
+        }
+        finally{_clockGate.Release();}
+    }
+
     public Task<string> GetPublicRawAsync(string path, IDictionary<string,string?>? query, CancellationToken cancellationToken = default)
         => SendPublicAsync<string>(HttpMethod.Get, path, query, cancellationToken);
 
@@ -188,7 +266,7 @@ public class BinanceApiClient : IDisposable
     public Task<string> DeleteSignedRawAsync(string path, IDictionary<string,string?>? query, CancellationToken cancellationToken = default)
         => SendSignedAsync<string>(HttpMethod.Delete, path, query, cancellationToken);
 
-    private Dictionary<string, string?> BuildOrderPayload(OrderRequest request)
+    internal static Dictionary<string, string?> BuildOrderPayload(OrderRequest request)
     {
         var payload = new Dictionary<string, string?>
         {
@@ -233,25 +311,27 @@ public class BinanceApiClient : IDisposable
     }
 
     private async Task<T> SendPublicAsync<T>(HttpMethod method, string path, IDictionary<string, string?>? query, CancellationToken cancellationToken)
-        => await SendAsyncInternal<T>(() => new HttpRequestMessage(method, BuildUri(path, query)), cancellationToken).ConfigureAwait(false);
+        => await SendAsyncInternal<T>(() => new HttpRequestMessage(method, BuildUri(path, query)), method==HttpMethod.Get, cancellationToken).ConfigureAwait(false);
 
     private async Task<T> SendSignedAsync<T>(HttpMethod method, string path, IDictionary<string, string?>? query, CancellationToken cancellationToken)
     {
         EnsureSigned();
+        var clock=await SynchronizeClockAsync(cancellationToken).ConfigureAwait(false);
+        if(!IsFreshTrusted(clock,_utcNow()))throw new InvalidOperationException($"Binance Testnet clock is unavailable ({clock.Code}).");
         return await SendAsyncInternal<T>(() =>
         {
             var payload = CloneQuery(query);
-            payload["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+            payload["timestamp"] = _utcNow().AddMilliseconds(clock.OffsetMilliseconds).ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
             payload["recvWindow"] = _receiveWindow.ToString(CultureInfo.InvariantCulture);
             var queryString = BuildQueryString(payload);
-            payload["signature"] = ComputeSignature(queryString);
-            var request = new HttpRequestMessage(method, BuildUri(path, payload));
+            var signature = ComputeSignature(queryString);
+            var request = new HttpRequestMessage(method,new Uri($"{path}?{queryString}&signature={signature}",UriKind.Relative));
             request.Headers.Add("X-MBX-APIKEY", _apiKey);
             return request;
-        }, cancellationToken).ConfigureAwait(false);
+        }, method==HttpMethod.Get, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<T> SendAsyncInternal<T>(Func<HttpRequestMessage> requestFactory, CancellationToken cancellationToken)
+    private async Task<T> SendAsyncInternal<T>(Func<HttpRequestMessage> requestFactory,bool allowRetry,CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt <= RetryDelays.Length; attempt++)
         {
@@ -259,9 +339,9 @@ public class BinanceApiClient : IDisposable
             try
             {
                 using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-                if (!ShouldRetry(response.StatusCode, attempt, out var delay))
+                if (!allowRetry||!ShouldRetry(response.StatusCode, attempt, out var delay))
                 {
-                    response.EnsureSuccessStatusCode();
+                    if(!response.IsSuccessStatusCode)throw await CreateResponseExceptionAsync(response,cancellationToken).ConfigureAwait(false);
                     if (typeof(T) == typeof(string))
                     {
                         var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -277,13 +357,22 @@ public class BinanceApiClient : IDisposable
 
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
-            catch (HttpRequestException) when (TryGetRetryDelay(attempt, out var delay) && !cancellationToken.IsCancellationRequested)
+            catch(BinanceHttpException){throw;}
+            catch (HttpRequestException) when (allowRetry&&TryGetRetryDelay(attempt, out var delay) && !cancellationToken.IsCancellationRequested)
             {
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
-            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested && TryGetRetryDelay(attempt, out var delay))
+            catch (TaskCanceledException) when (allowRetry&&!cancellationToken.IsCancellationRequested && TryGetRetryDelay(attempt, out var delay))
             {
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
+            catch (HttpRequestException ex)
+            {
+                throw new BinanceHttpException(BinanceHttpOutcome.Uncertain,ex.StatusCode,null,null,ex);
+            }
+            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new BinanceHttpException(BinanceHttpOutcome.Uncertain,null,null,null);
             }
         }
 
@@ -295,12 +384,7 @@ public class BinanceApiClient : IDisposable
         if (!TryGetRetryDelay(attempt, out delay))
             return false;
 
-        if (statusCode == (HttpStatusCode)429 ||
-            statusCode == HttpStatusCode.RequestTimeout ||
-            statusCode == HttpStatusCode.InternalServerError ||
-            statusCode == HttpStatusCode.BadGateway ||
-            statusCode == HttpStatusCode.ServiceUnavailable ||
-            statusCode == HttpStatusCode.GatewayTimeout)
+        if (IsRetryableStatus(statusCode))
         {
             return true;
         }
@@ -308,6 +392,40 @@ public class BinanceApiClient : IDisposable
         delay = default;
         return false;
     }
+
+    private static async Task<BinanceHttpException> CreateResponseExceptionAsync(HttpResponseMessage response,CancellationToken ct)
+    {
+        int? exchangeCode=null;
+        try
+        {
+            var body=await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            using var document=JsonDocument.Parse(body);
+            if(document.RootElement.TryGetProperty("code",out var code)&&code.TryGetInt32(out var parsed))exchangeCode=parsed;
+        }
+        catch(Exception ex) when(ex is JsonException or InvalidOperationException){}
+        var retryAfter=response.Headers.RetryAfter?.Delta is { } delta?(int?)Math.Clamp((long)Math.Ceiling(delta.TotalSeconds),0,86400):null;
+        var status=(int)response.StatusCode;
+        var outcome=status is >=400 and <500&&response.StatusCode is not HttpStatusCode.RequestTimeout&&(int)response.StatusCode is not 418 and not 429
+            ?BinanceHttpOutcome.Rejected
+            :BinanceHttpOutcome.Uncertain;
+        return new(outcome,response.StatusCode,exchangeCode,retryAfter);
+    }
+
+    internal static bool IsFreshTrusted(BinanceClockMeasurement clock,DateTimeOffset now)=>
+        clock.Trusted&&clock.SampleCount==RequiredClockSamples&&clock.MaximumRoundTripMilliseconds<=MaximumClockRoundTripMilliseconds&&
+        clock.UncertaintyMilliseconds<=MaximumClockUncertaintyMilliseconds&&now>=clock.MeasuredAtUtc&&now-clock.MeasuredAtUtc<=ClockMeasurementLifetime;
+    private static bool IsOfficialTestnetOrigin(Uri? endpoint)=>endpoint is not null&&endpoint.Scheme==Uri.UriSchemeHttps&&
+        endpoint.Host.Equals("testnet.binancefuture.com",StringComparison.OrdinalIgnoreCase)&&endpoint.IsDefaultPort&&
+        endpoint.AbsolutePath.TrimEnd('/').Length==0&&string.IsNullOrEmpty(endpoint.Query)&&string.IsNullOrEmpty(endpoint.Fragment)&&string.IsNullOrEmpty(endpoint.UserInfo);
+
+    internal static bool IsRetryableStatus(HttpStatusCode statusCode) =>
+        statusCode == (HttpStatusCode)418 ||
+        statusCode == (HttpStatusCode)429 ||
+        statusCode == HttpStatusCode.RequestTimeout ||
+        statusCode == HttpStatusCode.InternalServerError ||
+        statusCode == HttpStatusCode.BadGateway ||
+        statusCode == HttpStatusCode.ServiceUnavailable ||
+        statusCode == HttpStatusCode.GatewayTimeout;
 
     private static bool TryGetRetryDelay(int attempt, out TimeSpan delay)
     {
@@ -348,10 +466,16 @@ public class BinanceApiClient : IDisposable
         return new Uri($"{path}?{queryString}", UriKind.Relative);
     }
 
-    private static string BuildQueryString(IDictionary<string, string?> query)
+    internal static string BuildQueryString(IEnumerable<KeyValuePair<string, string?>> query)
     {
-        return string.Join('&', query
+        var parameters=query.ToArray();
+        if(parameters.GroupBy(x=>x.Key,StringComparer.Ordinal).Any(x=>x.Count()>1))
+            throw new ArgumentException("Duplicate Binance query parameters are not allowed.",nameof(query));
+        if(parameters.Any(x=>string.IsNullOrWhiteSpace(x.Key)))
+            throw new ArgumentException("Binance query parameter names cannot be empty.",nameof(query));
+        return string.Join('&', parameters
             .Where(kvp => kvp.Value is not null)
+            .OrderBy(kvp=>kvp.Key,StringComparer.Ordinal)
             .Select(kvp => $"{kvp.Key}={Uri.EscapeDataString(kvp.Value!)}"));
     }
 

@@ -1,5 +1,5 @@
 using System.Text;
-using 币安量化机器人.Services.Exchange;
+using WpeAgent.Plugins;
 
 namespace 币安量化机器人.Services.Agent;
 
@@ -7,28 +7,22 @@ public static class PluginCenterSnapshot
 {
     public static string Build(AgentSettings settings)
     {
-        var catalog = new ExchangeProviderCatalog();
+        ArgumentNullException.ThrowIfNull(settings);
+        var snapshot = LocalPluginRegistry.CreateDefault().List();
         var text = new StringBuilder();
-        text.AppendLine("LLM / ASSISTANT ADAPTERS");
-        foreach (var adapter in AssistantAdapterCatalog.All)
-            text.AppendLine($"{(adapter.Local ? "LOCAL" : "REMOTE")}  {adapter.DisplayName} [{adapter.Id}]  protocol={adapter.Protocol}");
-        text.AppendLine("CONFIGURED INSTANCES");
-        var local = settings.Brains.Values.Any(x => x.IsLocal || x.Provider.Equals("WPE Local Brain", StringComparison.OrdinalIgnoreCase));
-        text.AppendLine($"● WPE Local Brain   {(local ? "READY" : "AVAILABLE")}");
-        foreach (var brain in settings.Brains.Values.Where(x => !x.IsLocal && !x.Provider.Equals("WPE Local Brain", StringComparison.OrdinalIgnoreCase)))
-            text.AppendLine($"○ {brain.Provider} / {brain.Model}   {(string.IsNullOrWhiteSpace(brain.EncryptedKey) ? "NOT CONFIGURED" : "CONFIGURED")}");
+        text.AppendLine("WPE PLUGIN PHASE 0 - READ ONLY");
+        text.AppendLine($"State: {snapshot.State}");
+        if (!string.IsNullOrWhiteSpace(snapshot.Message)) text.AppendLine(snapshot.Message);
         text.AppendLine();
-        text.AppendLine("EXCHANGE ADAPTERS");
-        foreach (var provider in catalog.All.OrderBy(x => x.Id))
-            text.AppendLine($"{(catalog.IsInstalled(provider.Id) ? "●" : "○")} {provider.DisplayName} [{provider.Id}]   {provider.AssetClass}");
+        foreach (var plugin in snapshot.Items)
+        {
+            text.AppendLine($"{(plugin.Enabled ? "ENABLED" : "DISABLED")}  {plugin.Manifest.Name} [{plugin.Manifest.Id}]");
+            text.AppendLine($"  type={plugin.Manifest.Type} version={plugin.Manifest.Version} compatibility={plugin.CompatibilityStatus}");
+            text.AppendLine($"  permissions={string.Join(",", plugin.Manifest.Permissions)} risk={plugin.RiskLevel} testnetOnly={plugin.Manifest.Lifecycle.TestnetOnly}");
+        }
         text.AppendLine();
-        text.AppendLine($"CORE SKILLS   {AgentSkillRegistry.Skills.Count} registered");
-        foreach (var skill in AgentSkillRegistry.Skills.OrderBy(x => x.Name))
-            text.AppendLine($"● {skill.Name}  timeout={skill.TimeoutSeconds}s retries={skill.Retries}");
-        text.AppendLine();
-        text.AppendLine("CONTROL POLICY");
-        text.AppendLine("Workflow / State / Scheduler / Risk remain authoritative.");
-        text.AppendLine("Assistant adapters have no order or risk permissions.");
+        text.AppendLine("Manifests are catalogued only. WPE does not load plugin code or install remote packages in Phase 0.");
+        text.AppendLine("Exchange adapters are Testnet-only, disabled by default, and cannot bypass the execution safety chain.");
         return text.ToString();
     }
 }

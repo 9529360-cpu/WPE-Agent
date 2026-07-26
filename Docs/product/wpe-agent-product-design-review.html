@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WPE Agent 产品设计审计与原型</title>
+  <style>
+    :root{
+      --bg:#07090d; --panel:#0d1118; --panel2:#111827; --line:#223044; --text:#e5eefc; --muted:#8ea0ba;
+      --cyan:#4dd6ff; --green:#6ef3b5; --amber:#f0c66e; --red:#ff7a7a; --blue:#6ba8ff;
+      --shadow:0 18px 60px rgba(0,0,0,.45);
+      --radius:20px;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:
+      radial-gradient(1200px 700px at 20% 0%, rgba(77,214,255,.12), transparent 55%),
+      radial-gradient(900px 600px at 100% 10%, rgba(110,243,181,.08), transparent 40%),
+      linear-gradient(180deg,#05070b 0%, #07090d 100%);color:var(--text)}
+    a{color:inherit}
+    .wrap{max-width:1400px;margin:0 auto;padding:28px}
+    .hero{display:grid;grid-template-columns:1.35fr .65fr;gap:18px;margin-bottom:18px}
+    .card{background:linear-gradient(180deg,rgba(17,24,39,.92),rgba(10,14,22,.92));border:1px solid rgba(150,180,220,.12);border-radius:var(--radius);box-shadow:var(--shadow)}
+    .hero .card{padding:24px}
+    h1,h2,h3,p{margin:0}
+    h1{font-size:36px;line-height:1.05;letter-spacing:-.03em}
+    .sub{margin-top:10px;color:var(--muted);max-width:72ch}
+    .pillrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+    .pill{padding:7px 10px;border:1px solid rgba(150,180,220,.15);border-radius:999px;background:rgba(255,255,255,.03);font-size:12px;color:#cfe0f7}
+    .statgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+    .stat{padding:16px;border:1px solid rgba(150,180,220,.12);border-radius:16px;background:rgba(255,255,255,.02)}
+    .stat b{display:block;font-size:18px;margin-top:6px}
+    .section{margin-top:18px;padding:22px}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+    .grid6{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+    .kpi{padding:14px;border-radius:16px;border:1px solid rgba(150,180,220,.12);background:rgba(255,255,255,.02)}
+    .kpi span{display:block;color:var(--muted);font-size:12px}
+    .kpi b{display:block;margin-top:6px;font-size:20px}
+    .title{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+    .title h2{font-size:20px}
+    .title small{color:var(--muted)}
+    ul{margin:10px 0 0 18px;color:#d8e4f7}
+    li{margin:8px 0}
+    .route{padding:18px;border-radius:18px;border:1px solid rgba(150,180,220,.12);background:rgba(255,255,255,.02)}
+    .route h3{font-size:16px;margin-bottom:8px}
+    .muted{color:var(--muted)}
+    .flow{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+    .step{padding:14px;border:1px solid rgba(150,180,220,.12);border-radius:16px;background:rgba(255,255,255,.02)}
+    .step .n{width:26px;height:26px;border-radius:999px;background:rgba(77,214,255,.12);display:grid;place-items:center;color:var(--cyan);font-size:12px;margin-bottom:10px}
+    .spec{width:100%;border-collapse:collapse;font-size:13px}
+    .spec td,.spec th{border-bottom:1px solid rgba(150,180,220,.12);padding:10px 8px;vertical-align:top;text-align:left}
+    .spec th{color:#cfe0f7}
+    .badge{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;font-size:12px;border:1px solid rgba(150,180,220,.14);background:rgba(255,255,255,.03)}
+    .b-cyan{color:var(--cyan)} .b-green{color:var(--green)} .b-amber{color:var(--amber)} .b-red{color:var(--red)} .b-blue{color:var(--blue)}
+    .mock{padding:16px;border-radius:18px;border:1px solid rgba(150,180,220,.12);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01))}
+    .mocktop{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    .nav{display:flex;gap:8px;flex-wrap:wrap}
+    .nav .pill{background:rgba(77,214,255,.06)}
+    .bars{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
+    .bar{height:12px;border-radius:999px;background:linear-gradient(90deg, rgba(77,214,255,.2), rgba(110,243,181,.6))}
+    .note{padding:14px 16px;border-left:3px solid var(--cyan);background:rgba(77,214,255,.06);border-radius:14px;color:#d8e6fb}
+    .footer{margin:20px 0 6px;color:var(--muted);font-size:12px}
+    @media (max-width: 1100px){.hero,.grid2,.grid3,.grid6,.flow{grid-template-columns:1fr 1fr}.hero{grid-template-columns:1fr}.wrap{padding:18px}}
+    @media (max-width: 720px){.grid2,.grid3,.grid6,.flow{grid-template-columns:1fr}.h1{font-size:30px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <div class="card">
+        <div class="badge b-cyan">WPE Agent · 产品设计审计</div>
+        <h1 style="margin-top:14px">多交易所 / 多品种商业化交易指挥中心</h1>
+        <p class="sub">当前 WebUi 的基底已经很专业，但业务层仍停在“运行时未接入”式空态。建议把产品从“单一仪表盘”升级为“可配置工作区 + 交易所/品种目录 + Agent 策略编排 + 风险确认”的商业化操作台。</p>
+        <div class="pillrow">
+          <span class="pill">全局交易所 / 市场选择器</span><span class="pill">品种目录</span><span class="pill">工作区</span><span class="pill">策略配置</span><span class="pill">风险确认</span><span class="pill">首次上手</span>
+        </div>
+      </div>
+      <div class="card" style="padding:18px">
+        <div class="statgrid">
+          <div class="stat"><span class="muted">当前形态</span><b>单页控制台</b></div>
+          <div class="stat"><span class="muted">目标形态</span><b>交易 OS</b></div>
+          <div class="stat"><span class="muted">主风险</span><b>信息密度高，流程断裂</b></div>
+          <div class="stat"><span class="muted">优先改造</span><b>选择器 / 空态 / 确认流</b></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="title"><h2>信息架构</h2><small>建议从页面导航升级为任务导航</small></div>
+      <div class="grid3">
+        <div class="route"><h3>全局层</h3><ul><li>交易所切换</li><li>市场 / 品种切换</li><li>账户 / 环境状态</li><li>全局搜索与命令面板</li></ul></div>
+        <div class="route"><h3>工作层</h3><ul><li>工作区</li><li>策略编排</li><li>订单流</li><li>风险面板</li></ul></div>
+        <div class="route"><h3>系统层</h3><ul><li>监控与告警</li><li>连接与权限</li><li>设置与集成</li><li>审计与日志</li></ul></div>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="title"><h2>关键用户流程</h2><small>从“看板”变成“下单前操作链”</small></div>
+      <div class="flow">
+        <div class="step"><div class="n">1</div><b>选择交易所与市场</b><p class="muted">确定账户、币种、合约/现货、地域与时区。</p></div>
+        <div class="step"><div class="n">2</div><b>挑选品种并加入工作区</b><p class="muted">把 BTC、ETH、XAU 等加入观察或执行清单。</p></div>
+        <div class="step"><div class="n">3</div><b>配置 Agent 策略</b><p class="muted">参数、权限、触发条件、回退机制。</p></div>
+        <div class="step"><div class="n">4</div><b>风险确认</b><p class="muted">仓位、杠杆、损失阈值、人工审批。</p></div>
+        <div class="step"><div class="n">5</div><b>监控与复盘</b><p class="muted">执行、偏差、告警、绩效、审计。</p></div>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="title"><h2>组件规范</h2><small>统一风格，减少“空态拼装感”</small></div>
+      <table class="spec">
+        <tr><th>组件</th><th>规范</th><th>用途</th></tr>
+        <tr><td>全局选择器</td><td>左对齐、两级层级、支持最近使用与收藏</td><td>交易所 / 市场 / 品种</td></tr>
+        <tr><td>工作区卡片</td><td>可拖拽、可分组、支持执行态徽标</td><td>策略、观察、告警</td></tr>
+        <tr><td>风险条</td><td>红黄绿三级，明确“阻断 / 需确认 / 可执行”</td><td>下单前确认</td></tr>
+        <tr><td>空态</td><td>给目标、给下一步动作、给示例数据</td><td>首次上手 / 断连 / 无数据</td></tr>
+      </table>
+    </section>
+
+    <section class="card section">
+      <div class="title"><h2>逐页改版</h2><small>围绕商业化交易闭环重构</small></div>
+      <div class="grid2">
+        <div class="route"><h3>Dashboard</h3><p class="muted">从“运行时状态”升级为“今日交易态势”：市场、策略、风险、执行、告警五块并列，顶部固定全局选择器。</p></div>
+        <div class="route"><h3>Orders</h3><p class="muted">增加订单生命周期、撤改追踪、异常订单池、人工介入入口，默认展示工作区维度而非纯列表。</p></div>
+        <div class="route"><h3>Risk</h3><p class="muted">以“预执行检查 + 实时风控 + 事后复盘”三段式呈现，风险确认必须成为明确步骤。</p></div>
+        <div class="route"><h3>Strategies</h3><p class="muted">改成策略库 + 策略编辑器 + Agent 编排器，强调模板、版本、灰度与回滚。</p></div>
+        <div class="route"><h3>Monitoring</h3><p class="muted">突出交易链路、连接健康、延迟、错误率、告警队列与审计日志。</p></div>
+        <div class="route"><h3>Settings</h3><p class="muted">拆成连接、权限、通知、数据源、偏好五块，让首次上手有向导入口。</p></div>
+      </div>
+    </section>
+
+    <section class="grid2" style="margin-top:18px">
+      <div class="card section">
+        <div class="title"><h2>原型片段</h2><small>深色交易指挥中心</small></div>
+        <div class="mock">
+          <div class="mocktop"><b>Global Control</b><span class="badge b-green">Connected</span></div>
+          <div class="nav"><span class="pill">Binance</span><span class="pill">Bybit</span><span class="pill">BTC-USDT</span><span class="pill">ETH-USDT</span><span class="pill">Spot</span></div>
+          <div class="bars"><div class="bar"></div><div class="bar" style="width:84%"></div><div class="bar" style="width:62%"></div><div class="bar" style="width:48%"></div></div>
+        </div>
+      </div>
+      <div class="card section">
+        <div class="title"><h2>空态策略</h2><small>每个空态都要推动下一步</small></div>
+        <div class="note">不要只说“尚未接入”，而要给出“为什么空、下一步做什么、谁来做”。首次上手建议用向导式流程覆盖连接、选择器、工作区和首个策略。</div>
+      </div>
+    </section>
+
+    <div class="footer">输出：独立 HTML 原型，未写入主项目。路径：`outputs/wpe-agent-product-design-review.html`</div>
+  </div>
+</body>
+</html>

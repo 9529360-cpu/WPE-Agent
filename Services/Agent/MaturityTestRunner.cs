@@ -17,7 +17,7 @@ public static class MaturityTestRunner
 {
     public static async Task<SmokeRunResult> RunAsync(CancellationToken ct=default)
     {
-        var report=new MaturityTestReport();var dir=Path.Combine(AppContext.BaseDirectory,"Data","maturity-tests");Directory.CreateDirectory(dir);var path=Path.Combine(dir,$"maturity-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");
+        var report=new MaturityTestReport();var dir=Path.Combine(AppDataPaths.TestArtifactsDirectory,"maturity-tests");Directory.CreateDirectory(dir);var path=Path.Combine(dir,$"maturity-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");
         try
         {
             var policy=new DecisionPolicy();var skill=new SignalAggregationSkill();var governance=new DecisionGovernanceSkill();
@@ -32,7 +32,7 @@ public static class MaturityTestRunner
             report.Success=true;
         }
         catch(Exception ex){report.Cases.Add(new("测试运行中止","FAILED",0,ex.Message));report.Success=false;}
-        report.CompletedAtUtc=DateTime.UtcNow;await File.WriteAllTextAsync(path,JsonSerializer.Serialize(report,new JsonSerializerOptions{WriteIndented=true}),ct);return new(report.Success,path);
+        report.CompletedAtUtc=DateTime.UtcNow;await global::币安量化机器人.Services.SensitiveDataRedactor.WriteRedactedJsonAsync(path,report,ct);return new(report.Success,path);
     }
 
     private static void Test(MaturityTestReport report,string name,Func<string> body){var sw=Stopwatch.StartNew();try{report.Cases.Add(new(name,"PASSED",sw.ElapsedMilliseconds,body()));}catch(Exception ex){report.Cases.Add(new(name,"FAILED",sw.ElapsedMilliseconds,ex.Message));throw;}}

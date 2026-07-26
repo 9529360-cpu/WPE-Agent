@@ -15,7 +15,7 @@ public static class ExchangeAdapterTestRunner
 {
     public static async Task<ExchangeAdapterTestResult> RunAsync(CancellationToken ct=default)
     {
-        var report=new ExchangeAdapterTestReport();var dir=Path.Combine(AppContext.BaseDirectory,"Data","exchange-adapter-tests");Directory.CreateDirectory(dir);var path=Path.Combine(dir,$"exchange-adapters-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");
+        var report=new ExchangeAdapterTestReport();var dir=Path.Combine(AppDataPaths.TestArtifactsDirectory,"exchange-adapter-tests");Directory.CreateDirectory(dir);var path=Path.Combine(dir,$"exchange-adapters-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");
         try
         {
             await Test(report,"Symbol Mapping",()=>{Require(new ConventionSymbolMapper("okx").ToNative("BTCUSDT")=="BTC-USDT-SWAP","OKX mapping failed");Require(new ConventionSymbolMapper("bybit").ToNative("BTC-USDT")=="BTCUSDT","Bybit mapping failed");Require(new ConventionSymbolMapper("gate").ToNative("BTCUSDT")=="BTC_USDT","Gate mapping failed");Require(new ConventionSymbolMapper("kraken").ToCanonical("XBTUSDT")=="BTCUSDT","XBT mapping failed");var custom=new ConventionSymbolMapper("custom",new Dictionary<string,string>{{"BTCUSDT","BTCUSDTPERP"}});Require(custom.ToCanonical("BTCUSDTPERP")=="BTCUSDT","custom reverse mapping failed");return Task.FromResult("OKX, Bybit, Gate, Kraken/XBT and explicit mappings passed");});
@@ -29,7 +29,7 @@ public static class ExchangeAdapterTestRunner
             report.Success=true;
         }
         catch(Exception ex){report.Cases.Add(new("Test run","FAILED",0,ex.Message));report.Success=false;}
-        report.CompletedAtUtc=DateTime.UtcNow;await File.WriteAllTextAsync(path,JsonSerializer.Serialize(report,new JsonSerializerOptions{WriteIndented=true}),CancellationToken.None);return new(report.Success,path);
+        report.CompletedAtUtc=DateTime.UtcNow;await global::币安量化机器人.Services.SensitiveDataRedactor.WriteRedactedJsonAsync(path,report,CancellationToken.None);return new(report.Success,path);
     }
     private static ExchangeConnectionProfile Profile(string id)=>new(){Id=id,ProviderId="binance-futures",DisplayName=id,IsTestnet=true,Endpoint="https://testnet.binancefuture.com"};
     private static IReadOnlyDictionary<string,string> Credentials()=>new Dictionary<string,string>{{"apiKey","test-api-key"},{"secret","test-secret"}};

@@ -9,6 +9,8 @@ public sealed record ExchangeCredentialField(string Key,string Label,ExchangeCre
 public sealed record ExchangeProviderDescriptor(
     string Id,string DisplayName,ExchangeAssetClass AssetClass,bool SupportsTestnet,bool SupportsMainnet,
     IReadOnlyList<ExchangeCredentialField> CredentialFields,IReadOnlySet<string> Capabilities,bool Installed=true,string Status="READY");
+public sealed record ProviderEnvironmentValidation(
+    bool CanRead,bool CanTrade,bool TestnetAvailable,string? Failure=null);
 public sealed record ExchangePermissionSnapshot(bool CanRead,bool CanTrade,bool CanWithdraw,string AccountId,IReadOnlyList<string> Warnings);
 public sealed record ExchangeHealthSnapshot(bool Healthy,long LatencyMs,long ClockSkewMs,string Message,DateTime CheckedAtUtc);
 public sealed record MarginSnapshot(decimal WalletBalance,decimal AvailableMargin,decimal UsedMargin,decimal MaintenanceMargin,decimal MarginRatio);
@@ -61,6 +63,12 @@ public interface IBrokerProvider
     Task CancelOrderAsync(string canonicalSymbol,string orderId,CancellationToken ct);
 }
 
+public interface IRecentOrderProvider
+{
+    Task<IReadOnlyList<ExchangeOrder>> GetRecentOrdersAsync(
+        string canonicalSymbol,int limit,CancellationToken ct);
+}
+
 public interface IRealtimeMarketFeed:IAsyncDisposable
 {
     string Status { get; }
@@ -90,6 +98,24 @@ public interface IExchangeProviderPlugin
 {
     ExchangeProviderDescriptor Descriptor { get; }
     IExchangeProvider Create(ExchangeConnectionProfile profile,IReadOnlyDictionary<string,string> credentials);
+}
+
+public interface IProviderEnvironmentGuard
+{
+    ProviderEnvironmentValidation ValidateEnvironment(bool requireTestnet);
+}
+
+public static class ProviderEndpointPolicy
+{
+    public static bool IsOfficialHttpsOrigin(string endpoint,string host)=>
+        Uri.TryCreate(endpoint,UriKind.Absolute,out var uri)&&
+        uri.Scheme==Uri.UriSchemeHttps&&
+        uri.IsDefaultPort&&
+        string.Equals(uri.Host,host,StringComparison.OrdinalIgnoreCase)&&
+        string.IsNullOrEmpty(uri.UserInfo)&&
+        string.IsNullOrEmpty(uri.Query)&&
+        string.IsNullOrEmpty(uri.Fragment)&&
+        uri.AbsolutePath.TrimEnd('/').Length==0;
 }
 
 public sealed class PollingRealtimeFeed:IRealtimeMarketFeed

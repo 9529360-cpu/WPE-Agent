@@ -183,6 +183,7 @@ public class BinanceDataCollectionService : IDataCollectionService
 
     public async Task<OrderBook> GetOrderBookAsync(string symbol, int depth = 20)
     {
+        await Task.CompletedTask;
         if (!_isRunning)
         {
             throw new InvalidOperationException("数据采集服务未运行");

@@ -25,7 +25,7 @@ public static class LocalizationSelfTest
             lines.Add($"{language.Code}: {(valid ? "PASS" : "FAIL")} | {label} | {number} USDT | {date} | missing={missing.Count}");
         }
         service.SetLanguage(original, save: false, notify: false);
-        var directory = Path.Combine(AppContext.BaseDirectory, "logs");
+        var directory = AppDataPaths.LogsDirectory;
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, "i18n-self-test.txt");
         File.WriteAllText(path, string.Join(Environment.NewLine, lines), new UTF8Encoding(false));

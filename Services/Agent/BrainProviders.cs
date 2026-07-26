@@ -3,6 +3,8 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Security.Cryptography;
+using CoreModels = global::币安量化机器人.Core.Models;
 using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人.Services.Agent;
@@ -123,11 +125,368 @@ public static class AssistantAdapterCatalog
     ];
 }
 
+internal static class BrainPromptComposer
+{
+    private const int MaxDetailedMarketContexts = 2;
+
+    private enum PromptDetailLevel
+    {
+        SlimBrief,
+        DetailedContext
+    }
+
+    private const int MaxMarketBriefContexts = 4;
+
+    private sealed record PromptCompressionProfile(
+        int NewsCount,
+        int NewsSummaryChars,
+        int PreviousOutcomeCount,
+        int PreviousOutcomeChars,
+        int SignalCount,
+        int RecentCloseCount,
+        int MissingConditionCount);
+
+    private static readonly PromptCompressionProfile[] Profiles =
+    [
+        new(12, 220, 8, 180, 6, 4, 8),
+        new(6, 140, 5, 120, 4, 3, 6),
+        new(4, 90, 3, 80, 2, 2, 4)
+    ];
+
+    internal static string BuildDecisionPrompt(EvidencePack evidence, AgentContext context, string outputLanguage, int contextLimit, string instruction)
+    {
+        var budget = DetermineTargetCharacters(contextLimit);
+        string? best = null;
+        foreach (var profile in Profiles)
+        {
+            var slimPrompt = BuildPrompt(evidence, context, outputLanguage, instruction, profile, PromptDetailLevel.SlimBrief);
+            best = slimPrompt;
+            if (slimPrompt.Length <= budget || !ShouldUpgradeToDetailedContext(evidence, context)) return slimPrompt;
+
+            var detailedPrompt = BuildPrompt(evidence, context, outputLanguage, instruction, profile, PromptDetailLevel.DetailedContext);
+            best = detailedPrompt;
+            if (detailedPrompt.Length <= budget) return detailedPrompt;
+        }
+
+        return best ?? JsonSerializer.Serialize(new { instruction, outputLanguage });
+    }
+
+    private static string BuildPrompt(
+        EvidencePack evidence,
+        AgentContext context,
+        string outputLanguage,
+        string instruction,
+        PromptCompressionProfile profile,
+        PromptDetailLevel detailLevel)
+    {
+        var orderedAssessments = context.MarketAssessments
+            .OrderByDescending(x => x.EntryReady)
+            .ThenByDescending(x => x.Confidence)
+            .ThenByDescending(x => Math.Abs(x.NetScore))
+            .ToArray();
+        var detailedSymbols = detailLevel == PromptDetailLevel.DetailedContext
+            ? SelectDetailedSymbols(evidence, context, orderedAssessments)
+            : Array.Empty<string>();
+        return JsonSerializer.Serialize(new
+        {
+            instruction,
+            outputLanguage,
+            promptStructure = detailLevel == PromptDetailLevel.SlimBrief ? "two-level-slim-brief" : "two-level-detailed-context",
+            evidence = BuildEvidence(evidence, context, profile, detailLevel, detailedSymbols),
+            marketAssessments = orderedAssessments
+                .Select(x => BuildAssessment(x, profile, detailLevel))
+                .ToArray(),
+            context = new
+            {
+                context.BrainName,
+                context.CircuitBreakerActive,
+                context.ActiveSymbol,
+                PreviousOutcomes = context.PreviousOutcomes
+                    .Take(profile.PreviousOutcomeCount)
+                    .Select(x => TrimText(x, profile.PreviousOutcomeChars))
+                    .ToArray(),
+                context.ConsecutiveHolds
+            },
+            detailedMarketContext = detailLevel == PromptDetailLevel.DetailedContext
+                ? BuildDetailedMarkets(evidence, detailedSymbols, profile.RecentCloseCount)
+                : null
+        });
+    }
+
+    private static object BuildEvidence(EvidencePack evidence, AgentContext context, PromptCompressionProfile profile, PromptDetailLevel detailLevel, IReadOnlyList<string> detailedSymbols) => new
+    {
+        evidence.CollectedAt,
+        Mode = context.CircuitBreakerActive ? "degraded" : "active",
+        Account = new
+        {
+            evidence.Account.WalletBalance,
+            evidence.Account.AvailableBalance,
+            evidence.Account.Equity,
+            evidence.Account.Timestamp
+        },
+        Positions = evidence.Positions
+            .Take(6)
+            .Select(x => new
+            {
+                x.Symbol,
+                x.Side,
+                x.Quantity,
+                x.EntryPrice,
+                x.UnrealizedPnl
+            })
+            .ToArray(),
+        Markets = BuildMarketBriefs(evidence, context, detailLevel, detailedSymbols),
+        MissingSources = evidence.MissingSources
+            .Take(6)
+            .Select(x => TrimText(x, 96))
+            .ToArray(),
+        evidence.Completeness,
+        News = BuildNews(evidence.News, profile, detailLevel)
+    };
+
+    private static object[] BuildNews(IReadOnlyList<NewsEvidence> news, PromptCompressionProfile profile, PromptDetailLevel detailLevel) =>
+        news.OrderByDescending(x => x.PublishedAt ?? x.CollectedAt)
+            .Take(profile.NewsCount)
+            .Select(x =>
+            {
+                var item = new Dictionary<string, object?>
+                {
+                    ["Source"] = x.Source,
+                    ["Title"] = x.Title,
+                    ["PublishedAt"] = x.PublishedAt,
+                    ["Confidence"] = x.Confidence,
+                    ["EventType"] = x.EventType,
+                    ["IsBreaking"] = x.IsBreaking
+                };
+                if (detailLevel == PromptDetailLevel.DetailedContext && !string.IsNullOrWhiteSpace(x.BodySummary))
+                    item["BodySummary"] = TrimText(x.BodySummary, profile.NewsSummaryChars);
+                return (object)item;
+            })
+            .ToArray();
+
+    private static object[] BuildMarketBriefs(EvidencePack evidence, AgentContext context, PromptDetailLevel detailLevel, IReadOnlyList<string> detailedSymbols)
+    {
+        var selected = new List<string>();
+        var excluded = detailLevel == PromptDetailLevel.DetailedContext
+            ? detailedSymbols.ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var orderedAssessments = context.MarketAssessments
+            .OrderByDescending(x => x.EntryReady)
+            .ThenByDescending(x => x.Confidence)
+            .ThenByDescending(x => Math.Abs(x.NetScore))
+            .ToArray();
+
+        void Add(string? symbol, bool allowDetailedDuplicate = false)
+        {
+            if (string.IsNullOrWhiteSpace(symbol)) return;
+            if (!evidence.Markets.ContainsKey(symbol)) return;
+            if (!allowDetailedDuplicate && excluded.Contains(symbol)) return;
+            if (!selected.Contains(symbol, StringComparer.OrdinalIgnoreCase)) selected.Add(symbol);
+        }
+
+        Add(context.ActiveSymbol);
+        foreach (var symbol in evidence.Positions.Select(x => x.Symbol))
+            Add(symbol);
+        foreach (var assessment in orderedAssessments.Where(x => x.EntryReady))
+        {
+            Add(assessment.Symbol);
+            if (selected.Count >= MaxMarketBriefContexts) break;
+        }
+        foreach (var assessment in orderedAssessments)
+        {
+            Add(assessment.Symbol);
+            if (selected.Count >= MaxMarketBriefContexts) break;
+        }
+        foreach (var symbol in evidence.Markets.Keys.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+        {
+            Add(symbol);
+            if (selected.Count >= MaxMarketBriefContexts) break;
+        }
+        if (selected.Count == 0 && detailLevel == PromptDetailLevel.DetailedContext)
+            foreach (var symbol in detailedSymbols.Take(MaxMarketBriefContexts))
+            {
+                Add(symbol, allowDetailedDuplicate: true);
+                if (selected.Count >= MaxMarketBriefContexts) break;
+            }
+
+        return selected
+            .Where(symbol => evidence.Markets.ContainsKey(symbol))
+            .Select(symbol => BuildMarketBrief(evidence.Markets[symbol]))
+            .ToArray();
+    }
+
+    private static IReadOnlyDictionary<string, object> BuildDetailedMarkets(EvidencePack evidence, IReadOnlyList<string> detailedSymbols, int recentCloseCount) =>
+        evidence.Markets
+            .Where(x => detailedSymbols.Contains(x.Key))
+            .OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => BuildDetailedMarket(x.Value, recentCloseCount), StringComparer.OrdinalIgnoreCase);
+
+    private static bool ShouldUpgradeToDetailedContext(EvidencePack evidence, AgentContext context)
+    {
+        var ordered = context.MarketAssessments
+            .OrderByDescending(x => x.EntryReady)
+            .ThenByDescending(x => x.Confidence)
+            .ThenByDescending(x => Math.Abs(x.NetScore))
+            .ToArray();
+        if (ordered.Any(x => x.EntryReady)) return true;
+        if (!string.IsNullOrWhiteSpace(context.ActiveSymbol)) return true;
+        if (evidence.Positions.Count > 0) return true;
+        if (ordered.Length > 1 && Math.Abs(ordered[0].NetScore - ordered[1].NetScore) <= 0.15) return true;
+        return false;
+    }
+
+    private static IReadOnlyList<string> SelectDetailedSymbols(
+        EvidencePack evidence,
+        AgentContext context,
+        IReadOnlyList<MarketDecisionAssessment> orderedAssessments)
+    {
+        var selected = new List<string>();
+
+        void Add(string? symbol)
+        {
+            if (string.IsNullOrWhiteSpace(symbol)) return;
+            if (!evidence.Markets.ContainsKey(symbol)) return;
+            if (!selected.Contains(symbol, StringComparer.OrdinalIgnoreCase)) selected.Add(symbol);
+        }
+
+        Add(context.ActiveSymbol);
+        foreach (var symbol in evidence.Positions.Select(x => x.Symbol))
+            Add(symbol);
+        foreach (var assessment in orderedAssessments.Where(x => x.EntryReady))
+        {
+            Add(assessment.Symbol);
+            if (selected.Count >= MaxDetailedMarketContexts) break;
+        }
+        if (selected.Count == 0 && orderedAssessments.Count > 0)
+        {
+            Add(orderedAssessments[0].Symbol);
+            if (orderedAssessments.Count > 1 && Math.Abs(orderedAssessments[0].NetScore - orderedAssessments[1].NetScore) <= 0.15)
+                Add(orderedAssessments[1].Symbol);
+        }
+
+        return selected.Take(MaxDetailedMarketContexts).ToArray();
+    }
+
+    private static object BuildMarketBrief(MarketEvidence market) =>
+        new
+        {
+            market.Symbol,
+            market.Price,
+            market.Support,
+            market.Resistance,
+            market.Rsi,
+            market.Trend15m,
+            market.CollectedAt,
+            QualityScore = market.Quality.QualityScore
+        };
+
+    private static object BuildDetailedMarket(MarketEvidence market, int recentCloseCount)
+    {
+        CandleEvidence? last = market.Candles.Count > 0 ? market.Candles[^1] : null;
+        CandleEvidence? previous = market.Candles.Count > 1 ? market.Candles[^2] : null;
+        var recent = market.Candles.TakeLast(Math.Max(1, recentCloseCount)).Select(x => x.Close).ToArray();
+        var window = market.Candles.TakeLast(Math.Min(24, market.Candles.Count)).ToArray();
+        var dayHigh = window.Length == 0 ? market.Price : window.Max(x => x.High);
+        var dayLow = window.Length == 0 ? market.Price : window.Min(x => x.Low);
+        var lastChange = last is null || previous is null || previous.Close == 0 ? 0 : (double)(last.Close / previous.Close - 1);
+
+        return new
+        {
+            market.Symbol,
+            market.Price,
+            market.Support,
+            market.Resistance,
+            market.Rsi,
+            market.Trend15m,
+            market.Trend1h,
+            market.Trend4h,
+            market.CollectedAt,
+            Derivatives = new
+            {
+                market.Derivatives.FundingRate,
+                market.Derivatives.OpenInterest,
+                market.Derivatives.LongShortRatio,
+                market.Derivatives.Basis
+            },
+            Quality = new
+            {
+                market.Quality.SpreadBps,
+                market.Quality.AtrPercent,
+                market.Quality.LiquidityScore,
+                market.Quality.QualityScore,
+                Anomalies = market.Quality.Anomalies.Take(2).Select(x => TrimText(x, 80)).ToArray()
+            },
+            CandleSummary = new
+            {
+                LastClose = last?.Close ?? market.Price,
+                LastCloseChangePct = lastChange,
+                DayHigh = dayHigh,
+                DayLow = dayLow,
+                RecentCloses = recent
+            }
+        };
+    }
+
+    private static object BuildAssessment(MarketDecisionAssessment assessment, PromptCompressionProfile profile, PromptDetailLevel detailLevel) => new
+    {
+        assessment.Symbol,
+        assessment.Regime,
+        assessment.NetScore,
+        assessment.Confidence,
+        assessment.ConflictRatio,
+        assessment.Fresh,
+        assessment.EntryReady,
+        assessment.RecommendedAction,
+        Signals = assessment.Signals
+            .OrderByDescending(x => Math.Abs(x.WeightedScore))
+            .Take(profile.SignalCount)
+            .Select(x => BuildSignal(x, detailLevel))
+            .ToArray(),
+        MissingConditions = assessment.MissingConditions
+            .Take(profile.MissingConditionCount)
+            .Select(x => TrimText(x, 120))
+            .ToArray(),
+        Summary = TrimText(assessment.Summary, 180)
+    };
+
+    private static object BuildSignal(SignalContribution signal, PromptDetailLevel detailLevel)
+    {
+        var item = new Dictionary<string, object?>
+        {
+            ["Name"] = signal.Name,
+            ["Horizon"] = signal.Horizon,
+            ["WeightedScore"] = signal.WeightedScore,
+            ["Direction"] = signal.Direction
+        };
+        if (detailLevel == PromptDetailLevel.DetailedContext)
+        {
+            item["RawValue"] = signal.RawValue;
+            item["Weight"] = signal.Weight;
+            item["Explanation"] = TrimText(signal.Explanation, 120);
+        }
+        return item;
+    }
+
+    private static int DetermineTargetCharacters(int contextLimit)
+    {
+        var bounded = Math.Clamp(contextLimit, 1024, 32000);
+        var target = bounded * 3;
+        return Math.Clamp(target, 3_000, 12_000);
+    }
+
+    private static string TrimText(string? value, int maxChars)
+    {
+        value = (value ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (value.Length <= maxChars) return value;
+        return value[..Math.Max(1, maxChars - 3)] + "...";
+    }
+}
+
 public sealed class HttpBrainProvider : IAssistantProvider
 {
-    private readonly HttpClient _http; private readonly BrainSlot _slot; private readonly string _key; private readonly LlmRequestGovernor _governor; private readonly IAssistantProtocolAdapter _protocol; public string Name=>_slot.Provider; public bool IsLocal => false;
-    public HttpBrainProvider(BrainSlot slot,string key,LlmRequestGovernor? governor=null, IAssistantProtocolAdapter? protocol=null){_slot=slot;_key=key;_governor=governor??LlmRequestGovernor.Shared;_protocol=protocol??AssistantProtocolAdapterFactory.Create(slot.Provider);_http=new HttpClient{Timeout=TimeSpan.FromSeconds(Math.Clamp(slot.TimeoutSeconds,5,300))};}
-    public async Task<BrainHealth> HealthCheckAsync(CancellationToken ct){if(string.IsNullOrWhiteSpace(_key)||string.IsNullOrWhiteSpace(_slot.Endpoint)||string.IsNullOrWhiteSpace(_slot.Model))return new(false,LocalizationService.Current.T("Provider.Incomplete"));try{using var r=await BuildAndSend("Reply only: HOLD",ct);return new(r.IsSuccessStatusCode,$"HTTP {(int)r.StatusCode}");}catch(Exception ex){return new(false,ex.Message);}}
+    private readonly HttpClient _http; private readonly BrainSlot _slot; private readonly string _key; private readonly LlmRequestGovernor _governor; private readonly IAssistantProtocolAdapter _protocol; private readonly CoreModels.AiRuntimeMode _mode; public string Name=>_slot.Provider; public bool IsLocal => false;
+    public HttpBrainProvider(BrainSlot slot,string key,CoreModels.AiRuntimeMode mode=CoreModels.AiRuntimeMode.LocalOnly,LlmRequestGovernor? governor=null, IAssistantProtocolAdapter? protocol=null){_slot=slot;_key=key;_mode=mode;_governor=governor??LlmRequestGovernor.Shared;_protocol=protocol??AssistantProtocolAdapterFactory.Create(slot.Provider);_http=new HttpClient{Timeout=Timeout.InfiniteTimeSpan};}
+    public async Task<BrainHealth> HealthCheckAsync(CancellationToken ct){if(string.IsNullOrWhiteSpace(_key)||string.IsNullOrWhiteSpace(_slot.Endpoint)||string.IsNullOrWhiteSpace(_slot.Model))return new(false,LocalizationService.Current.T("Provider.Incomplete"));try{using var r=await BuildAndSend("Reply only: HOLD",ct);return new(r.IsSuccessStatusCode,$"HTTP {(int)r.StatusCode}");}catch(Exception ex){return new(false,global::币安量化机器人.Services.SensitiveDataRedactor.ForLog(ex.Message,180,_key,_slot.EncryptedKey));}}
     public async Task<BrainDecisionResult> DecideAsync(EvidencePack e,AgentContext c,CancellationToken ct)
     {
         var instruction="""
@@ -140,23 +499,24 @@ public sealed class HttpBrainProvider : IAssistantProvider
         不得编造新闻、鲸鱼流向、截图、订单流或来源，不得承诺收益。reason 必须简述核心证据与风险，invalidation 必须写明观点失效条件，evidenceReferences 只能引用输入中实际存在的项目；conflictSummary 描述同一品种内部冲突。
         """;
         instruction += $"\n允许的 instrument：{string.Join(",",e.Markets.Keys)}。所有面向用户的描述字段（reason、invalidation、conflictSummary、missingConditions）必须使用{LocalizationService.Current.CurrentLanguage.AiLanguage}；action、instrument 和 JSON 字段名保持规定的英文枚举。missingConditions 和 evidenceReferences 必须输出字符串数组。";
-        var compactEvidence=new
-        {
-            e.CollectedAt,e.Account,e.Positions,e.Markets,e.MissingSources,e.Completeness,
-            News=e.News.OrderByDescending(x=>x.PublishedAt).Take(12).Select(x=>new{x.Source,x.Title,x.PublishedAt,x.Reliability,x.AffectedAssets,x.Confidence,x.CorroboratingSources,x.EventType,x.IsBreaking,x.Sentiment,BodySummary=x.BodySummary.Length>500?x.BodySummary[..500]+"…":x.BodySummary})
-        };
-        var prompt=JsonSerializer.Serialize(new{instruction,outputLanguage=LocalizationService.Current.CurrentLanguage.AiLanguage,evidence=compactEvidence,marketAssessments=c.MarketAssessments,context=new{c.BrainName,c.CircuitBreakerActive,c.ActiveSymbol,c.PreviousOutcomes,c.ConsecutiveHolds}});string raw="";
-        try{using var r=await BuildAndSend(prompt,ct);raw=await r.Content.ReadAsStringAsync(ct);if(!r.IsSuccessStatusCode)throw new BrainCallException($"{Name} HTTP {(int)r.StatusCode}",prompt,raw);var content=ExtractProviderText(raw);var json=ExtractJson(content);var opt=new JsonSerializerOptions{PropertyNameCaseInsensitive=true};opt.Converters.Add(new JsonStringEnumConverter());opt.Converters.Add(new FlexibleStringListConverter());var decision=JsonSerializer.Deserialize<DecisionPlan>(json,opt)??new DecisionPlan{Reason=LocalizationService.Current.T("Provider.EmptyResponse")};decision.MissingConditions??=[];decision.EvidenceReferences??=[];return new(decision,prompt,raw);}
-        catch(BrainCallException){throw;}catch(Exception ex){throw new BrainCallException(LocalizationService.Current.T("Provider.ParseFailed",Name,ex.Message),prompt,raw,ex);}
+        var prompt = BrainPromptComposer.BuildDecisionPrompt(e, c, LocalizationService.Current.CurrentLanguage.AiLanguage, _slot.ContextLimit, instruction);
+        string raw="";
+        try{using var r=await BuildAndSend(prompt,ct);raw=await r.Content.ReadAsStringAsync(ct);if(!r.IsSuccessStatusCode)throw new BrainCallException($"{Name} HTTP {(int)r.StatusCode}",AuditRef("prompt",prompt),AuditRef("response",raw));var content=ExtractProviderText(raw);var json=ExtractJson(content);var opt=new JsonSerializerOptions{PropertyNameCaseInsensitive=true};opt.Converters.Add(new JsonStringEnumConverter());opt.Converters.Add(new FlexibleStringListConverter());var decision=JsonSerializer.Deserialize<DecisionPlan>(json,opt)??new DecisionPlan{Reason=LocalizationService.Current.T("Provider.EmptyResponse")};decision.MissingConditions??=[];decision.EvidenceReferences??=[];return new(decision,AuditRef("prompt",prompt),AuditRef("response",raw));}
+        catch(BrainCallException){throw;}catch(Exception ex){throw new BrainCallException(LocalizationService.Current.T("Provider.ParseFailed",Name,global::币安量化机器人.Services.SensitiveDataRedactor.ForLog(ex.Message,180,_key,_slot.EncryptedKey)),AuditRef("prompt",prompt),AuditRef("response",raw),ex);}
     }
     private async Task<HttpResponseMessage> BuildAndSend(string prompt,CancellationToken ct)
     {
-        var req = _protocol.CreateRequest(_slot, _key, prompt);
         var purpose=prompt=="Reply only: HOLD"?"health-check":"assistant-advice";
-        return await _governor.SendAsync(_slot.Provider,_slot.Model,purpose,prompt,_=>_http.SendAsync(req,ct),ct);
+        var context=new LlmRequestContext(_mode,_slot.PromptVersion,_slot.MaxTokens,_slot.ContextLimit,TimeSpan.FromSeconds(Math.Clamp(_slot.TimeoutSeconds,5,300)),"brain-planner","assistant-provider");
+        return await _governor.SendAsync(_slot.Provider,_slot.Model,purpose,prompt,context,token=>
+        {
+            var request=_protocol.CreateRequest(_slot,_key,prompt);
+            return _http.SendAsync(request,token);
+        },ct);
     }
     private string ExtractProviderText(string raw){using var d=JsonDocument.Parse(raw);return _protocol.ExtractText(d);}
 private static string ExtractJson(string s){var a=s.IndexOf('{');var b=s.LastIndexOf('}');if(a<0||b<=a)throw new JsonException(LocalizationService.Current.T("Provider.JsonMissing"));return s[a..(b+1)];}
+private string AuditRef(string kind,string value){var hash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value??string.Empty)));return $"{kind}Hash={hash}; length={value?.Length??0}; promptVersion={_slot.PromptVersion}";}
 }
 
 public sealed class FlexibleStringListConverter : JsonConverter<List<string>>
@@ -178,11 +538,14 @@ public static class AssistantProviderFactory
 {
     public static IAssistantProvider CreateLocal() => new DeterministicBrainProvider();
 
-    public static IAssistantProvider Create(BrainSlot? slot, string? secret, bool allowRemote)
+    public static IAssistantProvider Create(BrainSlot? slot, string? secret, CoreModels.AiRuntimeMode mode)
     {
-        if (!allowRemote || slot is null || string.IsNullOrWhiteSpace(secret) ||
+        if (mode == CoreModels.AiRuntimeMode.LocalOnly || slot is null || string.IsNullOrWhiteSpace(secret) ||
             string.IsNullOrWhiteSpace(slot.Endpoint) || string.IsNullOrWhiteSpace(slot.Model))
             return CreateLocal();
-        return new HttpBrainProvider(slot, secret);
+        return new HttpBrainProvider(slot, secret, mode);
     }
+
+    public static IAssistantProvider Create(BrainSlot? slot, string? secret, bool allowRemote) =>
+        Create(slot, secret, allowRemote ? CoreModels.AiRuntimeMode.Hybrid : CoreModels.AiRuntimeMode.LocalOnly);
 }

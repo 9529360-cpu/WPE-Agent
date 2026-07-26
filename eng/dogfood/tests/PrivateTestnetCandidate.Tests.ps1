@@ -1,0 +1,29 @@
+$ErrorActionPreference='Stop'
+function Assert($condition,[string]$message){if(-not $condition){throw "ASSERT:$message"}}
+function Throws([scriptblock]$action,[string]$code){try{& $action|Out-Null;throw "expected:$code"}catch{if($_.Exception.Message -notlike "*$code*"){throw}}}
+function Hash([string]$path){(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+function Write-Manifest([string]$root,[string]$path,[hashtable]$overrides){
+    $m=[ordered]@{schemaVersion='wpe.private-testnet-payload/1.0';version='1.0.0';createdUtc=[DateTimeOffset]::UtcNow.ToString('o');localOnly=$true;commercialDistribution=$false;mainnet=$false;probeScript='dogfood-probe.ps1';files=@(Get-ChildItem $root -Recurse -File|Sort-Object FullName|ForEach-Object {[ordered]@{path=$_.FullName.Substring($root.Length+1);sha256=Hash $_.FullName;length=$_.Length}})}
+    foreach($key in $overrides.Keys){$m[$key]=$overrides[$key]};$m|ConvertTo-Json -Depth 7|Set-Content $path -Encoding utf8;Hash $path
+}
+$work=Join-Path ([IO.Path]::GetTempPath()) ('wpe-private-'+[Guid]::NewGuid().ToString('N'));New-Item -ItemType Directory $work|Out-Null
+try{
+    $tool=Split-Path $PSScriptRoot -Parent;$creator=Join-Path $tool 'New-PrivateTestnetCandidate.ps1';$payload=Join-Path $work 'payload';New-Item -ItemType Directory $payload|Out-Null
+    'param([string]$Mode);exit 0'|Set-Content (Join-Path $payload 'dogfood-probe.ps1') -Encoding utf8;'payload'|Set-Content (Join-Path $payload 'app.bin') -Encoding ascii
+    $manifest=Join-Path $work 'payload-manifest.json';$hash=Write-Manifest $payload $manifest @{};$destination=Join-Path $work 'slots/1.0.0'
+    $result=& $creator -PayloadRoot $payload -PayloadManifestPath $manifest -ExpectedPayloadManifestHash $hash -CandidateRoot $destination -Version '1.0.0'
+    Assert $result.LocalOnly 'localOnly';Assert (-not $result.CommercialDistribution) 'commercialDistribution';Assert (-not $result.Mainnet) 'mainnet';Assert (Test-Path (Join-Path $destination 'private-candidate-manifest.json')) 'atomic candidate missing'
+    Assert (@(Get-ChildItem $destination -Recurse -File|Where-Object {-not $_.IsReadOnly}).Count -eq 0) 'candidate mutable'
+    Throws {& $creator -PayloadRoot $payload -PayloadManifestPath $manifest -ExpectedPayloadManifestHash ('0'*64) -CandidateRoot (Join-Path $work 'slots/bad-anchor') -Version '1.0.0'} 'manifest.external-anchor-mismatch'
+    $tampered=Join-Path $work 'tampered-payload';Copy-Item $payload $tampered -Recurse;$h=Write-Manifest $tampered $manifest @{};'tampered'|Set-Content (Join-Path $tampered 'app.bin');Throws {& $creator -PayloadRoot $tampered -PayloadManifestPath $manifest -ExpectedPayloadManifestHash $h -CandidateRoot (Join-Path $work 'slots/hash-mismatch') -Version '1.0.0'} 'manifest.hash-mismatch'
+    $incomplete=Join-Path $work 'incomplete-payload';Copy-Item $payload $incomplete -Recurse;$h=Write-Manifest $incomplete $manifest @{};'extra'|Set-Content (Join-Path $incomplete 'extra.bin');Throws {& $creator -PayloadRoot $incomplete -PayloadManifestPath $manifest -ExpectedPayloadManifestHash $h -CandidateRoot (Join-Path $work 'slots/incomplete') -Version '1.0.0'} 'manifest.incomplete'
+    $missingProbe=Join-Path $work 'missing-probe';Copy-Item $payload $missingProbe -Recurse;Remove-Item (Join-Path $missingProbe 'dogfood-probe.ps1');$h=Write-Manifest $missingProbe $manifest @{}
+    Throws {& $creator -PayloadRoot $missingProbe -PayloadManifestPath $manifest -ExpectedPayloadManifestHash $h -CandidateRoot (Join-Path $work 'slots/no-probe') -Version '1.0.0'} 'probe.missing-or-unanchored'
+    $h=Write-Manifest $payload $manifest @{createdUtc=[DateTimeOffset]::UtcNow.AddHours(-1).ToString('o')};Throws {& $creator -PayloadRoot $payload -PayloadManifestPath $manifest -ExpectedPayloadManifestHash $h -CandidateRoot (Join-Path $work 'slots/stale') -Version '1.0.0'} 'manifest.stale'
+    foreach($case in @(@{flag='CommercialDistribution';code='candidate.local-only-export-forbidden'},@{flag='Export';code='candidate.local-only-export-forbidden'},@{flag='Mainnet';code='candidate.mainnet-forbidden'})){$h=Write-Manifest $payload $manifest @{};$invokeArgs=@{PayloadRoot=$payload;PayloadManifestPath=$manifest;ExpectedPayloadManifestHash=$h;CandidateRoot=Join-Path $work ('slots/'+$case.flag);Version='1.0.0'};$invokeArgs[$case.flag]=$true;Throws {& $creator @invokeArgs} $case.code}
+    $secret=Join-Path $work 'secret-payload';Copy-Item $payload $secret -Recurse;'api_key="x"'|Set-Content (Join-Path $secret 'credentials.txt');$h=Write-Manifest $secret $manifest @{};Throws {& $creator -PayloadRoot $secret -PayloadManifestPath $manifest -ExpectedPayloadManifestHash $h -CandidateRoot (Join-Path $work 'slots/secret') -Version '1.0.0'} 'payload.credentials-forbidden'
+    $mutable=Join-Path $work 'bin/payload';New-Item -ItemType Directory $mutable -Force|Out-Null;Copy-Item (Join-Path $payload '*') $mutable -Recurse;$h=Write-Manifest $mutable $manifest @{};Throws {& $creator -PayloadRoot $mutable -PayloadManifestPath $manifest -ExpectedPayloadManifestHash $h -CandidateRoot (Join-Path $work 'slots/mutable') -Version '1.0.0'} 'payload.mutable-root-forbidden'
+    Throws {& $creator -PayloadRoot '\\server\share\payload' -PayloadManifestPath $manifest -ExpectedPayloadManifestHash $h -CandidateRoot (Join-Path $work 'slots/unc') -Version '1.0.0'} 'payload.network-path-forbidden'
+    $junction=Join-Path $work 'junction';cmd /c "mklink /J `"$junction`" `"$payload`""|Out-Null;if(Test-Path $junction){$h=Write-Manifest $payload $manifest @{};Throws {& $creator -PayloadRoot $junction -PayloadManifestPath $manifest -ExpectedPayloadManifestHash $h -CandidateRoot (Join-Path $work 'slots/reparse') -Version '1.0.0'} 'payload.reparse-forbidden'}
+    'PASS PrivateTestnetCandidate local-only/atomic/anchor/hash/probe/stale/export/mainnet/secret/mutable/UNC/reparse'
+}finally{Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue}

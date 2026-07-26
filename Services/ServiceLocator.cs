@@ -1,20 +1,23 @@
 using System;
+using WpeAgent.RuntimeServices;
+using WpeAgent.Plugins;
+using WpeAgent.Equities;
+using 币安量化机器人.Services.Security;
+using 币安量化机器人.Services.MarketData;
+using 币安量化机器人.Services.Exchange.Binance;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using 币安量化机器人.Application.Backtesting;
+using 币安量化机器人.Services.Agent;
 using Serilog;
 using 币安量化机器人.Application.Services;
 using 币安量化机器人.Core.Abstractions;
 using 币安量化机器人.Core.Models;
-using 币安量化机器人.Core.Risk;
 using 币安量化机器人.Core.Strategies;
-using 币安量化机器人.Infrastructure.Data;
 using 币安量化机器人.Monitoring;
-using 币安量化机器人.Services.Execution;
 
 namespace 币安量化机器人.Services;
 
@@ -32,92 +35,75 @@ public static class ServiceLocator
         return cache;
     });
 
-    private static readonly Lazy<BinanceApiClient> ApiFactory = new(() => new BinanceApiClient(useTestnet: AppSettingsService.Current.UseFuturesTestnet));
-    private static readonly Lazy<AiForecastService> AiFactory = new(() => new AiForecastService(Api, Cache));
     private static readonly Lazy<RiskEngine> RiskFactory = new(() => new RiskEngine(Cache));
-    private static readonly Lazy<BinanceStreamClient> StreamFactory = new(() => new BinanceStreamClient());
-    private static readonly Lazy<NotificationService> NotificationFactory = new(() => new NotificationService());
     private static readonly Lazy<Serilog.ILogger> LoggerFactory = new(() =>
     {
         // Simple Serilog-based logger for services to use
         var logger = new LoggerConfiguration()
             .MinimumLevel.Information()
-            .WriteTo.File("logs\\services.log", rollingInterval: RollingInterval.Day)
+            .WriteTo.Sink(new SensitiveFileLogSink(AppDataPaths.LogFile("services.log")))
             .CreateLogger();
         return logger;
     });
     private static readonly Lazy<AppSettings> SettingsFactory = new(() => AppSettingsService.Current);
     private static readonly Lazy<SystemState> SystemStateFactory = new(() => InitializeSystemState());
-    private static readonly Lazy<RiskManager> AdvancedRiskFactory = new(() => new RiskManager());
+    private static readonly Lazy<RuntimeMarketStateStore> RuntimeMarketFactory = new(() => new RuntimeMarketStateStore());
+    private static readonly Lazy<RuntimeTradingStateStore> RuntimeTradingFactory = new(() => new RuntimeTradingStateStore());
+    private static readonly Lazy<RuntimeBacktestStateStore> RuntimeBacktestFactory = new(() => new RuntimeBacktestStateStore(new AgentSqliteStore()));
+    private static readonly Lazy<RuntimeCrossAssetResearchStateStore> RuntimeCrossAssetResearchFactory = new(() => new RuntimeCrossAssetResearchStateStore());
+    private static readonly Lazy<RuntimeDistributionStateStore> RuntimeDistributionFactory = new(() => new RuntimeDistributionStateStore());
+    private static readonly Lazy<RuntimeEquityStateStore> RuntimeEquityFactory = new(() => new RuntimeEquityStateStore(new AgentSqliteStore()));
+    private static readonly Lazy<EquityMarketDataStateStore> RuntimeEquityMarketFactory = new(() => new EquityMarketDataStateStore());
+    private static readonly Lazy<RuntimeHistoricalCollectionsSnapshotStore> RuntimeHistoricalCollectionsFactory = new(() => new RuntimeHistoricalCollectionsSnapshotStore(AppDataPaths.File("agent.db")));
+    private static readonly Lazy<RuntimeConnectionStateStore> RuntimeConnectionFactory = new(() => new RuntimeConnectionStateStore());
+    private static readonly Lazy<RuntimeStrategyRegistryStateStore> RuntimeStrategyRegistryFactory = new(() => new RuntimeStrategyRegistryStateStore(new AgentSqliteStore()));
+    private static readonly Lazy<RuntimeSkillCallStateStore> RuntimeSkillCallFactory = new(() => new RuntimeSkillCallStateStore(new AgentSqliteStore()));
+    private static readonly Lazy<RuntimeMemoryStateStore> RuntimeMemoryFactory = new(() => new RuntimeMemoryStateStore(new AgentSqliteStore()));
+    private static readonly Lazy<RuntimeAgentOperationsStateStore> RuntimeAgentOperationsFactory = new(() => new RuntimeAgentOperationsStateStore(new AgentSqliteStore()));
+    private static readonly Lazy<RuntimeAuditStateStore> RuntimeAuditFactory = new(() => new RuntimeAuditStateStore(new AgentSqliteStore()));
+    private static readonly Lazy<RuntimeNotificationStateStore> RuntimeNotificationFactory = new(() => new RuntimeNotificationStateStore());
+    private static readonly Lazy<RuntimeAuthorizationStateStore> RuntimeAuthorizationFactory = new(() => new RuntimeAuthorizationStateStore(new AgentSettingsStore(), new AgentSqliteStore()));
+    private static readonly Lazy<SecurityStorageRuntime> SecurityStorageFactory = new(() => SecurityStorageComposition.Create(AppDataPaths.File("security-storage.db")));
+    private static readonly Lazy<PublicMarketRuntime> PublicMarketFactory = new(() => new PublicMarketRuntime(
+        ["BTCUSDT", "ETHUSDT"],
+        new BinancePublicMarketClient(useTestnet: false),
+        new BinanceStreamClient(useTestnet: false),
+        Cache));
+    private static readonly Lazy<LocalPluginRegistry> PluginRegistryFactory = new(LocalPluginRegistry.CreateDefault);
     private static readonly Lazy<IMultiTimeframeAnalyzer> AnalyzerFactory = new(() => new MultiTimeframeAnalyzer());
     private static readonly Lazy<IMachineLearningSignalGenerator> MlFactory = new(() => new RandomForestSignalGenerator());
-    private static readonly Lazy<InMemoryFeatureStore> FeatureStoreFactory = new(() => new InMemoryFeatureStore());
-    private static readonly Lazy<RealTimeDataPipeline> PipelineFactory = new(CreatePipeline);
-    private static readonly Lazy<DataPipelineOrchestrator> OrchestratorFactory = new(() => new DataPipelineOrchestrator(PipelineFactory.Value));
-    private static readonly Lazy<IMarketDataService> MarketDataFactory = new(() => new PipelineMarketDataService(OrchestratorFactory.Value, FeatureStoreFactory.Value));
     private static readonly Lazy<ITradeMonitoringHub> MonitoringHubFactory = new(() => new InMemoryTradeMonitoringHub());
-    private static readonly Lazy<IOrderStateStore> OrderStateStoreFactory = new(() => new FileOrderStateStore(AppDataPaths.DataDirectory));
-    private static readonly Lazy<ExecutionService> ExecutionFactory = new(() => new ExecutionService(ApiFactory.Value, OrderStateStoreFactory.Value, SettingsFactory.Value));
-    private static readonly Lazy<AccountStateProvider> AccountStateFactory = new(() => new AccountStateProvider(ApiFactory.Value));
-    private static readonly Lazy<OrderLifecycleManager> OrderLifecycleFactory = new(() => new OrderLifecycleManager(ApiFactory.Value, OrderStateStoreFactory.Value, LoggerFactory.Value));
-    private static readonly Lazy<StrategySignalExecutor> SignalExecutorFactory = new(() => new StrategySignalExecutor(ExecutionFactory.Value, AccountStateFactory.Value, AdvancedRiskFactory.Value, MonitoringHubFactory.Value, LoggerFactory.Value));
-    private static readonly Lazy<StrategyOrchestrator> StrategyOrchestratorFactory = new(() => new StrategyOrchestrator(MarketDataFactory.Value, AdvancedRiskFactory.Value, FeatureStoreFactory.Value, MonitoringHubFactory.Value, SignalExecutorFactory.Value, OrderLifecycleFactory.Value));
     private static readonly Lazy<GridSearchStrategyOptimizer> OptimizerFactory = new(() => new GridSearchStrategyOptimizer());
     private static readonly Lazy<WalkForwardOptimizer> WalkForwardFactory = new(() => new WalkForwardOptimizer(OptimizerFactory.Value, new DefaultBacktestEngine()));
 
     public static DataCacheService Cache => CacheFactory.Value;
-    public static BinanceApiClient Api => ApiFactory.Value;
-    public static AiForecastService Ai => AiFactory.Value;
     public static RiskEngine Risk => RiskFactory.Value;
-    public static BinanceStreamClient Stream => StreamFactory.Value;
-    public static NotificationService Notification => NotificationFactory.Value;
     public static AppSettings Settings => SettingsFactory.Value;
     public static SystemState SystemState => SystemStateFactory.Value;
-    public static RiskManager AdvancedRisk => AdvancedRiskFactory.Value;
+    public static RuntimeMarketStateStore RuntimeMarkets => RuntimeMarketFactory.Value;
+    public static RuntimeTradingStateStore RuntimeTrading => RuntimeTradingFactory.Value;
+    public static RuntimeBacktestStateStore RuntimeBacktests => RuntimeBacktestFactory.Value;
+    public static RuntimeCrossAssetResearchStateStore RuntimeCrossAssetResearch => RuntimeCrossAssetResearchFactory.Value;
+    public static RuntimeDistributionStateStore RuntimeDistribution => RuntimeDistributionFactory.Value;
+    public static RuntimeEquityStateStore RuntimeEquity => RuntimeEquityFactory.Value;
+    public static EquityMarketDataStateStore RuntimeEquityMarkets => RuntimeEquityMarketFactory.Value;
+    public static RuntimeHistoricalCollectionsSnapshotStore RuntimeHistoricalCollections => RuntimeHistoricalCollectionsFactory.Value;
+    public static RuntimeConnectionStateStore RuntimeConnection => RuntimeConnectionFactory.Value;
+    public static RuntimeStrategyRegistryStateStore RuntimeStrategyRegistry => RuntimeStrategyRegistryFactory.Value;
+    public static RuntimeSkillCallStateStore RuntimeSkillCalls => RuntimeSkillCallFactory.Value;
+    public static RuntimeMemoryStateStore RuntimeMemory => RuntimeMemoryFactory.Value;
+    public static RuntimeAgentOperationsStateStore RuntimeAgentOperations => RuntimeAgentOperationsFactory.Value;
+    public static RuntimeAuditStateStore RuntimeAudit => RuntimeAuditFactory.Value;
+    public static RuntimeNotificationStateStore RuntimeNotifications => RuntimeNotificationFactory.Value;
+    public static RuntimeAuthorizationStateStore RuntimeAuthorization => RuntimeAuthorizationFactory.Value;
+    public static SecurityStorageRuntime SecurityStorage => SecurityStorageFactory.Value;
+    public static PublicMarketRuntime PublicMarket => PublicMarketFactory.Value;
+    public static LocalPluginRegistry PluginRegistry => PluginRegistryFactory.Value;
     public static IMultiTimeframeAnalyzer Analyzer => AnalyzerFactory.Value;
     public static IMachineLearningSignalGenerator MachineLearning => MlFactory.Value;
-    public static InMemoryFeatureStore FeatureStore => FeatureStoreFactory.Value;
-    public static RealTimeDataPipeline DataPipeline => PipelineFactory.Value;
-    public static StrategyOrchestrator StrategyOrchestrator => StrategyOrchestratorFactory.Value;
     public static WalkForwardOptimizer WalkForward => WalkForwardFactory.Value;
     public static ITradeMonitoringHub MonitoringHub => MonitoringHubFactory.Value;
     public static Serilog.ILogger Logger => LoggerFactory.Value;
-    public static ExecutionService Execution => ExecutionFactory.Value;
-    public static AccountStateProvider AccountState => AccountStateFactory.Value;
-    public static OrderLifecycleManager OrderLifecycle => OrderLifecycleFactory.Value;
-
-    private static RealTimeDataPipeline CreatePipeline()
-    {
-        var dataDirectory = AppDataPaths.DataDirectory;
-        Directory.CreateDirectory(dataDirectory);
-        var dbPath = Path.Combine(dataDirectory, "trading.sqlite");
-        var importPath = Path.Combine(dataDirectory, "import");
-        Directory.CreateDirectory(importPath);
-
-        // Resolve core data interfaces from Core.Data namespace
-        var sources = new Core.Data.IDataSource[]
-        {
-            new Infrastructure.Data.DatabaseDataSource($"Data Source={dbPath}"),
-            new Infrastructure.Data.ApiDataSource(new HttpClient { Timeout = TimeSpan.FromSeconds(10) }, "https://testnet.binancefuture.com"),
-            new Infrastructure.Data.FileDataSource(importPath)
-        };
-
-        var qualityRules = new Core.Data.IDataQualityRule[]
-        {
-            new Infrastructure.Data.NullValueQualityRule(),
-            new Infrastructure.Data.RangeQualityRule("close", 0, double.MaxValue),
-            new Infrastructure.Data.SpikeDetectionRule("close")
-        };
-
-        var engineers = new Core.Data.IFeatureEngineer[]
-        {
-            new Infrastructure.Data.TechnicalIndicatorEngineer(),
-            new Infrastructure.Data.LagFeatureEngineer()
-        };
-
-        return new RealTimeDataPipeline(sources, qualityRules, engineers, FeatureStoreFactory.Value);
-    }
-
     private static SystemState InitializeSystemState()
     {
         var mode = Settings.TradingMode?.ToLowerInvariant() switch
@@ -140,10 +126,8 @@ public static class ServiceLocator
 
     public static async ValueTask DisposeAsync()
     {
-        if (StreamFactory.IsValueCreated)
-            await StreamFactory.Value.DisposeAsync();
-        if (ApiFactory.IsValueCreated)
-            ApiFactory.Value.Dispose();
+        if (PublicMarketFactory.IsValueCreated)
+            await PublicMarketFactory.Value.DisposeAsync().ConfigureAwait(false);
     }
 
     private sealed class DefaultBacktestEngine : IBacktestEngine

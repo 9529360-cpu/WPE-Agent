@@ -1,0 +1,235 @@
+using System.Text.Json.Nodes;
+
+namespace WPE.Tests;
+
+public sealed class ModelOffCapabilityMaturityTests
+{
+    private static readonly string[] CapabilityIds =
+    [
+        "orchestrator", "market-data", "news", "macro", "technical", "fundamental", "strategy",
+        "backtest", "risk", "execution", "position", "review-post-trade", "teacher"
+    ];
+
+    private static readonly string[] AggregateIds =
+    [
+        "market", "research", "strategy", "risk", "execution", "recovery", "audit"
+    ];
+
+    private static readonly IReadOnlyDictionary<string, string[]> ExpectedMappings =
+        new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            ["orchestrator"] = ["market", "research", "strategy", "risk", "execution", "recovery", "audit"],
+            ["market-data"] = ["market"],
+            ["news"] = ["research"],
+            ["macro"] = ["research"],
+            ["technical"] = ["research"],
+            ["fundamental"] = ["research"],
+            ["strategy"] = ["strategy"],
+            ["backtest"] = ["research"],
+            ["risk"] = ["risk"],
+            ["execution"] = ["execution"],
+            ["position"] = ["execution", "recovery"],
+            ["review-post-trade"] = ["audit"],
+            ["teacher"] = ["research"]
+        };
+
+    [Fact]
+    public void CanonicalInventoryIsCurrentAndValid()
+    {
+        var errors = Validate(LoadCanonical());
+
+        Assert.Empty(errors);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("duplicate")]
+    [InlineData("unknown")]
+    [InlineData("stale")]
+    [InlineData("core-partial-implemented")]
+    [InlineData("core-no-accepted")]
+    public void ValidatorRejectsInvalidAuthorityClaims(string mutation)
+    {
+        var root = LoadCanonical();
+        var capabilities = root["capabilities"]!.AsArray();
+
+        switch (mutation)
+        {
+            case "missing":
+                capabilities.RemoveAt(0);
+                break;
+            case "duplicate":
+                capabilities.Add(capabilities[0]!.DeepClone());
+                break;
+            case "unknown":
+                capabilities[0]!["aggregate_ids"]![0] = "unknown-aggregate";
+                break;
+            case "stale":
+                root["authority"]!["status"] = "historical";
+                break;
+            case "core-partial-implemented":
+                capabilities.Single(Capability("orchestrator"))!["implemented"] = true;
+                break;
+            case "core-no-accepted":
+                capabilities.Single(Capability("macro"))!["accepted"] = true;
+                break;
+        }
+
+        Assert.NotEmpty(Validate(root));
+    }
+
+    [Theory]
+    [InlineData("wrong-parent")]
+    [InlineData("missing-parent")]
+    [InlineData("extra-parent")]
+    [InlineData("duplicate-parent")]
+    public void ValidatorRejectsAnyExactMappingDrift(string mutation)
+    {
+        var root = LoadCanonical();
+        var capabilities = root["capabilities"]!.AsArray();
+
+        switch (mutation)
+        {
+            case "wrong-parent":
+                capabilities.Single(Capability("macro"))!["aggregate_ids"] = new JsonArray("market");
+                break;
+            case "missing-parent":
+                capabilities.Single(Capability("orchestrator"))!["aggregate_ids"]!.AsArray().RemoveAt(0);
+                break;
+            case "extra-parent":
+                capabilities.Single(Capability("market-data"))!["aggregate_ids"]!.AsArray().Add("research");
+                break;
+            case "duplicate-parent":
+                capabilities.Single(Capability("market-data"))!["aggregate_ids"]!.AsArray().Add("market");
+                break;
+        }
+
+        Assert.NotEmpty(Validate(root));
+    }
+
+    [Theory]
+    [InlineData("core_no_or_partial_is_implemented", "weakened")]
+    [InlineData("core_no_or_partial_is_accepted", "weakened")]
+    [InlineData("yes_is_bounded_to_acceptance_scope", "weakened")]
+    [InlineData("core_no_or_partial_is_implemented", "missing")]
+    [InlineData("core_no_or_partial_is_accepted", "wrong-type")]
+    [InlineData("yes_is_bounded_to_acceptance_scope", "missing")]
+    public void ValidatorRejectsMissingMistypedOrWeakenedRefusalPolicy(string ruleName, string mutation)
+    {
+        var root = LoadCanonical();
+        var rules = root["rules"]!.AsObject();
+
+        switch (mutation)
+        {
+            case "weakened":
+                rules[ruleName] = ruleName == "yes_is_bounded_to_acceptance_scope" ? false : true;
+                break;
+            case "missing":
+                rules.Remove(ruleName);
+                break;
+            case "wrong-type":
+                rules[ruleName] = "false";
+                break;
+        }
+
+        Assert.NotEmpty(Validate(root));
+    }
+
+    private static JsonObject LoadCanonical() =>
+        JsonNode.Parse(File.ReadAllText(FindInventoryPath()))!.AsObject();
+
+    private static string FindInventoryPath()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        {
+            var candidate = Path.Combine(directory.FullName, "Docs", "product", "model-off-capability-maturity.json");
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new FileNotFoundException("Could not locate the canonical model-off capability inventory.");
+    }
+
+    private static Func<JsonNode?, bool> Capability(string id) =>
+        node => String(node, "id") == id;
+
+    private static IReadOnlyList<string> Validate(JsonObject root)
+    {
+        var errors = new List<string>();
+        var authority = root["authority"] as JsonObject;
+        var rules = root["rules"] as JsonObject;
+        var aggregates = root["aggregates"] as JsonArray;
+        var capabilities = root["capabilities"] as JsonArray;
+
+        Require(root["schema_version"]?.GetValue<string>() == "wpe.model-off-capability-maturity/1.0", "unknown schema", errors);
+        Require(String(authority, "id") == "MO-01" && String(authority, "status") == "current" && String(authority, "as_of") == "2026-07-23", "stale authority", errors);
+        Require(String(authority, "target") == "private_autonomous_testnet" && Bool(authority, "human_per_cycle_approval") == false, "wrong Testnet authority", errors);
+        Require(String(authority, "mainnet") == "disabled" && String(authority, "teacher") == "frozen_future", "unsafe authority", errors);
+        Require(Int(rules, "retained_capability_count") == 13 && Int(rules, "aggregate_count") == 7, "wrong declared counts", errors);
+        Require(Bool(rules, "aggregation_upgrades_maturity") == false, "aggregation upgrade enabled", errors);
+        Require(Bool(rules, "core_no_or_partial_is_implemented") == false, "core no/partial implementation refusal weakened", errors);
+        Require(Bool(rules, "core_no_or_partial_is_accepted") == false, "core no/partial acceptance refusal weakened", errors);
+        Require(Bool(rules, "yes_is_bounded_to_acceptance_scope") == true, "yes acceptance scope boundary weakened", errors);
+
+        if (aggregates is null || capabilities is null)
+        {
+            errors.Add("missing inventory arrays");
+            return errors;
+        }
+
+        var aggregateIds = aggregates.Select(node => String(node, "id")).ToArray();
+        Require(aggregateIds.Length == 7 && aggregateIds.Distinct(StringComparer.Ordinal).Count() == 7, "missing or duplicate aggregate", errors);
+        Require(aggregateIds.ToHashSet(StringComparer.Ordinal).SetEquals(AggregateIds), "unknown aggregate inventory", errors);
+        Require(aggregates.All(node => String(node, "maturity") == "partial" && Bool(node, "accepted") == false), "aggregate upgraded", errors);
+
+        var capabilityIds = capabilities.Select(node => String(node, "id")).ToArray();
+        Require(capabilityIds.Length == 13 && capabilityIds.Distinct(StringComparer.Ordinal).Count() == 13, "missing or duplicate capability", errors);
+        Require(capabilityIds.ToHashSet(StringComparer.Ordinal).SetEquals(CapabilityIds), "unknown capability inventory", errors);
+
+        foreach (var capability in capabilities)
+        {
+            var capabilityId = String(capability, "id");
+            var maturity = String(capability, "maturity");
+            var core = Bool(capability, "core");
+            var implemented = Bool(capability, "implemented");
+            var accepted = Bool(capability, "accepted");
+            Require(maturity is "no" or "partial" or "yes", "unknown maturity", errors);
+            var mappings = capability?["aggregate_ids"] as JsonArray;
+            var actualMappings = mappings?.Select(StringValue).ToArray() ?? [];
+            var hasExactMapping = capabilityId is not null &&
+                ExpectedMappings.TryGetValue(capabilityId, out var expectedMappings) &&
+                actualMappings.Length == expectedMappings.Length &&
+                actualMappings.Distinct(StringComparer.Ordinal).Count() == actualMappings.Length &&
+                actualMappings.ToHashSet(StringComparer.Ordinal).SetEquals(expectedMappings);
+            Require(hasExactMapping, $"exact aggregate mapping mismatch for {capabilityId ?? "<missing>"}", errors);
+            if (core == true && maturity is "no" or "partial")
+            {
+                Require(implemented == false && accepted == false, "core no/partial claimed implemented or accepted", errors);
+            }
+
+            if (maturity == "yes")
+            {
+                Require(implemented == true && accepted == true && !string.IsNullOrWhiteSpace(String(capability, "acceptance_scope")), "unbounded yes claim", errors);
+            }
+        }
+
+        var teacher = capabilities.Single(Capability("teacher"));
+        Require(Bool(teacher, "core") == false && String(teacher, "lifecycle") == "frozen_future" && String(teacher, "maturity") == "no" && Bool(teacher, "implemented") == false && Bool(teacher, "accepted") == false, "Teacher is not frozen", errors);
+        return errors;
+    }
+
+    private static string? String(JsonNode? node, string name) => StringValue(node?[name]);
+    private static string? StringValue(JsonNode? node) => node is JsonValue value && value.TryGetValue<string>(out var result) ? result : null;
+    private static bool? Bool(JsonNode? node, string name) => node?[name] is JsonValue value && value.TryGetValue<bool>(out var result) ? result : null;
+    private static int? Int(JsonNode? node, string name) => node?[name] is JsonValue value && value.TryGetValue<int>(out var result) ? result : null;
+
+    private static void Require(bool condition, string error, ICollection<string> errors)
+    {
+        if (!condition)
+        {
+            errors.Add(error);
+        }
+    }
+}

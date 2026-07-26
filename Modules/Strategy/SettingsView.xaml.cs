@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using 币安量化机器人.Models;
+using 币安量化机器人.Services;
 
 namespace 币安量化机器人.Modules.Strategy;
 
@@ -15,7 +16,7 @@ public partial class SettingsView : UserControl
 {
     private readonly ObservableCollection<StrategyParameterRow> _parameters = new();
     private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
-    private readonly string _configDirectory = Path.Combine(AppContext.BaseDirectory, "Configs");
+    private readonly string _configDirectory = AppDataPaths.ExportsDirectory;
 
     public SettingsView()
     {

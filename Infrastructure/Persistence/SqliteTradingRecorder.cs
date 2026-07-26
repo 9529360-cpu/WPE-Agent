@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Serilog;
+using 币安量化机器人.Services;
 using 币安量化机器人.Core.Persistence;
 
 /// <summary>
@@ -20,7 +21,7 @@ public class SqliteTradingRecorder : ITradingRecorder
 
     public SqliteTradingRecorder(string? databasePath = null)
     {
-        _databasePath = databasePath ?? Path.Combine(AppContext.BaseDirectory, "Data", "trading.db");
+        _databasePath = databasePath ?? AppDataPaths.File("trading.db");
         _logger = Log.ForContext<SqliteTradingRecorder>();
         
         // 确保数据库目录存在
