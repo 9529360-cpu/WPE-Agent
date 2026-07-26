@@ -65,6 +65,41 @@ public sealed class ModelOffLiveCycleInputComposerTests
         Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(inputs[^1].Output));
     }
 
+    [Fact]
+    public void CanonicalNewsEvidenceEntersResearchByHashWithoutBodyText()
+    {
+        var request=Request();var evidence=CopyEvidence(request.Evidence,news:[News()]);
+        var research=ModelOffLiveCycleInputComposerV1.Compose(request with{Evidence=evidence}).Single(x=>x.Output.Agent==ModelOffAgentV1.Research);
+        Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(research.Output));
+        Assert.Equal(1,research.Output.Facts.GetProperty("news_evidence_count").GetInt32());
+        Assert.Equal(1,research.Output.Facts.GetProperty("news_target_count").GetInt32());
+        var source=Assert.Single(research.Output.Sources,x=>x.Kind==ModelOffSourceKindV1.News);
+        Assert.StartsWith("sha256:",source.ArtifactHash,StringComparison.Ordinal);
+        Assert.DoesNotContain("private full article body",research.Document.Json,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("wrong-host")]
+    [InlineData("stale")]
+    [InlineData("duplicate")]
+    [InlineData("invalid-confidence")]
+    [InlineData("non-utc")]
+    [InlineData("all-sources-unavailable")]
+    public void InvalidOrUnavailableNewsEvidenceFailsResearchClosed(string defect)
+    {
+        var request=Request();var item=News();IReadOnlyList<NewsEvidence> news=[item];IReadOnlyList<string> missing=[];
+        if(defect=="wrong-host")news=[item with{Url="https://attacker.example/news"}];
+        if(defect=="stale")news=[item with{CollectedAt=Now.AddMinutes(-6).UtcDateTime}];
+        if(defect=="duplicate")news=[item,item];
+        if(defect=="invalid-confidence")news=[item with{Confidence=double.NaN}];
+        if(defect=="non-utc")news=[item with{PublishedAt=DateTime.SpecifyKind(item.PublishedAt!.Value,DateTimeKind.Unspecified)}];
+        if(defect=="all-sources-unavailable"){news=[];missing=["SEC","CFTC","Federal Reserve","ECB","CoinDesk","Cointelegraph","Google News"];}
+        var evidence=CopyEvidence(request.Evidence,news:news,missingSources:missing);
+        var research=ModelOffLiveCycleInputComposerV1.Compose(request with{Evidence=evidence}).Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(research));
+        Assert.Contains(research.Decision.ReasonCodes,x=>x.StartsWith("live.research.news-",StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("missing")]
     [InlineData("not-approved")]
@@ -318,9 +353,10 @@ public sealed class ModelOffLiveCycleInputComposerTests
             ["BTCUSDT"] = Market("BTCUSDT", 100000m, collectedAt)
         }
     };
-    private static EvidencePack CopyEvidence(EvidencePack source,AccountSnapshot? account=null,IReadOnlyList<ManagedPosition>? positions=null,IReadOnlyDictionary<string,MarketEvidence>? markets=null)=>new(){CollectedAt=source.CollectedAt,Completeness=source.Completeness,Account=account??source.Account,Positions=positions??source.Positions,Markets=markets??source.Markets,News=source.News,MissingSources=source.MissingSources};
+    private static EvidencePack CopyEvidence(EvidencePack source,AccountSnapshot? account=null,IReadOnlyList<ManagedPosition>? positions=null,IReadOnlyDictionary<string,MarketEvidence>? markets=null,IReadOnlyList<NewsEvidence>? news=null,IReadOnlyList<string>? missingSources=null)=>new(){CollectedAt=source.CollectedAt,Completeness=source.Completeness,Account=account??source.Account,Positions=positions??source.Positions,Markets=markets??source.Markets,News=news??source.News,MissingSources=missingSources??source.MissingSources};
     private static MarketEvidence Market(string symbol, decimal price, DateTime at) =>
         new(symbol, price, price * .98m, price * 1.02m, 55, .2, .3, .4, new(0, 1, 1, 1, 1, 1, 0), at);
+    private static NewsEvidence News()=>new("SEC","Official digital asset market update","https://www.sec.gov/news/press-release/test",Now.AddMinutes(-2).UtcDateTime,Now.AddMinutes(-1).UtcDateTime,"official",new string('a',64),["BTC"],"Private full article body must not enter canonical audit.",.9,1,"REGULATION",false,.1);
     private static ResearchValidationResult Research(string symbol) => new()
     { Symbol = symbol, StrategyVersion = "strategy-v1", SampleSize = 200, Trades = 30, QualityScore = .8, Approved = true, Promoted = true, CoverageDays = 90 };
     private static ResearchValidationResult CopyResearch(ResearchValidationResult value,bool? approved=null,bool? promoted=null,double? qualityScore=null)=>new(){Symbol=value.Symbol,StrategyVersion=value.StrategyVersion,SampleSize=value.SampleSize,Trades=value.Trades,WinRate=value.WinRate,ProfitFactor=value.ProfitFactor,Expectancy=value.Expectancy,MaxDrawdown=value.MaxDrawdown,Sharpe=value.Sharpe,OutOfSampleReturn=value.OutOfSampleReturn,WalkForwardScore=value.WalkForwardScore,MonteCarloLossProbability=value.MonteCarloLossProbability,QualityScore=qualityScore??value.QualityScore,Approved=approved??value.Approved,Promoted=promoted??value.Promoted,CoverageDays=value.CoverageDays,OutOfSampleTrades=value.OutOfSampleTrades,StrategyReturn=value.StrategyReturn,BenchmarkReturn=value.BenchmarkReturn,RegimeReturns=value.RegimeReturns,Summary=value.Summary};

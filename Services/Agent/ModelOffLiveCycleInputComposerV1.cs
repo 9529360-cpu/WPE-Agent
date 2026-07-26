@@ -22,6 +22,13 @@ internal static class ModelOffLiveCycleInputComposerV1
 {
     internal const string InputSchema = "wpe.live-cycle-snapshot/1.0";
     private static readonly TimeSpan MaximumMarketAge = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MaximumNewsAge = TimeSpan.FromDays(7);
+    private static readonly IReadOnlyDictionary<string,string[]> NewsSourceHosts=new Dictionary<string,string[]>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["SEC"]=["sec.gov"],["CFTC"]=["cftc.gov"],["Federal Reserve"]=["federalreserve.gov"],["ECB"]=["ecb.europa.eu"],
+        ["CoinDesk"]=["coindesk.com"],["Cointelegraph"]=["cointelegraph.com"],["Google News"]=["news.google.com"]
+    };
+    private static readonly HashSet<string> NewsEventTypes=new(StringComparer.Ordinal){"SECURITY","REGULATION","ETF","MACRO","EXCHANGE","MARKET","GENERAL"};
 
     internal static IReadOnlyList<ModelOffProductionInputV1> Compose(ModelOffLiveCycleInputRequestV1 request)
     {
@@ -67,6 +74,11 @@ internal static class ModelOffLiveCycleInputComposerV1
         var researchReasons = new List<string>();
         var macro=request.MacroObservations??[];
         var target=request.DecisionReview.Decision.Instrument;
+        var news=request.Evidence.News.OrderBy(x=>x.DuplicateGroup,StringComparer.Ordinal).ToArray();
+        var newsValid=news.All(x=>ValidNews(x,request.EvaluationTimeUtc))&&!news.GroupBy(x=>x.DuplicateGroup,StringComparer.OrdinalIgnoreCase).Any(x=>x.Count()>1);
+        var missingNewsSources=request.Evidence.MissingSources.Count(x=>NewsSourceHosts.ContainsKey(x));
+        if(!newsValid)researchReasons.Add("live.research.news-invalid");
+        if(news.Length==0&&missingNewsSources==NewsSourceHosts.Count)researchReasons.Add("live.research.news-unavailable");
         var targetMatches=request.Research.Values.Where(x=>string.Equals(x.Symbol,target,StringComparison.OrdinalIgnoreCase)).ToArray();
         var targetResearch=targetMatches.Length==1?targetMatches[0]:null;
         var targetResearchValid=targetResearch is not null&&ValidResearch(targetResearch);
@@ -82,6 +94,12 @@ internal static class ModelOffLiveCycleInputComposerV1
             researchReasons.Add("live.research.macro-invalid");
         if (!ModelOffEligibilityV1.IsEligibleForDownstream(marketOutput)) researchReasons.Add("live.research.market-invalid");
         var researchSources=new List<ModelOffSourceV1>{UpstreamSource(marketOutput,outputs[^1].Document,request.EvaluationTimeUtc)};
+        if(newsValid)foreach(var item in news.Take(12))
+        {
+            var published=NewsTimestamp(item);
+            researchSources.Add(new("news-"+item.DuplicateGroup.ToLowerInvariant(),ModelOffSourceKindV1.News,published,new DateTimeOffset(item.CollectedAt),
+                ModelOffSourceStatusV1.Available,Hash(NewsCanonicalFact(item,published))));
+        }
         if(targetResearch is not null)researchSources.Add(new($"strategy-validation-{(SafeToken(targetResearch.Symbol)?targetResearch.Symbol:"unknown")}",ModelOffSourceKindV1.Strategy,request.EvaluationTimeUtc,request.EvaluationTimeUtc,
             targetResearchValid&&targetResearch.Approved&&targetResearch.Promoted?ModelOffSourceStatusV1.Available:ModelOffSourceStatusV1.Invalid,
             targetResearchValid?Hash(new{targetResearch.Symbol,targetResearch.StrategyVersion,targetResearch.SampleSize,targetResearch.Trades,targetResearch.WinRate,targetResearch.ProfitFactor,targetResearch.Expectancy,targetResearch.MaxDrawdown,targetResearch.Sharpe,targetResearch.OutOfSampleReturn,targetResearch.WalkForwardScore,targetResearch.MonteCarloLossProbability,targetResearch.QualityScore,targetResearch.Approved,targetResearch.Promoted,targetResearch.CoverageDays,targetResearch.OutOfSampleTrades,targetResearch.StrategyReturn,targetResearch.BenchmarkReturn}):Hash(new{target=SafeToken(target)?target:"unknown",state="invalid"})));
@@ -91,6 +109,9 @@ internal static class ModelOffLiveCycleInputComposerV1
             new { target_symbol=SafeToken(target)?target:"unknown",target_validation_state=targetResearchValid?"valid":"invalid",validations = (!targetResearchValid?Array.Empty<ResearchValidationResult>():[targetResearch!]).Select(x => new
                 { Symbol = SafeToken(x.Symbol) ? x.Symbol : "unknown", strategy_version_present = !string.IsNullOrWhiteSpace(x.StrategyVersion),
                     x.SampleSize, x.Trades, x.QualityScore, x.Approved, x.Promoted, x.CoverageDays }).ToArray(),
+                news_evidence_count=newsValid?news.Length:0,
+                news_target_count=newsValid?news.Count(x=>NewsTargets(x,target)):0,
+                news_evidence_hash=newsValid?Hash(news.Select(x=>NewsCanonicalFact(x,NewsTimestamp(x))).ToArray()):Hash(new{state="invalid"}),
                 macro_observations=macro.OrderBy(x=>x.IndicatorId,StringComparer.Ordinal).Select(x=>new{x.IndicatorId,x.ObservationAtUtc,x.Revision,x.Geography,x.Frequency,x.Unit,x.Value,x.SourceArtifactHash,x.FirstObservedAtUtc}).ToArray() });
         outputs.Add(Input(research));
 
@@ -201,6 +222,31 @@ internal static class ModelOffLiveCycleInputComposerV1
 
     private static bool CurrentPositionReport(DateTimeOffset observed,DateTimeOffset evaluated,DateTimeOffset now)=>
         observed.Offset==TimeSpan.Zero&&evaluated.Offset==TimeSpan.Zero&&observed<=evaluated&&evaluated<=now&&now-evaluated<=MaximumMarketAge;
+
+    private static bool ValidNews(NewsEvidence value,DateTimeOffset now)
+    {
+        if(!NewsSourceHosts.TryGetValue(value.Source,out var hosts)||!Uri.TryCreate(value.Url,UriKind.Absolute,out var uri)||uri.Scheme!=Uri.UriSchemeHttps||
+           !hosts.Any(host=>uri.Host.Equals(host,StringComparison.OrdinalIgnoreCase)||uri.Host.EndsWith("."+host,StringComparison.OrdinalIgnoreCase)))return false;
+        if(string.IsNullOrWhiteSpace(value.Title)||value.Title.Length>500||!TryUtc(value.CollectedAt,out var collected)||!Fresh(collected,now))return false;
+        if(value.PublishedAt is {Kind:not DateTimeKind.Utc})return false;
+        var published=NewsTimestamp(value);if(published.Offset!=TimeSpan.Zero||published>collected||now-published>MaximumNewsAge)return false;
+        if(value.Reliability is not ("official" or "mainstream" or "aggregator")||value.DuplicateGroup.Length is not (20 or 64)||!value.DuplicateGroup.All(Uri.IsHexDigit))return false;
+        if(value.AffectedAssets.Any(x=>!SafeToken(x))||value.AffectedAssets.Distinct(StringComparer.Ordinal).Count()!=value.AffectedAssets.Count)return false;
+        return Finite(value.Confidence)&&value.Confidence is >=0 and <=1&&value.CorroboratingSources>0&&NewsEventTypes.Contains(value.EventType)&&Finite(value.Sentiment)&&value.Sentiment is >=-1 and <=1;
+    }
+    private static DateTimeOffset NewsTimestamp(NewsEvidence value)=>value.PublishedAt is {Kind:DateTimeKind.Utc} published?new DateTimeOffset(published):new DateTimeOffset(value.CollectedAt);
+    private static bool NewsTargets(NewsEvidence value,string symbol)
+    {
+        var asset=symbol.EndsWith("USDT",StringComparison.OrdinalIgnoreCase)?symbol[..^4]:symbol;
+        return value.AffectedAssets.Contains(asset,StringComparer.OrdinalIgnoreCase)||value.AffectedAssets.Contains(symbol,StringComparer.OrdinalIgnoreCase);
+    }
+    private static object NewsCanonicalFact(NewsEvidence value,DateTimeOffset published)=>new
+    {
+        source=value.Source,source_uri=value.Url,published_at_utc=published,collected_at_utc=new DateTimeOffset(value.CollectedAt),
+        reliability=value.Reliability,duplicate_group=value.DuplicateGroup.ToLowerInvariant(),assets=value.AffectedAssets.Order(StringComparer.Ordinal).ToArray(),
+        confidence=value.Confidence,corroborating_sources=value.CorroboratingSources,event_type=value.EventType,is_breaking=value.IsBreaking,sentiment=value.Sentiment,
+        title_sha256=Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value.Title))).ToLowerInvariant()
+    };
 
     private static bool TryUtc(DateTime value, out DateTimeOffset result)
     {
