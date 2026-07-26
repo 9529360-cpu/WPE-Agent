@@ -28,6 +28,44 @@ public sealed class ModelOffProductionCycleOrchestratorTests : IDisposable
         Assert.False(result.Outputs[ModelOffAgentV1.Execution].Facts.GetProperty("mutation_attempted").GetBoolean());
         Assert.Equal("no_resubmit", result.Outputs[ModelOffAgentV1.Recovery].Decision.Action);
         Assert.False(result.Outputs[ModelOffAgentV1.Recovery].Facts.GetProperty("resubmit_allowed").GetBoolean());
+        Assert.Equal(7, await Count("production-valid.db", "model_off_canonical_audits"));
+        Assert.Equal(6, await Count("production-valid.db", "model_off_canonical_handoffs"));
+        var replay = await Run("valid", inputs);
+        Assert.True(replay.EligibleForRiskIncrease);
+        Assert.Equal("model-off.production-cycle-ready", replay.Code);
+        Assert.Equal(7, await Count("production-valid.db", "model_off_canonical_audits"));
+        Assert.Equal(6, await Count("production-valid.db", "model_off_canonical_handoffs"));
+    }
+
+    [Fact]
+    public async Task HandoffIdentityConflictRollsBackTheWholeProductionCycle()
+    {
+        const string cycle = "production-atomic";
+        var database = "production-" + cycle + ".db";
+        _ = Store("production-" + cycle);
+        await Execute(database, "INSERT INTO model_off_canonical_handoffs(handoff_id,cycle_id,from_agent,to_agent,canonical_output_id,canonical_sha256,status,recorded_at_utc,handoff_sha256,canonical_bytes) VALUES($id,$cycle,'market','research','conflict',$hash,'blocked',$at,$hash,X'01')",
+            ("$id", cycle + "-production-handoff-1"), ("$cycle", cycle), ("$hash", new string('a', 64)), ("$at", Now.ToString("O")));
+
+        var result = await Run(cycle, Recycle(await Inputs("atomic"), cycle));
+
+        Assert.False(result.EligibleForRiskIncrease);
+        Assert.Equal("audit.handoff-identity-conflict", result.Code);
+        Assert.Equal(0, await Count(database, "model_off_canonical_audits"));
+        Assert.Equal(1, await Count(database, "model_off_canonical_handoffs"));
+    }
+
+    [Fact]
+    public async Task PersistedProductionEvidenceIsDatabaseAppendOnly()
+    {
+        const string cycle = "production-append-only";
+        var database = "production-" + cycle + ".db";
+        var result = await Run(cycle, Recycle(await Inputs("append-only"), cycle));
+        Assert.True(result.EligibleForRiskIncrease);
+
+        await Assert.ThrowsAsync<SqliteException>(() => Execute(database, "UPDATE model_off_canonical_audits SET status='blocked'"));
+        await Assert.ThrowsAsync<SqliteException>(() => Execute(database, "DELETE FROM model_off_canonical_handoffs"));
+        Assert.Equal(7, await Count(database, "model_off_canonical_audits"));
+        Assert.Equal(6, await Count(database, "model_off_canonical_handoffs"));
     }
 
     [Fact]
@@ -127,5 +165,15 @@ public sealed class ModelOffProductionCycleOrchestratorTests : IDisposable
         new ModelOffProductionCycleOrchestratorV1(Store("production-" + cycle + (storeSuffix is null ? "" : "-" + storeSuffix))).RunAsync(
             new(cycle, Now, inputs, mainnet), CancellationToken.None);
     private AgentSqliteStore Store(string name) => new(Path.Combine(_dir, name + ".db"), () => Now);
+    private async Task<long> Count(string database,string table)
+    {
+        await using var connection=new SqliteConnection("Data Source="+Path.Combine(_dir,database));await connection.OpenAsync();
+        await using var command=connection.CreateCommand();command.CommandText="SELECT COUNT(*) FROM "+table;return (long)(await command.ExecuteScalarAsync())!;
+    }
+    private async Task Execute(string database,string sql,params (string Name,object Value)[] parameters)
+    {
+        await using var connection=new SqliteConnection("Data Source="+Path.Combine(_dir,database));await connection.OpenAsync();
+        await using var command=connection.CreateCommand();command.CommandText=sql;foreach(var parameter in parameters)command.Parameters.AddWithValue(parameter.Name,parameter.Value);await command.ExecuteNonQueryAsync();
+    }
     private static string ProjectRoot() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 }

@@ -57,6 +57,12 @@ public sealed class AgentSqliteStore
     CREATE TABLE IF NOT EXISTS maturity_audits(cycle_id TEXT PRIMARY KEY,created_at TEXT NOT NULL,plan_json TEXT NOT NULL,review_json TEXT NOT NULL,risk_json TEXT NOT NULL,research_json TEXT,execution_result TEXT);
     CREATE TABLE IF NOT EXISTS model_off_canonical_audits(output_id TEXT PRIMARY KEY,cycle_id TEXT NOT NULL,schema TEXT NOT NULL,template_version TEXT NOT NULL,canonical_sha256 TEXT NOT NULL,status TEXT NOT NULL,output_kind TEXT NOT NULL,sources_json TEXT NOT NULL,as_of_utc TEXT NOT NULL,recorded_at_utc TEXT NOT NULL,canonical_bytes BLOB NOT NULL);
     CREATE INDEX IF NOT EXISTS ix_model_off_canonical_audits_cycle ON model_off_canonical_audits(cycle_id,as_of_utc,output_id);
+    CREATE TRIGGER IF NOT EXISTS model_off_canonical_audits_no_update BEFORE UPDATE ON model_off_canonical_audits BEGIN SELECT RAISE(ABORT,'model-off canonical audits are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS model_off_canonical_audits_no_delete BEFORE DELETE ON model_off_canonical_audits BEGIN SELECT RAISE(ABORT,'model-off canonical audits are append-only'); END;
+    CREATE TABLE IF NOT EXISTS model_off_canonical_handoffs(handoff_id TEXT PRIMARY KEY,cycle_id TEXT NOT NULL,from_agent TEXT NOT NULL,to_agent TEXT NOT NULL,canonical_output_id TEXT NOT NULL,canonical_sha256 TEXT NOT NULL,status TEXT NOT NULL,recorded_at_utc TEXT NOT NULL,handoff_sha256 TEXT NOT NULL,canonical_bytes BLOB NOT NULL);
+    CREATE INDEX IF NOT EXISTS ix_model_off_canonical_handoffs_cycle ON model_off_canonical_handoffs(cycle_id,handoff_id);
+    CREATE TRIGGER IF NOT EXISTS model_off_canonical_handoffs_no_update BEFORE UPDATE ON model_off_canonical_handoffs BEGIN SELECT RAISE(ABORT,'model-off canonical handoffs are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS model_off_canonical_handoffs_no_delete BEFORE DELETE ON model_off_canonical_handoffs BEGIN SELECT RAISE(ABORT,'model-off canonical handoffs are append-only'); END;
     CREATE TABLE IF NOT EXISTS execution_events(id INTEGER PRIMARY KEY AUTOINCREMENT,cycle_id TEXT,client_order_id TEXT UNIQUE,symbol TEXT,side TEXT,action TEXT,reduce_only INTEGER,quantity TEXT,avg_price TEXT,expected_price TEXT NOT NULL DEFAULT '0',status TEXT,occurred_at TEXT,exchange_updated_at TEXT);
     CREATE TABLE IF NOT EXISTS exchange_order_fee_evidence(evidence_id TEXT PRIMARY KEY,schema TEXT NOT NULL,provider_id TEXT NOT NULL,environment TEXT NOT NULL,symbol TEXT NOT NULL,order_id TEXT NOT NULL,client_order_id TEXT NOT NULL,fill_count INTEGER NOT NULL,executed_quantity TEXT NOT NULL,fee_amount TEXT NOT NULL,fee_asset TEXT NOT NULL,observed_at TEXT NOT NULL,state TEXT NOT NULL,canonical_sha256 TEXT NOT NULL,canonical_bytes BLOB NOT NULL);
     CREATE INDEX IF NOT EXISTS ix_exchange_order_fee_identity ON exchange_order_fee_evidence(provider_id,environment,symbol,order_id,client_order_id,observed_at DESC);
@@ -226,6 +232,47 @@ public sealed class AgentSqliteStore
     {
         if(string.IsNullOrWhiteSpace(cycleId))throw new ArgumentException("Cycle id is required.",nameof(cycleId));
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT output_id,cycle_id,schema,template_version,canonical_sha256,status,output_kind,sources_json,as_of_utc,recorded_at_utc,canonical_bytes FROM model_off_canonical_audits WHERE cycle_id=$c ORDER BY as_of_utc,output_id";q.Parameters.AddWithValue("$c",cycleId);await using var r=await q.ExecuteReaderAsync(ct);var rows=new List<PersistedModelOffAudit>();while(await r.ReadAsync(ct))rows.Add(new(r.GetString(0),r.GetString(1),r.GetString(2),r.GetString(3),r.GetString(4),r.GetString(5),r.GetString(6),r.GetString(7),DateTimeOffset.Parse(r.GetString(8),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),DateTimeOffset.Parse(r.GetString(9),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),(byte[])r[10]));return rows;
+    }
+    public async Task<ModelOffAuditPersistenceResult> SaveModelOffProductionCycleAsync(IReadOnlyList<(ModelOffAgentOutputV1 Output,ModelOffCanonicalDocumentV1 Document)> outputs,IReadOnlyList<ModelOffHandoffV1> handoffs,CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(outputs);ArgumentNullException.ThrowIfNull(handoffs);
+        var roles=Enum.GetValues<ModelOffAgentV1>();
+        if(outputs.Count!=roles.Length||outputs.Select(x=>x.Output.Agent).Distinct().Count()!=roles.Length||roles.Any(role=>outputs.Count(x=>x.Output.Agent==role)!=1)||handoffs.Count!=roles.Length-1)return new(false,false,"audit.production-cycle-shape-invalid");
+        var cycle=outputs[0].Output.CycleId;
+        if(string.IsNullOrWhiteSpace(cycle)||outputs.Any(x=>!string.Equals(x.Output.CycleId,cycle,StringComparison.Ordinal))||handoffs.Any(x=>!string.Equals(x.CycleId,cycle,StringComparison.Ordinal)))return new(false,false,"audit.production-cycle-identity-invalid");
+        var ordered=outputs.OrderBy(x=>x.Output.Agent).ToArray();
+        for(var i=0;i<handoffs.Count;i++)
+        {
+            var handoff=handoffs[i];var source=ordered[i];
+            if(handoff.FromAgent!=roles[i]||handoff.ToAgent!=roles[i+1]||!string.Equals(handoff.CanonicalOutputId,source.Output.OutputId,StringComparison.Ordinal)||!string.Equals(handoff.CanonicalSha256,source.Document.Sha256,StringComparison.Ordinal))return new(false,false,"audit.production-cycle-handoff-invalid");
+        }
+        var prepared=new List<(ModelOffAgentOutputV1 Output,ModelOffCanonicalDocumentV1 Document,string Sources,DateTimeOffset AsOf)>();
+        try
+        {
+            foreach(var pair in ordered)
+            {
+                var canonical=ModelOffCanonicalSerializerV1.Serialize(pair.Output);
+                if(pair.Document.Utf8Bytes.Length==0||!CryptographicOperations.FixedTimeEquals(canonical.Utf8Bytes,pair.Document.Utf8Bytes)||!string.Equals(canonical.Sha256,pair.Document.Sha256,StringComparison.Ordinal))return new(false,false,"audit.production-cycle-canonical-invalid");
+                var asOf=pair.Output.Sources.Select(x=>x.AsOfUtc).Where(x=>x.HasValue).Select(x=>x!.Value).DefaultIfEmpty().Max();if(asOf==default)return new(false,false,"audit.production-cycle-source-time-invalid");
+                var sources=JsonSerializer.Serialize(pair.Output.Sources.OrderBy(x=>x.SourceId,StringComparer.Ordinal).Select(x=>new{x.SourceId,Kind=x.Kind.ToString().ToLowerInvariant(),AsOfUtc=x.AsOfUtc!.Value.ToUniversalTime().ToString("O",CultureInfo.InvariantCulture),Status=x.Status.ToString().ToLowerInvariant(),x.ArtifactHash}));
+                prepared.Add((pair.Output,pair.Document,sources,asOf));
+            }
+        }
+        catch(InvalidOperationException){return new(false,false,"audit.production-cycle-canonical-invalid");}
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);var allIdempotent=true;var recorded=DbInstant(_utcNow());
+        foreach(var pair in prepared)
+        {
+            await using var q=c.CreateCommand();q.Transaction=tx;q.CommandText="INSERT OR IGNORE INTO model_off_canonical_audits(output_id,cycle_id,schema,template_version,canonical_sha256,status,output_kind,sources_json,as_of_utc,recorded_at_utc,canonical_bytes) VALUES($o,$c,$s,$v,$h,$st,$k,$src,$a,$r,$b)";AddParameters(q,("$o",pair.Output.OutputId),("$c",cycle),("$s",ModelOffAgentOutputV1.Schema),("$v",pair.Output.TemplateVersion),("$h",pair.Document.Sha256),("$st",pair.Output.Status.ToString().ToLowerInvariant()),("$k",pair.Output.Agent.ToString().ToLowerInvariant()),("$src",pair.Sources),("$a",DbInstant(pair.AsOf)),("$r",recorded));q.Parameters.Add("$b",SqliteType.Blob).Value=pair.Document.Utf8Bytes;
+            if(await q.ExecuteNonQueryAsync(ct)==1){allIdempotent=false;continue;}
+            await using var check=c.CreateCommand();check.Transaction=tx;check.CommandText="SELECT cycle_id,canonical_sha256,canonical_bytes FROM model_off_canonical_audits WHERE output_id=$id";check.Parameters.AddWithValue("$id",pair.Output.OutputId);await using var reader=await check.ExecuteReaderAsync(ct);if(!await reader.ReadAsync(ct)||!string.Equals(reader.GetString(0),cycle,StringComparison.Ordinal)||!string.Equals(reader.GetString(1),pair.Document.Sha256,StringComparison.Ordinal)||!CryptographicOperations.FixedTimeEquals((byte[])reader[2],pair.Document.Utf8Bytes)){await tx.RollbackAsync(ct);return new(false,false,"audit.identity-conflict");}
+        }
+        foreach(var handoff in handoffs)
+        {
+            var document=ModelOffCanonicalSerializerV1.SerializeHandoff(handoff);await using var q=c.CreateCommand();q.Transaction=tx;q.CommandText="INSERT OR IGNORE INTO model_off_canonical_handoffs(handoff_id,cycle_id,from_agent,to_agent,canonical_output_id,canonical_sha256,status,recorded_at_utc,handoff_sha256,canonical_bytes) VALUES($i,$c,$f,$t,$o,$h,$s,$r,$hh,$b)";AddParameters(q,("$i",handoff.HandoffId),("$c",cycle),("$f",handoff.FromAgent.ToString().ToLowerInvariant()),("$t",handoff.ToAgent.ToString().ToLowerInvariant()),("$o",handoff.CanonicalOutputId),("$h",handoff.CanonicalSha256),("$s",handoff.Status.ToString().ToLowerInvariant()),("$r",recorded),("$hh",document.Sha256));q.Parameters.Add("$b",SqliteType.Blob).Value=document.Utf8Bytes;
+            if(await q.ExecuteNonQueryAsync(ct)==1){allIdempotent=false;continue;}
+            await using var check=c.CreateCommand();check.Transaction=tx;check.CommandText="SELECT cycle_id,handoff_sha256,canonical_bytes FROM model_off_canonical_handoffs WHERE handoff_id=$id";check.Parameters.AddWithValue("$id",handoff.HandoffId);await using var reader=await check.ExecuteReaderAsync(ct);if(!await reader.ReadAsync(ct)||!string.Equals(reader.GetString(0),cycle,StringComparison.Ordinal)||!string.Equals(reader.GetString(1),document.Sha256,StringComparison.Ordinal)||!CryptographicOperations.FixedTimeEquals((byte[])reader[2],document.Utf8Bytes)){await tx.RollbackAsync(ct);return new(false,false,"audit.handoff-identity-conflict");}
+        }
+        await tx.CommitAsync(ct);return new(true,allIdempotent,allIdempotent?"audit.production-cycle-idempotent":"audit.production-cycle-persisted");
     }
     public async Task<bool> HasModelOffCanonicalAuditAsync(string outputId,CancellationToken ct)
     {

@@ -28,7 +28,7 @@
     { "id": "audit", "name": "Audit", "maturity": "partial", "accepted": false }
   ],
   "capabilities": [
-    { "id": "orchestrator", "name": "Orchestrator/control", "core": true, "lifecycle": "current", "aggregate_ids": ["market", "research", "strategy", "risk", "execution", "recovery", "audit"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
+    { "id": "orchestrator", "name": "Orchestrator/control", "core": true, "lifecycle": "current", "aggregate_ids": ["market", "research", "strategy", "risk", "execution", "recovery", "audit"], "maturity": "yes", "implemented": true, "accepted": true, "acceptance_scope": "deterministic seven-role canonical chain with mandatory fail-closed pre-authorization gate and atomic append-only output/handoff persistence; no live Testnet mutation certification" },
     { "id": "market-data", "name": "Market Data", "core": true, "lifecycle": "current", "aggregate_ids": ["market"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
     { "id": "news", "name": "News", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
     { "id": "macro", "name": "Macro", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },

@@ -57,6 +57,14 @@ public sealed class ModelOffCapabilityMaturityTests
         foreach(var id in new[]{"execution","recovery"}){var aggregate=aggregates.Single(node=>String(node,"id")==id);Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));}
     }
 
+    [Fact]
+    public void OrchestratorAcceptanceIsBoundedAndDoesNotUpgradeSevenAggregates()
+    {
+        var root=LoadCanonical();var orchestrator=root["capabilities"]!.AsArray().Single(Capability("orchestrator"));var aggregates=root["aggregates"]!.AsArray();
+        Assert.Equal("yes",String(orchestrator,"maturity"));Assert.True(Bool(orchestrator,"implemented"));Assert.True(Bool(orchestrator,"accepted"));Assert.Contains("atomic append-only output/handoff persistence",String(orchestrator,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no live Testnet mutation certification",String(orchestrator,"acceptance_scope"),StringComparison.Ordinal);
+        foreach(var aggregate in aggregates){Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));}
+    }
+
     [Theory]
     [InlineData("missing")]
     [InlineData("duplicate")]
@@ -84,7 +92,7 @@ public sealed class ModelOffCapabilityMaturityTests
                 root["authority"]!["status"] = "historical";
                 break;
             case "core-partial-implemented":
-                capabilities.Single(Capability("orchestrator"))!["implemented"] = true;
+                capabilities.Single(Capability("market-data"))!["implemented"] = true;
                 break;
             case "core-no-accepted":
                 capabilities.Single(Capability("macro"))!["accepted"] = true;

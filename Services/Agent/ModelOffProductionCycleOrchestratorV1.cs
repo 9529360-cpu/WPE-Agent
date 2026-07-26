@@ -95,28 +95,25 @@ internal sealed class ModelOffProductionCycleOrchestratorV1
             new { expected_output_count = 7, upstream_hashes = documents.Select(x => x.Sha256).ToArray() });
         outputs.Add(audit); documents.Add(ModelOffCanonicalSerializerV1.Serialize(audit));
 
+        var handoffValues = BuildHandoffValues(request, outputs, documents);
+        var handoffs = handoffValues.Select(ModelOffCanonicalSerializerV1.SerializeHandoff).ToArray();
         var persisted = true;
-        var persistenceCode = "audit.persisted";
+        var persistenceCode = "audit.production-cycle-persisted";
         try
         {
-            foreach (var pair in outputs.Zip(documents))
-            {
-                var saved = await _auditStore.SaveModelOffCanonicalAuditAsync(pair.First, pair.Second, ct);
-                if (saved.Succeeded) continue;
-                persisted = false; persistenceCode = saved.Code; break;
-            }
+            var saved = await _auditStore.SaveModelOffProductionCycleAsync(outputs.Zip(documents).Select(x => (x.First, x.Second)).ToArray(), handoffValues, ct);
+            persisted = saved.Succeeded; persistenceCode = saved.Code;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch { persisted = false; persistenceCode = "audit.persistence-failed"; }
 
         var outputMap = outputs.ToDictionary(x => x.Agent);
         var documentMap = outputs.Zip(documents).ToDictionary(x => x.First.Agent, x => x.Second);
-        var handoffs = BuildHandoffs(request, outputs, documents);
         var eligible = cycleReady && ModelOffEligibilityV1.IsEligibleForDownstream(audit) && persisted;
         return new(outputMap, documentMap, handoffs,
             documentMap.ToDictionary(x => x.Key, x => x.Value.Sha256), eligible,
             eligible ? "model-off.production-cycle-ready" :
-            persistenceCode == "audit.persisted" ? "model-off.production-cycle-blocked" : persistenceCode);
+            persisted ? "model-off.production-cycle-blocked" : persistenceCode);
     }
 
     private static IReadOnlyList<string> ValidateInput(
@@ -194,21 +191,21 @@ internal sealed class ModelOffProductionCycleOrchestratorV1
             ready ? ModelOffSourceStatusV1.Available : ModelOffSourceStatusV1.Invalid,
             "sha256:" + document.Sha256);
 
-    private static IReadOnlyList<ModelOffCanonicalDocumentV1> BuildHandoffs(
+    private static IReadOnlyList<ModelOffHandoffV1> BuildHandoffValues(
         ModelOffProductionCycleRequestV1 request, IReadOnlyList<ModelOffAgentOutputV1> outputs,
         IReadOnlyList<ModelOffCanonicalDocumentV1> documents)
     {
-        var handoffs = new List<ModelOffCanonicalDocumentV1>(6);
+        var handoffs = new List<ModelOffHandoffV1>(6);
         for (var index = 0; index < OrderedRoles.Length - 1; index++)
         {
             var ready = ModelOffEligibilityV1.IsEligibleForDownstream(outputs[index]);
-            handoffs.Add(ModelOffCanonicalSerializerV1.SerializeHandoff(new(
+            handoffs.Add(new(
                 $"{request.CycleId}-production-handoff-{index + 1}", request.CycleId,
                 OrderedRoles[index], OrderedRoles[index + 1], outputs[index].OutputId,
                 documents[index].Sha256, ready ? ModelOffHandoffStatusV1.Ready : ModelOffHandoffStatusV1.Blocked,
                 ready ? ["continue"] : [], ["model_override", "direct_mutation"],
                 ready ? [] : outputs[index].Decision.ReasonCodes,
-                request.EvaluationTimeUtc, request.EvaluationTimeUtc.AddMinutes(5))));
+                request.EvaluationTimeUtc, request.EvaluationTimeUtc.AddMinutes(5)));
         }
         return handoffs;
     }
