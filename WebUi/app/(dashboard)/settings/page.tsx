@@ -119,6 +119,7 @@ export default function SettingsPage() {
         <RuntimeMetric label="WhatsApp" value={notification.whatsAppReady ? t('common.ready') : t('common.notReady')} />
         <RuntimeMetric label={t('settings.pending')} value={notification.pendingCount} />
         <RuntimeMetric label={t('settings.deadLetter')} value={notification.deadLetterCount} />
+        <RuntimeMetric label="Allowed events" value={notification.eventKinds.length ? notification.eventKinds.join(', ') : t('common.none')} />
       </PanelBody> : <PanelBody className="p-5 text-sm text-muted-foreground">{runtime.notificationStatus?.message || t('settings.notificationHelp')}</PanelBody>}
     </Panel>
 

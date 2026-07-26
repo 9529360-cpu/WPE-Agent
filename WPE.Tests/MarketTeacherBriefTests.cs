@@ -68,11 +68,30 @@ public sealed class MarketTeacherBriefTests : IDisposable
         Assert.Contains("NotificationEventKind.MarketBrief",guard,StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void SecureSettingsPersistExplicitMarketBriefConsent()
+    {
+        var path=Path.Combine(_directory,"settings.json");var store=new AgentSettingsStore(path);
+        var service=new NotificationConfigurationService(store,new NoopCleaner(),new TestProtector());
+        service.SaveConfirmed(new(true,new HashSet<NotificationEventKind>([NotificationEventKind.MarketBrief]),false,"22:00","07:00","UTC",new(false,"",""),new(false,"","","","")),true,"SAVE NOTIFICATION CONFIG");
+        Assert.Contains(NotificationEventKind.MarketBrief.ToString(),store.Load().Notification.EventKinds);
+    }
+
+    [Fact]
+    public void DesktopSettingsExposeMarketBriefInEverySupportedLanguage()
+    {
+        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"SetupWindow.xaml.cs"));
+        Assert.Contains("_notifyMarketBrief",source,StringComparison.Ordinal);
+        foreach(var language in new[]{"zh_CN","zh_TW","ja_JP","ko_KR","it_IT"})Assert.Contains(language,source,StringComparison.Ordinal);
+    }
+
     private static ModelOffAgentOutputV1 Research()=>new(ModelOffAgentV1.Research,"research","cycle",Now,Now,"wpe.live-cycle-snapshot/1.0",new("wpe.live-research","1.0"),
         [new("market",ModelOffSourceKindV1.Audit,Now,Now,ModelOffSourceStatusV1.Available,"sha256:"+new string('a',64))],ModelOffOutputStatusV1.Succeeded,new(ModelOffUncertaintyLevelV1.None,[],[]),
         JsonSerializer.SerializeToElement(new{validations=new[]{new{Symbol="BTCUSDT"}},macro_observations=new[]{new{IndicatorId="CUUR0000SA0",ObservationAtUtc=new DateTimeOffset(2026,6,1,0,0,0,TimeSpan.Zero),Revision=2,Geography="US",Frequency="monthly",Unit="index",Value=334.1m,SourceArtifactHash=new string('b',64),FirstObservedAtUtc=Now.AddMinutes(-2)}}}),[],new("publish_research",true,[]),[],ModelOffFixedTemplatesV1.SummaryVersion);
 
     private sealed class RecordingObserver:IConfirmedNotificationObserver
     {public List<ConfirmedNotificationEvent> Events{get;}=[];public Task ObserveAsync(ConfirmedNotificationEvent value,CancellationToken ct){Events.Add(value);return Task.CompletedTask;}}
+    private sealed class NoopCleaner:ILegacyNotificationSecretCleaner{public void ClearAfterConfirmedMigration(){}}
+    private sealed class TestProtector:INotificationSecretProtector{public string Protect(string value)=>"protected:"+value;}
     private static string ProjectRoot()=>Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
 }

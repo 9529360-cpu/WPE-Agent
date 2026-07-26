@@ -18,6 +18,7 @@ namespace 币安量化机器人;
 
 public partial class SetupWindow:Window
 {
+    private readonly CheckBox _notifyMarketBrief=new(){Tag=NotificationEventKind.MarketBrief.ToString(),Margin=new(0,4,18,4)};
     private readonly AgentSettingsStore _store=new();private readonly AgentSqliteStore _auditStore=new();private readonly AccessReadinessService _readiness=new();private readonly RuntimeAuthorizationStateStore _authorizationState;private readonly LocalTradingReviewContextProvider _reviewContext;private readonly TradingReviewApprovalService _reviewApprovals;private AgentSettings _settings;private AccessReadinessReport? _last;private static LocalizationService I18n=>LocalizationService.Current;public bool SetupCompleted{get;private set;}
     public SetupWindow(string user,bool configurationMode=false){InitializeComponent();if(!ProviderBox.Items.OfType<ComboBoxItem>().Any(x=>string.Equals(x.Content?.ToString(),"WPE Local Brain",StringComparison.OrdinalIgnoreCase)))ProviderBox.Items.Insert(0,new ComboBoxItem{Content="WPE Local Brain"});_settings=_store.Load();UseLocalBrainWhenRemoteIsUnconfigured();_settings.ActiveUser=user;_reviewContext=new LocalTradingReviewContextProvider(_store,_auditStore);_reviewApprovals=new TradingReviewApprovalService(_auditStore,_reviewContext);_authorizationState=new RuntimeAuthorizationStateStore(_store,_auditStore);UserText.Text="● "+user;LoadSettings();if(configurationMode){WizardTabs.SelectedIndex=1;}I18n.LanguageChanged+=LanguageChanged;}
     private void UseLocalBrainWhenRemoteIsUnconfigured(){if(_settings.Brains.TryGetValue(_settings.ActiveBrain,out var active)&&!active.IsLocal&&!string.IsNullOrWhiteSpace(active.EncryptedKey))return;const string name="WPE Local Brain";if(!_settings.Brains.ContainsKey(name))_settings.Brains[name]=new BrainSlot{Provider=name,Endpoint=string.Empty,Model="deterministic-local-v1",IsLocal=true,PromptVersion="wpe-local-deterministic-v1",EnableFallback=false};_settings.ActiveBrain=name;_store.Save(_settings);}
@@ -83,7 +84,12 @@ public partial class SetupWindow:Window
             return new(settings.ActiveUser,request.DeviceId,request.SessionId,settings.AuthorizationMode,true,profile.ProviderId);
         }
     }
-    private CheckBox[] NotificationEventBoxes()=>[NotifyOrderFilled,NotifyPositionOpened,NotifyPositionClosed,NotifyProtection,NotifyProtectionFailed,NotifyRiskBlocked,NotifyAgentDegraded,NotifyTest];
+    private CheckBox[] NotificationEventBoxes()
+    {
+        _notifyMarketBrief.Content=I18n.CurrentCode switch{"zh_CN"=>"每日市场简报","zh_TW"=>"每日市場簡報","ja_JP"=>"毎日のマーケットレポート","ko_KR"=>"일일 시장 브리핑","it_IT"=>"Briefing giornaliero di mercato",_=>"Daily market brief"};
+        if(_notifyMarketBrief.Parent is null&&NotifyTest.Parent is Panel panel)panel.Children.Insert(Math.Max(0,panel.Children.IndexOf(NotifyTest)),_notifyMarketBrief);
+        return[NotifyOrderFilled,NotifyPositionOpened,NotifyPositionClosed,NotifyProtection,NotifyProtectionFailed,NotifyRiskBlocked,NotifyAgentDegraded,_notifyMarketBrief,NotifyTest];
+    }
     private void LoadNotificationSettings()
     {
         var n=_settings.Notification;NotificationsEnabledBox.IsChecked=n.Enabled;TelegramEnabledBox.IsChecked=n.Telegram.Enabled;WhatsAppEnabledBox.IsChecked=n.WhatsApp.Enabled;QuietHoursBox.IsChecked=n.QuietHoursEnabled;QuietStartBox.Text=n.QuietHoursStart;QuietEndBox.Text=n.QuietHoursEnd;
