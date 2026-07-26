@@ -47,7 +47,9 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
         Assert.Equal("quarantine_pending_reconciliation", result.Recovery.Decision.Action);
         Assert.True(result.Recovery.Facts.GetProperty("quarantined").GetBoolean());
         Assert.False(result.Recovery.Facts.GetProperty("resubmit_allowed").GetBoolean());
-        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(result.Audit));
+        Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(result.Audit));
+        Assert.Equal("record_execution_exception",result.Audit.Decision.Action);
+        Assert.False(result.Audit.Facts.GetProperty("execution_succeeded").GetBoolean());
     }
 
     [Fact]
@@ -252,6 +254,12 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
 
         Assert.Equal(1,failed.Failed);
         Assert.Null(await store.GetStateAsync("model-off.execution-backfill.event-cursor",CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task NonContiguousTimelineBlocksExecutionRecoveryAndAuditTruth()
+    {
+        var store=Store();var item=await Succeeded(store,"timeline-gap");await SeedConfirmedIntent(store,item.Artifact!);await using(var connection=new SqliteConnection($"Data Source={DatabasePath}")){await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText="INSERT INTO automatic_execution_events(execution_id,sequence,occurred_at,from_status,to_status,event_code,actor_kind) VALUES($id,99,$time,'Succeeded','Succeeded','tampered-gap','test')";command.Parameters.AddWithValue("$id",item.ExecutionId);command.Parameters.AddWithValue("$time",Now.ToString("O"));await command.ExecuteNonQueryAsync();}var events=await store.GetAutomaticExecutionEventsAsync(item.ExecutionId,100,default);var result=await new ModelOffExecutionObservationWriterV1(store).WriteAsync(item,events,Evidence(item),Now,default);Assert.Contains("execution.timeline-invalid",result.Execution.Decision.ReasonCodes);Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(result.Execution));Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(result.Recovery));Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(result.Audit));Assert.False(result.Audit.Facts.GetProperty("timeline_valid").GetBoolean());
     }
 
     private AgentSqliteStore Store() => new(DatabasePath, () => Now);

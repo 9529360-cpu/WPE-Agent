@@ -37,7 +37,7 @@ internal sealed class ModelOffExecutionObservationWriterV1
             throw new ArgumentException("Execution events must be non-empty and belong to the execution.", nameof(events));
 
         var timeline = ModelOffExecutionRecoveryContractV1.Timeline(item.ExecutionId, events);
-        if(timeline.Entries[^1].To!=item.Status.ToString())throw new InvalidOperationException("Execution timeline and persisted state are inconsistent.");
+        var timelineValid=ValidTimeline(timeline,item.Status,evaluationTimeUtc);
         var persistedIntents = await _store.GetIntentsByCycleAsync(item.Artifact?.CorrelationId ?? item.ExecutionId,100,ct);
         var correlation = Correlate(item.Artifact,persistedIntents);
         var exchangeConfirmed=exchangeEvidence is {State:ModelOffExchangeOrderEvidenceStateV1.Confirmed}
@@ -51,9 +51,9 @@ internal sealed class ModelOffExecutionObservationWriterV1
         var cycleId = item.Artifact?.CorrelationId ?? item.ExecutionId;
         var stateToken = item.Status.ToString().ToLowerInvariant();
         var identity = ObservationIdentity(item,events,exchangeEvidence);
-        var sourceStatus = item.ArtifactValid ? ModelOffSourceStatusV1.Available : ModelOffSourceStatusV1.Invalid;
-        var executionSucceeded = item.Status == AutomaticExecutionQueueStatus.Succeeded && item.ArtifactValid && correlation.Valid && exchangeConfirmed;
-        var executionReasons = ExecutionReasons(item).Concat(
+        var sourceStatus = item.ArtifactValid&&timelineValid ? ModelOffSourceStatusV1.Available : ModelOffSourceStatusV1.Invalid;
+        var executionSucceeded = item.Status == AutomaticExecutionQueueStatus.Succeeded && item.ArtifactValid && timelineValid && correlation.Valid && exchangeConfirmed;
+        var executionReasons = ExecutionReasons(item).Concat(timelineValid?[]:["execution.timeline-invalid"]).Concat(
             item.Status == AutomaticExecutionQueueStatus.Succeeded
                 ?correlation.ReasonCodes.Concat(exchangeConfirmed?[]:[ExchangeReason(exchangeEvidence)]):[]).ToArray();
         var execution = Output(ModelOffAgentV1.Execution, identity + "-execution", cycleId, evaluationTimeUtc,
@@ -62,6 +62,7 @@ internal sealed class ModelOffExecutionObservationWriterV1
             executionSucceeded ? "execution_observed_succeeded" : "execution_observed_blocked", executionReasons,
             new { state = stateToken, item.AttemptCount, item.ArtifactValid, item.RiskReceiptValid,
                 timeline_sha256 = timeline.TimelineSha256, event_count = timeline.Entries.Count,
+                timeline_valid = timelineValid,
                 expected_intent_count = correlation.ExpectedCount, persisted_intent_count = correlation.PersistedCount,
                 correlation_sha256 = correlation.Sha256, order_correlation_confirmed = correlation.Valid,
                 exchange_evidence_state = exchangeEvidence?.State.ToString().ToLowerInvariant()??"unknown",
@@ -75,7 +76,7 @@ internal sealed class ModelOffExecutionObservationWriterV1
             AutomaticExecutionQueueStatus.FailedTerminal or AutomaticExecutionQueueStatus.PolicyBlocked or
             AutomaticExecutionQueueStatus.RiskBlocked or AutomaticExecutionQueueStatus.CapabilityUnavailable or
             AutomaticExecutionQueueStatus.MarketStale or AutomaticExecutionQueueStatus.ArtifactInvalid;
-        var recoveryReady = terminalState && (item.Status != AutomaticExecutionQueueStatus.Succeeded || correlation.Valid&&exchangeConfirmed);
+        var recoveryReady = timelineValid&&terminalState && (item.Status != AutomaticExecutionQueueStatus.Succeeded || correlation.Valid&&exchangeConfirmed);
         var quarantined = !recoveryReady;
         var recoveryReasons = recoveryReady ? Array.Empty<string>() : ["recovery.execution-state-unresolved"];
         var recovery = Output(ModelOffAgentV1.Recovery, identity + "-recovery", cycleId, evaluationTimeUtc,
@@ -86,15 +87,16 @@ internal sealed class ModelOffExecutionObservationWriterV1
                 reconciliation_required = quarantined, mutation_performed_by_observer = false });
         var recoveryDocument = ModelOffCanonicalSerializerV1.Serialize(recovery);
 
-        var auditReady = executionSucceeded && recoveryReady;
-        var auditReasons = auditReady ? Array.Empty<string>() : ["audit.execution-not-successful"];
+        var auditReady = timelineValid;
+        var auditReasons = auditReady ? Array.Empty<string>() : ["audit.timeline-invalid"];
         var audit = Output(ModelOffAgentV1.Audit, identity + "-audit", cycleId, evaluationTimeUtc,
             [Source(execution.OutputId, executionDocument, evaluationTimeUtc,
-                 executionSucceeded ? ModelOffSourceStatusV1.Available : ModelOffSourceStatusV1.Invalid),
+                 ModelOffSourceStatusV1.Available),
              Source(recovery.OutputId, recoveryDocument, evaluationTimeUtc,
-                 recoveryReady ? ModelOffSourceStatusV1.Available : ModelOffSourceStatusV1.Unknown)],
-            auditReady, auditReady ? "record_execution_success" : "record_execution_exception",
-            auditReasons, new { timeline_sha256 = timeline.TimelineSha256,
+                 ModelOffSourceStatusV1.Available)],
+            auditReady, executionSucceeded ? "record_execution_success" : "record_execution_exception",
+            auditReasons, new { timeline_sha256 = timeline.TimelineSha256, timeline_valid=timelineValid,
+                execution_succeeded=executionSucceeded,recovery_ready=recoveryReady,
                 execution_sha256 = executionDocument.Sha256, recovery_sha256 = recoveryDocument.Sha256,
                 latest_sequence = latestSequence, observed_state = stateToken });
         var auditDocument = ModelOffCanonicalSerializerV1.Serialize(audit);
@@ -176,6 +178,17 @@ internal sealed class ModelOffExecutionObservationWriterV1
         ModelOffExchangeOrderEvidenceStateV1.Unsupported => "execution.exchange-observation-unsupported",
         _ => "execution.exchange-observation-unknown"
     };
+
+    private static bool ValidTimeline(ModelOffExecutionTimelineV1 timeline,AutomaticExecutionQueueStatus status,DateTimeOffset evaluationTimeUtc)
+    {
+        var entries=timeline.Entries.OrderBy(x=>x.Sequence).ToArray();if(entries.Length==0||entries[0].Sequence!=1||entries[^1].To!=status.ToString())return false;
+        for(var index=0;index<entries.Length;index++)
+        {
+            var entry=entries[index];if(entry.Sequence!=index+1||entry.OccurredAtUtc.Offset!=TimeSpan.Zero||entry.OccurredAtUtc>evaluationTimeUtc)return false;
+            if(index==0&&entry.From!="None"||index>0&&(entry.From!=entries[index-1].To||entry.OccurredAtUtc<entries[index-1].OccurredAtUtc))return false;
+        }
+        return true;
+    }
 
     private static bool ExchangeEntriesMatch(DurableExecutionArtifactV2? artifact,ModelOffExchangeOrderEvidenceV1 evidence)
     {
