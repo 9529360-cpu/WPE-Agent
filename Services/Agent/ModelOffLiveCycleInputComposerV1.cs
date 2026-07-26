@@ -12,7 +12,10 @@ internal sealed record ModelOffLiveCycleInputRequestV1(
     IReadOnlyList<MarketDecisionAssessment> Assessments,
     DecisionReview DecisionReview,
     IndependentRiskReview RiskReview,
-    IReadOnlyList<PersistedMacroObservation>? MacroObservations = null);
+    IReadOnlyList<PersistedMacroObservation>? MacroObservations = null,
+    PositionReconciliationReportV1? PositionReconciliation = null,
+    ProtectionReconciliationReportV1? ProtectionReconciliation = null,
+    ExternalPositionIsolationReportV1? ExternalPositionIsolation = null);
 
 /// <summary>Maps already-computed local runtime truth into canonical Agent inputs without invoking a model or a network.</summary>
 internal static class ModelOffLiveCycleInputComposerV1
@@ -116,6 +119,15 @@ internal static class ModelOffLiveCycleInputComposerV1
         outputs.Add(Input(strategy));
 
         var riskReasons = new List<string>();
+        var positionValid=request.PositionReconciliation is not null&&PositionReconciliationServiceV1.IsCanonical(request.PositionReconciliation)&&CurrentPositionReport(request.PositionReconciliation.ObservedAtUtc,request.PositionReconciliation.EvaluatedAtUtc,request.EvaluationTimeUtc);
+        var protectionValid=request.ProtectionReconciliation is not null&&ProtectionReconciliationServiceV1.IsCanonical(request.ProtectionReconciliation)&&CurrentPositionReport(request.ProtectionReconciliation.ObservedAtUtc,request.ProtectionReconciliation.EvaluatedAtUtc,request.EvaluationTimeUtc);
+        var isolationValid=request.ExternalPositionIsolation is not null&&ExternalPositionIsolationServiceV1.IsCanonical(request.ExternalPositionIsolation)&&CurrentPositionReport(request.ExternalPositionIsolation.ObservedAtUtc,request.ExternalPositionIsolation.EvaluatedAtUtc,request.EvaluationTimeUtc);
+        if(!positionValid)riskReasons.Add("live.risk.position-reconciliation-invalid");
+        else if(!request.PositionReconciliation!.AllowsRiskIncrease)riskReasons.Add("live.risk.position-reconciliation-blocked");
+        if(!protectionValid)riskReasons.Add("live.risk.protection-reconciliation-invalid");
+        else if(!request.ProtectionReconciliation!.AllowsRiskIncrease)riskReasons.Add("live.risk.protection-reconciliation-blocked");
+        if(!isolationValid)riskReasons.Add("live.risk.external-position-isolation-invalid");
+        else if(!request.ExternalPositionIsolation!.AllowsRiskIncrease)riskReasons.Add("live.risk.external-position-isolation-blocked");
         if (!request.RiskReview.Approved) riskReasons.Add("live.risk.not-approved");
         if (request.RiskReview.PlannedQuantity < 0 || request.RiskReview.RiskAmount < 0 || request.RiskReview.ExposureAfter < 0)
             riskReasons.Add("live.risk.numeric-invalid");
@@ -126,14 +138,21 @@ internal static class ModelOffLiveCycleInputComposerV1
         if(checks.Length==0||checks.Any(x=>!SafeIdentityToken(x))||checks.Distinct(StringComparer.Ordinal).Count()!=checks.Length)riskReasons.Add("live.risk.checks-invalid");
         if(!SafeIdentityToken(request.RiskReview.RiskLevel)||request.RiskReview.Approved&&string.Equals(request.RiskReview.RiskLevel,"BLOCKED",StringComparison.OrdinalIgnoreCase))riskReasons.Add("live.risk.level-invalid");
         if (!ModelOffEligibilityV1.IsEligibleForDownstream(strategy)) riskReasons.Add("live.risk.strategy-invalid");
+        var riskSources=new List<ModelOffSourceV1>{UpstreamSource(strategy, outputs[^1].Document, request.EvaluationTimeUtc)};
+        AddPositionSource(riskSources,"position-reconciliation",request.PositionReconciliation,positionValid,request.EvaluationTimeUtc);
+        AddPositionSource(riskSources,"protection-reconciliation",request.ProtectionReconciliation,protectionValid,request.EvaluationTimeUtc);
+        AddPositionSource(riskSources,"external-position-isolation",request.ExternalPositionIsolation,isolationValid,request.EvaluationTimeUtc);
         var risk = Output(ModelOffAgentV1.Risk, request,
-            [UpstreamSource(strategy, outputs[^1].Document, request.EvaluationTimeUtc)], riskReasons.Count == 0,
+            riskSources, riskReasons.Count == 0,
             riskReasons.Count == 0 ? "risk_approved" : "block", riskReasons,
             new { request.RiskReview.Approved, RiskLevel = SafeToken(request.RiskReview.RiskLevel) ? request.RiskReview.RiskLevel : "UNKNOWN",
                 request.RiskReview.PlannedQuantity, request.RiskReview.RiskAmount,
                 request.RiskReview.ExposureAfter, check_count = checks.Length,
                 check_set_hash=Hash(checks.Order(StringComparer.Ordinal).ToArray()),
                 blocking_reason_count = request.RiskReview.BlockingReasons.Count,
+                position_reconciliation=positionValid?request.PositionReconciliation!.State.ToString().ToLowerInvariant():"invalid",
+                protection_reconciliation=protectionValid?request.ProtectionReconciliation!.State.ToString().ToLowerInvariant():"invalid",
+                external_position_isolation=isolationValid?request.ExternalPositionIsolation!.State.ToString().ToLowerInvariant():"invalid",
                 result_state = request.RiskReview.Approved ? "approved" : "blocked" });
         outputs.Add(Input(risk));
         return outputs;
@@ -163,8 +182,25 @@ internal static class ModelOffLiveCycleInputComposerV1
     private static string Hash(object value) => "sha256:" + Convert.ToHexString(
         SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(value))).ToLowerInvariant();
 
+    private static void AddPositionSource<T>(List<ModelOffSourceV1> sources,string sourceId,T? report,bool valid,DateTimeOffset at) where T:class
+    {
+        var (observed,hash)=report switch
+        {
+            PositionReconciliationReportV1 value=>(value.ObservedAtUtc,value.CanonicalSha256),
+            ProtectionReconciliationReportV1 value=>(value.ObservedAtUtc,value.CanonicalSha256),
+            ExternalPositionIsolationReportV1 value=>(value.ObservedAtUtc,value.CanonicalSha256),
+            _=>(at,string.Empty)
+        };
+        sources.Add(new(sourceId,ModelOffSourceKindV1.Account,observed,at,
+            valid?ModelOffSourceStatusV1.Available:ModelOffSourceStatusV1.Invalid,
+            valid?"sha256:"+hash:Hash(new{sourceId,state="invalid"})));
+    }
+
     private static bool Fresh(DateTimeOffset value, DateTimeOffset now) =>
         value != default && value.Offset == TimeSpan.Zero && value <= now && now - value <= MaximumMarketAge;
+
+    private static bool CurrentPositionReport(DateTimeOffset observed,DateTimeOffset evaluated,DateTimeOffset now)=>
+        observed.Offset==TimeSpan.Zero&&evaluated.Offset==TimeSpan.Zero&&observed<=evaluated&&evaluated<=now&&now-evaluated<=MaximumMarketAge;
 
     private static bool TryUtc(DateTime value, out DateTimeOffset result)
     {

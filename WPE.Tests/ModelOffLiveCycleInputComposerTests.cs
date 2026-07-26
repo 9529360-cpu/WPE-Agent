@@ -119,6 +119,42 @@ public sealed class ModelOffLiveCycleInputComposerTests
     }
 
     [Theory]
+    [InlineData("missing-position")]
+    [InlineData("tampered-position")]
+    [InlineData("stale-position")]
+    [InlineData("replayed-confirmed-position")]
+    [InlineData("incomplete-protection")]
+    [InlineData("external-position")]
+    public void RiskAgentRequiresCanonicalPositionManagementTruth(string defect)
+    {
+        var request=Request();
+        if(defect=="missing-position")request=request with{PositionReconciliation=null};
+        if(defect=="tampered-position")request=request with{PositionReconciliation=request.PositionReconciliation! with{CanonicalBytes=[..request.PositionReconciliation!.CanonicalBytes,0]}};
+        if(defect=="stale-position")request=request with{PositionReconciliation=PositionReconciliationServiceV1.Reconcile([],[],Now-PositionReconciliationServiceV1.MaximumAge-TimeSpan.FromSeconds(1),Now)};
+        if(defect=="replayed-confirmed-position")request=request with{PositionReconciliation=PositionReconciliationServiceV1.Reconcile([],[],Now-TimeSpan.FromHours(1),Now-TimeSpan.FromHours(1))};
+        if(defect=="incomplete-protection")request=request with{ProtectionReconciliation=ProtectionReconciliationServiceV1.Reconcile([new ManagedPosition("BTCUSDT",PositionSide.Long,.01m,100000m,100100m,1m,2m,true,50000m)],[],Now,Now)};
+        if(defect=="external-position")request=request with{ExternalPositionIsolation=ExternalPositionIsolationServiceV1.Evaluate([],[new ManagedPosition("ETHUSDT",PositionSide.Short,1m,3500m,3490m,0,0,false,3500m)],Now,Now)};
+
+        var risk=ModelOffLiveCycleInputComposerV1.Compose(request).Last().Output;
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(risk));
+        Assert.Contains(risk.Decision.ReasonCodes,reason=>reason.StartsWith("live.risk.",StringComparison.Ordinal)&&
+            (reason.Contains("position-reconciliation",StringComparison.Ordinal)||reason.Contains("protection-reconciliation",StringComparison.Ordinal)||reason.Contains("external-position-isolation",StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void RiskAgentCarriesCanonicalPositionEvidenceHashes()
+    {
+        var request=Request();var risk=ModelOffLiveCycleInputComposerV1.Compose(request).Last().Output;
+        Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(risk));
+        Assert.Equal("sha256:"+request.PositionReconciliation!.CanonicalSha256,risk.Sources.Single(x=>x.SourceId=="position-reconciliation").ArtifactHash);
+        Assert.Equal("sha256:"+request.ProtectionReconciliation!.CanonicalSha256,risk.Sources.Single(x=>x.SourceId=="protection-reconciliation").ArtifactHash);
+        Assert.Equal("sha256:"+request.ExternalPositionIsolation!.CanonicalSha256,risk.Sources.Single(x=>x.SourceId=="external-position-isolation").ArtifactHash);
+        Assert.Equal("confirmed",risk.Facts.GetProperty("position_reconciliation").GetString());
+        Assert.Equal("confirmed",risk.Facts.GetProperty("protection_reconciliation").GetString());
+        Assert.Equal("clear",risk.Facts.GetProperty("external_position_isolation").GetString());
+    }
+
+    [Theory]
     [InlineData("stale")]
     [InlineData("empty-market")]
     [InlineData("review-blocked")]
@@ -186,7 +222,8 @@ public sealed class ModelOffLiveCycleInputComposerTests
             var request = Request();
             var result = await AutoTradingAgent.RunModelOffProductionShadowAsync(store, request.CycleId,
                 request.EvaluationTimeUtc, request.Evidence, request.Research, request.Assessments,
-                request.DecisionReview, request.RiskReview, CancellationToken.None);
+                request.DecisionReview, request.RiskReview, request.PositionReconciliation!,
+                request.ProtectionReconciliation!,request.ExternalPositionIsolation!,CancellationToken.None);
 
             Assert.NotNull(result);
             Assert.True(result.EligibleForRiskIncrease);
@@ -223,11 +260,13 @@ public sealed class ModelOffLiveCycleInputComposerTests
             var ready = await AutoTradingAgent.RunModelOffProductionShadowAsync(
                 new AgentSqliteStore(Path.Combine(directory, "ready.db"), () => Now), request.CycleId,
                 request.EvaluationTimeUtc, request.Evidence, request.Research, request.Assessments,
-                request.DecisionReview, request.RiskReview, CancellationToken.None);
+                request.DecisionReview, request.RiskReview,request.PositionReconciliation!,
+                request.ProtectionReconciliation!,request.ExternalPositionIsolation!,CancellationToken.None);
             var blocked = await AutoTradingAgent.RunModelOffProductionShadowAsync(
                 new AgentSqliteStore(Path.Combine(directory, "blocked.db"), () => Now), request.CycleId + "-blocked",
                 request.EvaluationTimeUtc, request.Evidence, request.Research, request.Assessments,
-                request.DecisionReview, Risk(false), CancellationToken.None);
+                request.DecisionReview, Risk(false),request.PositionReconciliation!,
+                request.ProtectionReconciliation!,request.ExternalPositionIsolation!,CancellationToken.None);
 
             Assert.True(AutoTradingAgent.ModelOffProductionGateAllowsRiskIncrease(ready));
             Assert.False(AutoTradingAgent.ModelOffProductionGateAllowsRiskIncrease(blocked));
@@ -260,7 +299,14 @@ public sealed class ModelOffLiveCycleInputComposerTests
         {
             ["ETHUSDT"] = Research("ETHUSDT"), ["BTCUSDT"] = Research("BTCUSDT")
         },
-        [Assessment()], Review(true), Risk(true));
+        [Assessment()], Review(true), Risk(true),null,PositionReport(),ProtectionReport(),IsolationReport());
+
+    private static PositionReconciliationReportV1 PositionReport()=>
+        PositionReconciliationServiceV1.Reconcile([],[],Now,Now);
+    private static ProtectionReconciliationReportV1 ProtectionReport()=>
+        ProtectionReconciliationServiceV1.Reconcile([],[],Now,Now);
+    private static ExternalPositionIsolationReportV1 IsolationReport()=>
+        ExternalPositionIsolationServiceV1.Evaluate([],[],Now,Now);
 
     private static EvidencePack Evidence(DateTime collectedAt) => new()
     {

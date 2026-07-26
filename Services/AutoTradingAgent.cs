@@ -273,7 +273,8 @@ public static class AutoTradingAgent
                 else if(intents.Count==0)state.ExecutionApprovalStatus="NO_ORDER";
                 else state.ExecutionApprovalStatus="READY";
 
-                var modelOffCycle=await RunModelOffProductionShadowAsync(Db,cycle,DateTimeOffset.UtcNow,evidence,research,assessments,review,riskReview,ct);
+                var modelOffCycle=await RunModelOffProductionShadowAsync(Db,cycle,DateTimeOffset.UtcNow,evidence,research,assessments,review,riskReview,
+                    positionReconciliation,protectionReconciliation,externalPositionIsolation,ct);
                 if(settings.Notification.Enabled&&settings.Notification.EventKinds.Contains(WpeAgent.Notifications.NotificationEventKind.MarketBrief.ToString(),StringComparer.OrdinalIgnoreCase)&&modelOffCycle is not null&&modelOffCycle.Outputs.TryGetValue(WpeAgent.ModelOff.ModelOffAgentV1.Research,out var canonicalResearch)&&WpeAgent.ModelOff.ModelOffEligibilityV1.IsEligibleForDownstream(canonicalResearch))
                     try{await MarketTeacherBriefPublisherV1.PublishDailyAsync(Db,notifications.Observer,canonicalResearch,exchange.ProviderId,exchange.Environment.ToString(),ct,LocalizationService.Current.CurrentCode);}catch(Exception ex){await Db.RecordErrorAsync("MARKET_TEACHER_BRIEF",ex,CancellationToken.None);}
                 var gatedIntents=ApplyModelOffProductionRiskIncreaseGate(intents,modelOffCycle);
@@ -379,14 +380,16 @@ public static class AutoTradingAgent
     internal static async Task<ModelOffProductionCycleResultV1?> RunModelOffProductionShadowAsync(
         AgentSqliteStore auditStore,string cycleId,DateTimeOffset evaluationTimeUtc,EvidencePack evidence,
         IReadOnlyDictionary<string,ResearchValidationResult> research,IReadOnlyList<MarketDecisionAssessment> assessments,
-        DecisionReview decisionReview,IndependentRiskReview riskReview,CancellationToken ct)
+        DecisionReview decisionReview,IndependentRiskReview riskReview,PositionReconciliationReportV1 positionReconciliation,
+        ProtectionReconciliationReportV1 protectionReconciliation,ExternalPositionIsolationReportV1 externalPositionIsolation,CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(auditStore);
         try
         {
             var macroObservations=await auditStore.GetLatestMacroObservationsAsync(8,ct);
             var inputs=ModelOffLiveCycleInputComposerV1.Compose(new(
-                cycleId,evaluationTimeUtc,evidence,research,assessments,decisionReview,riskReview,macroObservations));
+                cycleId,evaluationTimeUtc,evidence,research,assessments,decisionReview,riskReview,macroObservations,
+                positionReconciliation,protectionReconciliation,externalPositionIsolation));
             return await new ModelOffProductionCycleOrchestratorV1(auditStore).RunAsync(
                 new(cycleId,evaluationTimeUtc,inputs),ct);
         }
