@@ -149,7 +149,7 @@ public sealed class PortfolioRiskAssessment
     public bool Approved { get; init; }
     public string Summary { get; init; } = string.Empty;
 }
-public sealed record AgentContext(string BrainName, bool CircuitBreakerActive, string? ActiveSymbol, IReadOnlyList<string> PreviousOutcomes, IReadOnlyList<MarketDecisionAssessment> MarketAssessments, int ConsecutiveHolds);
+public sealed record AgentContext(string BrainName, bool CircuitBreakerActive, string? ActiveSymbol, IReadOnlyList<StructuredOutcomeMemory> OutcomeMemories, IReadOnlyList<MarketDecisionAssessment> MarketAssessments, int ConsecutiveHolds);
 public sealed record StructuredOutcomeMemory(
     DateTime CycleStartedUtc,
     string Mode,

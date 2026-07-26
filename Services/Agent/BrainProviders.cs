@@ -201,9 +201,24 @@ internal static class BrainPromptComposer
                 context.BrainName,
                 context.CircuitBreakerActive,
                 context.ActiveSymbol,
-                PreviousOutcomes = context.PreviousOutcomes
+                outcomeMemorySchema = "wpe.planner-outcome-memory/1.0",
+                outcomeMemory = context.OutcomeMemories
                     .Take(profile.PreviousOutcomeCount)
-                    .Select(x => TrimText(x, profile.PreviousOutcomeChars))
+                    .Select(x => new
+                    {
+                        t = x.CycleStartedUtc,
+                        m = TrimText(x.Mode, 16),
+                        x = TrimText(x.Exchange, 24),
+                        s = TrimText(x.Symbol, 24),
+                        a = TrimText(x.DecisionAction, 16),
+                        r = TrimText(x.RiskResult, 16),
+                        rc = TrimText(x.RiskReasonCode, 40),
+                        ea = x.ExecutionAttempted,
+                        er = TrimText(x.ExecutionResult, 24),
+                        sc = x.StateChanged,
+                        next = TrimText(x.RecoveryHint, 40),
+                        note = TrimText(x.DecisionSummary, Math.Min(profile.PreviousOutcomeChars, 80))
+                    })
                     .ToArray(),
                 context.ConsecutiveHolds
             },

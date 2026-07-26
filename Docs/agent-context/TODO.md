@@ -33,4 +33,4 @@
 - [x] First `structured short memory` batch is contract-only: added the read-side `StructuredOutcomeMemory[]` projection plus narrow store/persistence/degraded-path tests before changing `AutoTradingAgent` or deleting the old text aggregation path.
 - [x] Prompt-compression follow-up from the July 21, 2026 audit: `Markets` brief now uses a bounded priority subset, slim-mode `marketAssessments.Signals` now keeps only directional essentials, and slim-mode news no longer carries `BodySummary`.
 - [x] Expose the runtime/UI governance baseline clearly enough to track token/cost/remote-usage regression without re-reading prompt internals.
-- Next token follow-up only if additional savings are still needed: consider switching `AutoTradingAgent` from legacy `PreviousOutcomes` string consumption to the structured contract directly, using the current runtime/UI baseline as the regression gate.
+- [x] Switch `AutoTradingAgent` from legacy `PreviousOutcomes` string consumption to the structured memory contract directly; emit a bounded versioned short-key projection only when a remote planner is selected, while Local Only continues to operate without a model.

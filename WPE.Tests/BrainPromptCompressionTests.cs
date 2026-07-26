@@ -25,12 +25,28 @@ public sealed class BrainPromptCompressionTests
         Assert.Contains("if (!string.IsNullOrWhiteSpace(context.ActiveSymbol)) return true;", source, StringComparison.Ordinal);
         Assert.Contains("if (evidence.Positions.Count > 0) return true;", source, StringComparison.Ordinal);
         Assert.Contains("if (ordered.Length > 1 && Math.Abs(ordered[0].NetScore - ordered[1].NetScore) <= 0.15) return true;", source, StringComparison.Ordinal);
-        Assert.Contains("PreviousOutcomes = context.PreviousOutcomes", source, StringComparison.Ordinal);
+        Assert.Contains("outcomeMemory = context.OutcomeMemories", source, StringComparison.Ordinal);
+        Assert.Contains("outcomeMemorySchema = \"wpe.planner-outcome-memory/1.0\"", source, StringComparison.Ordinal);
+        Assert.Contains("ea = x.ExecutionAttempted", source, StringComparison.Ordinal);
+        Assert.Contains("sc = x.StateChanged", source, StringComparison.Ordinal);
+        Assert.Contains("next = TrimText(x.RecoveryHint, 40)", source, StringComparison.Ordinal);
+        Assert.Contains("Math.Min(profile.PreviousOutcomeChars, 80)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("PreviousOutcomes = context.PreviousOutcomes", source, StringComparison.Ordinal);
         Assert.Contains("evidence = BuildEvidence(evidence, context, profile, detailLevel, detailedSymbols)", source, StringComparison.Ordinal);
         Assert.Contains("News = BuildNews(evidence.News, profile, detailLevel)", source, StringComparison.Ordinal);
         Assert.Contains(".Select(x => BuildAssessment(x, profile, detailLevel))", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Markets = evidence.Markets", source, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildMarket(x.Value, profile.RecentCloseCount)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ProductionPlanner_ReadsStructuredMemoryWithoutLegacyTextAdaptation()
+    {
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        var source = File.ReadAllText(Path.Combine(root, "Services", "AutoTradingAgent.cs"));
+
+        Assert.Contains("RecentOutcomeMemoriesAsync(ct)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("RecentOutcomesAsync(ct)", source, StringComparison.Ordinal);
     }
 
     [Fact]
