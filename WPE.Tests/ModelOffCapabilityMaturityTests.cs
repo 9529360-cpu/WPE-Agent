@@ -41,6 +41,14 @@ public sealed class ModelOffCapabilityMaturityTests
         Assert.Empty(errors);
     }
 
+    [Fact]
+    public void PostTradeAcceptanceIsBoundedAndDoesNotUpgradeAuditAggregate()
+    {
+        var root=LoadCanonical();var postTrade=root["capabilities"]!.AsArray().Single(Capability("review-post-trade"));var audit=root["aggregates"]!.AsArray().Single(node=>String(node,"id")=="audit");
+        Assert.Equal("yes",String(postTrade,"maturity"));Assert.True(Bool(postTrade,"implemented"));Assert.True(Bool(postTrade,"accepted"));Assert.Contains("no broad causal-performance claim",String(postTrade,"acceptance_scope"),StringComparison.Ordinal);
+        Assert.Equal("partial",String(audit,"maturity"));Assert.False(Bool(audit,"accepted"));
+    }
+
     [Theory]
     [InlineData("missing")]
     [InlineData("duplicate")]

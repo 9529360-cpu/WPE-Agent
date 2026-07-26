@@ -1,4 +1,5 @@
 using WpeAgent.ModelOff;
+using System.Text.Json.Nodes;
 
 namespace WPE.Tests;
 
@@ -21,6 +22,25 @@ public sealed class ModelOffRoleRuntimeRegistryTests
         var teacher=registry.Capabilities.Single(x=>x.Id=="teacher");
         Assert.Equal("current",teacher.Lifecycle);Assert.True(teacher.Implemented);Assert.True(teacher.Accepted);
         Assert.Contains("opt-in notification",teacher.AcceptanceScope,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RuntimeRegistryMatchesCanonicalCapabilityAuthority()
+    {
+        var registry=ModelOffRoleRuntimeRegistryBuilderV1.CreateDefault().Registry!;
+        var root=JsonNode.Parse(File.ReadAllText(FindInventoryPath()))!.AsObject();
+        var canonical=root["capabilities"]!.AsArray().ToDictionary(x=>x!["id"]!.GetValue<string>(),StringComparer.Ordinal);
+
+        Assert.Equal(canonical.Keys.Order(StringComparer.Ordinal),registry.Capabilities.Select(x=>x.Id).Order(StringComparer.Ordinal));
+        foreach(var runtime in registry.Capabilities)
+        {
+            var authority=canonical[runtime.Id]!;
+            Assert.Equal(authority["maturity"]!.GetValue<string>(),runtime.Maturity);
+            Assert.Equal(authority["implemented"]!.GetValue<bool>(),runtime.Implemented);
+            Assert.Equal(authority["accepted"]!.GetValue<bool>(),runtime.Accepted);
+            Assert.Equal(authority["lifecycle"]!.GetValue<string>(),runtime.Lifecycle);
+            Assert.Equal(authority["acceptance_scope"]?.GetValue<string>(),runtime.AcceptanceScope);
+        }
     }
 
     [Fact]
@@ -93,6 +113,16 @@ public sealed class ModelOffRoleRuntimeRegistryTests
 
     private static AcceptedModelOffRoleManifestV1[] Accepted() =>
         ModelOffRoleRuntimeCatalogV1.CreateAll().Select(x => new AcceptedModelOffRoleManifestV1(x, true, false)).ToArray();
+
+    private static string FindInventoryPath()
+    {
+        for(var directory=new DirectoryInfo(AppContext.BaseDirectory);directory is not null;directory=directory.Parent)
+        {
+            var candidate=Path.Combine(directory.FullName,"Docs","product","model-off-capability-maturity.json");
+            if(File.Exists(candidate))return candidate;
+        }
+        throw new FileNotFoundException("Could not locate the canonical model-off capability inventory.");
+    }
 
     private static AcceptedModelOffRoleManifestV1[] Replace(AcceptedModelOffRoleManifestV1[] values, int index, ModelOffRoleRuntimeManifestV1 replacement)
     {

@@ -44,15 +44,15 @@ public static class ModelOffRoleRuntimeRegistryBuilderV1
         Capability("orchestrator", AllRoles(), "partial"),
         Capability("market-data", [ModelOffRuntimeRoleV1.Market], "partial"),
         Capability("news", [ModelOffRuntimeRoleV1.Research], "partial"),
-        Capability("macro", [ModelOffRuntimeRoleV1.Research], "no"),
+        Capability("macro", [ModelOffRuntimeRoleV1.Research], "partial"),
         Capability("technical", [ModelOffRuntimeRoleV1.Research], "partial"),
-        Capability("fundamental", [ModelOffRuntimeRoleV1.Research], "no"),
+        Capability("fundamental", [ModelOffRuntimeRoleV1.Research], "partial"),
         Capability("strategy", [ModelOffRuntimeRoleV1.Strategy], "partial"),
         Capability("backtest", [ModelOffRuntimeRoleV1.Research], "yes", true, true, "current", "basic deterministic backtest component only"),
         Capability("risk", [ModelOffRuntimeRoleV1.Risk], "yes", true, true, "current", "covered crypto Risk Gate only"),
         Capability("execution", [ModelOffRuntimeRoleV1.Execution], "yes", true, true, "current", "deterministic execution contract boundary only; no Testnet claim"),
         Capability("position", [ModelOffRuntimeRoleV1.Execution, ModelOffRuntimeRoleV1.Recovery], "partial"),
-        Capability("review-post-trade", [ModelOffRuntimeRoleV1.Audit], "partial"),
+        Capability("review-post-trade", [ModelOffRuntimeRoleV1.Audit], "yes", true, true, "current", "deterministic confirmed-close accounting with idempotent PnL, fee, funding, slippage and bounded strategy identity; no broad causal-performance claim"),
         Capability("teacher", [ModelOffRuntimeRoleV1.Research], "yes", true, true, "current", "deterministic daily market brief from eligible canonical Research; opt-in notification only")
     ];
 
