@@ -24,7 +24,7 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
     {
         if(environment!=ExchangeEnvironment.Testnet)throw new InvalidOperationException("Realtime hub is Testnet-only.");_symbols=symbols.Select(x=>x.ToUpperInvariant()).Distinct().ToArray();_apiKey=apiKey;_db=db;foreach(var symbol in _symbols)_states[symbol]=new();
     }
-    public string Status=>_status;public bool Healthy=>_marketConnected&&_userConnected&&_states.Values.All(x=>DateTime.UtcNow-x.UpdatedAt<TimeSpan.FromSeconds(30));
+    public string Status=>_status;public bool Healthy=>_marketConnected&&_userConnected&&_states.Values.All(IsHealthy);
     public async Task StartAsync(CancellationToken ct)
     {
         if(_cts is not null)return;var runCts=CancellationTokenSource.CreateLinkedTokenSource(ct);_cts=runCts;_marketTask=Task.Run(()=>MarketLoopAsync(runCts.Token),runCts.Token);_userTask=Task.Run(()=>UserLoopAsync(runCts.Token),runCts.Token);await Task.Yield();
@@ -39,7 +39,7 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
     }
     public MarketEvidence Enrich(MarketEvidence market)
     {
-        var live=GetSnapshot(market.Symbol);if(live is null||!live.Fresh)return market;var flow=live.OrderFlowImbalance;var spread=live.SpreadBps;var liquidity=Math.Clamp((1-Math.Min(1,spread/20))*.45+Math.Min(1,(double)((live.BidQuantity+live.AskQuantity)*live.LastPrice/1_000_000m))*.25+Math.Min(1,(double)(live.BuyVolume5m+live.SellVolume5m)/1000)*.30,0,1);var anomalies=market.Quality.Anomalies.Where(x=>x!="book_ticker_missing"&&x!="order_book_missing").ToArray();var quality=new MarketQualityEvidence{BestBid=live.BestBid,BestAsk=live.BestAsk,SpreadBps=spread,OrderBookImbalance=flow,AtrPercent=market.Quality.AtrPercent,RealizedVolatility=market.Quality.RealizedVolatility,RelativeVolume=market.Quality.RelativeVolume,LiquidityScore=Math.Max(market.Quality.LiquidityScore,liquidity),LiquidationIntensity=market.Quality.LiquidationIntensity,ClockSkewMilliseconds=market.Quality.ClockSkewMilliseconds,SourceCount=market.Quality.SourceCount+1,QualityScore=Math.Min(100,market.Quality.QualityScore+5),Anomalies=anomalies};return market with{Price=live.LastPrice>0?live.LastPrice:market.Price,CollectedAt=live.UpdatedAt,Quality=quality};
+        var live=GetSnapshot(market.Symbol);if(live is null||!live.EligibleForEnrichment)return market;var flow=live.OrderFlowImbalance;var spread=live.SpreadBps;var liquidity=Math.Clamp((1-Math.Min(1,spread/20))*.45+Math.Min(1,(double)((live.BidQuantity+live.AskQuantity)*live.LastPrice/1_000_000m))*.25+Math.Min(1,(double)(live.BuyVolume5m+live.SellVolume5m)/1000)*.30,0,1);var anomalies=market.Quality.Anomalies.Where(x=>x!="book_ticker_missing"&&x!="order_book_missing").ToArray();var quality=new MarketQualityEvidence{BestBid=live.BestBid,BestAsk=live.BestAsk,SpreadBps=spread,OrderBookImbalance=flow,AtrPercent=market.Quality.AtrPercent,RealizedVolatility=market.Quality.RealizedVolatility,RelativeVolume=market.Quality.RelativeVolume,LiquidityScore=Math.Max(market.Quality.LiquidityScore,liquidity),LiquidationIntensity=market.Quality.LiquidationIntensity,ClockSkewMilliseconds=market.Quality.ClockSkewMilliseconds,SourceCount=market.Quality.SourceCount+1,QualityScore=Math.Min(100,market.Quality.QualityScore+5),Anomalies=anomalies};return market with{Price=live.LastPrice,CollectedAt=live.UpdatedAt,Quality=quality};
     }
     private async Task MarketLoopAsync(CancellationToken ct)
     {
@@ -61,11 +61,13 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
     }
     internal async Task HandleMarketAsync(string json,CancellationToken ct)
     {
-        using var document=JsonDocument.Parse(json);var data=document.RootElement.TryGetProperty("data",out var combined)?combined:document.RootElement;var eventType=S(data,"e");var symbol=S(data,"s");if(string.IsNullOrWhiteSpace(symbol)||!_states.TryGetValue(symbol,out var state))return;lock(state.Gate)
+        using var document=JsonDocument.Parse(json);var data=document.RootElement.TryGetProperty("data",out var combined)?combined:document.RootElement;var eventType=S(data,"e");var symbol=S(data,"s");if(string.IsNullOrWhiteSpace(symbol)||!_states.TryGetValue(symbol,out var state))return;var receivedAt=DateTime.UtcNow;lock(state.Gate)
         {
-            state.Messages++;state.UpdatedAt=DateTime.UtcNow;if(eventType=="bookTicker"){state.BestBid=D(data,"b");state.BestAsk=D(data,"a");state.BidQuantity=D(data,"B");state.AskQuantity=D(data,"A");}
-            else if(eventType=="aggTrade"){var price=D(data,"p");var quantity=D(data,"q");var maker=data.TryGetProperty("m",out var m)&&m.GetBoolean();if(price>0)state.LastPrice=price;state.Trades.Enqueue(new(DateTime.UtcNow,quantity,!maker));Prune(state);}
-            else if(eventType=="kline"&&data.TryGetProperty("k",out var k)){var close=D(k,"c");var closed=k.TryGetProperty("x",out var x)&&x.GetBoolean();state.LastMinuteVolume=D(k,"v");if(close>0)state.LastPrice=close;if(closed){var move=state.PreviousMinutePrice>0?Math.Abs((close-state.PreviousMinutePrice)/state.PreviousMinutePrice):0;state.PreviousMinutePrice=close;_triggers.Writer.TryWrite(move>=.005m?$"volatility:{symbol}":$"minute_close:{symbol}");}}
+            var accepted=false;
+            if(eventType=="bookTicker"){var bid=D(data,"b");var ask=D(data,"a");var bidQuantity=D(data,"B");var askQuantity=D(data,"A");if(bid>0&&ask>=bid&&bidQuantity>=0&&askQuantity>=0){state.BestBid=bid;state.BestAsk=ask;state.BidQuantity=bidQuantity;state.AskQuantity=askQuantity;accepted=true;}}
+            else if(eventType=="aggTrade"){var price=D(data,"p");var quantity=D(data,"q");if(price>0&&quantity>0&&data.TryGetProperty("m",out var m)&&m.ValueKind is JsonValueKind.True or JsonValueKind.False){state.LastPrice=price;state.Trades.Enqueue(new(receivedAt,quantity,!m.GetBoolean()));Prune(state);accepted=true;}}
+            else if(eventType=="kline"&&data.TryGetProperty("k",out var k)){var close=D(k,"c");var volume=D(k,"v");if(close>0&&volume>=0&&k.TryGetProperty("x",out var x)&&x.ValueKind is JsonValueKind.True or JsonValueKind.False){var closed=x.GetBoolean();state.LastMinuteVolume=volume;state.LastPrice=close;if(closed){var move=state.PreviousMinutePrice>0?Math.Abs((close-state.PreviousMinutePrice)/state.PreviousMinutePrice):0;state.PreviousMinutePrice=close;_triggers.Writer.TryWrite(move>=.005m?$"volatility:{symbol}":$"minute_close:{symbol}");}accepted=true;}}
+            if(accepted){state.Messages++;state.UpdatedAt=receivedAt;}
         }await Task.CompletedTask;
     }
     private async Task HandleUserAsync(string json,CancellationToken ct)
@@ -78,6 +80,7 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
     private Task Audit(string type,string symbol,string status,string summary,string hash,CancellationToken ct)=>_db.RecordRealtimeEventAsync(new(
         SensitiveDataRedactor.ForLog(type,80),SensitiveDataRedactor.ForLog(symbol,80),SensitiveDataRedactor.ForLog(status,80),SensitiveDataRedactor.ForLog(summary,240),DateTime.UtcNow,SensitiveDataRedactor.ForLog(hash,120)),ct);
     private static void Prune(SymbolState state){var cutoff=DateTime.UtcNow.AddMinutes(-5);while(state.Trades.Count>0&&state.Trades.Peek().Time<cutoff)state.Trades.Dequeue();}
+    private static bool IsHealthy(SymbolState state){lock(state.Gate)return DateTime.UtcNow-state.UpdatedAt<TimeSpan.FromSeconds(30)&&state.LastPrice>0&&state.BestBid>0&&state.BestAsk>=state.BestBid;}
     private static TimeSpan Backoff(int attempt)=>TimeSpan.FromSeconds(Math.Min(60,Math.Pow(2,Math.Min(5,attempt))));private static string S(JsonElement e,string name)=>e.TryGetProperty(name,out var p)?p.GetString()??string.Empty:string.Empty;private static decimal D(JsonElement e,string name)=>e.TryGetProperty(name,out var p)&&decimal.TryParse(p.GetString(),NumberStyles.Any,CultureInfo.InvariantCulture,out var value)?value:0;
     public async ValueTask DisposeAsync(){var runCts=Interlocked.Exchange(ref _cts,null);if(runCts is null)return;runCts.Cancel();try{if(_marketTask is not null)await _marketTask;if(_userTask is not null)await _userTask;}catch(OperationCanceledException){}finally{runCts.Dispose();_marketConnected=false;_userConnected=false;_status="STOPPED";}}
 }
