@@ -7,7 +7,7 @@ public sealed class BinanceProviderPlugin:IExchangeProviderPlugin
     public static ExchangeProviderDescriptor ProviderDescriptor { get; }=new(
         "binance-futures","Binance Futures",ExchangeAssetClass.CryptoCex,true,false,
         [new("apiKey","API Key",ExchangeCredentialKind.ApiKey),new("secret","API Secret",ExchangeCredentialKind.Secret)],
-        new HashSet<string>(["account","balance","positions","margin","candles","orderbook","funding","open-interest","index-price","mark-price","place-order","cancel-order","query-order","protection-orders","realtime","health"]));
+        new HashSet<string>(["account","balance","positions","margin","candles","orderbook","funding","open-interest","index-price","mark-price","place-order","cancel-order","query-order","order-fees","protection-orders","realtime","health"]));
     public ExchangeProviderDescriptor Descriptor=>ProviderDescriptor;
     public IExchangeProvider Create(ExchangeConnectionProfile profile,IReadOnlyDictionary<string,string> credentials)
     {

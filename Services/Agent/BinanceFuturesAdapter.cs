@@ -9,7 +9,7 @@ using WpeAgent.RuntimeContracts;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvider,IBrokerProvider,IProviderMarketCatalog,IProviderEnvironmentGuard,IRecentOrderProvider
+public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvider,IBrokerProvider,IProviderMarketCatalog,IProviderEnvironmentGuard,IRecentOrderProvider,IExchangeOrderFeeEvidenceReader
 {
     internal const long MaximumTradingClockSkewMilliseconds=1000;
     private readonly BinanceApiClient _api;
@@ -149,6 +149,17 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
         return sl with { IsProtection=true };
     }
     public async Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct) { var q=new Dictionary<string,string?>{{"symbol",N(symbol)},{"origClientOrderId",clientOrderId}}; try { using var d=JsonDocument.Parse(await _api.GetSignedRawAsync("/fapi/v1/order",q,ct)); return MapRaw(d.RootElement); } catch(HttpRequestException ex)when(ex.Message.Contains("-2013",StringComparison.Ordinal)||ex.Message.Contains("Order does not exist",StringComparison.OrdinalIgnoreCase)){return null;} }
+    public async Task<ExchangeOrderFeeEvidenceV1> ReadOrderFeeEvidenceAsync(ExchangeOrder order,CancellationToken ct)
+    {
+        var observed=DateTimeOffset.UtcNow;if(Environment!=ExchangeEnvironment.Testnet)return ExchangeOrderFeeEvidenceCanonicalizerV1.Create(ProviderId,Environment.ToString(),order.Symbol,order.OrderId,order.ClientOrderId,0,0,0,"",observed,ExchangeOrderFeeEvidenceStateV1.Unsupported);
+        try
+        {
+            using var document=JsonDocument.Parse(await _api.GetSignedRawAsync("/fapi/v1/userTrades",new Dictionary<string,string?>{{"symbol",N(order.Symbol)},{"orderId",order.OrderId},{"limit","1000"}},ct));
+            return BinanceOrderFeeEvidenceParserV1.Parse(document.RootElement,order,observed,N(order.Symbol));
+        }
+        catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
+        catch(Exception){return ExchangeOrderFeeEvidenceCanonicalizerV1.Create(ProviderId,"Testnet",order.Symbol,order.OrderId,order.ClientOrderId,0,0,0,"",observed,ExchangeOrderFeeEvidenceStateV1.Error);}
+    }
     public async Task CancelOrderAsync(string symbol,string id,CancellationToken ct)
     {
         if(_algoOrderIds.TryRemove(id,out _))
