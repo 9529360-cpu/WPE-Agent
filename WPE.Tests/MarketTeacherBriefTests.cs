@@ -24,6 +24,21 @@ public sealed class MarketTeacherBriefTests : IDisposable
         Assert.DoesNotContain("buy",brief.Content,StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("sell",brief.Content,StringComparison.OrdinalIgnoreCase);
         Assert.Equal(64,brief.Sha256.Length);
+        Assert.Equal("wpe.market-teacher-persona/1.0",brief.PersonaVersion);
+        Assert.Equal(48,MarketTeacherBriefComposerV1.Persona.PersonaAge);
+        Assert.Contains("evidence-first",MarketTeacherBriefComposerV1.Persona.Traits);
+        Assert.Contains("no-quiz-or-scoring",MarketTeacherBriefComposerV1.Persona.Boundaries);
+    }
+
+    [Fact]
+    public void ChineseBriefUsesExperiencedPlainSpokenVoiceWithoutChangingFacts()
+    {
+        var brief=MarketTeacherBriefComposerV1.Compose(Research(),"zh_CN");
+        Assert.Contains("先看事实，不急着下结论",brief.Content,StringComparison.Ordinal);
+        Assert.Contains("CPI 衡量消费者价格的总体变化",brief.Content,StringComparison.Ordinal);
+        Assert.Contains("334.1",brief.Content,StringComparison.Ordinal);
+        Assert.Contains("不要当成买卖按钮",brief.Content,StringComparison.Ordinal);
+        Assert.DoesNotContain("考试",brief.Content,StringComparison.Ordinal);
     }
 
     [Fact]
@@ -33,7 +48,7 @@ public sealed class MarketTeacherBriefTests : IDisposable
         Assert.True(await MarketTeacherBriefPublisherV1.PublishDailyAsync(store,observer,Research(),"binance-futures","Testnet",CancellationToken.None));
         Assert.False(await MarketTeacherBriefPublisherV1.PublishDailyAsync(store,observer,Research(),"binance-futures","Testnet",CancellationToken.None));
         var value=Assert.Single(observer.Events);Assert.Equal(NotificationEventKind.MarketBrief,value.Kind);Assert.NotEmpty(value.Content!);
-        var formatted=new NotificationFormatter().Format(value);Assert.Contains("Market briefing",formatted.Text,StringComparison.Ordinal);
+        var formatted=new NotificationFormatter().Format(value);Assert.Contains("Market notes",formatted.Text,StringComparison.Ordinal);
     }
 
     [Fact]
