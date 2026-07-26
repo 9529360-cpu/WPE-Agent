@@ -20,7 +20,7 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
         var item = await Succeeded(store, "observed-success");
         await SeedConfirmedIntent(store, item.Artifact!);
         var events = await store.GetAutomaticExecutionEventsAsync(item.ExecutionId, 100, CancellationToken.None);
-        var result = await new ModelOffExecutionObservationWriterV1(store).WriteAsync(item, events, Now, CancellationToken.None);
+        var result = await new ModelOffExecutionObservationWriterV1(store).WriteAsync(item, events, Evidence(item), Now, CancellationToken.None);
 
         Assert.True(result.Persisted);
         Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(result.Execution));
@@ -40,7 +40,7 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
             "worker", "automatic.unknown-outcome", CancellationToken.None)).Succeeded);
         item = (await store.GetAutomaticExecutionAsync(item.ExecutionId, CancellationToken.None))!;
         var events = await store.GetAutomaticExecutionEventsAsync(item.ExecutionId, 100, CancellationToken.None);
-        var result = await new ModelOffExecutionObservationWriterV1(store).WriteAsync(item, events, Now, CancellationToken.None);
+        var result = await new ModelOffExecutionObservationWriterV1(store).WriteAsync(item, events, Evidence(item), Now, CancellationToken.None);
 
         Assert.True(result.Persisted);
         Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(result.Execution));
@@ -56,7 +56,7 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
         var store = Store();
         var item = await Succeeded(store, "observed-missing-order");
         var events = await store.GetAutomaticExecutionEventsAsync(item.ExecutionId, 100, CancellationToken.None);
-        var result = await new ModelOffExecutionObservationWriterV1(store).WriteAsync(item, events, Now, CancellationToken.None);
+        var result = await new ModelOffExecutionObservationWriterV1(store).WriteAsync(item, events, Evidence(item), Now, CancellationToken.None);
 
         Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(result.Execution));
         Assert.Contains("execution.intent-missing", result.Execution.Decision.ReasonCodes);
@@ -77,12 +77,47 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
         await store.SaveIntentAsync(item.Artifact.CorrelationId, conflicting, "PROTECTED", "order-conflicting", CancellationToken.None);
         var events = await store.GetAutomaticExecutionEventsAsync(item.ExecutionId, 100, CancellationToken.None);
 
-        var result = await new ModelOffExecutionObservationWriterV1(store).WriteAsync(item, events, Now, CancellationToken.None);
+        var result = await new ModelOffExecutionObservationWriterV1(store).WriteAsync(item, events, Evidence(item), Now, CancellationToken.None);
 
         Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(result.Execution));
         Assert.Contains("execution.intent-conflicting", result.Execution.Decision.ReasonCodes);
         Assert.Equal("quarantine_order_correlation", result.Recovery.Decision.Action);
         Assert.False(result.Recovery.Facts.GetProperty("resubmit_allowed").GetBoolean());
+    }
+
+    [Theory]
+    [InlineData(ModelOffExchangeOrderEvidenceStateV1.Missing, "execution.exchange-order-missing")]
+    [InlineData(ModelOffExchangeOrderEvidenceStateV1.Conflicting, "execution.exchange-order-conflicting")]
+    [InlineData(ModelOffExchangeOrderEvidenceStateV1.Unknown, "execution.exchange-observation-unknown")]
+    public async Task ExchangeEvidenceMustConfirmPersistedSuccess(
+        ModelOffExchangeOrderEvidenceStateV1 state,string reason)
+    {
+        var store=Store();var item=await Succeeded(store,"observed-exchange-"+state.ToString().ToLowerInvariant());
+        await SeedConfirmedIntent(store,item.Artifact!);
+        var events=await store.GetAutomaticExecutionEventsAsync(item.ExecutionId,100,CancellationToken.None);
+
+        var result=await new ModelOffExecutionObservationWriterV1(store).WriteAsync(
+            item,events,Evidence(item,state),Now,CancellationToken.None);
+
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(result.Execution));
+        Assert.Contains(reason,result.Execution.Decision.ReasonCodes);
+        Assert.Equal("quarantine_order_correlation",result.Recovery.Decision.Action);
+        Assert.False(result.Recovery.Facts.GetProperty("resubmit_allowed").GetBoolean());
+    }
+
+    [Fact]
+    public async Task TamperedExchangeEvidenceHashCannotConfirmExecution()
+    {
+        var store=Store();var item=await Succeeded(store,"observed-exchange-tampered");
+        await SeedConfirmedIntent(store,item.Artifact!);
+        var evidence=Evidence(item) with{EvidenceSha256="sha256:"+new string('a',64)};
+        var events=await store.GetAutomaticExecutionEventsAsync(item.ExecutionId,100,CancellationToken.None);
+
+        var result=await new ModelOffExecutionObservationWriterV1(store).WriteAsync(item,events,evidence,Now,CancellationToken.None);
+
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(result.Execution));
+        Assert.Contains("execution.exchange-observation-unknown",result.Execution.Decision.ReasonCodes);
+        Assert.Equal("quarantine_order_correlation",result.Recovery.Decision.Action);
     }
 
     [Fact]
@@ -92,14 +127,14 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
         var executing = await Executing(store, "observed-history");
         var writer = new ModelOffExecutionObservationWriterV1(store);
         var events = await store.GetAutomaticExecutionEventsAsync(executing.ExecutionId, 100, CancellationToken.None);
-        Assert.True((await writer.WriteAsync(executing, events, Now, CancellationToken.None)).Persisted);
-        Assert.True((await writer.WriteAsync(executing, events.Reverse().ToArray(), Now, CancellationToken.None)).Persisted);
+        Assert.True((await writer.WriteAsync(executing, events, Evidence(executing), Now, CancellationToken.None)).Persisted);
+        Assert.True((await writer.WriteAsync(executing, events.Reverse().ToArray(), Evidence(executing), Now, CancellationToken.None)).Persisted);
         Assert.True((await store.TryTransitionAutomaticExecutionAsync(executing.ExecutionId,
             AutomaticExecutionQueueStatus.Executing, AutomaticExecutionQueueStatus.Succeeded,
             "worker", "automatic.succeeded", CancellationToken.None)).Succeeded);
         var succeeded = (await store.GetAutomaticExecutionAsync(executing.ExecutionId, CancellationToken.None))!;
         events = await store.GetAutomaticExecutionEventsAsync(succeeded.ExecutionId, 100, CancellationToken.None);
-        Assert.True((await writer.WriteAsync(succeeded, events, Now, CancellationToken.None)).Persisted);
+        Assert.True((await writer.WriteAsync(succeeded, events, Evidence(succeeded), Now, CancellationToken.None)).Persisted);
         Assert.Equal(6, (await store.GetModelOffCanonicalAuditsAsync(executing.ExecutionId, CancellationToken.None)).Count);
     }
 
@@ -175,7 +210,19 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
                 AutomaticFactState.True, AutomaticFactState.True, "automatic.runtime-ready"));
     }
 
-    private sealed class SuccessfulGateway : IAutomaticExecutionGateway
+    private static ModelOffExchangeOrderEvidenceV1 Evidence(PersistedAutomaticExecution item,
+        ModelOffExchangeOrderEvidenceStateV1 state=ModelOffExchangeOrderEvidenceStateV1.Confirmed)
+    {
+        var expected=item.Artifact?.Intents.Count??0;
+        var entries=item.Artifact?.Intents.OrderBy(x=>x.Sequence).Select(x=>new ModelOffExchangeOrderEvidenceEntryV1(
+            x.Sequence,state==ModelOffExchangeOrderEvidenceStateV1.Confirmed?"confirmed":state.ToString().ToLowerInvariant(),
+            state==ModelOffExchangeOrderEvidenceStateV1.Confirmed?"FILLED":"none",
+            state==ModelOffExchangeOrderEvidenceStateV1.Confirmed?x.Quantity:0)).ToArray()??[];
+        return ModelOffExchangeOrderEvidenceContractV1.Create(item.ExecutionId,state,expected,
+            state==ModelOffExchangeOrderEvidenceStateV1.Confirmed?expected:0,Now,entries);
+    }
+
+    private sealed class SuccessfulGateway : IAutomaticExecutionGateway, IAutomaticExecutionOrderEvidenceReader
     {
         public bool IsTestnet => true;
         public Task<AutomaticGatewayExecutionResult> ExecuteAsync(DurableExecutionArtifactV2 artifact,
@@ -184,5 +231,9 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
         public Task<AutomaticGatewayReconciliationResult> ReconcileAsync(DurableExecutionArtifactV2 artifact,
             CancellationToken ct) =>
             Task.FromResult(new AutomaticGatewayReconciliationResult(AutomaticGatewayReconciliationState.Succeeded, "automatic.reconcile-succeeded"));
+        public Task<ModelOffExchangeOrderEvidenceV1> ObserveOrdersAsync(DurableExecutionArtifactV2 artifact,CancellationToken ct) =>
+            Task.FromResult(ModelOffExchangeOrderEvidenceContractV1.Create(artifact.CorrelationId,
+                ModelOffExchangeOrderEvidenceStateV1.Confirmed,artifact.Intents.Count,artifact.Intents.Count,Now,
+                artifact.Intents.Select(x=>new ModelOffExchangeOrderEvidenceEntryV1(x.Sequence,"confirmed","FILLED",x.Quantity)).ToArray()));
     }
 }

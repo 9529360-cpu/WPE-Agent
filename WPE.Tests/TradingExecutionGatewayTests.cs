@@ -62,6 +62,33 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     }
 
     [Fact]
+    public async Task AutomaticOrderObserverConfirmsMatchingExchangeOrderWithoutMutation()
+    {
+        var setup=Setup(TradingAuthorizationMode.Auto);var artifact=AutomaticArtifact();
+        setup.Exchange.ObservedOrder=new("BTCUSDT","order-observed","client-1","FILLED",.001m,50_000m,"MARKET",PositionSide.Long,false,Now.UtcDateTime);
+        var before=setup.Exchange.MutationCount;
+
+        var evidence=await new TradingAutomaticExecutionGateway(setup.Gateway,setup.Exchange,setup.Store)
+            .ObserveOrdersAsync(artifact,CancellationToken.None);
+
+        Assert.Equal(ModelOffExchangeOrderEvidenceStateV1.Confirmed,evidence.State);
+        Assert.Equal(1,evidence.ExpectedCount);Assert.Equal(1,evidence.FoundCount);
+        Assert.Equal(before,setup.Exchange.MutationCount);
+    }
+
+    [Fact]
+    public async Task AutomaticOrderObserverReportsMissingWithoutMutation()
+    {
+        var setup=Setup(TradingAuthorizationMode.Auto);var before=setup.Exchange.MutationCount;
+
+        var evidence=await new TradingAutomaticExecutionGateway(setup.Gateway,setup.Exchange,setup.Store)
+            .ObserveOrdersAsync(AutomaticArtifact(),CancellationToken.None);
+
+        Assert.Equal(ModelOffExchangeOrderEvidenceStateV1.Missing,evidence.State);
+        Assert.Equal(0,evidence.FoundCount);Assert.Equal(before,setup.Exchange.MutationCount);
+    }
+
+    [Fact]
     public async Task Review_ConsumesPersistedApprovalBeforeCallingReliableExecutor()
     {
         var setup=Setup(TradingAuthorizationMode.Review);await PersistApproval(setup.Store);
@@ -338,6 +365,9 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     private static TradingApprovalRequest Request()=>new("request-1",TradingAuthorizationMode.Review,"correlation-1",IntentHash(),"user-1","device-1","session-1",Now.AddMinutes(-5),Now.AddMinutes(5));
     private static TradingApprovalReceipt Receipt()=>new("receipt-1","correlation-1",IntentHash(),"user-1","device-1","session-1",true,Now.AddMinutes(-4),Now.AddMinutes(4));
     private static ExecutionIntent Intent()=>new("BTCUSDT",PositionSide.Long,.001m,false,49_000m,51_000m,"client-1","gateway test",DecisionAction.OpenLong,ExpectedPrice:50_000m);
+    private static DurableExecutionArtifactV2 AutomaticArtifact()=>new(2,"correlation-1",
+        [new(0,"BTCUSDT","Long",.001m,false,49_000m,51_000m,"client-1","strategy.entry","OpenLong","Market",0,50_000m)],
+        5,true,"binance","Testnet","strategy","v1",Now.AddSeconds(-20),"market-v1",Now.AddSeconds(-10),Now.AddMinutes(2));
     private static string IntentHash()=>TradingExecutionGateway.ComputeIntentHash([Intent()],5,true);
     private static ManualEmergencyConfirmation Confirmation(DateTimeOffset? confirmedAt=null)=>new("confirmation-1","emergency-correlation","user-1","device-1","session-1",confirmedAt??Now.AddMinutes(-1));
     private static EmergencyReductionCommand EmergencyCommand()=>new(Confirmation(),new("BTCUSDT",PositionSide.Long,.01m,49_000m,50_000m,10m,5m,true,20_000m),new("BTCUSDT",PositionSide.Long,.01m,true,0,0,"emergency-client-1","manual emergency close",DecisionAction.CloseLong,ExpectedPrice:50_000m),5,true);
@@ -353,6 +383,7 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     {
         public ExchangeEnvironment Environment{get;}=environment;
         public int MutationCount{get;private set;}
+        public ExchangeOrder? ObservedOrder{get;set;}
         public Task<AccountSnapshot> GetAccountAsync(CancellationToken ct)=>Task.FromResult(new AccountSnapshot(1_000,1_000,1_000,DateTime.UtcNow));
         public Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct)=>Task.FromResult<IReadOnlyList<ManagedPosition>>([]);
         public Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol,CancellationToken ct)=>Task.FromResult<IReadOnlyList<ExchangeOrder>>([]);
@@ -367,7 +398,7 @@ public sealed class TradingExecutionGatewayTests:IDisposable
         public Task<ExchangeOrder> PlaceMarketAsync(string symbol,PositionSide side,decimal quantity,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;return Task.FromResult(new ExchangeOrder(symbol,"order-1",clientOrderId,"FILLED",quantity,50_000m,"MARKET",side,false,DateTime.UtcNow));}
         public Task<ExchangeOrder> PlaceLimitAsync(string symbol,PositionSide side,decimal quantity,decimal price,string clientOrderId,bool reduceOnly,CancellationToken ct)=>PlaceMarketAsync(symbol,side,quantity,clientOrderId,reduceOnly,ct);
         public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide sideToClose,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct){MutationCount++;return Task.FromResult(new ExchangeOrder(symbol,"protection-1",groupId,"NEW",0,0,"OCO",sideToClose,true,DateTime.UtcNow));}
-        public Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct)=>Task.FromResult<ExchangeOrder?>(null);
+        public Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct)=>Task.FromResult(ObservedOrder);
         public Task CancelOrderAsync(string symbol,string orderId,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
         public ValueTask DisposeAsync()=>ValueTask.CompletedTask;
     }

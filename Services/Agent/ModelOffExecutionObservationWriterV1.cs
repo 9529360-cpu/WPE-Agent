@@ -25,6 +25,7 @@ internal sealed class ModelOffExecutionObservationWriterV1
     internal async Task<ModelOffExecutionObservationResultV1> WriteAsync(
         PersistedAutomaticExecution item,
         IReadOnlyList<PersistedAutomaticExecutionEvent> events,
+        ModelOffExchangeOrderEvidenceV1? exchangeEvidence,
         DateTimeOffset evaluationTimeUtc,
         CancellationToken ct)
     {
@@ -38,14 +39,22 @@ internal sealed class ModelOffExecutionObservationWriterV1
         var timeline = ModelOffExecutionRecoveryContractV1.Timeline(item.ExecutionId, events);
         var persistedIntents = await _store.GetIntentsByCycleAsync(item.Artifact?.CorrelationId ?? item.ExecutionId,100,ct);
         var correlation = Correlate(item.Artifact,persistedIntents);
+        var exchangeConfirmed=exchangeEvidence is {State:ModelOffExchangeOrderEvidenceStateV1.Confirmed}
+            &&ModelOffExchangeOrderEvidenceContractV1.Validate(exchangeEvidence)
+            &&string.Equals(exchangeEvidence.ExecutionId,item.ExecutionId,StringComparison.Ordinal)
+            &&exchangeEvidence.ExpectedCount==correlation.ExpectedCount&&exchangeEvidence.FoundCount==correlation.ExpectedCount
+            &&exchangeEvidence.ObservedAtUtc.Offset==TimeSpan.Zero&&exchangeEvidence.ObservedAtUtc<=evaluationTimeUtc
+            &&evaluationTimeUtc-exchangeEvidence.ObservedAtUtc<=TimeSpan.FromMinutes(1)
+            &&ExchangeEntriesMatch(item.Artifact,exchangeEvidence);
         var latestSequence = timeline.Entries.Max(x => x.Sequence);
         var cycleId = item.Artifact?.CorrelationId ?? item.ExecutionId;
         var stateToken = item.Status.ToString().ToLowerInvariant();
         var identity = $"{item.ExecutionId}-observation-{latestSequence}-{stateToken}";
         var sourceStatus = item.ArtifactValid ? ModelOffSourceStatusV1.Available : ModelOffSourceStatusV1.Invalid;
-        var executionSucceeded = item.Status == AutomaticExecutionQueueStatus.Succeeded && item.ArtifactValid && correlation.Valid;
+        var executionSucceeded = item.Status == AutomaticExecutionQueueStatus.Succeeded && item.ArtifactValid && correlation.Valid && exchangeConfirmed;
         var executionReasons = ExecutionReasons(item).Concat(
-            item.Status == AutomaticExecutionQueueStatus.Succeeded ? correlation.ReasonCodes : []).ToArray();
+            item.Status == AutomaticExecutionQueueStatus.Succeeded
+                ?correlation.ReasonCodes.Concat(exchangeConfirmed?[]:[ExchangeReason(exchangeEvidence)]):[]).ToArray();
         var execution = Output(ModelOffAgentV1.Execution, identity + "-execution", cycleId, evaluationTimeUtc,
             [new(item.ExecutionId, ModelOffSourceKindV1.Audit, item.UpdatedAtUtc, evaluationTimeUtc,
                 sourceStatus, NormalizeHash(item.ArtifactHash))], executionSucceeded,
@@ -54,15 +63,18 @@ internal sealed class ModelOffExecutionObservationWriterV1
                 timeline_sha256 = timeline.TimelineSha256, event_count = timeline.Entries.Count,
                 expected_intent_count = correlation.ExpectedCount, persisted_intent_count = correlation.PersistedCount,
                 correlation_sha256 = correlation.Sha256, order_correlation_confirmed = correlation.Valid,
+                exchange_evidence_state = exchangeEvidence?.State.ToString().ToLowerInvariant()??"unknown",
+                exchange_evidence_sha256 = exchangeEvidence?.EvidenceSha256??"sha256:"+new string('0',64),
+                exchange_order_confirmed = exchangeConfirmed,
                 mutation_performed_by_observer = false });
         var executionDocument = ModelOffCanonicalSerializerV1.Serialize(execution);
 
-        var recoveryState = RecoveryState(item.Status,correlation.Valid);
+        var recoveryState = RecoveryState(item.Status,correlation.Valid&&exchangeConfirmed);
         var terminalState = item.Status is AutomaticExecutionQueueStatus.Succeeded or
             AutomaticExecutionQueueStatus.FailedTerminal or AutomaticExecutionQueueStatus.PolicyBlocked or
             AutomaticExecutionQueueStatus.RiskBlocked or AutomaticExecutionQueueStatus.CapabilityUnavailable or
             AutomaticExecutionQueueStatus.MarketStale or AutomaticExecutionQueueStatus.ArtifactInvalid;
-        var recoveryReady = terminalState && (item.Status != AutomaticExecutionQueueStatus.Succeeded || correlation.Valid);
+        var recoveryReady = terminalState && (item.Status != AutomaticExecutionQueueStatus.Succeeded || correlation.Valid&&exchangeConfirmed);
         var quarantined = !recoveryReady;
         var recoveryReasons = recoveryReady ? Array.Empty<string>() : ["recovery.execution-state-unresolved"];
         var recovery = Output(ModelOffAgentV1.Recovery, identity + "-recovery", cycleId, evaluationTimeUtc,
@@ -142,6 +154,25 @@ internal sealed class ModelOffExecutionObservationWriterV1
             AutomaticExecutionQueueStatus.Reconciling => "quarantine_pending_reconciliation",
         _ => "terminal_no_resubmit"
     };
+
+    private static string ExchangeReason(ModelOffExchangeOrderEvidenceV1? evidence) => evidence?.State switch
+    {
+        ModelOffExchangeOrderEvidenceStateV1.Missing => "execution.exchange-order-missing",
+        ModelOffExchangeOrderEvidenceStateV1.Conflicting => "execution.exchange-order-conflicting",
+        ModelOffExchangeOrderEvidenceStateV1.Unsupported => "execution.exchange-observation-unsupported",
+        _ => "execution.exchange-observation-unknown"
+    };
+
+    private static bool ExchangeEntriesMatch(DurableExecutionArtifactV2? artifact,ModelOffExchangeOrderEvidenceV1 evidence)
+    {
+        if(artifact is null||evidence.Entries.Count!=artifact.Intents.Count)return false;
+        var expected=artifact.Intents.OrderBy(x=>x.Sequence).ToArray();
+        var actual=evidence.Entries.OrderBy(x=>x.Sequence).ToArray();
+        return expected.Zip(actual).All(pair=>pair.First.Sequence==pair.Second.Sequence
+            &&string.Equals(pair.Second.State,"confirmed",StringComparison.Ordinal)
+            &&string.Equals(pair.Second.Status,"FILLED",StringComparison.Ordinal)
+            &&pair.Second.ExecutedQuantity==pair.First.Quantity);
+    }
 
     private sealed record CorrelationResult(bool Valid,int ExpectedCount,int PersistedCount,string Sha256,IReadOnlyList<string> ReasonCodes);
 

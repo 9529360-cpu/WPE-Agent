@@ -22,6 +22,42 @@ public enum AutomaticGatewayExecutionState { Succeeded,Rejected,Unknown }
 public sealed record AutomaticGatewayExecutionResult(AutomaticGatewayExecutionState State,string Code);
 public enum AutomaticGatewayReconciliationState { Succeeded,NotSubmitted,Failed,Unknown }
 public sealed record AutomaticGatewayReconciliationResult(AutomaticGatewayReconciliationState State,string Code);
+public enum ModelOffExchangeOrderEvidenceStateV1 { Confirmed,Missing,Conflicting,Unknown,Unsupported }
+public sealed record ModelOffExchangeOrderEvidenceEntryV1(int Sequence,string State,string Status,decimal ExecutedQuantity);
+public sealed record ModelOffExchangeOrderEvidenceV1(
+    int ContractVersion,string ExecutionId,ModelOffExchangeOrderEvidenceStateV1 State,
+    int ExpectedCount,int FoundCount,DateTimeOffset ObservedAtUtc,
+    IReadOnlyList<ModelOffExchangeOrderEvidenceEntryV1> Entries,string EvidenceSha256);
+public static class ModelOffExchangeOrderEvidenceContractV1
+{
+    public const int Version=1;
+    public static ModelOffExchangeOrderEvidenceV1 Create(string executionId,ModelOffExchangeOrderEvidenceStateV1 state,
+        int expected,int found,DateTimeOffset observedAt,IReadOnlyList<ModelOffExchangeOrderEvidenceEntryV1> entries)
+    {
+        var ordered=entries.OrderBy(x=>x.Sequence).ToArray();
+        return new(Version,executionId,state,expected,found,observedAt,ordered,Hash(executionId,state,expected,found,observedAt,ordered));
+    }
+    public static bool Validate(ModelOffExchangeOrderEvidenceV1? value)
+    {
+        if(value is null||value.ContractVersion!=Version||string.IsNullOrWhiteSpace(value.ExecutionId)
+           ||value.ExpectedCount<0||value.FoundCount<0||value.FoundCount>value.ExpectedCount
+           ||value.ObservedAtUtc==default||value.ObservedAtUtc.Offset!=TimeSpan.Zero||value.Entries is null
+           ||value.Entries.Select(x=>x.Sequence).Distinct().Count()!=value.Entries.Count)return false;
+        var ordered=value.Entries.OrderBy(x=>x.Sequence).ToArray();
+        var expected=Hash(value.ExecutionId,value.State,value.ExpectedCount,value.FoundCount,value.ObservedAtUtc,ordered);
+        return string.Equals(expected,value.EvidenceSha256,StringComparison.Ordinal);
+    }
+    private static string Hash(string executionId,ModelOffExchangeOrderEvidenceStateV1 state,int expected,int found,
+        DateTimeOffset observedAt,IReadOnlyList<ModelOffExchangeOrderEvidenceEntryV1> entries)
+    {
+        var bytes=JsonSerializer.SerializeToUtf8Bytes(new{executionId,state=state.ToString(),expected,found,observedAt,entries});
+        return "sha256:"+Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+    }
+}
+public interface IAutomaticExecutionOrderEvidenceReader
+{
+    Task<ModelOffExchangeOrderEvidenceV1> ObserveOrdersAsync(DurableExecutionArtifactV2 artifact,CancellationToken ct);
+}
 
 /// <summary>Module gateway port. A later integration adapter must delegate this to the existing execution gateway.</summary>
 public interface IAutomaticExecutionGateway
@@ -126,7 +162,14 @@ public sealed class AutomaticExecutionProcessor
         var item=await _store.GetAutomaticExecutionAsync(id,ct);
         if(item is not null&&events.Count>0)
         {
-            try{await new ModelOffExecutionObservationWriterV1(_store).WriteAsync(item,events,_utcNow().ToUniversalTime(),ct);}
+            ModelOffExchangeOrderEvidenceV1? exchangeEvidence=null;
+            if(item.Artifact is not null&&_gateway is IAutomaticExecutionOrderEvidenceReader reader)
+            {
+                try{exchangeEvidence=await reader.ObserveOrdersAsync(item.Artifact,ct);}
+                catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+                catch{exchangeEvidence=null;}
+            }
+            try{await new ModelOffExecutionObservationWriterV1(_store).WriteAsync(item,events,exchangeEvidence,_utcNow().ToUniversalTime(),ct);}
             catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
             catch(Exception ex)
             {

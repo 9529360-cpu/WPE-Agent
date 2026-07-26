@@ -192,7 +192,7 @@ internal sealed class PersistedAutomaticPreMutationAuthority(AgentSqliteStore st
     }
 }
 
-public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGateway
+public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGateway,IAutomaticExecutionOrderEvidenceReader
 {
     private readonly TradingExecutionGateway _gateway;
     private readonly IExchangeAdapter _exchange;
@@ -245,11 +245,40 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
         return new(AutomaticGatewayReconciliationState.Unknown,"automatic.reconcile-unknown");
     }
 
+    public async Task<ModelOffExchangeOrderEvidenceV1> ObserveOrdersAsync(DurableExecutionArtifactV2 artifact,CancellationToken ct)
+    {
+        var observedAt=_utcNow().ToUniversalTime();
+        if(!IsTestnet||!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid)
+            return ModelOffExchangeOrderEvidenceContractV1.Create(artifact?.CorrelationId??"invalid",ModelOffExchangeOrderEvidenceStateV1.Unsupported,artifact?.Intents.Count??0,0,observedAt,[]);
+        var entries=new List<ModelOffExchangeOrderEvidenceEntryV1>();var found=0;var conflicting=false;
+        try
+        {
+            foreach(var intent in artifact.Intents.OrderBy(x=>x.Sequence))
+            {
+                var order=await _exchange.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);
+                if(order is null){entries.Add(new(intent.Sequence,"missing","none",0));continue;}
+                found++;
+                var matches=string.Equals(order.Symbol,intent.Symbol,StringComparison.Ordinal)
+                    &&string.Equals(order.ClientOrderId,intent.ClientOrderId,StringComparison.Ordinal)
+                    &&order.ExecutedQuantity==intent.Quantity
+                    &&string.Equals(order.Status,"FILLED",StringComparison.Ordinal);
+                if(!matches)conflicting=true;
+                entries.Add(new(intent.Sequence,matches?"confirmed":"conflicting",order.Status,order.ExecutedQuantity));
+            }
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch{return ModelOffExchangeOrderEvidenceContractV1.Create(artifact.CorrelationId,ModelOffExchangeOrderEvidenceStateV1.Unknown,artifact.Intents.Count,found,observedAt,entries);}
+        var state=conflicting?ModelOffExchangeOrderEvidenceStateV1.Conflicting:
+            found==artifact.Intents.Count?ModelOffExchangeOrderEvidenceStateV1.Confirmed:ModelOffExchangeOrderEvidenceStateV1.Missing;
+        return ModelOffExchangeOrderEvidenceContractV1.Create(artifact.CorrelationId,state,artifact.Intents.Count,found,observedAt,entries);
+    }
+
     private static IReadOnlyList<ExecutionIntent> Restore(DurableExecutionArtifactV2 artifact)
     {
         if(!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid)throw new ArgumentException("automatic.artifact-invalid",nameof(artifact));
         return artifact.Intents.OrderBy(x=>x.Sequence).Select(x=>new ExecutionIntent(x.Symbol,Enum.Parse<PositionSide>(x.Side),x.Quantity,x.ReduceOnly,x.StopLoss,x.TakeProfit,x.ClientOrderId,x.ReasonCode,Enum.Parse<DecisionAction>(x.Action),Enum.Parse<ExecutionOrderType>(x.OrderType),x.LimitPrice,x.ExpectedPrice)).ToArray();
     }
+
 }
 
 public sealed class TradingExecutionGateway
