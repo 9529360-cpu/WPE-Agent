@@ -27,7 +27,7 @@ public sealed class EvidenceCollector
     {
         var missing=new List<string>();var markets=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase);
         var account=await _exchange.GetAccountAsync(ct);var positions=await _exchange.GetPositionsAsync(ct);
-        foreach(var symbol in _symbols)try{var market=await _exchange.GetMarketAsync(symbol,ct);markets[symbol]=_realtime?.Enrich(market)??market;}catch{missing.Add(symbol+":market_derivatives");}
+        foreach(var symbol in _symbols)try{var market=await _exchange.GetMarketAsync(symbol,ct);market=_realtime?.Enrich(market)??market;var provider=_exchange is IExchangeProvider p?p.ProviderId:"local";market=market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,provider,_exchange.Environment.ToString())};markets[symbol]=market;}catch{missing.Add(symbol+":market_derivatives");}
         if(_realtime is not null&&!_realtime.Healthy)missing.Add("realtime_stream_unhealthy:"+_realtime.Status);
         var fundamentals=new Dictionary<string,CryptoInstrumentFundamentalV1>(StringComparer.OrdinalIgnoreCase);
         if(_exchange is ICryptoInstrumentFundamentalReader fundamentalReader)try{foreach(var fact in await fundamentalReader.GetInstrumentFundamentalsAsync(_symbols,ct))fundamentals[fact.Symbol]=fact;foreach(var symbol in _symbols.Where(x=>!fundamentals.ContainsKey(x)))missing.Add(symbol+":fundamental_unavailable");}catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}catch{foreach(var symbol in _symbols)missing.Add(symbol+":fundamental_error");}else foreach(var symbol in _symbols)missing.Add(symbol+":fundamental_unsupported");

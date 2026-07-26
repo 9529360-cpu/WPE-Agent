@@ -42,7 +42,7 @@ public static class ModelOffRoleRuntimeRegistryBuilderV1
     private static readonly ModelOffRegistryCapabilityV1[] CapabilityMatrix =
     [
         Capability("orchestrator", AllRoles(), "yes", true, true, "current", "deterministic seven-role canonical chain with mandatory fail-closed pre-authorization gate and atomic append-only output/handoff persistence; no live Testnet mutation certification"),
-        Capability("market-data", [ModelOffRuntimeRoleV1.Market], "partial"),
+        Capability("market-data", [ModelOffRuntimeRoleV1.Market], "yes", true, true, "current", "deterministic confirmed-candle market facts with source-time freshness, Testnet provider-bound canonical provenance and complete realtime enrichment gates; no raw HTTP response retention or live provider certification"),
         Capability("news", [ModelOffRuntimeRoleV1.Research], "partial"),
         Capability("macro", [ModelOffRuntimeRoleV1.Research], "partial"),
         Capability("technical", [ModelOffRuntimeRoleV1.Research], "partial"),

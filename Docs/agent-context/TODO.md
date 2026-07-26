@@ -45,6 +45,7 @@
 - [x] Accept the bounded Orchestrator/control component after making the seven-output/six-handoff production cycle atomic, idempotent, append-only, and conflict-failing. Keep all seven aggregate Agents partial and make no live Testnet mutation claim.
 - [x] Stop unknown or malformed realtime market events from refreshing freshness, require complete price and bid/ask evidence for hub health and enrichment, and preserve REST evidence when the stream snapshot is incomplete. Provider raw-source and REST/WS consistency evidence remain open before Market Data acceptance.
 - [x] Build REST market facts only from valid unique fully closed candles and use the confirmed close time as Market `CollectedAt` across Binance and shared provider adapters. Persisted raw-response provenance and cross-source identity remain open before Market Data acceptance.
+- [x] Accept bounded Market Data after binding each final market fact to Testnet provider identity, symbol, source time, confirmed-candle bounds and canonical SHA-256, with independent Market Agent verification. Keep the Market aggregate partial; do not claim raw HTTP retention or live provider certification.
 - [x] Replace the position-count protection heuristic with versioned read-only SL/TP reconciliation and tamper-evident persistence. Missing, orphaned, stale, or invalid protection blocks new risk without attempting an exchange mutation. Bybit position-level TP/SL is now observed read-only through `/v5/position/list`, and synthetic evidence cannot enter the ordinary order-cancellation endpoint.
 
 ## P2

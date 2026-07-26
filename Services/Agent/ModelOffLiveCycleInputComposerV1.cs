@@ -52,14 +52,13 @@ internal static class ModelOffLiveCycleInputComposerV1
         {
             var sourceValid=true;
             if (!SafeToken(market.Symbol) || market.Price <= 0){marketReasons.Add("live.market.invalid");sourceValid=false;}
+            if(!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)){marketReasons.Add("live.market.provenance-invalid");sourceValid=false;}
             if (!TryUtc(market.CollectedAt, out var collectedAt) || !Fresh(collectedAt, request.EvaluationTimeUtc))
                 {marketReasons.Add("live.market.stale");sourceValid=false;}
             marketSources.Add(new(SafeToken(market.Symbol) ? market.Symbol : "unknown-market",
                 ModelOffSourceKindV1.Market, collectedAt, request.EvaluationTimeUtc,
                 sourceValid ? ModelOffSourceStatusV1.Available : ModelOffSourceStatusV1.Invalid,
-                Hash(new { market.Symbol, market.Price, market.Support, market.Resistance, market.Rsi,
-                    market.Trend15m, market.Trend1h, market.Trend4h, market.Quality.QualityScore,
-                    market.Quality.SpreadBps, market.Quality.LiquidityScore, CollectedAtUtc = collectedAt })));
+                sourceValid?"sha256:"+market.Provenance!.CanonicalSha256:Hash(new { market.Symbol, state="invalid", CollectedAtUtc = collectedAt })));
         }
         if (marketSources.Count == 0) marketReasons.Add("live.market.missing");
         if (request.Evidence.Completeness is < 0 or > 100) marketReasons.Add("live.evidence.completeness-invalid");

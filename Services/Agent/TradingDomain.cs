@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.IO;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace 币安量化机器人.Services.Agent;
@@ -62,6 +65,25 @@ public sealed record MarketEvidence(string Symbol, decimal Price, decimal Suppor
 {
     public MarketQualityEvidence Quality { get; init; } = new();
     public IReadOnlyList<CandleEvidence> Candles { get; init; } = Array.Empty<CandleEvidence>();
+    public MarketEvidenceProvenanceV1? Provenance { get; init; }
+}
+public sealed record MarketEvidenceProvenanceV1(string Schema,string ProviderId,string Environment,string Symbol,DateTime CollectedAtUtc,DateTime? FirstCandleOpenUtc,DateTime? LastCandleOpenUtc,int CandleCount,byte[] CanonicalBytes,string CanonicalSha256);
+public static class MarketEvidenceProvenanceCanonicalizerV1
+{
+    public const string Schema="wpe.market-evidence-provenance/1.0";
+    public static MarketEvidenceProvenanceV1 Create(MarketEvidence market,string providerId,string environment)
+    {
+        var candles=market.Candles.OrderBy(x=>x.OpenTime).ToArray();var bytes=Serialize(market,providerId,environment,candles);return new(Schema,providerId,environment,market.Symbol,market.CollectedAt,candles.FirstOrDefault()?.OpenTime,candles.LastOrDefault()?.OpenTime,candles.Length,bytes,Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant());
+    }
+    public static bool IsCanonical(MarketEvidence market)
+    {
+        var value=market.Provenance;if(value is null||value.Schema!=Schema||value.Environment!="Testnet"||string.IsNullOrWhiteSpace(value.ProviderId)||!string.Equals(value.Symbol,market.Symbol,StringComparison.Ordinal)||value.CollectedAtUtc!=market.CollectedAt)return false;
+        var expected=Create(market,value.ProviderId,value.Environment);return value.CandleCount==expected.CandleCount&&value.FirstCandleOpenUtc==expected.FirstCandleOpenUtc&&value.LastCandleOpenUtc==expected.LastCandleOpenUtc&&string.Equals(value.CanonicalSha256,expected.CanonicalSha256,StringComparison.Ordinal)&&value.CanonicalBytes.Length>0&&CryptographicOperations.FixedTimeEquals(value.CanonicalBytes,expected.CanonicalBytes);
+    }
+    private static byte[] Serialize(MarketEvidence market,string providerId,string environment,IReadOnlyList<CandleEvidence> candles)
+    {
+        using var stream=new MemoryStream();using(var writer=new Utf8JsonWriter(stream)){writer.WriteStartObject();writer.WriteNumber("candle_count",candles.Count);writer.WriteString("collected_at_utc",market.CollectedAt.ToUniversalTime());writer.WriteString("environment",environment);writer.WriteNumber("price",market.Price);writer.WriteString("provider_id",providerId);writer.WriteNumber("resistance",market.Resistance);writer.WriteNumber("rsi",market.Rsi);writer.WriteString("schema",Schema);writer.WriteNumber("support",market.Support);writer.WriteString("symbol",market.Symbol);writer.WriteNumber("trend_15m",market.Trend15m);writer.WriteNumber("trend_1h",market.Trend1h);writer.WriteNumber("trend_4h",market.Trend4h);writer.WritePropertyName("candles");writer.WriteStartArray();foreach(var x in candles){writer.WriteStartArray();writer.WriteStringValue(x.OpenTime.ToUniversalTime());writer.WriteNumberValue(x.Open);writer.WriteNumberValue(x.High);writer.WriteNumberValue(x.Low);writer.WriteNumberValue(x.Close);writer.WriteNumberValue(x.Volume);writer.WriteNumberValue(x.QuoteVolume);writer.WriteNumberValue(x.Trades);writer.WriteNumberValue(x.TakerBuyVolume);writer.WriteEndArray();}writer.WriteEndArray();writer.WriteEndObject();}return stream.ToArray();
+    }
 }
 public sealed record NewsEvidence(string Source,string Title,string Url,DateTime? PublishedAt,DateTime CollectedAt,string Reliability,string DuplicateGroup,IReadOnlyList<string> AffectedAssets,string BodySummary="",double Confidence=.5,int CorroboratingSources=1,string EventType="GENERAL",bool IsBreaking=false,double Sentiment=0);
 public sealed class EvidencePack

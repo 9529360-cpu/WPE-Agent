@@ -228,6 +228,16 @@ public sealed class ModelOffLiveCycleInputComposerTests
     }
 
     [Fact]
+    public void MarketAgentRejectsMissingOrTamperedProviderProvenance()
+    {
+        var request=Request();var original=request.Evidence.Markets["BTCUSDT"];
+        var missing=request.Evidence.Markets.ToDictionary(x=>x.Key,x=>x.Value);missing["BTCUSDT"]=original with{Provenance=null};
+        var missingOutput=ModelOffLiveCycleInputComposerV1.Compose(request with{Evidence=CopyEvidence(request.Evidence,markets:missing)}).First().Output;Assert.Contains("live.market.provenance-invalid",missingOutput.Decision.ReasonCodes);Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(missingOutput));
+        var tampered=request.Evidence.Markets.ToDictionary(x=>x.Key,x=>x.Value);tampered["BTCUSDT"]=original with{Price=original.Price+1};
+        var tamperedOutput=ModelOffLiveCycleInputComposerV1.Compose(request with{Evidence=CopyEvidence(request.Evidence,markets:tampered)}).First().Output;Assert.Contains("live.market.provenance-invalid",tamperedOutput.Decision.ReasonCodes);Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(tamperedOutput));
+    }
+
+    [Fact]
     public void ComposerHasNoModelNetworkOrMutationDependency()
     {
         var source = File.ReadAllText(Path.Combine(ProjectRoot(), "Services", "Agent", "ModelOffLiveCycleInputComposerV1.cs"));
@@ -363,8 +373,11 @@ public sealed class ModelOffLiveCycleInputComposerTests
     };
     private static EvidencePack CopyEvidence(EvidencePack source,AccountSnapshot? account=null,IReadOnlyList<ManagedPosition>? positions=null,IReadOnlyDictionary<string,MarketEvidence>? markets=null,IReadOnlyList<NewsEvidence>? news=null,IReadOnlyList<string>? missingSources=null)=>new(){CollectedAt=source.CollectedAt,Completeness=source.Completeness,Account=account??source.Account,Positions=positions??source.Positions,Markets=markets??source.Markets,News=news??source.News,Fundamentals=source.Fundamentals,MissingSources=missingSources??source.MissingSources};
     private static CryptoInstrumentFundamentalV1 Fundamental(string symbol,DateTime observed){var baseAsset=symbol[..^4];return CryptoInstrumentFundamentalCanonicalizerV1.Create("binance-futures","Testnet",symbol,symbol,baseAsset,"USDT","USDT","PERPETUAL","TRADING",Now.AddYears(-2),new DateTimeOffset(observed),new string('a',64));}
-    private static MarketEvidence Market(string symbol, decimal price, DateTime at) =>
-        new(symbol, price, price * .98m, price * 1.02m, 55, .2, .3, .4, new(0, 1, 1, 1, 1, 1, 0), at);
+    private static MarketEvidence Market(string symbol, decimal price, DateTime at)
+    {
+        var market=new MarketEvidence(symbol, price, price * .98m, price * 1.02m, 55, .2, .3, .4, new(0, 1, 1, 1, 1, 1, 0), at);
+        return market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,"test-provider","Testnet")};
+    }
     private static NewsEvidence News()=>new("SEC","Official digital asset market update","https://www.sec.gov/news/press-release/test",Now.AddMinutes(-2).UtcDateTime,Now.AddMinutes(-1).UtcDateTime,"official",new string('a',64),["BTC"],"Private full article body must not enter canonical audit.",.9,1,"REGULATION",false,.1);
     private static ResearchValidationResult Research(string symbol) => new()
     { Symbol = symbol, StrategyVersion = "strategy-v1", SampleSize = 200, Trades = 30, QualityScore = .8, Approved = true, Promoted = true, CoverageDays = 90 };

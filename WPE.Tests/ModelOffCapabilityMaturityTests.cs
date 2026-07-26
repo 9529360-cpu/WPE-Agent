@@ -65,6 +65,14 @@ public sealed class ModelOffCapabilityMaturityTests
         foreach(var aggregate in aggregates){Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));}
     }
 
+    [Fact]
+    public void MarketDataAcceptanceIsBoundedAndDoesNotUpgradeMarketAggregate()
+    {
+        var root=LoadCanonical();var capability=root["capabilities"]!.AsArray().Single(Capability("market-data"));var aggregate=root["aggregates"]!.AsArray().Single(node=>String(node,"id")=="market");
+        Assert.Equal("yes",String(capability,"maturity"));Assert.True(Bool(capability,"implemented"));Assert.True(Bool(capability,"accepted"));Assert.Contains("Testnet provider-bound canonical provenance",String(capability,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no raw HTTP response retention or live provider certification",String(capability,"acceptance_scope"),StringComparison.Ordinal);
+        Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));
+    }
+
     [Theory]
     [InlineData("missing")]
     [InlineData("duplicate")]
@@ -92,7 +100,7 @@ public sealed class ModelOffCapabilityMaturityTests
                 root["authority"]!["status"] = "historical";
                 break;
             case "core-partial-implemented":
-                capabilities.Single(Capability("market-data"))!["implemented"] = true;
+                capabilities.Single(Capability("news"))!["implemented"] = true;
                 break;
             case "core-no-accepted":
                 capabilities.Single(Capability("macro"))!["accepted"] = true;
