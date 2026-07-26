@@ -9,6 +9,7 @@
 - [x] Connect the read-only trading-authorization projection to the Reference UI runtime snapshot: `BuildRuntimeJson()` refreshes and supplies `RuntimeAuthorization`; `MainWindowRuntimeBridgeTests` `2/2` passed. This is visibility only, not approval mutation or approved-order processing.
 
 ## P1
+- [x] Add the first production model-off seven-Agent orchestration boundary for canonical Market/Research/Strategy/Risk inputs, deterministic ordered handoffs, zero-mutation Execution/Recovery, and fail-closed Audit coverage. Connecting live runtime producers and Testnet mutation remains a later gated batch.
 - Expose strategy registry and lifecycle events to the Web UI.
 - [x] Add historical orders, equity, backtest, skill-call, and audit collection protocols with bounded signed cursors, stale/error withholding, SQLite read-only projection, runtime bridge integration, and focused tests.
 - [x] Add the first deterministic Macro research component: a versioned observed-fact contract requiring canonical Macro source metadata, UTC observation/release times, geography, frequency, unit, and numeric value. Live official-source ingestion and revision history remain open, so the full Macro capability is not promoted.
