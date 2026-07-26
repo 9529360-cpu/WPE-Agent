@@ -271,6 +271,8 @@ public static class AutoTradingAgent
                 else if(intents.Count==0)state.ExecutionApprovalStatus="NO_ORDER";
                 else state.ExecutionApprovalStatus="READY";
 
+                await RunModelOffProductionShadowAsync(Db,cycle,DateTimeOffset.UtcNow,evidence,research,assessments,review,riskReview,ct);
+
                 if(intents.Count>0&&tradingRule is not null)
                 {
                     var leverage=Math.Min(settings.Risk.Leverage,tradingRule.MaxLeverage);
@@ -360,6 +362,27 @@ public static class AutoTradingAgent
             return completed;
         }
         finally{ExecutionGate.Release();}
+    }
+
+    internal static async Task<ModelOffProductionCycleResultV1?> RunModelOffProductionShadowAsync(
+        AgentSqliteStore auditStore,string cycleId,DateTimeOffset evaluationTimeUtc,EvidencePack evidence,
+        IReadOnlyDictionary<string,ResearchValidationResult> research,IReadOnlyList<MarketDecisionAssessment> assessments,
+        DecisionReview decisionReview,IndependentRiskReview riskReview,CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(auditStore);
+        try
+        {
+            var inputs=ModelOffLiveCycleInputComposerV1.Compose(new(
+                cycleId,evaluationTimeUtc,evidence,research,assessments,decisionReview,riskReview));
+            return await new ModelOffProductionCycleOrchestratorV1(auditStore).RunAsync(
+                new(cycleId,evaluationTimeUtc,inputs),ct);
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch(Exception ex)
+        {
+            try{await auditStore.RecordErrorAsync("ModelOffProductionShadow",ex,CancellationToken.None);}catch{/* Shadow audit must not alter execution. */}
+            return null;
+        }
     }
 
     private static async Task<IReadOnlyList<ManagedPosition>> ReadPositionsAsync(IExchangeAdapter exchange,CancellationToken ct)

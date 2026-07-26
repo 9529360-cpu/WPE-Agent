@@ -10,6 +10,7 @@
 
 ## P1
 - [x] Add the first production model-off seven-Agent orchestration boundary for canonical Market/Research/Strategy/Risk inputs, deterministic ordered handoffs, zero-mutation Execution/Recovery, and fail-closed Audit coverage. Connecting live runtime producers and Testnet mutation remains a later gated batch.
+- [x] Connect existing live Evidence/Research/Strategy/Risk runtime truth to the production seven-Agent orchestrator as an observation-only shadow before order authorization. Promotion from shadow evidence to a mandatory execution gate remains a separate acceptance decision.
 - Expose strategy registry and lifecycle events to the Web UI.
 - [x] Add historical orders, equity, backtest, skill-call, and audit collection protocols with bounded signed cursors, stale/error withholding, SQLite read-only projection, runtime bridge integration, and focused tests.
 - [x] Add the first deterministic Macro research component: a versioned observed-fact contract requiring canonical Macro source metadata, UTC observation/release times, geography, frequency, unit, and numeric value. Live official-source ingestion and revision history remain open, so the full Macro capability is not promoted.
