@@ -217,8 +217,7 @@ public static class DeterministicResearchCapabilityProducerV1
             throw new ArgumentException("Research facts must be an explicit JSON object.", nameof(input));
 
         var reasons = RefusalReasons(input).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
-        var supported = input.Capability is not ModelOffResearchCapabilityV1.Fundamental;
-        var succeeded = supported && reasons.Length == 0;
+        var succeeded = reasons.Length == 0;
         var missing = reasons.Where(reason => reason.StartsWith("research.missing", StringComparison.Ordinal)).ToArray();
         var canonicalSources = input.Sources.Where(IsCanonicalSourceMetadata).ToArray();
         return new ModelOffAgentOutputV1(
@@ -241,8 +240,6 @@ public static class DeterministicResearchCapabilityProducerV1
 
     private static IEnumerable<string> RefusalReasons(ModelOffResearchInputV1 input)
     {
-        if (input.Capability == ModelOffResearchCapabilityV1.Fundamental)
-            yield return $"research.unsupported.{input.Capability.ToString().ToLowerInvariant()}";
         if (input.Sources.Count == 0)
             yield return "research.missing.sources";
         if (!input.Facts.EnumerateObject().Any())
@@ -252,6 +249,7 @@ public static class DeterministicResearchCapabilityProducerV1
         {
             ModelOffResearchCapabilityV1.News => ModelOffSourceKindV1.News,
             ModelOffResearchCapabilityV1.Macro => ModelOffSourceKindV1.Macro,
+            ModelOffResearchCapabilityV1.Fundamental => ModelOffSourceKindV1.Fundamental,
             ModelOffResearchCapabilityV1.Technical => ModelOffSourceKindV1.Market,
             ModelOffResearchCapabilityV1.Backtest => ModelOffSourceKindV1.Strategy,
             _ => (ModelOffSourceKindV1?)null
@@ -261,6 +259,9 @@ public static class DeterministicResearchCapabilityProducerV1
 
         if (input.Capability == ModelOffResearchCapabilityV1.Macro)
             foreach (var reason in ValidateMacroFacts(input))
+                yield return reason;
+        if (input.Capability == ModelOffResearchCapabilityV1.Fundamental)
+            foreach (var reason in ValidateFundamentalFacts(input))
                 yield return reason;
 
         foreach (var source in input.Sources)
@@ -296,6 +297,26 @@ public static class DeterministicResearchCapabilityProducerV1
         if (!input.Sources.Any(source => source.Kind == ModelOffSourceKindV1.Macro && source.AsOfUtc >= releasedAt))
             yield return "research.invalid.macro_source_asof";
     }
+
+    private static IEnumerable<string> ValidateFundamentalFacts(ModelOffResearchInputV1 input)
+    {
+        var facts=input.Facts;if(!StringFact(facts,"schema",out var schema)||schema!="wpe.crypto-instrument-fundamental/1.0")yield return "research.invalid.fundamental_schema";
+        var required=new[]{"providerId","environment","symbol","nativeSymbol","baseAsset","quoteAsset","marginAsset","contractType","tradingStatus","sourceArtifactSha256","canonicalSha256"};foreach(var name in required)if(!StringFact(facts,name,out _))yield return $"research.missing.fundamental_{name.ToLowerInvariant()}";
+        if(StringFact(facts,"environment",out var environment)&&environment!="Testnet")yield return "research.invalid.fundamental_environment";
+        if(StringFact(facts,"contractType",out var contract)&&contract!="PERPETUAL")yield return "research.invalid.fundamental_contract";
+        if(StringFact(facts,"tradingStatus",out var status)&&status!="TRADING")yield return "research.invalid.fundamental_status";
+        if(StringFact(facts,"symbol",out var symbol)&&StringFact(facts,"baseAsset",out var baseAsset)&&StringFact(facts,"quoteAsset",out var quoteAsset)&&!string.Equals(symbol,baseAsset+quoteAsset,StringComparison.OrdinalIgnoreCase))yield return "research.invalid.fundamental_symbol";
+        if(StringFact(facts,"quoteAsset",out quoteAsset)&&StringFact(facts,"marginAsset",out var marginAsset)&&!string.Equals(quoteAsset,marginAsset,StringComparison.OrdinalIgnoreCase))yield return "research.invalid.fundamental_margin";
+        if(StringFact(facts,"sourceArtifactSha256",out var sourceHash)&&!ValidSha(sourceHash)||StringFact(facts,"canonicalSha256",out var canonicalHash)&&!ValidSha(canonicalHash))yield return "research.invalid.fundamental_hash";
+        var onboard=UtcFact(facts,"onboardAtUtc",out var onboardAt);var observed=UtcFact(facts,"observedAtUtc",out var observedAt);if(!onboard)yield return "research.invalid.fundamental_onboard_time";if(!observed)yield return "research.invalid.fundamental_observed_time";if(onboard&&observed&&onboardAt>observedAt)yield return "research.invalid.fundamental_temporal_order";if(observed&&observedAt>input.EvaluationTimeUtc)yield return "research.invalid.fundamental_future";if(observed&&input.EvaluationTimeUtc-observedAt>TimeSpan.FromHours(24))yield return "research.invalid.fundamental_stale";
+        if(observed&&StringFact(facts,"canonicalSha256",out canonicalHash)&&!input.Sources.Any(x=>x.Kind==ModelOffSourceKindV1.Fundamental&&x.AsOfUtc>=observedAt&&x.ArtifactHash=="sha256:"+canonicalHash))yield return "research.invalid.fundamental_source_asof";
+        if(onboard&&observed&&StringFact(facts,"providerId",out var provider)&&StringFact(facts,"environment",out environment)&&StringFact(facts,"symbol",out symbol)&&StringFact(facts,"nativeSymbol",out var native)&&StringFact(facts,"baseAsset",out baseAsset)&&StringFact(facts,"quoteAsset",out quoteAsset)&&StringFact(facts,"marginAsset",out marginAsset)&&StringFact(facts,"contractType",out contract)&&StringFact(facts,"tradingStatus",out status)&&StringFact(facts,"sourceArtifactSha256",out sourceHash)&&StringFact(facts,"canonicalSha256",out canonicalHash))
+        {
+            var expected=CryptoInstrumentFundamentalCanonicalizerV1.Create(provider,environment,symbol,native,baseAsset,quoteAsset,marginAsset,contract,status,onboardAt,observedAt,sourceHash);if(!string.Equals(expected.CanonicalSha256,canonicalHash,StringComparison.Ordinal))yield return "research.invalid.fundamental_canonical_hash";
+        }
+    }
+
+    private static bool ValidSha(string value)=>value.Length==64&&value.All(Uri.IsHexDigit);
 
     private static bool StringFact(JsonElement facts, string name, out string value)
     {

@@ -33,7 +33,7 @@
     { "id": "news", "name": "News", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
     { "id": "macro", "name": "Macro", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
     { "id": "technical", "name": "Technical", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
-    { "id": "fundamental", "name": "Fundamental", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "no", "implemented": false, "accepted": false, "acceptance_scope": null },
+    { "id": "fundamental", "name": "Fundamental", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
     { "id": "strategy", "name": "Strategy", "core": true, "lifecycle": "current", "aggregate_ids": ["strategy"], "maturity": "partial", "implemented": false, "accepted": false, "acceptance_scope": null },
     { "id": "backtest", "name": "Backtest", "core": true, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "yes", "implemented": true, "accepted": true, "acceptance_scope": "basic deterministic backtest component only" },
     { "id": "risk", "name": "Risk", "core": true, "lifecycle": "current", "aggregate_ids": ["risk"], "maturity": "yes", "implemented": true, "accepted": true, "acceptance_scope": "covered crypto Risk Gate only" },

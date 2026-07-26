@@ -29,11 +29,13 @@ public sealed class EvidenceCollector
         var account=await _exchange.GetAccountAsync(ct);var positions=await _exchange.GetPositionsAsync(ct);
         foreach(var symbol in _symbols)try{var market=await _exchange.GetMarketAsync(symbol,ct);markets[symbol]=_realtime?.Enrich(market)??market;}catch{missing.Add(symbol+":market_derivatives");}
         if(_realtime is not null&&!_realtime.Healthy)missing.Add("realtime_stream_unhealthy:"+_realtime.Status);
+        var fundamentals=new Dictionary<string,CryptoInstrumentFundamentalV1>(StringComparer.OrdinalIgnoreCase);
+        if(_exchange is ICryptoInstrumentFundamentalReader fundamentalReader)try{foreach(var fact in await fundamentalReader.GetInstrumentFundamentalsAsync(_symbols,ct))fundamentals[fact.Symbol]=fact;foreach(var symbol in _symbols.Where(x=>!fundamentals.ContainsKey(x)))missing.Add(symbol+":fundamental_unavailable");}catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}catch{foreach(var symbol in _symbols)missing.Add(symbol+":fundamental_error");}else foreach(var symbol in _symbols)missing.Add(symbol+":fundamental_unsupported");
         var newsResult=await _news.CollectAsync(_symbols,ct);missing.AddRange(newsResult.MissingSources);var news=newsResult.Items;
         foreach(var market in markets.Values)foreach(var anomaly in market.Quality.Anomalies)missing.Add($"{market.Symbol}:{anomaly}");
         var marketScore=_symbols.Count==0?0:(int)Math.Round(markets.Count/(double)_symbols.Count*35);var qualityScore=markets.Count==0?0:(int)Math.Round(markets.Values.Average(x=>x.Quality.QualityScore)*.25);
         var derivScore=markets.Count==0?0:(int)Math.Round(markets.Count(x=>x.Value.Derivatives.OpenInterest>0||x.Value.Derivatives.FundingRate!=0)/(double)markets.Count*15);var newsScore=Math.Min(12,newsResult.SuccessfulSources+(newsResult.FullTextDocuments>0?3:0));var realtimeScore=_realtime is null?4:_realtime.Healthy?8:0;
-        return new EvidencePack{Account=account,Positions=positions,Markets=markets,News=news,MissingSources=missing.Distinct().ToArray(),Completeness=Math.Min(100,10+marketScore+qualityScore+derivScore+newsScore+realtimeScore)};
+        return new EvidencePack{Account=account,Positions=positions,Markets=markets,News=news,Fundamentals=fundamentals,MissingSources=missing.Distinct().ToArray(),Completeness=Math.Min(100,10+marketScore+qualityScore+derivScore+newsScore+realtimeScore)};
     }
 }
 

@@ -32,16 +32,15 @@ public sealed class ModelOffResearchCapabilityTests
     }
 
     [Fact]
-    public void UnsupportedFundamentalCapabilityAbstainsWithoutInventingFacts()
+    public void FundamentalCapabilityRecordsOnlyValidatedObservedFacts()
     {
-        var capability = ModelOffResearchCapabilityV1.Fundamental;
-        var output = DeterministicMemoryService.ProduceUnsupportedModelOff(Input(capability, [Source(ModelOffSourceKindV1.Config)]));
+        var output=DeterministicMemoryService.ProduceFundamentalModelOff(FundamentalInput());Assert.Equal(ModelOffOutputStatusV1.Succeeded,output.Status);Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(output));Assert.Equal("record_research",output.Decision.Action);Assert.Equal("BTCUSDT",output.Facts.GetProperty("symbol").GetString());Assert.DoesNotContain("forecast",ModelOffCanonicalSerializerV1.Serialize(output).Json,StringComparison.OrdinalIgnoreCase);
+    }
 
-        Assert.Equal(ModelOffOutputStatusV1.Abstained, output.Status);
-        Assert.Equal("abstain", output.Decision.Action);
-        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(output));
-        Assert.Contains($"research.unsupported.{capability.ToString().ToLowerInvariant()}", output.Decision.ReasonCodes);
-        Assert.Equal("observed", output.Facts.GetProperty("state").GetString());
+    [Fact]
+    public void FundamentalCapabilityRejectsFabricatedCanonicalHash()
+    {
+        var input=FundamentalInput();using var facts=JsonDocument.Parse(input.Facts.GetRawText());var values=facts.RootElement.EnumerateObject().ToDictionary(x=>x.Name,x=>x.Value.Clone());values["canonicalSha256"]=JsonSerializer.SerializeToElement(new string('f',64));var tampered=input with{Facts=JsonSerializer.SerializeToElement(values.ToDictionary(x=>x.Key,x=>(object)x.Value))};var output=DeterministicMemoryService.ProduceFundamentalModelOff(tampered);Assert.Equal(ModelOffOutputStatusV1.Abstained,output.Status);Assert.Contains("research.invalid.fundamental_canonical_hash",output.Decision.ReasonCodes);
     }
 
     [Fact]
@@ -196,7 +195,7 @@ public sealed class ModelOffResearchCapabilityTests
         Assert.Throws<ArgumentException>(() => StrategyResearchAgent.ProduceTechnicalModelOff(news));
         Assert.Throws<ArgumentException>(() => StrategyResearchAgent.ProduceBacktestModelOff(news));
         Assert.Throws<ArgumentException>(() => DeterministicMemoryService.ProduceMacroModelOff(news));
-        Assert.Throws<ArgumentException>(() => DeterministicMemoryService.ProduceUnsupportedModelOff(news));
+        Assert.Throws<ArgumentException>(() => DeterministicMemoryService.ProduceFundamentalModelOff(news));
     }
 
     [Fact]
@@ -206,11 +205,13 @@ public sealed class ModelOffResearchCapabilityTests
         var backtest = Input(ModelOffResearchCapabilityV1.Backtest, [Source(ModelOffSourceKindV1.Strategy)]);
         var news = Input(ModelOffResearchCapabilityV1.News, [Source(ModelOffSourceKindV1.News)]);
         var macro = MacroInput();
+        var fundamental=FundamentalInput();
 
         Assert.Equal(ModelOffOutputStatusV1.Succeeded, StrategyResearchAgent.ProduceTechnicalModelOff(technical).Status);
         Assert.Equal(ModelOffOutputStatusV1.Succeeded, StrategyResearchAgent.ProduceBacktestModelOff(backtest).Status);
         Assert.Equal(ModelOffOutputStatusV1.Succeeded, DeterministicMemoryService.ProduceNewsModelOff(news).Status);
         Assert.Equal(ModelOffOutputStatusV1.Succeeded, DeterministicMemoryService.ProduceMacroModelOff(macro).Status);
+        Assert.Equal(ModelOffOutputStatusV1.Succeeded, DeterministicMemoryService.ProduceFundamentalModelOff(fundamental).Status);
     }
 
     private static ModelOffResearchInputV1 Input(ModelOffResearchCapabilityV1 capability, IReadOnlyList<ModelOffSourceV1> sources) => new(
@@ -225,6 +226,8 @@ public sealed class ModelOffResearchCapabilityTests
         ModelOffResearchCapabilityV1.Macro, "macro-output", "cycle-1", Now,
         "wpe.research-input/1.0", "wpe.macro-method", "1.0",
         [Source(ModelOffSourceKindV1.Macro)], MacroFacts(), []);
+
+    private static ModelOffResearchInputV1 FundamentalInput(){var fact=CryptoInstrumentFundamentalCanonicalizerV1.Create("binance-futures","Testnet","BTCUSDT","BTCUSDT","BTC","USDT","USDT","PERPETUAL","TRADING",Now.AddYears(-2),Now.AddMinutes(-1),new string('a',64));return new(ModelOffResearchCapabilityV1.Fundamental,"fundamental-output","cycle-1",Now,"wpe.research-input/1.0","wpe.fundamental-method","1.0",[Source(ModelOffSourceKindV1.Fundamental) with{AsOfUtc=Now.AddMinutes(-1),ArtifactHash="sha256:"+fact.CanonicalSha256}],JsonSerializer.SerializeToElement(new{schema=fact.Schema,providerId=fact.ProviderId,environment=fact.Environment,symbol=fact.Symbol,nativeSymbol=fact.NativeSymbol,baseAsset=fact.BaseAsset,quoteAsset=fact.QuoteAsset,marginAsset=fact.MarginAsset,contractType=fact.ContractType,tradingStatus=fact.TradingStatus,onboardAtUtc=fact.OnboardAtUtc,observedAtUtc=fact.ObservedAtUtc,sourceArtifactSha256=fact.SourceArtifactSha256,canonicalSha256=fact.CanonicalSha256}),[]);}
 
     private static JsonElement MacroFacts(
         string schema = "wpe.macro-facts/1.0",

@@ -215,6 +215,13 @@ public sealed class ModelOffLiveCycleInputComposerTests
     }
 
     [Fact]
+    public void ResearchAgentRequiresFreshCanonicalTargetFundamentalEvidence()
+    {
+        var request=Request();var missing=CopyEvidence(request.Evidence);missing=new EvidencePack{CollectedAt=missing.CollectedAt,Completeness=missing.Completeness,Account=missing.Account,Positions=missing.Positions,Markets=missing.Markets,News=missing.News,Fundamentals=new Dictionary<string,CryptoInstrumentFundamentalV1>(),MissingSources=missing.MissingSources};var missingResearch=ModelOffLiveCycleInputComposerV1.Compose(request with{Evidence=missing})[1].Output;Assert.Contains("live.research.fundamental-missing",missingResearch.Decision.ReasonCodes);Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(missingResearch));
+        var tampered=request.Evidence.Fundamentals.ToDictionary(x=>x.Key,x=>x.Value);tampered["BTCUSDT"]=tampered["BTCUSDT"] with{CanonicalBytes=[..tampered["BTCUSDT"].CanonicalBytes,0]};var badEvidence=new EvidencePack{CollectedAt=request.Evidence.CollectedAt,Completeness=request.Evidence.Completeness,Account=request.Evidence.Account,Positions=request.Evidence.Positions,Markets=request.Evidence.Markets,News=request.Evidence.News,Fundamentals=tampered,MissingSources=request.Evidence.MissingSources};var invalid=ModelOffLiveCycleInputComposerV1.Compose(request with{Evidence=badEvidence})[1].Output;Assert.Contains("live.research.fundamental-invalid",invalid.Decision.ReasonCodes);Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(invalid));
+    }
+
+    [Fact]
     public void InvalidMarketDoesNotRelabelIndependentValidSource()
     {
         var request=Request();var markets=new Dictionary<string,MarketEvidence>{{"BAD",Market("BAD",0,Now.UtcDateTime)},{"BTCUSDT",Market("BTCUSDT",100000m,Now.UtcDateTime)}};var market=ModelOffLiveCycleInputComposerV1.Compose(request with{Evidence=CopyEvidence(request.Evidence,markets:markets)}).First().Output;Assert.Equal(ModelOffSourceStatusV1.Invalid,market.Sources.Single(source=>source.SourceId=="BAD").Status);Assert.Equal(ModelOffSourceStatusV1.Available,market.Sources.Single(source=>source.SourceId=="BTCUSDT").Status);Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(market));
@@ -351,9 +358,11 @@ public sealed class ModelOffLiveCycleInputComposerTests
         {
             ["ETHUSDT"] = Market("ETHUSDT", 3500m, collectedAt),
             ["BTCUSDT"] = Market("BTCUSDT", 100000m, collectedAt)
-        }
+        },
+        Fundamentals=new Dictionary<string,CryptoInstrumentFundamentalV1>{{"BTCUSDT",Fundamental("BTCUSDT",collectedAt)},{"ETHUSDT",Fundamental("ETHUSDT",collectedAt)}}
     };
-    private static EvidencePack CopyEvidence(EvidencePack source,AccountSnapshot? account=null,IReadOnlyList<ManagedPosition>? positions=null,IReadOnlyDictionary<string,MarketEvidence>? markets=null,IReadOnlyList<NewsEvidence>? news=null,IReadOnlyList<string>? missingSources=null)=>new(){CollectedAt=source.CollectedAt,Completeness=source.Completeness,Account=account??source.Account,Positions=positions??source.Positions,Markets=markets??source.Markets,News=news??source.News,MissingSources=missingSources??source.MissingSources};
+    private static EvidencePack CopyEvidence(EvidencePack source,AccountSnapshot? account=null,IReadOnlyList<ManagedPosition>? positions=null,IReadOnlyDictionary<string,MarketEvidence>? markets=null,IReadOnlyList<NewsEvidence>? news=null,IReadOnlyList<string>? missingSources=null)=>new(){CollectedAt=source.CollectedAt,Completeness=source.Completeness,Account=account??source.Account,Positions=positions??source.Positions,Markets=markets??source.Markets,News=news??source.News,Fundamentals=source.Fundamentals,MissingSources=missingSources??source.MissingSources};
+    private static CryptoInstrumentFundamentalV1 Fundamental(string symbol,DateTime observed){var baseAsset=symbol[..^4];return CryptoInstrumentFundamentalCanonicalizerV1.Create("binance-futures","Testnet",symbol,symbol,baseAsset,"USDT","USDT","PERPETUAL","TRADING",Now.AddYears(-2),new DateTimeOffset(observed),new string('a',64));}
     private static MarketEvidence Market(string symbol, decimal price, DateTime at) =>
         new(symbol, price, price * .98m, price * 1.02m, 55, .2, .3, .4, new(0, 1, 1, 1, 1, 1, 0), at);
     private static NewsEvidence News()=>new("SEC","Official digital asset market update","https://www.sec.gov/news/press-release/test",Now.AddMinutes(-2).UtcDateTime,Now.AddMinutes(-1).UtcDateTime,"official",new string('a',64),["BTC"],"Private full article body must not enter canonical audit.",.9,1,"REGULATION",false,.1);

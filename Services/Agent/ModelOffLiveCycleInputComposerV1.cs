@@ -74,6 +74,8 @@ internal static class ModelOffLiveCycleInputComposerV1
         var researchReasons = new List<string>();
         var macro=request.MacroObservations??[];
         var target=request.DecisionReview.Decision.Instrument;
+        request.Evidence.Fundamentals.TryGetValue(target,out var targetFundamental);var targetFundamentalValid=targetFundamental is not null&&CryptoInstrumentFundamentalCanonicalizerV1.IsCanonical(targetFundamental,request.EvaluationTimeUtc)&&string.Equals(targetFundamental.Symbol,target,StringComparison.OrdinalIgnoreCase)&&targetFundamental.Environment=="Testnet";
+        if(targetFundamental is null)researchReasons.Add("live.research.fundamental-missing");else if(!targetFundamentalValid)researchReasons.Add("live.research.fundamental-invalid");
         var news=request.Evidence.News.OrderBy(x=>x.DuplicateGroup,StringComparer.Ordinal).ToArray();
         var newsValid=news.All(x=>ValidNews(x,request.EvaluationTimeUtc))&&!news.GroupBy(x=>x.DuplicateGroup,StringComparer.OrdinalIgnoreCase).Any(x=>x.Count()>1);
         var missingNewsSources=request.Evidence.MissingSources.Count(x=>NewsSourceHosts.ContainsKey(x));
@@ -103,6 +105,7 @@ internal static class ModelOffLiveCycleInputComposerV1
         if(targetResearch is not null)researchSources.Add(new($"strategy-validation-{(SafeToken(targetResearch.Symbol)?targetResearch.Symbol:"unknown")}",ModelOffSourceKindV1.Strategy,request.EvaluationTimeUtc,request.EvaluationTimeUtc,
             targetResearchValid&&targetResearch.Approved&&targetResearch.Promoted?ModelOffSourceStatusV1.Available:ModelOffSourceStatusV1.Invalid,
             targetResearchValid?Hash(new{targetResearch.Symbol,targetResearch.StrategyVersion,targetResearch.SampleSize,targetResearch.Trades,targetResearch.WinRate,targetResearch.ProfitFactor,targetResearch.Expectancy,targetResearch.MaxDrawdown,targetResearch.Sharpe,targetResearch.OutOfSampleReturn,targetResearch.WalkForwardScore,targetResearch.MonteCarloLossProbability,targetResearch.QualityScore,targetResearch.Approved,targetResearch.Promoted,targetResearch.CoverageDays,targetResearch.OutOfSampleTrades,targetResearch.StrategyReturn,targetResearch.BenchmarkReturn}):Hash(new{target=SafeToken(target)?target:"unknown",state="invalid"})));
+        if(targetFundamental is not null)researchSources.Add(new("fundamental-"+(SafeToken(target)?target.ToLowerInvariant():"unknown"),ModelOffSourceKindV1.Fundamental,targetFundamental.ObservedAtUtc,request.EvaluationTimeUtc,targetFundamentalValid?ModelOffSourceStatusV1.Available:ModelOffSourceStatusV1.Invalid,"sha256:"+targetFundamental.CanonicalSha256));
         var research = Output(ModelOffAgentV1.Research, request,
             researchSources, researchReasons.Count == 0,
             researchReasons.Count == 0 ? "publish_research" : "block", researchReasons,
@@ -112,6 +115,7 @@ internal static class ModelOffLiveCycleInputComposerV1
                 news_evidence_count=newsValid?news.Length:0,
                 news_target_count=newsValid?news.Count(x=>NewsTargets(x,target)):0,
                 news_evidence_hash=newsValid?Hash(news.Select(x=>NewsCanonicalFact(x,NewsTimestamp(x))).ToArray()):Hash(new{state="invalid"}),
+                fundamental_state=targetFundamentalValid?"verified":"unavailable",fundamental_evidence_hash=targetFundamentalValid?targetFundamental!.CanonicalSha256:string.Empty,
                 macro_observations=macro.OrderBy(x=>x.IndicatorId,StringComparer.Ordinal).Select(x=>new{x.IndicatorId,x.ObservationAtUtc,x.Revision,x.Geography,x.Frequency,x.Unit,x.Value,x.SourceArtifactHash,x.FirstObservedAtUtc,x.ReleasedAtUtc,x.ReleaseTimeBasis,x.ReleaseCalendarArtifactHash,x.ReleaseCalendarEventId}).ToArray() });
         outputs.Add(Input(research));
 

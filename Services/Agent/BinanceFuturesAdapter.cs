@@ -9,7 +9,7 @@ using WpeAgent.RuntimeContracts;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvider,IBrokerProvider,IProviderMarketCatalog,IProviderEnvironmentGuard,IRecentOrderProvider,IExchangeOrderFeeEvidenceReader
+public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvider,IBrokerProvider,IProviderMarketCatalog,IProviderEnvironmentGuard,IRecentOrderProvider,IExchangeOrderFeeEvidenceReader,ICryptoInstrumentFundamentalReader
 {
     internal const long MaximumTradingClockSkewMilliseconds=1000;
     private readonly BinanceApiClient _api;
@@ -73,6 +73,11 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
         };
         using var document=JsonDocument.Parse(await _api.GetSignedRawAsync("/fapi/v1/allOrders",query,ct));
         return DeduplicateOrderEvents(document.RootElement.EnumerateArray().Select(MapRaw));
+    }
+    public async Task<IReadOnlyList<CryptoInstrumentFundamentalV1>> GetInstrumentFundamentalsAsync(IReadOnlyList<string> canonicalSymbols,CancellationToken ct)
+    {
+        if(Environment!=ExchangeEnvironment.Testnet||canonicalSymbols.Count is 0 or >100)return [];
+        var mapping=canonicalSymbols.Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(N,x=>C(x),StringComparer.OrdinalIgnoreCase);using var document=JsonDocument.Parse(await _api.GetPublicRawAsync("/fapi/v1/exchangeInfo",null,ct));return BinanceInstrumentFundamentalParserV1.Parse(document.RootElement,mapping,DateTimeOffset.UtcNow);
     }
     public async Task<TradingRule> GetRulesAsync(string symbol,CancellationToken ct)
     {

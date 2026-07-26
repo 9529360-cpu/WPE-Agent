@@ -53,6 +53,7 @@ public sealed class EvidencePack
     public IReadOnlyList<ManagedPosition> Positions { get; init; } = Array.Empty<ManagedPosition>();
     public IReadOnlyDictionary<string, MarketEvidence> Markets { get; init; } = new Dictionary<string, MarketEvidence>();
     public IReadOnlyList<NewsEvidence> News { get; init; } = Array.Empty<NewsEvidence>();
+    public IReadOnlyDictionary<string,CryptoInstrumentFundamentalV1> Fundamentals { get; init; } = new Dictionary<string,CryptoInstrumentFundamentalV1>();
     public IReadOnlyList<string> MissingSources { get; init; } = Array.Empty<string>();
     public int Completeness { get; init; }
 }

@@ -7,7 +7,7 @@ namespace WpeAgent.ModelOff;
 public enum ModelOffAgentV1 { Market, Research, Strategy, Risk, Execution, Recovery, Audit }
 
 [JsonConverter(typeof(JsonStringEnumConverter<ModelOffSourceKindV1>))]
-public enum ModelOffSourceKindV1 { Market, Account, News, Macro, Config, Strategy, Audit }
+public enum ModelOffSourceKindV1 { Market, Account, News, Macro, Fundamental, Config, Strategy, Audit }
 
 [JsonConverter(typeof(JsonStringEnumConverter<ModelOffSourceStatusV1>))]
 public enum ModelOffSourceStatusV1 { Available, Stale, Unknown, Unsupported, Inconsistent, Invalid, Error }
