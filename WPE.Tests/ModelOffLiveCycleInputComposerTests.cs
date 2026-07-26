@@ -34,7 +34,7 @@ public sealed class ModelOffLiveCycleInputComposerTests
         var first = ModelOffLiveCycleInputComposerV1.Compose(request);
         var second = ModelOffLiveCycleInputComposerV1.Compose(request with
         {
-            Evidence = new EvidencePack { CollectedAt = request.Evidence.CollectedAt, Completeness = 100, Markets = reversedMarkets },
+            Evidence = CopyEvidence(request.Evidence,markets:reversedMarkets),
             Research = reversedResearch
         });
         Assert.Equal(first.Select(x => x.Document.Sha256), second.Select(x => x.Document.Sha256));
@@ -81,6 +81,19 @@ public sealed class ModelOffLiveCycleInputComposerTests
         var inputs = ModelOffLiveCycleInputComposerV1.Compose(request);
         Assert.Contains(inputs, input => !ModelOffEligibilityV1.IsEligibleForDownstream(input.Output));
         Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(inputs[^1].Output));
+    }
+
+    [Fact]
+    public void MarketAgentRequiresFreshAccountAndValidPositionStructure()
+    {
+        var request=Request();var staleAccount=request.Evidence.Account with{Timestamp=Now.AddMinutes(-6).UtcDateTime};var stale=ModelOffLiveCycleInputComposerV1.Compose(request with{Evidence=CopyEvidence(request.Evidence,account:staleAccount)}).First().Output;Assert.Contains("live.account.invalid-or-stale",stale.Decision.ReasonCodes);Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(stale));
+        var duplicate=new ManagedPosition("BTCUSDT",PositionSide.Long,.01m,100000m,100100m,1m,2m,true,50000m);var invalid=ModelOffLiveCycleInputComposerV1.Compose(request with{Evidence=CopyEvidence(request.Evidence,positions:[duplicate,duplicate])}).First().Output;Assert.Contains("live.positions.invalid",invalid.Decision.ReasonCodes);Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(invalid));
+    }
+
+    [Fact]
+    public void InvalidMarketDoesNotRelabelIndependentValidSource()
+    {
+        var request=Request();var markets=new Dictionary<string,MarketEvidence>{{"BAD",Market("BAD",0,Now.UtcDateTime)},{"BTCUSDT",Market("BTCUSDT",100000m,Now.UtcDateTime)}};var market=ModelOffLiveCycleInputComposerV1.Compose(request with{Evidence=CopyEvidence(request.Evidence,markets:markets)}).First().Output;Assert.Equal(ModelOffSourceStatusV1.Invalid,market.Sources.Single(source=>source.SourceId=="BAD").Status);Assert.Equal(ModelOffSourceStatusV1.Available,market.Sources.Single(source=>source.SourceId=="BTCUSDT").Status);Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(market));
     }
 
     [Fact]
@@ -200,12 +213,14 @@ public sealed class ModelOffLiveCycleInputComposerTests
     private static EvidencePack Evidence(DateTime collectedAt) => new()
     {
         CollectedAt = collectedAt, Completeness = 100,
+        Account=new(10000m,9000m,10000m,collectedAt),
         Markets = new Dictionary<string, MarketEvidence>
         {
             ["ETHUSDT"] = Market("ETHUSDT", 3500m, collectedAt),
             ["BTCUSDT"] = Market("BTCUSDT", 100000m, collectedAt)
         }
     };
+    private static EvidencePack CopyEvidence(EvidencePack source,AccountSnapshot? account=null,IReadOnlyList<ManagedPosition>? positions=null,IReadOnlyDictionary<string,MarketEvidence>? markets=null)=>new(){CollectedAt=source.CollectedAt,Completeness=source.Completeness,Account=account??source.Account,Positions=positions??source.Positions,Markets=markets??source.Markets,News=source.News,MissingSources=source.MissingSources};
     private static MarketEvidence Market(string symbol, decimal price, DateTime at) =>
         new(symbol, price, price * .98m, price * 1.02m, 55, .2, .3, .4, new(0, 1, 1, 1, 1, 1, 0), at);
     private static ResearchValidationResult Research(string symbol) => new()

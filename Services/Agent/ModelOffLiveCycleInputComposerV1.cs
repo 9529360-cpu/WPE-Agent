@@ -27,14 +27,26 @@ internal static class ModelOffLiveCycleInputComposerV1
 
         var marketReasons = new List<string>();
         var marketSources = new List<ModelOffSourceV1>();
+        var account=request.Evidence.Account;
+        var accountTimestampValid=TryUtc(account.Timestamp,out var accountAt);
+        var accountValid=account.WalletBalance>=0&&account.AvailableBalance>=0&&account.Equity>0&&account.AvailableBalance<=account.Equity&&
+            accountTimestampValid&&Fresh(accountAt,request.EvaluationTimeUtc);
+        if(!accountValid)marketReasons.Add("live.account.invalid-or-stale");
+        marketSources.Add(new("account-snapshot",ModelOffSourceKindV1.Account,accountAt,request.EvaluationTimeUtc,
+            accountValid?ModelOffSourceStatusV1.Available:ModelOffSourceStatusV1.Invalid,
+            Hash(new{account.WalletBalance,account.AvailableBalance,account.Equity,TimestampUtc=accountAt})));
+        var positionsValid=request.Evidence.Positions.All(position=>SafeToken(position.Symbol)&&position.Quantity>0&&position.EntryPrice>0&&position.MarkPrice>0&&position.Leverage>0&&
+            Enum.IsDefined(position.Side))&&!request.Evidence.Positions.GroupBy(position=>(position.Symbol,position.Side)).Any(group=>group.Count()>1);
+        if(!positionsValid)marketReasons.Add("live.positions.invalid");
         foreach (var market in request.Evidence.Markets.Values.OrderBy(x => x.Symbol, StringComparer.Ordinal))
         {
-            if (!SafeToken(market.Symbol) || market.Price <= 0) marketReasons.Add("live.market.invalid");
+            var sourceValid=true;
+            if (!SafeToken(market.Symbol) || market.Price <= 0){marketReasons.Add("live.market.invalid");sourceValid=false;}
             if (!TryUtc(market.CollectedAt, out var collectedAt) || !Fresh(collectedAt, request.EvaluationTimeUtc))
-                marketReasons.Add("live.market.stale");
+                {marketReasons.Add("live.market.stale");sourceValid=false;}
             marketSources.Add(new(SafeToken(market.Symbol) ? market.Symbol : "unknown-market",
                 ModelOffSourceKindV1.Market, collectedAt, request.EvaluationTimeUtc,
-                marketReasons.Count == 0 ? ModelOffSourceStatusV1.Available : ModelOffSourceStatusV1.Invalid,
+                sourceValid ? ModelOffSourceStatusV1.Available : ModelOffSourceStatusV1.Invalid,
                 Hash(new { market.Symbol, market.Price, market.Support, market.Resistance, market.Rsi,
                     market.Trend15m, market.Trend1h, market.Trend4h, market.Quality.QualityScore,
                     market.Quality.SpreadBps, market.Quality.LiquidityScore, CollectedAtUtc = collectedAt })));
@@ -44,7 +56,9 @@ internal static class ModelOffLiveCycleInputComposerV1
         var marketOutput = Output(ModelOffAgentV1.Market, request, marketSources, marketReasons.Count == 0,
             marketReasons.Count == 0 ? "publish_market" : "block",
             marketReasons, new { completeness = request.Evidence.Completeness,
-                market_count = request.Evidence.Markets.Count, missing_source_count = request.Evidence.MissingSources.Count });
+                market_count = request.Evidence.Markets.Count, position_count=request.Evidence.Positions.Count,
+                account_available=accountValid, positions_valid=positionsValid,
+                missing_source_count = request.Evidence.MissingSources.Count });
         outputs.Add(Input(marketOutput));
 
         var researchReasons = new List<string>();

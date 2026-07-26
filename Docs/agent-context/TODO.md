@@ -9,6 +9,7 @@
 - [x] Connect the read-only trading-authorization projection to the Reference UI runtime snapshot: `BuildRuntimeJson()` refreshes and supplies `RuntimeAuthorization`; `MainWindowRuntimeBridgeTests` `2/2` passed. This is visibility only, not approval mutation or approved-order processing.
 
 ## P1
+- [x] Harden the live Market Agent input with an independently hashed account source, fresh positive account truth, structurally valid non-duplicate positions, and per-market source status so one invalid market cannot relabel unrelated valid evidence.
 - [x] Add the first production model-off seven-Agent orchestration boundary for canonical Market/Research/Strategy/Risk inputs, deterministic ordered handoffs, zero-mutation Execution/Recovery, and fail-closed Audit coverage. Connecting live runtime producers and Testnet mutation remains a later gated batch.
 - [x] Connect existing live Evidence/Research/Strategy/Risk runtime truth to the production seven-Agent orchestrator as an observation-only shadow before order authorization. Promotion from shadow evidence to a mandatory execution gate remains a separate acceptance decision.
 - [x] Project persisted automatic Testnet queue transitions and append-only events into immutable canonical Execution, Recovery, and Audit Agent observations. Exchange-order detail correlation and promotion of these observations into a mandatory risk-increase gate remain separate work.
@@ -31,6 +32,7 @@
 - [x] Replace the position-count protection heuristic with versioned read-only SL/TP reconciliation and tamper-evident persistence. Missing, orphaned, stale, or invalid protection blocks new risk without attempting an exchange mutation. Bybit position-level TP/SL is now observed read-only through `/v5/position/list`, and synthetic evidence cannot enter the ordinary order-cancellation endpoint.
 
 ## P2
+- Add a portable Windows release package that keeps immutable application files separate from `%LOCALAPPDATA%\WPE Agent` user data, includes a signed/hash manifest, and supports side-by-side last-known-good rollback without copying secrets or runtime databases into the package.
 - [x] Add compact context/input-token/output-token/cache/latency/cost metrics for Brain calls to local SQLite and the runtime snapshot without exposing raw prompts or responses.
 - [x] Add bounded, symbol-scoped, balanced working/episodic/long-term memory retrieval using existing SQLite and feed its short versioned projection into production planning without changing deterministic safety authority.
 - [x] Token milestone order completed for the July 21, 2026 batch: landed `two-level planner prompt slimming`, `structured short memory` planner-history compression, and the `runtime/UI` governance baseline.
