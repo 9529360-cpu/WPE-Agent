@@ -63,16 +63,29 @@ internal static class ModelOffLiveCycleInputComposerV1
 
         var researchReasons = new List<string>();
         var macro=request.MacroObservations??[];
-        if (request.Research.Count == 0) researchReasons.Add("live.research.missing");
-        if (request.Research.Values.Any(x => !SafeToken(x.Symbol) || !Finite(x.QualityScore) || x.CoverageDays < 0))
-            researchReasons.Add("live.research.invalid");
+        var target=request.DecisionReview.Decision.Instrument;
+        var targetMatches=request.Research.Values.Where(x=>string.Equals(x.Symbol,target,StringComparison.OrdinalIgnoreCase)).ToArray();
+        var targetResearch=targetMatches.Length==1?targetMatches[0]:null;
+        var targetResearchValid=targetResearch is not null&&ValidResearch(targetResearch);
+        if(targetMatches.Length>1)researchReasons.Add("live.research.target-conflicting");
+        if(targetResearch is null)researchReasons.Add("live.research.target-missing");
+        else
+        {
+            if(!targetResearchValid)researchReasons.Add("live.research.target-invalid");
+            if(!targetResearch.Approved)researchReasons.Add("live.research.target-not-approved");
+            if(!targetResearch.Promoted)researchReasons.Add("live.research.target-not-promoted");
+        }
         if(macro.GroupBy(x=>x.IndicatorId,StringComparer.Ordinal).Any(x=>x.Count()>1)||macro.Any(x=>!ValidMacro(x,request.EvaluationTimeUtc)))
             researchReasons.Add("live.research.macro-invalid");
         if (!ModelOffEligibilityV1.IsEligibleForDownstream(marketOutput)) researchReasons.Add("live.research.market-invalid");
+        var researchSources=new List<ModelOffSourceV1>{UpstreamSource(marketOutput,outputs[^1].Document,request.EvaluationTimeUtc)};
+        if(targetResearch is not null)researchSources.Add(new($"strategy-validation-{(SafeToken(targetResearch.Symbol)?targetResearch.Symbol:"unknown")}",ModelOffSourceKindV1.Strategy,request.EvaluationTimeUtc,request.EvaluationTimeUtc,
+            targetResearchValid&&targetResearch.Approved&&targetResearch.Promoted?ModelOffSourceStatusV1.Available:ModelOffSourceStatusV1.Invalid,
+            targetResearchValid?Hash(new{targetResearch.Symbol,targetResearch.StrategyVersion,targetResearch.SampleSize,targetResearch.Trades,targetResearch.WinRate,targetResearch.ProfitFactor,targetResearch.Expectancy,targetResearch.MaxDrawdown,targetResearch.Sharpe,targetResearch.OutOfSampleReturn,targetResearch.WalkForwardScore,targetResearch.MonteCarloLossProbability,targetResearch.QualityScore,targetResearch.Approved,targetResearch.Promoted,targetResearch.CoverageDays,targetResearch.OutOfSampleTrades,targetResearch.StrategyReturn,targetResearch.BenchmarkReturn}):Hash(new{target=SafeToken(target)?target:"unknown",state="invalid"})));
         var research = Output(ModelOffAgentV1.Research, request,
-            [UpstreamSource(marketOutput, outputs[^1].Document, request.EvaluationTimeUtc)], researchReasons.Count == 0,
+            researchSources, researchReasons.Count == 0,
             researchReasons.Count == 0 ? "publish_research" : "block", researchReasons,
-            new { validations = request.Research.Values.OrderBy(x => x.Symbol, StringComparer.Ordinal).Select(x => new
+            new { target_symbol=SafeToken(target)?target:"unknown",target_validation_state=targetResearchValid?"valid":"invalid",validations = (!targetResearchValid?Array.Empty<ResearchValidationResult>():[targetResearch!]).Select(x => new
                 { Symbol = SafeToken(x.Symbol) ? x.Symbol : "unknown", strategy_version_present = !string.IsNullOrWhiteSpace(x.StrategyVersion),
                     x.SampleSize, x.Trades, x.QualityScore, x.Approved, x.Promoted, x.CoverageDays }).ToArray(),
                 macro_observations=macro.OrderBy(x=>x.IndicatorId,StringComparer.Ordinal).Select(x=>new{x.IndicatorId,x.ObservationAtUtc,x.Revision,x.Geography,x.Frequency,x.Unit,x.Value,x.SourceArtifactHash,x.FirstObservedAtUtc}).ToArray() });
@@ -149,6 +162,9 @@ internal static class ModelOffLiveCycleInputComposerV1
             character is >= 'A' and <= 'Z' or >= '0' and <= '9' or '.' or '_' or '-');
 
     private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
+    private static bool ValidResearch(ResearchValidationResult value)=>SafeToken(value.Symbol)&&SafeIdentityToken(value.StrategyVersion)&&value.SampleSize>0&&value.Trades>0&&value.CoverageDays>0&&value.OutOfSampleTrades>=0&&
+        new[]{value.WinRate,value.ProfitFactor,value.Expectancy,value.MaxDrawdown,value.Sharpe,value.OutOfSampleReturn,value.WalkForwardScore,value.MonteCarloLossProbability,value.QualityScore,value.StrategyReturn,value.BenchmarkReturn}.All(Finite);
+    private static bool SafeIdentityToken(string? value)=>!string.IsNullOrWhiteSpace(value)&&value.Length<=64&&value.All(character=>char.IsAsciiLetterOrDigit(character)||character is '.' or '_' or '-');
     private static bool ValidMacro(PersistedMacroObservation value,DateTimeOffset now)=>
         SafeToken(value.IndicatorId)&&value.Revision>0&&!string.IsNullOrWhiteSpace(value.Geography)&&!string.IsNullOrWhiteSpace(value.Frequency)&&!string.IsNullOrWhiteSpace(value.Unit)&&value.ObservationAtUtc.Offset==TimeSpan.Zero&&value.FirstObservedAtUtc.Offset==TimeSpan.Zero&&value.ObservationAtUtc<=value.FirstObservedAtUtc&&value.FirstObservedAtUtc<=now&&value.SourceArtifactHash.Length==64&&value.SourceArtifactHash.All(Uri.IsHexDigit);
     private static string[] Sorted(IEnumerable<string> values) =>

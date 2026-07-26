@@ -66,6 +66,27 @@ public sealed class ModelOffLiveCycleInputComposerTests
     }
 
     [Theory]
+    [InlineData("missing")]
+    [InlineData("not-approved")]
+    [InlineData("not-promoted")]
+    [InlineData("invalid-number")]
+    public void ResearchAgentRequiresEligibleEvidenceForCurrentDecisionInstrument(string defect)
+    {
+        var request=Request();var btc=Research("BTCUSDT");var research=request.Research.ToDictionary(x=>x.Key,x=>x.Value);
+        if(defect=="missing")research.Remove("BTCUSDT");
+        if(defect=="not-approved")research["BTCUSDT"]=CopyResearch(btc,approved:false);
+        if(defect=="not-promoted")research["BTCUSDT"]=CopyResearch(btc,promoted:false);
+        if(defect=="invalid-number")research["BTCUSDT"]=CopyResearch(btc,qualityScore:double.NaN);
+        var output=ModelOffLiveCycleInputComposerV1.Compose(request with{Research=research}).Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(output));Assert.Contains(output.Decision.ReasonCodes,reason=>reason.StartsWith("live.research.target-",StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnrelatedResearchCannotSubstituteForCurrentInstrument()
+    {
+        var request=Request() with{Research=new Dictionary<string,ResearchValidationResult>{{"ETHUSDT",Research("ETHUSDT")}}};var output=ModelOffLiveCycleInputComposerV1.Compose(request).Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;Assert.Contains("live.research.target-missing",output.Decision.ReasonCodes);Assert.DoesNotContain(output.Sources,source=>source.SourceId=="strategy-validation-ETHUSDT");
+    }
+
+    [Theory]
     [InlineData("stale")]
     [InlineData("empty-market")]
     [InlineData("review-blocked")]
@@ -225,6 +246,7 @@ public sealed class ModelOffLiveCycleInputComposerTests
         new(symbol, price, price * .98m, price * 1.02m, 55, .2, .3, .4, new(0, 1, 1, 1, 1, 1, 0), at);
     private static ResearchValidationResult Research(string symbol) => new()
     { Symbol = symbol, StrategyVersion = "strategy-v1", SampleSize = 200, Trades = 30, QualityScore = .8, Approved = true, Promoted = true, CoverageDays = 90 };
+    private static ResearchValidationResult CopyResearch(ResearchValidationResult value,bool? approved=null,bool? promoted=null,double? qualityScore=null)=>new(){Symbol=value.Symbol,StrategyVersion=value.StrategyVersion,SampleSize=value.SampleSize,Trades=value.Trades,WinRate=value.WinRate,ProfitFactor=value.ProfitFactor,Expectancy=value.Expectancy,MaxDrawdown=value.MaxDrawdown,Sharpe=value.Sharpe,OutOfSampleReturn=value.OutOfSampleReturn,WalkForwardScore=value.WalkForwardScore,MonteCarloLossProbability=value.MonteCarloLossProbability,QualityScore=qualityScore??value.QualityScore,Approved=approved??value.Approved,Promoted=promoted??value.Promoted,CoverageDays=value.CoverageDays,OutOfSampleTrades=value.OutOfSampleTrades,StrategyReturn=value.StrategyReturn,BenchmarkReturn=value.BenchmarkReturn,RegimeReturns=value.RegimeReturns,Summary=value.Summary};
     private static DecisionReview Review(bool accepted) => new()
     {
         Accepted = accepted,

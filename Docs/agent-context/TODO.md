@@ -10,6 +10,7 @@
 
 ## P1
 - [x] Harden the live Market Agent input with an independently hashed account source, fresh positive account truth, structurally valid non-duplicate positions, and per-market source status so one invalid market cannot relabel unrelated valid evidence.
+- [x] Require the live Research Agent to consume an exact current-instrument validation that is structurally valid, approved, and promoted. Persist a bounded deterministic validation hash, reject missing/conflicting/wrong-instrument evidence, and keep invalid non-finite metrics out of canonical facts.
 - [x] Add the first production model-off seven-Agent orchestration boundary for canonical Market/Research/Strategy/Risk inputs, deterministic ordered handoffs, zero-mutation Execution/Recovery, and fail-closed Audit coverage. Connecting live runtime producers and Testnet mutation remains a later gated batch.
 - [x] Connect existing live Evidence/Research/Strategy/Risk runtime truth to the production seven-Agent orchestrator as an observation-only shadow before order authorization. Promotion from shadow evidence to a mandatory execution gate remains a separate acceptance decision.
 - [x] Project persisted automatic Testnet queue transitions and append-only events into immutable canonical Execution, Recovery, and Audit Agent observations. Exchange-order detail correlation and promotion of these observations into a mandatory risk-increase gate remain separate work.
