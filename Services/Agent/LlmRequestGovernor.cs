@@ -68,7 +68,7 @@ public sealed record LlmUsageSnapshot(
     DateTime? LastCallAtUtc = null);
 
 public sealed record LlmUsageBreakdown(string TopAgent, int TopAgentCalls, string TopTool, int TopToolCalls);
-public sealed record LlmCallUsage(int InputTokens, int OutputTokens, decimal CostUsd, bool CacheHit, bool Allowed, string Outcome, string TokenSource)
+public sealed record LlmCallUsage(int InputTokens, int OutputTokens, decimal CostUsd, bool CacheHit, bool Allowed, string Outcome, string TokenSource,int ContextCharacters=0)
 {
     public int LoggedTokens => CacheHit || !Allowed ? 0 : Math.Max(0, InputTokens) + Math.Max(0, OutputTokens);
     public decimal LoggedCostUsd => CacheHit || !Allowed ? 0 : CostUsd;
@@ -178,6 +178,7 @@ public sealed class LlmRequestGovernor
         {
             var now = DateTime.UtcNow;
             var promptHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(prompt ?? string.Empty)));
+            var promptCharacters=prompt?.Length??0;
             var inputTokens = EstimateTokens(prompt);
             var outputLimit = Math.Clamp(context.MaxOutputTokens, 1, _policy.MaxOutputTokens);
             var requestCostLimit = context.Mode == CoreModels.AiRuntimeMode.AIResearch ? _policy.AiResearchRequestCostLimitUsd : _policy.HybridRequestCostLimitUsd;
@@ -196,7 +197,7 @@ public sealed class LlmRequestGovernor
             var key = $"{provider}:{model}:{purpose}:{context.PromptVersion}:{promptHash}";
             if (_cache.TryGetValue(key, out var cached) && cached.ExpiresAtUtc > now)
             {
-                PublishUsage(new(0, 0, 0, true, true, "CACHE_HIT", "cache"));
+                PublishUsage(new(0, 0, 0, true, true, "CACHE_HIT", "cache",promptCharacters));
                 await AuditAsync(Row(true, true, EstimateTokens(cached.Body), 0, "CACHE_HIT", false), ct);
                 return JsonResponse(cached.Body);
             }
@@ -218,7 +219,7 @@ public sealed class LlmRequestGovernor
                 var cost = EstimateCost(actualInput, actualOutput);
                 var fallback = !response.IsSuccessStatusCode;
                 var outcome = $"HTTP_{(int)response.StatusCode}";
-                PublishUsage(new(actualInput, actualOutput, cost, false, true, outcome, source));
+                PublishUsage(new(actualInput, actualOutput, cost, false, true, outcome, source,promptCharacters));
                 await AuditAsync(Row(true, false, actualOutput, started.ElapsedMilliseconds, outcome, fallback, actualInput, cost, source), CancellationToken.None);
                 if (response.IsSuccessStatusCode)
                 {
@@ -230,13 +231,13 @@ public sealed class LlmRequestGovernor
             }
             catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
             {
-                PublishUsage(new(inputTokens, 0, EstimateCost(inputTokens, 0), false, true, "TIMEOUT", "estimate"));
+                PublishUsage(new(inputTokens, 0, EstimateCost(inputTokens, 0), false, true, "TIMEOUT", "estimate",promptCharacters));
                 await AuditAsync(Row(true, false, 0, started.ElapsedMilliseconds, "TIMEOUT", true), CancellationToken.None);
                 throw new LlmGovernanceException("TIMEOUT", "Remote assistant timed out; use deterministic local fallback.", ex);
             }
             catch (Exception ex) when (ex is not LlmGovernanceException)
             {
-                PublishUsage(new(inputTokens, 0, EstimateCost(inputTokens, 0), false, true, "REMOTE_ERROR", "estimate"));
+                PublishUsage(new(inputTokens, 0, EstimateCost(inputTokens, 0), false, true, "REMOTE_ERROR", "estimate",promptCharacters));
                 await AuditAsync(Row(true, false, 0, started.ElapsedMilliseconds, "REMOTE_ERROR", true), CancellationToken.None);
                 throw new LlmGovernanceException("REMOTE_ERROR", "Remote assistant failed; use deterministic local fallback.", ex);
             }
@@ -248,7 +249,7 @@ public sealed class LlmRequestGovernor
 
             async Task BlockAsync(string code, string message, bool fallback)
             {
-                PublishUsage(new(0, 0, 0, false, false, code, "blocked"));
+                PublishUsage(new(0, 0, 0, false, false, code, "blocked",promptCharacters));
                 await AuditAsync(Row(false, false, 0, 0, code, fallback), CancellationToken.None);
                 throw new LlmGovernanceException(code, message + " WPE remains available through local deterministic processing.");
             }

@@ -30,7 +30,7 @@
 - [x] Replace the position-count protection heuristic with versioned read-only SL/TP reconciliation and tamper-evident persistence. Missing, orphaned, stale, or invalid protection blocks new risk without attempting an exchange mutation. Bybit position-level TP/SL is now observed read-only through `/v5/position/list`, and synthetic evidence cannot enter the ordinary order-cancellation endpoint.
 
 ## P2
-- Add compact context/token/latency/cost metrics for Brain calls.
+- [x] Add compact context/input-token/output-token/cache/latency/cost metrics for Brain calls to local SQLite and the runtime snapshot without exposing raw prompts or responses.
 - [x] Add bounded, symbol-scoped, balanced working/episodic/long-term memory retrieval using existing SQLite and feed its short versioned projection into production planning without changing deterministic safety authority.
 - [x] Token milestone order completed for the July 21, 2026 batch: landed `two-level planner prompt slimming`, `structured short memory` planner-history compression, and the `runtime/UI` governance baseline.
 - [x] Replace `RecentOutcomesAsync` free-text planner history with bounded `structured short memory` that reuses existing SQLite memory tiers without weakening fail-closed trading context.

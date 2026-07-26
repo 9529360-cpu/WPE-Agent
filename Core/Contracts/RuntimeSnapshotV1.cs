@@ -46,7 +46,7 @@ public sealed record RuntimeRiskV1(
 public sealed record RuntimeStrategyV1(string Status, string Summary, int CandidateCount);
 public sealed record RuntimeStrategyProfileV1(string Id,string Version,string Symbol,string Family,string Lifecycle,string LastReason,DateTime? StateChangedAtUtc,double QualityScore);
 public sealed record RuntimeStrategyLifecycleEventV1(long Id,string StrategyId,string FromState,string ToState,DateTime OccurredAtUtc,string Reason);
-public sealed record RuntimeSkillCallV1(string Id,DateTime OccurredAtUtc,string Skill,string Status,long DurationMs,string? Mode,bool? RemoteLlmUsed,int? Tokens,decimal? CostUsd);
+public sealed record RuntimeSkillCallV1(string Id,DateTime OccurredAtUtc,string Skill,string Status,long DurationMs,string? Mode,bool? RemoteLlmUsed,int? Tokens,decimal? CostUsd,int? ContextCharacters=null,int? InputTokens=null,int? OutputTokens=null,bool? CacheHit=null,string? LlmOutcome=null,string? TokenSource=null);
 public sealed record RuntimeDiagnosticV1(string Code,DateTime TimeUtc,string Summary);
 public sealed record RuntimeMemoryStatusV1(int WorkingCount,int EpisodicCount,int LongTermCount,DateTime? LastRetrievedAtUtc);
 public sealed record RuntimeMemoryRetrievalV1(long Id,string Tier,string? Symbol,string? ProviderId,string? StrategyId,DateTime OccurredAtUtc,string Result,string Source,int ResultCount);

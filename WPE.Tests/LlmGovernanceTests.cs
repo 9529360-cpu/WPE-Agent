@@ -90,6 +90,7 @@ public sealed class LlmGovernanceTests : IDisposable
         Assert.Equal(row.EstimatedCostUsd, usage.LoggedCostUsd);
         Assert.Equal("provider", usage.TokenSource);
         Assert.Equal("HTTP_200", usage.Outcome);
+        Assert.Equal($"private {secret}".Length,usage.ContextCharacters);
     }
 
     [Fact]
