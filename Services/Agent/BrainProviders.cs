@@ -220,6 +220,15 @@ internal static class BrainPromptComposer
                         note = TrimText(x.DecisionSummary, Math.Min(profile.PreviousOutcomeChars, 80))
                     })
                     .ToArray(),
+                relevantMemorySchema = "wpe.planner-tiered-memory/1.0",
+                relevantMemory = (context.RelevantMemories??[]).Take(6).Select(x=>new
+                {
+                    t=TrimText(x.Tier,12),
+                    at=x.OccurredAtUtc,
+                    r=TrimText(x.Result,24),
+                    src=TrimText(x.Source,32),
+                    note=TrimText(x.Summary,100)
+                }).ToArray(),
                 context.ConsecutiveHolds
             },
             detailedMarketContext = detailLevel == PromptDetailLevel.DetailedContext

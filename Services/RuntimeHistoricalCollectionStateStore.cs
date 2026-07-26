@@ -85,6 +85,7 @@ public sealed class RuntimeHistoricalCollectionStateStore
         {
             var segments=cursor.Split('.');if(segments.Length!=2)return false;
             var payload=Convert.FromBase64String(segments[0]);var supplied=Convert.FromBase64String(segments[1]);
+            if(!string.Equals(Convert.ToBase64String(payload),segments[0],StringComparison.Ordinal)||!string.Equals(Convert.ToBase64String(supplied),segments[1],StringComparison.Ordinal))return false;
             var expected=HMACSHA256.HashData(_cursorKey,payload);if(!CryptographicOperations.FixedTimeEquals(expected,supplied))return false;
             var parts=Encoding.UTF8.GetString(payload).Split(':');
             return parts.Length==4&&parts[0]=="v1"&&parts[1]==kind.ToString()

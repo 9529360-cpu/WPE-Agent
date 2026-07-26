@@ -23,7 +23,7 @@
 - [x] Start official BLS Macro collection with the production Agent, persist append-only restart-safe revisions, and compose the latest valid revision per indicator into every live canonical Research input without introducing model inference or trading conclusions. Official release-calendar correlation remains open.
 - [x] Implement the bounded Teacher capability as a deterministic once-daily market brief sourced only from eligible canonical Research, with fixed financial-term explanations and explicit `MarketBrief` notification opt-in. Interactive teaching, quizzes, scoring, model-written commentary, and trading authority are outside the accepted scope.
 - [x] Expose explicit `MarketBrief` consent through secure WPF notification settings, persist it through the existing configuration service, and show the allowed event set read-only in Web runtime settings.
-- Consolidate or quarantine legacy Binance-direct services.
+- [x] Consolidate or quarantine legacy Binance-direct services. Deleted execution types are absent from the production assembly, residual reference-only desktop modules are excluded from compilation, and regression tests prevent production composition from registering the old Binance stack.
 - [x] Make confirmed-close post-trade accounting idempotent by client order identity, reject conflicting replays, exclude partial fills from realized PnL, calculate entry cost from the deterministic moving-weighted execution ledger, and persist a bounded review fact into local long-term memory. Exchange-reported fee attribution and broader causal strategy attribution remain open.
 - [x] Add a versioned canonical Position reconciliation gate that compares the decimal local execution ledger with fresh provider positions, persists tamper-evident evidence, blocks new risk on every unknown/conflicting state, and leaves reduce-only recovery available. Protection-order reconciliation and explicit external-position isolation are now completed as separate read-only gates.
 - [x] Isolate external-only and exchange-excess position quantities as versioned canonical read-only facts. Persist them append-only, block new risk on isolated/stale/invalid evidence, never mutate or adopt the external position, and leave reduce-only recovery available.
@@ -31,7 +31,7 @@
 
 ## P2
 - Add compact context/token/latency/cost metrics for Brain calls.
-- Add tiered working, episodic, and long-term memory retrieval using existing SQLite.
+- [x] Add bounded, symbol-scoped, balanced working/episodic/long-term memory retrieval using existing SQLite and feed its short versioned projection into production planning without changing deterministic safety authority.
 - [x] Token milestone order completed for the July 21, 2026 batch: landed `two-level planner prompt slimming`, `structured short memory` planner-history compression, and the `runtime/UI` governance baseline.
 - [x] Replace `RecentOutcomesAsync` free-text planner history with bounded `structured short memory` that reuses existing SQLite memory tiers without weakening fail-closed trading context.
 - [x] First `structured short memory` batch is contract-only: added the read-side `StructuredOutcomeMemory[]` projection plus narrow store/persistence/degraded-path tests before changing `AutoTradingAgent` or deleting the old text aggregation path.

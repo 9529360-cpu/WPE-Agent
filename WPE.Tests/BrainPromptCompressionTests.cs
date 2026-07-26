@@ -46,6 +46,7 @@ public sealed class BrainPromptCompressionTests
         var source = File.ReadAllText(Path.Combine(root, "Services", "AutoTradingAgent.cs"));
 
         Assert.Contains("RecentOutcomeMemoriesAsync(ct)", source, StringComparison.Ordinal);
+        Assert.Contains("RetrievePlannerMemoriesAsync(memorySymbol,ct)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("RecentOutcomesAsync(ct)", source, StringComparison.Ordinal);
     }
 
@@ -71,6 +72,8 @@ public sealed class BrainPromptCompressionTests
         Assert.Contains("new(12, 220, 8, 180, 6, 4, 8)", source, StringComparison.Ordinal);
         Assert.Contains("new(4, 90, 3, 80, 2, 2, 4)", source, StringComparison.Ordinal);
         Assert.Contains(".Take(6)", source, StringComparison.Ordinal);
+        Assert.Contains("relevantMemorySchema = \"wpe.planner-tiered-memory/1.0\"", source, StringComparison.Ordinal);
+        Assert.Contains("note=TrimText(x.Summary,100)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("x.Leverage,", source, StringComparison.Ordinal);
         Assert.DoesNotContain("x.Isolated", source, StringComparison.Ordinal);
     }
