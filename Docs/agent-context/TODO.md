@@ -21,6 +21,7 @@
 - [x] Add the first deterministic Macro research component: a versioned observed-fact contract requiring canonical Macro source metadata, UTC observation/release times, geography, frequency, unit, and numeric value. Live official-source ingestion and revision history remain open, so the full Macro capability is not promoted.
 - [x] Add the first keyless official Macro adapter for allowlisted BLS public series. It pins the official HTTPS endpoint, performs read-only POST, bounds responses, hashes raw evidence, labels fetch time as first-observed rather than formal release time, and fails closed on malformed/unavailable data. Persistent revision history and release-calendar correlation remain open.
 - [x] Start official BLS Macro collection with the production Agent, persist append-only restart-safe revisions, and compose the latest valid revision per indicator into every live canonical Research input without introducing model inference or trading conclusions. Official release-calendar correlation remains open.
+- [x] Implement the bounded Teacher capability as a deterministic once-daily market brief sourced only from eligible canonical Research, with fixed financial-term explanations and explicit `MarketBrief` notification opt-in. Interactive teaching, quizzes, scoring, model-written commentary, and trading authority are outside the accepted scope.
 - Consolidate or quarantine legacy Binance-direct services.
 
 ## P2

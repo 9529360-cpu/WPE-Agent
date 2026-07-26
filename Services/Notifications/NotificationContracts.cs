@@ -11,6 +11,7 @@ public enum NotificationEventKind
     ProtectionFailed,
     RiskBlocked,
     AgentDegraded,
+    MarketBrief,
     Test
 }
 public enum NotificationOutboxState{Queued,Sending,Sent,Failed,DeadLetter}
@@ -31,7 +32,8 @@ public sealed record ConfirmedNotificationEvent(
     decimal? StopLoss,
     decimal? TakeProfit,
     DateTime OccurredAtUtc,
-    string DiagnosticCode);
+    string DiagnosticCode,
+    string? Content=null);
 
 public sealed record NotificationEnvelope(
     ConfirmedNotificationEvent Event,

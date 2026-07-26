@@ -24,6 +24,7 @@ public sealed class NotificationFormatter
         Add(fields,"quantity",value.Quantity);
         Add(fields,"stop_loss",value.StopLoss);
         Add(fields,"take_profit",value.TakeProfit);
+        if(!string.IsNullOrWhiteSpace(value.Content))fields["content"]=CleanMultiline(value.Content);
 
         var text=string.Join(Environment.NewLine,fields.Select(x=>$"{Label(x.Key)}: {x.Value}"));
         return new(value.EventKey,value.Kind,text,fields);
@@ -38,6 +39,7 @@ public sealed class NotificationFormatter
         if(value is not null)fields[key]=value.Value.ToString("0.################",CultureInfo.InvariantCulture);
     }
     private static string Clean(string value)=>value.Replace('\r',' ').Replace('\n',' ').Trim();
+    private static string CleanMultiline(string value)=>string.Join('\n',value.Replace("\r\n","\n",StringComparison.Ordinal).Replace('\r','\n').Split('\n').Select(Clean)).Trim();
     private static string EventName(NotificationEventKind value)=>value switch
     {
         NotificationEventKind.OrderFilled=>"Order filled",
@@ -48,6 +50,7 @@ public sealed class NotificationFormatter
         NotificationEventKind.ProtectionFailed=>"Protection failed",
         NotificationEventKind.RiskBlocked=>"Risk blocked",
         NotificationEventKind.AgentDegraded=>"Agent degraded",
+        NotificationEventKind.MarketBrief=>"Market brief",
         NotificationEventKind.Test=>"Test notification",
         _=>value.ToString()
     };

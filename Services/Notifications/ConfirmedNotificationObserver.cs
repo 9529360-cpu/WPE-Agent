@@ -93,12 +93,12 @@ public static class ConfirmedNotificationTruth
 
     public static ConfirmedNotificationEvent System(
         string eventKey,NotificationEventKind kind,string provider,string environment,
-        DateTime occurredAtUtc,string diagnosticCode,string? symbol=null,string? side=null)
+        DateTime occurredAtUtc,string diagnosticCode,string? symbol=null,string? side=null,string? content=null)
     {
-        if(kind is not(NotificationEventKind.RiskBlocked or NotificationEventKind.AgentDegraded or NotificationEventKind.Test))
+        if(kind is not(NotificationEventKind.RiskBlocked or NotificationEventKind.AgentDegraded or NotificationEventKind.MarketBrief or NotificationEventKind.Test))
             throw new ArgumentOutOfRangeException(nameof(kind));
         return new(eventKey,kind,environment,provider,symbol,side,null,null,null,null,
-            occurredAtUtc.ToUniversalTime(),diagnosticCode);
+            occurredAtUtc.ToUniversalTime(),diagnosticCode,content);
     }
 }
 

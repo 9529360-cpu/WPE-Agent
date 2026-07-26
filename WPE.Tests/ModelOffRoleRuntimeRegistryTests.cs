@@ -18,8 +18,9 @@ public sealed class ModelOffRoleRuntimeRegistryTests
         Assert.Equal(Enum.GetValues<ModelOffRuntimeRoleV1>(), registry.Roles.Select(x => x.Role));
         Assert.False(registry.MainnetEnabled);
         Assert.Equal("Testnet", registry.Environment);
-        Assert.Equal("frozen_future", registry.Capabilities.Single(x => x.Id == "teacher").Lifecycle);
-        Assert.False(registry.Capabilities.Single(x => x.Id == "teacher").Implemented);
+        var teacher=registry.Capabilities.Single(x=>x.Id=="teacher");
+        Assert.Equal("current",teacher.Lifecycle);Assert.True(teacher.Implemented);Assert.True(teacher.Accepted);
+        Assert.Contains("opt-in notification",teacher.AcceptanceScope,StringComparison.Ordinal);
     }
 
     [Fact]
