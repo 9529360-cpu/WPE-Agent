@@ -5,11 +5,13 @@ using System.Collections.Concurrent;
 using 币安量化机器人.Models;
 using 币安量化机器人.Services.Exchange;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using WpeAgent.RuntimeContracts;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvider,IBrokerProvider,IProviderMarketCatalog,IProviderEnvironmentGuard,IRecentOrderProvider,IExchangeOrderFeeEvidenceReader,ICryptoInstrumentFundamentalReader
+public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvider,IBrokerProvider,IProviderMarketCatalog,IProviderEnvironmentGuard,IRecentOrderProvider,IExchangeOrderFeeEvidenceReader,IExchangeFundingIncomeReader,ICryptoInstrumentFundamentalReader
 {
     internal const long MaximumTradingClockSkewMilliseconds=1000;
     private readonly BinanceApiClient _api;
@@ -164,6 +166,34 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
         }
         catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
         catch(Exception){return ExchangeOrderFeeEvidenceCanonicalizerV1.Create(ProviderId,"Testnet",order.Symbol,order.OrderId,order.ClientOrderId,0,0,0,"",observed,ExchangeOrderFeeEvidenceStateV1.Error);}
+    }
+    public async Task<FundingObservationResultV1> ReadFundingIncomeAsync(string canonicalSymbol,DateTimeOffset startUtc,DateTimeOffset endUtc,CancellationToken ct)
+    {
+        startUtc=startUtc.ToUniversalTime();endUtc=endUtc.ToUniversalTime();var observed=DateTimeOffset.UtcNow;var emptyHash=Convert.ToHexString(SHA256.HashData(Array.Empty<byte>())).ToLowerInvariant();
+        FundingObservationResultV1 Result(FundingObservationStateV1 state,IReadOnlyList<FundingIncomeEventV1>? events=null,string? sourceHash=null)
+        {
+            var values=events??Array.Empty<FundingIncomeEventV1>();return new(FundingEvidenceCanonicalizerV1.Window(ProviderId,Environment.ToString(),canonicalSymbol,startUtc,endUtc,observed,state,values,sourceHash??emptyHash),values);
+        }
+        if(Environment!=ExchangeEnvironment.Testnet)return Result(FundingObservationStateV1.Unsupported);
+        if(string.IsNullOrWhiteSpace(canonicalSymbol)||startUtc>endUtc||endUtc>observed.AddMinutes(1)||endUtc-startUtc>TimeSpan.FromDays(90))return Result(FundingObservationStateV1.Invalid);
+        try
+        {
+            var native=N(canonicalSymbol);var events=new List<FundingIncomeEventV1>();var responseHashes=new List<string>();var cursor=startUtc;var chunks=0;
+            do
+            {
+                if(++chunks>14)return Result(FundingObservationStateV1.Invalid);
+                var chunkEnd=cursor.AddDays(7);if(chunkEnd>endUtc)chunkEnd=endUtc;
+                var raw=await _api.GetSignedRawAsync("/fapi/v1/income",new Dictionary<string,string?>{{"symbol",native},{"incomeType","FUNDING_FEE"},{"startTime",cursor.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture)},{"endTime",chunkEnd.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture)},{"limit","1000"}},ct);
+                responseHashes.Add(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant());
+                using var document=JsonDocument.Parse(raw);events.AddRange(BinanceFundingIncomeParserV1.Parse(document.RootElement,canonicalSymbol,native,cursor,chunkEnd));
+                if(chunkEnd==endUtc)break;cursor=chunkEnd.AddMilliseconds(1);
+            }while(cursor<=endUtc);
+            if(events.GroupBy(x=>x.TransactionId,StringComparer.Ordinal).Any(x=>x.Count()>1))return Result(FundingObservationStateV1.Invalid);
+            var sourceHash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('|',responseHashes)))).ToLowerInvariant();
+            return Result(FundingObservationStateV1.Available,events.OrderBy(x=>x.OccurredAtUtc).ThenBy(x=>x.TransactionId,StringComparer.Ordinal).ToArray(),sourceHash);
+        }
+        catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
+        catch(Exception){return Result(FundingObservationStateV1.Error);}
     }
     public async Task CancelOrderAsync(string symbol,string id,CancellationToken ct)
     {

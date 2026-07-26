@@ -109,7 +109,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
                 throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));
             }
             var partial=order.ExecutedQuantity<intent.Quantity;
-            await CaptureFeeEvidenceAsync(order,ct);await _db.RecordExecutionAsync(cycle,intent with{Quantity=order.ExecutedQuantity},
+            await CaptureFeeEvidenceAsync(order,ct);await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);await _db.RecordExecutionAsync(cycle,intent with{Quantity=order.ExecutedQuantity},
                 partial?order with{Status="PARTIALLY_FILLED"}:order,"wpe-core-v2",ct);
             await _db.SaveIntentAsync(cycle,intent,partial?"COMPLETED_PARTIAL":"COMPLETED",order.OrderId,ct);
             await NotifyExecutionAsync(cycle,intent,order,ct);
@@ -169,7 +169,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",order.OrderId,ct);
             throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));
         }
-        var filledIntent=intent with{Quantity=order.ExecutedQuantity};var recordedOrder=order.ExecutedQuantity>0&&order.Status!="FILLED"?order with{Status="PARTIALLY_FILLED"}:order;await CaptureFeeEvidenceAsync(recordedOrder,ct);await _db.RecordExecutionAsync(cycle,filledIntent,recordedOrder,"wpe-core-v2",ct);
+        var filledIntent=intent with{Quantity=order.ExecutedQuantity};var recordedOrder=order.ExecutedQuantity>0&&order.Status!="FILLED"?order with{Status="PARTIALLY_FILLED"}:order;await CaptureFeeEvidenceAsync(recordedOrder,ct);if(intent.ReduceOnly&&recordedOrder.Status=="FILLED")await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);await _db.RecordExecutionAsync(cycle,filledIntent,recordedOrder,"wpe-core-v2",ct);
         if(intent.ReduceOnly)
         {
             if(IsFullClose(intent.Action)){await CancelProtectionOrdersAsync(intent.Symbol,intent.Side,ct);await _db.ClearLockedSideIfMatchesAsync(intent.Symbol,intent.Side,ct);}
@@ -192,7 +192,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             var emergency=filledIntent with{ReduceOnly=true,OrderType=ExecutionOrderType.Market,ClientOrderId=EmergencyId(intent.ClientOrderId)};
             var close=await SubmitIdempotentlyAsync(emergency,ct);await _db.SaveIntentAsync(cycle,intent,"EMERGENCY_SUBMITTED",close.OrderId,ct);close=await WaitAndCancelOnTimeoutAsync(intent.Symbol,emergency.ClientOrderId,close,ct);
             var fullyClosed=close.Status=="FILLED"&&close.ExecutedQuantity>=order.ExecutedQuantity;await _db.SaveIntentAsync(cycle,intent,fullyClosed?"EMERGENCY_CLOSED":"EMERGENCY_UNKNOWN",close.OrderId,ct);
-            if(fullyClosed){await CaptureFeeEvidenceAsync(close,ct);await _db.RecordExecutionAsync(cycle,emergency with{Quantity=close.ExecutedQuantity},close,"wpe-core-v2",ct);}
+            if(fullyClosed){await CaptureFeeEvidenceAsync(close,ct);await CaptureFundingEvidenceAsync(emergency.Symbol,emergency.Side,close.ExecutedQuantity,ct);await _db.RecordExecutionAsync(cycle,emergency with{Quantity=close.ExecutedQuantity},close,"wpe-core-v2",ct);}
             var safety=fullyClosed?L("Execution.ProtectionEmergencyClosed"):L("Execution.ProtectionEmergencyUnknown",close.Status);
             throw new InvalidOperationException($"{safety} · {SensitiveDataRedactor.ForLog(protectionError.Message,180)}",protectionError);
         }
@@ -203,6 +203,18 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     {
         if(_ex is not IExchangeOrderFeeEvidenceReader reader)return;
         try{var evidence=await reader.ReadOrderFeeEvidenceAsync(order,ct);await _db.SaveExchangeOrderFeeEvidenceAsync(evidence,ct);}catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}catch{ /* Fee evidence is observational and never changes execution truth. */ }
+    }
+
+    private async Task CaptureFundingEvidenceAsync(string symbol,PositionSide side,decimal closingQuantity,CancellationToken ct)
+    {
+        if(_ex is not IExchangeFundingIncomeReader reader)return;
+        try
+        {
+            var start=await _db.GetUnambiguousFundingObservationStartAsync(symbol,side,closingQuantity,ct);if(start is null)return;
+            var result=await reader.ReadFundingIncomeAsync(symbol,start.Value,DateTimeOffset.UtcNow,ct);await _db.SaveFundingObservationAsync(result,ct);
+        }
+        catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
+        catch{ /* Funding evidence is observational and never changes execution truth. */ }
     }
 
     private void EnsureCapability(ExecutionIntent intent)
