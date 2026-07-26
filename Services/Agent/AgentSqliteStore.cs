@@ -583,6 +583,19 @@ public sealed class AgentSqliteStore
         q.CommandText="SELECT cycle_id,status,exchange_order_id,details FROM order_intents WHERE status NOT IN ('PROTECTED','PROTECTED_PARTIAL','PARTIALLY_FILLED_PROTECTED','PREFLIGHT_BLOCKED','COMPLETED','COMPLETED_PARTIAL','CANCELED','REJECTED','EXPIRED','EMERGENCY_CLOSED','LegacyUnresolved','Quarantined') ORDER BY updated_at";
         await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var intent=JsonSerializer.Deserialize<ExecutionIntent>(r.GetString(3));if(intent is not null)list.Add(new(r.IsDBNull(0)?"RECOVERY":r.GetString(0),intent,r.IsDBNull(1)?"UNKNOWN":r.GetString(1),r.IsDBNull(2)?null:r.GetValue(2).ToString()));}return list;
     }
+    public async Task<IReadOnlyList<PersistedIntent>> GetIntentsByCycleAsync(string cycleId,int limit,CancellationToken ct)
+    {
+        var list=new List<PersistedIntent>();if(!QueueToken(cycleId,120))return list;
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="SELECT cycle_id,status,exchange_order_id,details FROM order_intents WHERE cycle_id=$cycle ORDER BY client_order_id LIMIT $limit";
+        q.Parameters.AddWithValue("$cycle",cycleId);q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,100));
+        await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))
+        {
+            try{var intent=JsonSerializer.Deserialize<ExecutionIntent>(r.GetString(3));if(intent is not null)list.Add(new(r.GetString(0),intent,r.IsDBNull(1)?"UNKNOWN":r.GetString(1),r.IsDBNull(2)?null:r.GetValue(2).ToString()));}
+            catch(JsonException){/* Malformed rows are withheld and cause correlation to fail closed. */}
+        }
+        return list;
+    }
     public async Task<IntentStateSummary> GetIntentStateSummaryAsync(CancellationToken ct)
     {
         var statuses=new List<IntentStatusCount>();var total=0;var recoverable=0;var unknown=0;DateTimeOffset? latest=null;

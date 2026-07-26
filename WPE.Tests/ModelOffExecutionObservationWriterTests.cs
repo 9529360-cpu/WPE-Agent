@@ -18,6 +18,7 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
     {
         var store = Store();
         var item = await Succeeded(store, "observed-success");
+        await SeedConfirmedIntent(store, item.Artifact!);
         var events = await store.GetAutomaticExecutionEventsAsync(item.ExecutionId, 100, CancellationToken.None);
         var result = await new ModelOffExecutionObservationWriterV1(store).WriteAsync(item, events, Now, CancellationToken.None);
 
@@ -47,6 +48,41 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
         Assert.True(result.Recovery.Facts.GetProperty("quarantined").GetBoolean());
         Assert.False(result.Recovery.Facts.GetProperty("resubmit_allowed").GetBoolean());
         Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(result.Audit));
+    }
+
+    [Fact]
+    public async Task QueueSuccessWithoutConfirmedOrderIntentIsQuarantined()
+    {
+        var store = Store();
+        var item = await Succeeded(store, "observed-missing-order");
+        var events = await store.GetAutomaticExecutionEventsAsync(item.ExecutionId, 100, CancellationToken.None);
+        var result = await new ModelOffExecutionObservationWriterV1(store).WriteAsync(item, events, Now, CancellationToken.None);
+
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(result.Execution));
+        Assert.Contains("execution.intent-missing", result.Execution.Decision.ReasonCodes);
+        Assert.Equal("quarantine_order_correlation", result.Recovery.Decision.Action);
+        Assert.True(result.Recovery.Facts.GetProperty("quarantined").GetBoolean());
+        Assert.False(result.Recovery.Facts.GetProperty("resubmit_allowed").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ConflictingPersistedIntentCannotConfirmQueueSuccess()
+    {
+        var store = Store();
+        var item = await Succeeded(store, "observed-conflicting-order");
+        var expected = Assert.Single(item.Artifact!.Intents);
+        var conflicting = new ExecutionIntent("ETHUSDT", PositionSide.Short, expected.Quantity * 2,
+            expected.ReduceOnly, expected.StopLoss, expected.TakeProfit, expected.ClientOrderId, "conflicting",
+            DecisionAction.OpenShort, ExecutionOrderType.Limit, expected.LimitPrice, expected.ExpectedPrice);
+        await store.SaveIntentAsync(item.Artifact.CorrelationId, conflicting, "PROTECTED", "order-conflicting", CancellationToken.None);
+        var events = await store.GetAutomaticExecutionEventsAsync(item.ExecutionId, 100, CancellationToken.None);
+
+        var result = await new ModelOffExecutionObservationWriterV1(store).WriteAsync(item, events, Now, CancellationToken.None);
+
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(result.Execution));
+        Assert.Contains("execution.intent-conflicting", result.Execution.Decision.ReasonCodes);
+        Assert.Equal("quarantine_order_correlation", result.Recovery.Decision.Action);
+        Assert.False(result.Recovery.Facts.GetProperty("resubmit_allowed").GetBoolean());
     }
 
     [Fact]
@@ -84,6 +120,7 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
     {
         var store = Store();
         var artifact = Artifact("processor-observed");
+        await SeedConfirmedIntent(store, artifact);
         Assert.True((await store.SaveAutomaticExecutionAsync(artifact.CorrelationId, artifact, CancellationToken.None)).Succeeded);
         Assert.True((await store.RecordAutomaticRiskDecisionAsync(artifact.CorrelationId, Receipt(artifact), CancellationToken.None)).Succeeded);
         var processor = new AutomaticExecutionProcessor(store, new ValidRuntime(), new SuccessfulGateway(), () => Now);
@@ -120,6 +157,14 @@ public sealed class ModelOffExecutionObservationWriterTests : IDisposable
         Assert.True((await store.TryTransitionAutomaticExecutionAsync(id, AutomaticExecutionQueueStatus.Executing,
             AutomaticExecutionQueueStatus.Succeeded, "worker", "automatic.succeeded", CancellationToken.None)).Succeeded);
         return (await store.GetAutomaticExecutionAsync(id, CancellationToken.None))!;
+    }
+    private static Task SeedConfirmedIntent(AgentSqliteStore store, DurableExecutionArtifactV2 artifact)
+    {
+        var value = Assert.Single(artifact.Intents);
+        var intent = new ExecutionIntent(value.Symbol, Enum.Parse<PositionSide>(value.Side), value.Quantity,
+            value.ReduceOnly, value.StopLoss, value.TakeProfit, value.ClientOrderId, "confirmed", Enum.Parse<DecisionAction>(value.Action),
+            Enum.Parse<ExecutionOrderType>(value.OrderType), value.LimitPrice, value.ExpectedPrice);
+        return store.SaveIntentAsync(artifact.CorrelationId, intent, value.ReduceOnly ? "COMPLETED" : "PROTECTED", "order-confirmed", CancellationToken.None);
     }
     private static string ProjectRoot() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 

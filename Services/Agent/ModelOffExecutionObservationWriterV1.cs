@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using WpeAgent.ModelOff;
 using WpeAgent.TradingAuthorization;
 
@@ -34,29 +36,34 @@ internal sealed class ModelOffExecutionObservationWriterV1
             throw new ArgumentException("Execution events must be non-empty and belong to the execution.", nameof(events));
 
         var timeline = ModelOffExecutionRecoveryContractV1.Timeline(item.ExecutionId, events);
+        var persistedIntents = await _store.GetIntentsByCycleAsync(item.Artifact?.CorrelationId ?? item.ExecutionId,100,ct);
+        var correlation = Correlate(item.Artifact,persistedIntents);
         var latestSequence = timeline.Entries.Max(x => x.Sequence);
         var cycleId = item.Artifact?.CorrelationId ?? item.ExecutionId;
         var stateToken = item.Status.ToString().ToLowerInvariant();
         var identity = $"{item.ExecutionId}-observation-{latestSequence}-{stateToken}";
         var sourceStatus = item.ArtifactValid ? ModelOffSourceStatusV1.Available : ModelOffSourceStatusV1.Invalid;
-        var executionSucceeded = item.Status == AutomaticExecutionQueueStatus.Succeeded && item.ArtifactValid;
-        var executionReasons = ExecutionReasons(item);
+        var executionSucceeded = item.Status == AutomaticExecutionQueueStatus.Succeeded && item.ArtifactValid && correlation.Valid;
+        var executionReasons = ExecutionReasons(item).Concat(
+            item.Status == AutomaticExecutionQueueStatus.Succeeded ? correlation.ReasonCodes : []).ToArray();
         var execution = Output(ModelOffAgentV1.Execution, identity + "-execution", cycleId, evaluationTimeUtc,
             [new(item.ExecutionId, ModelOffSourceKindV1.Audit, item.UpdatedAtUtc, evaluationTimeUtc,
                 sourceStatus, NormalizeHash(item.ArtifactHash))], executionSucceeded,
             executionSucceeded ? "execution_observed_succeeded" : "execution_observed_blocked", executionReasons,
             new { state = stateToken, item.AttemptCount, item.ArtifactValid, item.RiskReceiptValid,
                 timeline_sha256 = timeline.TimelineSha256, event_count = timeline.Entries.Count,
+                expected_intent_count = correlation.ExpectedCount, persisted_intent_count = correlation.PersistedCount,
+                correlation_sha256 = correlation.Sha256, order_correlation_confirmed = correlation.Valid,
                 mutation_performed_by_observer = false });
         var executionDocument = ModelOffCanonicalSerializerV1.Serialize(execution);
 
-        var recoveryState = RecoveryState(item.Status);
-        var recoveryReady = item.Status is AutomaticExecutionQueueStatus.Succeeded or
+        var recoveryState = RecoveryState(item.Status,correlation.Valid);
+        var terminalState = item.Status is AutomaticExecutionQueueStatus.Succeeded or
             AutomaticExecutionQueueStatus.FailedTerminal or AutomaticExecutionQueueStatus.PolicyBlocked or
             AutomaticExecutionQueueStatus.RiskBlocked or AutomaticExecutionQueueStatus.CapabilityUnavailable or
             AutomaticExecutionQueueStatus.MarketStale or AutomaticExecutionQueueStatus.ArtifactInvalid;
-        var quarantined = item.Status is AutomaticExecutionQueueStatus.UnknownOutcome or
-            AutomaticExecutionQueueStatus.Executing or AutomaticExecutionQueueStatus.Reconciling;
+        var recoveryReady = terminalState && (item.Status != AutomaticExecutionQueueStatus.Succeeded || correlation.Valid);
+        var quarantined = !recoveryReady;
         var recoveryReasons = recoveryReady ? Array.Empty<string>() : ["recovery.execution-state-unresolved"];
         var recovery = Output(ModelOffAgentV1.Recovery, identity + "-recovery", cycleId, evaluationTimeUtc,
             [Source(execution.OutputId, executionDocument, evaluationTimeUtc,
@@ -127,13 +134,45 @@ internal sealed class ModelOffExecutionObservationWriterV1
         };
     }
 
-    private static string RecoveryState(AutomaticExecutionQueueStatus status) => status switch
+    private static string RecoveryState(AutomaticExecutionQueueStatus status,bool correlationValid) =>
+        status==AutomaticExecutionQueueStatus.Succeeded&&!correlationValid?"quarantine_order_correlation":status switch
     {
         AutomaticExecutionQueueStatus.Succeeded => "no_recovery_required",
         AutomaticExecutionQueueStatus.UnknownOutcome or AutomaticExecutionQueueStatus.Executing or
             AutomaticExecutionQueueStatus.Reconciling => "quarantine_pending_reconciliation",
         _ => "terminal_no_resubmit"
     };
+
+    private sealed record CorrelationResult(bool Valid,int ExpectedCount,int PersistedCount,string Sha256,IReadOnlyList<string> ReasonCodes);
+
+    private static CorrelationResult Correlate(DurableExecutionArtifactV2? artifact,IReadOnlyList<PersistedIntent> persisted)
+    {
+        var reasons=new List<string>();
+        if(artifact is null)return new(false,0,persisted.Count,HashCorrelation(Array.Empty<object>()),["execution.artifact-invalid"]);
+        var expected=artifact.Intents.OrderBy(x=>x.Sequence).ToArray();
+        if(expected.Length==0)reasons.Add("execution.intent-missing");
+        if(expected.Select(x=>x.ClientOrderId).Distinct(StringComparer.Ordinal).Count()!=expected.Length)reasons.Add("execution.intent-duplicate");
+        var rows=persisted.GroupBy(x=>x.Intent.ClientOrderId,StringComparer.Ordinal).ToDictionary(x=>x.Key,x=>x.ToArray(),StringComparer.Ordinal);
+        foreach(var intent in expected)
+        {
+            if(!rows.TryGetValue(intent.ClientOrderId,out var matches)||matches.Length!=1){reasons.Add("execution.intent-missing");continue;}
+            var row=matches[0];
+            if(!string.Equals(row.Intent.Symbol,intent.Symbol,StringComparison.Ordinal)||
+               !string.Equals(row.Intent.Side.ToString(),intent.Side,StringComparison.Ordinal)||
+               row.Intent.Quantity!=intent.Quantity||row.Intent.ReduceOnly!=intent.ReduceOnly)
+                reasons.Add("execution.intent-conflicting");
+            var expectedStatus=intent.ReduceOnly?"COMPLETED":"PROTECTED";
+            if(!string.Equals(row.Status,expectedStatus,StringComparison.Ordinal)||string.IsNullOrWhiteSpace(row.ExchangeOrderId))
+                reasons.Add("execution.intent-unconfirmed");
+        }
+        if(persisted.Count!=expected.Length)reasons.Add("execution.intent-count-conflicting");
+        var projection=persisted.OrderBy(x=>x.Intent.ClientOrderId,StringComparer.Ordinal).Select(x=>new
+        {x.Intent.ClientOrderId,x.Intent.Symbol,Side=x.Intent.Side.ToString(),x.Intent.Quantity,x.Intent.ReduceOnly,x.Status,HasOrderId=!string.IsNullOrWhiteSpace(x.ExchangeOrderId)}).ToArray();
+        return new(reasons.Count==0,expected.Length,persisted.Count,HashCorrelation(projection),Sorted(reasons));
+    }
+
+    private static string HashCorrelation(object value)=>"sha256:"+Convert.ToHexString(
+        SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value)))).ToLowerInvariant();
 
     private static string NormalizeHash(string value) =>
         value.StartsWith("sha256:", StringComparison.Ordinal) ? value : "sha256:" + value;
