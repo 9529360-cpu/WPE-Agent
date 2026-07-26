@@ -12,6 +12,7 @@
 - Expose strategy registry and lifecycle events to the Web UI.
 - [x] Add historical orders, equity, backtest, skill-call, and audit collection protocols with bounded signed cursors, stale/error withholding, SQLite read-only projection, runtime bridge integration, and focused tests.
 - [x] Add the first deterministic Macro research component: a versioned observed-fact contract requiring canonical Macro source metadata, UTC observation/release times, geography, frequency, unit, and numeric value. Live official-source ingestion and revision history remain open, so the full Macro capability is not promoted.
+- [x] Add the first keyless official Macro adapter for allowlisted BLS public series. It pins the official HTTPS endpoint, performs read-only POST, bounds responses, hashes raw evidence, labels fetch time as first-observed rather than formal release time, and fails closed on malformed/unavailable data. Persistent revision history and release-calendar correlation remain open.
 - Consolidate or quarantine legacy Binance-direct services.
 
 ## P2
