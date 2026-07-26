@@ -382,8 +382,9 @@ public static class AutoTradingAgent
         ArgumentNullException.ThrowIfNull(auditStore);
         try
         {
+            var macroObservations=await auditStore.GetLatestMacroObservationsAsync(8,ct);
             var inputs=ModelOffLiveCycleInputComposerV1.Compose(new(
-                cycleId,evaluationTimeUtc,evidence,research,assessments,decisionReview,riskReview));
+                cycleId,evaluationTimeUtc,evidence,research,assessments,decisionReview,riskReview,macroObservations));
             return await new ModelOffProductionCycleOrchestratorV1(auditStore).RunAsync(
                 new(cycleId,evaluationTimeUtc,inputs),ct);
         }

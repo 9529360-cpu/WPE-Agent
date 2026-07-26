@@ -11,7 +11,8 @@ internal sealed record ModelOffLiveCycleInputRequestV1(
     IReadOnlyDictionary<string, ResearchValidationResult> Research,
     IReadOnlyList<MarketDecisionAssessment> Assessments,
     DecisionReview DecisionReview,
-    IndependentRiskReview RiskReview);
+    IndependentRiskReview RiskReview,
+    IReadOnlyList<PersistedMacroObservation>? MacroObservations = null);
 
 /// <summary>Maps already-computed local runtime truth into canonical Agent inputs without invoking a model or a network.</summary>
 internal static class ModelOffLiveCycleInputComposerV1
@@ -47,16 +48,20 @@ internal static class ModelOffLiveCycleInputComposerV1
         outputs.Add(Input(marketOutput));
 
         var researchReasons = new List<string>();
+        var macro=request.MacroObservations??[];
         if (request.Research.Count == 0) researchReasons.Add("live.research.missing");
         if (request.Research.Values.Any(x => !SafeToken(x.Symbol) || !Finite(x.QualityScore) || x.CoverageDays < 0))
             researchReasons.Add("live.research.invalid");
+        if(macro.GroupBy(x=>x.IndicatorId,StringComparer.Ordinal).Any(x=>x.Count()>1)||macro.Any(x=>!ValidMacro(x,request.EvaluationTimeUtc)))
+            researchReasons.Add("live.research.macro-invalid");
         if (!ModelOffEligibilityV1.IsEligibleForDownstream(marketOutput)) researchReasons.Add("live.research.market-invalid");
         var research = Output(ModelOffAgentV1.Research, request,
             [UpstreamSource(marketOutput, outputs[^1].Document, request.EvaluationTimeUtc)], researchReasons.Count == 0,
             researchReasons.Count == 0 ? "publish_research" : "block", researchReasons,
             new { validations = request.Research.Values.OrderBy(x => x.Symbol, StringComparer.Ordinal).Select(x => new
                 { Symbol = SafeToken(x.Symbol) ? x.Symbol : "unknown", strategy_version_present = !string.IsNullOrWhiteSpace(x.StrategyVersion),
-                    x.SampleSize, x.Trades, x.QualityScore, x.Approved, x.Promoted, x.CoverageDays }).ToArray() });
+                    x.SampleSize, x.Trades, x.QualityScore, x.Approved, x.Promoted, x.CoverageDays }).ToArray(),
+                macro_observations=macro.OrderBy(x=>x.IndicatorId,StringComparer.Ordinal).Select(x=>new{x.IndicatorId,x.ObservationAtUtc,x.Revision,x.Geography,x.Frequency,x.Unit,x.Value,x.SourceArtifactHash,x.FirstObservedAtUtc}).ToArray() });
         outputs.Add(Input(research));
 
         var decision = request.DecisionReview.Decision;
@@ -130,6 +135,8 @@ internal static class ModelOffLiveCycleInputComposerV1
             character is >= 'A' and <= 'Z' or >= '0' and <= '9' or '.' or '_' or '-');
 
     private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
+    private static bool ValidMacro(PersistedMacroObservation value,DateTimeOffset now)=>
+        SafeToken(value.IndicatorId)&&value.Revision>0&&!string.IsNullOrWhiteSpace(value.Geography)&&!string.IsNullOrWhiteSpace(value.Frequency)&&!string.IsNullOrWhiteSpace(value.Unit)&&value.ObservationAtUtc.Offset==TimeSpan.Zero&&value.FirstObservedAtUtc.Offset==TimeSpan.Zero&&value.ObservationAtUtc<=value.FirstObservedAtUtc&&value.FirstObservedAtUtc<=now&&value.SourceArtifactHash.Length==64&&value.SourceArtifactHash.All(Uri.IsHexDigit);
     private static string[] Sorted(IEnumerable<string> values) =>
         values.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
 

@@ -35,6 +35,8 @@ public sealed class MacroResearchPersistenceTests : IDisposable
 
         Assert.Equal(2,count);var health=await store.GetStateAsync("macro-research:health",CancellationToken.None);
         Assert.Contains("READY",health,StringComparison.Ordinal);
+        var latest=await store.GetLatestMacroObservationsAsync(8,CancellationToken.None);
+        Assert.Equal(new[]{"CUUR0000SA0","LNS14000000"},latest.Select(x=>x.IndicatorId));
     }
 
     [Fact]

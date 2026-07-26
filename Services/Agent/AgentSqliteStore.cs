@@ -718,6 +718,16 @@ public sealed class AgentSqliteStore
     {
         var result=new List<PersistedMacroObservation>();if(string.IsNullOrWhiteSpace(indicatorId)||observationAtUtc.Offset!=TimeSpan.Zero)return result;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT revision,geography,frequency,unit,value,source_id,source_artifact_hash,first_observed_at FROM macro_observation_revisions WHERE indicator_id=$id AND observation_at=$at ORDER BY revision";AddParameters(q,("$id",indicatorId),("$at",DbInstant(observationAtUtc)));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))result.Add(new(indicatorId,observationAtUtc,r.GetInt32(0),r.GetString(1),r.GetString(2),r.GetString(3),decimal.Parse(r.GetString(4),CultureInfo.InvariantCulture),r.GetString(5),r.GetString(6),Instant(r.GetString(7))));return result;
     }
+
+    public async Task<IReadOnlyList<PersistedMacroObservation>> GetLatestMacroObservationsAsync(int limit,CancellationToken ct)
+    {
+        var result=new List<PersistedMacroObservation>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
+            SELECT m.indicator_id,m.observation_at,m.revision,m.geography,m.frequency,m.unit,m.value,m.source_id,m.source_artifact_hash,m.first_observed_at
+            FROM macro_observation_revisions m
+            WHERE (m.observation_at,m.revision)=(SELECT x.observation_at,x.revision FROM macro_observation_revisions x WHERE x.indicator_id=m.indicator_id ORDER BY x.observation_at DESC,x.revision DESC LIMIT 1)
+            ORDER BY m.indicator_id LIMIT $limit
+            """;q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,32));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))result.Add(new(r.GetString(0),Instant(r.GetString(1)),r.GetInt32(2),r.GetString(3),r.GetString(4),r.GetString(5),decimal.Parse(r.GetString(6),CultureInfo.InvariantCulture),r.GetString(7),r.GetString(8),Instant(r.GetString(9))));return result;
+    }
     public async Task<IReadOnlyList<NewsEvidence>> SearchNewsAsync(string query,int limit,CancellationToken ct)
     {
         var list=new List<NewsEvidence>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT d.source,d.title,d.url,d.published_at,d.collected_at,d.reliability,d.duplicate_group,d.assets,d.body_summary,d.confidence,d.corroborating_sources,d.event_type,d.is_breaking,d.sentiment FROM news_search f JOIN news_documents d ON d.id=f.rowid WHERE news_search MATCH $q ORDER BY rank LIMIT $l";q.Parameters.AddWithValue("$q",query);q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,50));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var assets=JsonSerializer.Deserialize<string[]>(r.GetString(7))??[];list.Add(new(r.GetString(0),r.GetString(1),r.GetString(2),DateTime.TryParse(r.IsDBNull(3)?null:r.GetString(3),out var p)?p:null,DateTime.Parse(r.GetString(4)),r.GetString(5),r.GetString(6),assets,r.GetString(8),r.GetDouble(9),r.GetInt32(10),r.GetString(11),r.GetInt32(12)==1,r.GetDouble(13)));}return list;

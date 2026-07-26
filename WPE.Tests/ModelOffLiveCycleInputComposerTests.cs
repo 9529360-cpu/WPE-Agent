@@ -40,6 +40,31 @@ public sealed class ModelOffLiveCycleInputComposerTests
         Assert.Equal(first.Select(x => x.Document.Sha256), second.Select(x => x.Document.Sha256));
     }
 
+    [Fact]
+    public void PersistedMacroFactsEnterCanonicalResearchWithoutTradingInference()
+    {
+        var macro=new PersistedMacroObservation("CUUR0000SA0",new(2026,6,1,0,0,0,TimeSpan.Zero),2,"US","monthly","index",334.1m,"bls-public-api-v2",new string('a',64),Now.AddMinutes(-2));
+        var inputs=ModelOffLiveCycleInputComposerV1.Compose(Request() with{MacroObservations=[macro]});
+        var research=inputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Research);
+
+        var persisted=Assert.Single(research.Output.Facts.GetProperty("macro_observations").EnumerateArray());
+        Assert.Equal(2,persisted.GetProperty("Revision").GetInt32());
+        Assert.Equal(334.1m,persisted.GetProperty("Value").GetDecimal());
+        Assert.DoesNotContain("forecast",research.Document.Json,StringComparison.OrdinalIgnoreCase);
+        Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(research.Output));
+    }
+
+    [Fact]
+    public void InvalidPersistedMacroFactFailsResearchClosed()
+    {
+        var future=new PersistedMacroObservation("CUUR0000SA0",new(2026,6,1,0,0,0,TimeSpan.Zero),1,"US","monthly","index",334.1m,"bls-public-api-v2",new string('a',64),Now.AddMinutes(1));
+        var inputs=ModelOffLiveCycleInputComposerV1.Compose(Request() with{MacroObservations=[future]});
+        var research=inputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Research);
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(research.Output));
+        Assert.Contains("live.research.macro-invalid",research.Output.Decision.ReasonCodes);
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(inputs[^1].Output));
+    }
+
     [Theory]
     [InlineData("stale")]
     [InlineData("empty-market")]
