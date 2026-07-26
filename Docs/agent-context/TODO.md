@@ -24,6 +24,7 @@
 - [x] Implement the bounded Teacher capability as a deterministic once-daily market brief sourced only from eligible canonical Research, with fixed financial-term explanations and explicit `MarketBrief` notification opt-in. Interactive teaching, quizzes, scoring, model-written commentary, and trading authority are outside the accepted scope.
 - [x] Expose explicit `MarketBrief` consent through secure WPF notification settings, persist it through the existing configuration service, and show the allowed event set read-only in Web runtime settings.
 - Consolidate or quarantine legacy Binance-direct services.
+- [x] Make confirmed-close post-trade accounting idempotent by client order identity, reject conflicting replays, exclude partial fills from realized PnL, and persist a deterministic bounded review fact into local long-term memory. Full post-trade attribution remains open.
 
 ## P2
 - Add compact context/token/latency/cost metrics for Brain calls.
