@@ -107,12 +107,12 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
     }
     public async Task<MarketEvidence> GetMarketAsync(string symbol,CancellationToken ct)
     {
-        var canonical=C(symbol);var native=N(canonical);
-        var s15=await Observe(native,"15m",ct); var s1=await Observe(native,"1h",ct); var s4=await Observe(native,"4h",ct);
+        var canonical=C(symbol);var native=N(canonical);var observed=DateTime.UtcNow;
+        var candles=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"15m",240,ct),"15m",observed);var c1=await GetCandlesAsync(canonical,"1h",120,ct);var c4=await GetCandlesAsync(canonical,"4h",90,ct);
+        var s15=ConfirmedMarketCandlesV1.Analyze(canonical,"15m",candles,observed);var s1=ConfirmedMarketCandlesV1.Analyze(canonical,"1h",c1,observed);var s4=ConfirmedMarketCandlesV1.Analyze(canonical,"4h",c4,observed);
         var deriv=await GetDerivativesNative(native,ct);
-        var candles=await GetCandlesAsync(canonical,"15m",240,ct);
         var quality=await GetMarketQualityAsync(native,candles,ct);
-        return new(canonical,s15.Price,s15.Support,s15.Resistance,s15.Rsi,s15.ShortTrend,s1.ShortTrend,s4.ShortTrend,deriv,DateTime.UtcNow){Candles=candles,Quality=quality};
+        return new(canonical,s15.Price,s15.Support,s15.Resistance,s15.Rsi,s15.ShortTrend,s1.ShortTrend,s4.ShortTrend,deriv,s15.Timestamp){Candles=candles,Quality=quality};
     }
     public async Task<IReadOnlyList<DerivativesSnapshot>> GetDerivativeHistoryAsync(string symbol,CancellationToken ct)=>[await GetDerivativesNative(N(symbol),ct)];
     public async Task<IReadOnlyList<CandleEvidence>> GetCandlesAsync(string symbol,string interval,int limit,CancellationToken ct)
@@ -204,7 +204,6 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
     }
     public ValueTask DisposeAsync(){_api.Dispose();return ValueTask.CompletedTask;}
 
-    private async Task<MarketSkillSnapshot> Observe(string symbol,string interval,CancellationToken ct)=>await new MarketStructureSkill(_api).ObserveAsync(symbol,interval,ct);
     private async Task<DerivativesSnapshot> GetDerivativesNative(string symbol,CancellationToken ct)
     {
         async Task<decimal> Last(string path,string property){using var d=JsonDocument.Parse(await _api.GetPublicRawAsync(path,new Dictionary<string,string?>{{"symbol",symbol},{"period","15m"},{"limit","2"}},ct));var a=d.RootElement;var e=a.ValueKind==JsonValueKind.Array?a.EnumerateArray().Last():a;return e.TryGetProperty(property,out var p)&&decimal.TryParse(p.GetString(),NumberStyles.Any,CultureInfo.InvariantCulture,out var v)?v:0;}

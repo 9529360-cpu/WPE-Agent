@@ -17,6 +17,23 @@ public sealed record ManagedPosition(string Symbol, PositionSide Side, decimal Q
 public sealed record ExchangeOrder(string Symbol, string OrderId, string ClientOrderId, string Status, decimal ExecutedQuantity, decimal AvgPrice, string Type, PositionSide? PositionSide, bool IsProtection, DateTime UpdatedAt);
 public sealed record DerivativesSnapshot(decimal FundingRate, decimal OpenInterest, decimal LongShortRatio, decimal TopAccountRatio, decimal TopPositionRatio, decimal TakerBuySellRatio, decimal Basis);
 public sealed record CandleEvidence(DateTime OpenTime, decimal Open, decimal High, decimal Low, decimal Close, decimal Volume, decimal QuoteVolume, long Trades, decimal TakerBuyVolume);
+internal static class ConfirmedMarketCandlesV1
+{
+    internal static IReadOnlyList<CandleEvidence> Select(IReadOnlyList<CandleEvidence> values,string interval,DateTime observedAtUtc)
+    {
+        var duration=Duration(interval);var observed=observedAtUtc.Kind==DateTimeKind.Utc?observedAtUtc:observedAtUtc.ToUniversalTime();
+        return values.Where(x=>Valid(x)&&x.OpenTime.Kind==DateTimeKind.Utc&&x.OpenTime<=observed-duration)
+            .OrderBy(x=>x.OpenTime).GroupBy(x=>x.OpenTime).Where(x=>x.Count()==1).Select(x=>x.Single()).ToArray();
+    }
+    internal static MarketSkillSnapshot Analyze(string symbol,string interval,IReadOnlyList<CandleEvidence> values,DateTime observedAtUtc)
+    {
+        var candles=Select(values,interval,observedAtUtc);if(candles.Count<31)throw new InvalidOperationException($"{interval} confirmed market history is incomplete");
+        var closes=candles.Select(x=>x.Close).ToArray();var price=closes[^1];var changes=closes.Zip(closes.Skip(1),(a,b)=>a==0?0d:(double)((b/a-1)*100)).ToArray();var gains=changes.TakeLast(14).Select(x=>Math.Max(x,0)).Average();var losses=changes.TakeLast(14).Select(x=>Math.Max(-x,0)).Average();var rsi=losses==0?100:100-100/(1+gains/losses);
+        return new(symbol,interval,price,candles.TakeLast(20).Min(x=>x.Low),candles.TakeLast(20).Max(x=>x.High),rsi,(double)(price/closes[^11]-1)*100,(double)(price/closes[^31]-1)*100,candles[^1].OpenTime+Duration(interval));
+    }
+    internal static TimeSpan Duration(string interval)=>interval switch{"1m"=>TimeSpan.FromMinutes(1),"5m"=>TimeSpan.FromMinutes(5),"15m"=>TimeSpan.FromMinutes(15),"1h"=>TimeSpan.FromHours(1),"4h"=>TimeSpan.FromHours(4),"1d"=>TimeSpan.FromDays(1),_=>throw new ArgumentException("Unsupported market interval.",nameof(interval))};
+    private static bool Valid(CandleEvidence x)=>x.Open>0&&x.High>0&&x.Low>0&&x.Close>0&&x.Low<=Math.Min(x.Open,x.Close)&&x.High>=Math.Max(x.Open,x.Close)&&x.High>=x.Low&&x.Volume>=0&&x.QuoteVolume>=0&&x.Trades>=0&&x.TakerBuyVolume>=0;
+}
 public sealed record RealtimeMarketSnapshot(string Symbol,decimal LastPrice,decimal BestBid,decimal BestAsk,decimal BidQuantity,decimal AskQuantity,decimal BuyVolume5m,decimal SellVolume5m,decimal LastMinuteVolume,DateTime UpdatedAt,long Messages,bool Connected)
 {
     public double SpreadBps=>BestBid>0&&BestAsk>=BestBid?(double)((BestAsk-BestBid)/((BestAsk+BestBid)/2)*10000):999;
