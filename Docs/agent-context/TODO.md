@@ -26,7 +26,7 @@
 - Consolidate or quarantine legacy Binance-direct services.
 - [x] Make confirmed-close post-trade accounting idempotent by client order identity, reject conflicting replays, exclude partial fills from realized PnL, and persist a deterministic bounded review fact into local long-term memory. Full post-trade attribution remains open.
 - [x] Add a versioned canonical Position reconciliation gate that compares the decimal local execution ledger with fresh provider positions, persists tamper-evident evidence, blocks new risk on every unknown/conflicting state, and leaves reduce-only recovery available. Protection-order reconciliation and explicit external-position isolation remain open.
-- [x] Replace the position-count protection heuristic with versioned read-only SL/TP reconciliation and tamper-evident persistence. Missing, orphaned, stale, or invalid protection blocks new risk without attempting an exchange mutation; Bybit position-level TP/SL observation remains open.
+- [x] Replace the position-count protection heuristic with versioned read-only SL/TP reconciliation and tamper-evident persistence. Missing, orphaned, stale, or invalid protection blocks new risk without attempting an exchange mutation. Bybit position-level TP/SL is now observed read-only through `/v5/position/list`, and synthetic evidence cannot enter the ordinary order-cancellation endpoint.
 
 ## P2
 - Add compact context/token/latency/cost metrics for Brain calls.

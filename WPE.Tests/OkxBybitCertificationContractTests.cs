@@ -212,6 +212,24 @@ public sealed class OkxBybitCertificationContractTests
 
         await Assert.ThrowsAsync<NotSupportedException>(() =>
             provider.CancelOrderAsync("BTCUSDT", "position-tpsl:offline", CancellationToken.None));
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
+            provider.CancelOrderAsync("BTCUSDT", "position-protection:BTCUSDT:long:position_tpsl", CancellationToken.None));
+    }
+
+    [Fact]
+    public void Bybit_PositionLevelProtectionIsProjectedAsReadOnlyEvidence()
+    {
+        using var json=JsonDocument.Parse("""[{"symbol":"BTCUSDT","side":"Buy","positionIdx":"1","size":"1","stopLoss":"49000","takeProfit":"52000"},{"symbol":"ETHUSDT","side":"Sell","positionIdx":"2","size":"2","stopLoss":"3100","takeProfit":"0"},{"symbol":"SOLUSDT","side":"","positionIdx":"0","size":"3","stopLoss":"100","takeProfit":"0"},{"symbol":"XRPUSDT","side":"Buy","positionIdx":"1","size":"0","stopLoss":"1","takeProfit":"2"}]""");var observed=new DateTime(2026,7,27,9,0,0,DateTimeKind.Utc);
+        var rows=BybitExchangeProvider.ParsePositionProtectionOrders(json.RootElement,observed,value=>value);
+        var btc=Assert.Single(rows,x=>x.Symbol=="BTCUSDT");Assert.Equal("POSITION_TPSL",btc.Type);Assert.Equal(PositionSide.Long,btc.PositionSide);Assert.True(btc.IsProtection);Assert.Equal(observed,btc.UpdatedAt);
+        var eth=Assert.Single(rows,x=>x.Symbol=="ETHUSDT");Assert.Equal("STOP_POSITION",eth.Type);Assert.Equal(PositionSide.Short,eth.PositionSide);
+        Assert.Null(Assert.Single(rows,x=>x.Symbol=="SOLUSDT").PositionSide);Assert.DoesNotContain(rows,x=>x.Symbol=="XRPUSDT");
+    }
+
+    [Fact]
+    public void Bybit_MalformedPositionProtectionPayloadFailsClosed()
+    {
+        using var json=JsonDocument.Parse("""{"list":{}}""");Assert.Throws<InvalidOperationException>(()=>BybitExchangeProvider.ParsePositionProtectionOrders(json.RootElement.GetProperty("list"),DateTime.UtcNow,value=>value));
     }
 
     [Theory]
@@ -446,7 +464,7 @@ public sealed class OkxBybitCertificationContractTests
         InjectHttp(provider, handler, contract.OfficialTestnetEndpoint);
 
         Assert.Empty(await provider.Broker.GetOpenOrdersAsync("BTCUSDT", CancellationToken.None));
-        Assert.Equal(1, handler.CallCount);
+        Assert.Equal(2, handler.CallCount);
     }
 
     private static ProviderContract Contract(string providerId) => providerId switch
@@ -530,7 +548,12 @@ public sealed class OkxBybitCertificationContractTests
                 return Task.FromResult(JsonResponse("{\"code\":\"0\",\"data\":[]}"));
             }
 
-            Assert.Equal("/v5/order/realtime?category=linear&settleCoin=USDT&symbol=BTCUSDT", request.RequestUri!.PathAndQuery);
+            Assert.Contains(request.RequestUri!.PathAndQuery,
+            new string[]
+            {
+                "/v5/order/realtime?category=linear&settleCoin=USDT&symbol=BTCUSDT",
+                "/v5/position/list?category=linear&settleCoin=USDT&symbol=BTCUSDT"
+            });
             Assert.Single(headers["X-BAPI-API-KEY"]);
             Assert.Single(headers["X-BAPI-SIGN"]);
             Assert.True(long.TryParse(Assert.Single(headers["X-BAPI-TIMESTAMP"]), NumberStyles.None, CultureInfo.InvariantCulture, out _));
