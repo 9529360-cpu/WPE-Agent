@@ -31,6 +31,18 @@ public sealed class PostTradeReviewTests : IDisposable
         Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));
     }
 
+    [Fact]
+    public async Task MultipleEntriesUseDeterministicWeightedCostBasis()
+    {
+        var store=new AgentSqliteStore(Database);var first=Intent("entry-a",false,1m,100m);var second=Intent("entry-b",false,3m,120m);var close=Intent("close-weighted",true,2m,130m);await store.RecordExecutionAsync("open-a",first,Order(first,"FILLED",1m,100m),"strategy-v1",default);await store.RecordExecutionAsync("open-b",second,Order(second,"FILLED",3m,120m),"strategy-v1",default);await store.RecordExecutionAsync("close-weighted",close,Order(close,"FILLED",2m,130m),"strategy-v1",default);var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));Assert.Equal(115m,review.EntryPrice);Assert.Equal(29.804m,review.NetPnl);Assert.Equal(29.804m/230m,review.ReturnPct);
+    }
+
+    [Fact]
+    public async Task PriorReductionPreservesAverageAndHistoricalReplaySurvivesLaterEntry()
+    {
+        var store=new AgentSqliteStore(Database);var first=Intent("entry-a",false,1m,100m);var second=Intent("entry-b",false,1m,120m);var close=Intent("close-first",true,1m,130m);await store.RecordExecutionAsync("open-a",first,Order(first,"FILLED",1m,100m),"strategy-v1",default);await store.RecordExecutionAsync("open-b",second,Order(second,"FILLED",1m,120m),"strategy-v1",default);var fill=Order(close,"FILLED",1m,130m);await store.RecordExecutionAsync("close-first",close,fill,"strategy-v1",default);var later=Intent("entry-later",false,1m,200m);await store.RecordExecutionAsync("open-later",later,Order(later,"FILLED",1m,200m),"strategy-v2",default);await store.RecordExecutionAsync("close-first",close,fill,"strategy-v1",default);var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default),x=>x.ClientOrderId=="close-first");Assert.Equal(110m,review.EntryPrice);Assert.Equal(19.904m,review.NetPnl);
+    }
+
     private static ExecutionIntent Intent(string id,bool reduceOnly,decimal quantity,decimal expected)=>new("BTCUSDT",PositionSide.Long,quantity,reduceOnly,90m,120m,id,"test",reduceOnly?DecisionAction.CloseLong:DecisionAction.OpenLong,ExecutionOrderType.Market,0,expected);
     private static ExchangeOrder Order(ExecutionIntent intent,string status,decimal quantity,decimal price)=>new(intent.Symbol,"order-"+intent.ClientOrderId,intent.ClientOrderId,status,quantity,price,"MARKET",intent.Side,false,DateTime.UtcNow);
     public void Dispose(){SqliteConnection.ClearAllPools();if(Directory.Exists(_directory))Directory.Delete(_directory,true);}
