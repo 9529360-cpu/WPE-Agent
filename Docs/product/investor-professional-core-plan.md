@@ -132,7 +132,7 @@
 | Backtest | 历史验证、成本、样本外、稳健性和复现 | StrategyResearch、RuntimeBacktest | **已实现基础，专业覆盖部分实现** |
 | Risk | 独立阻断、限额、组合和异常门禁 | IndependentRisk、PortfolioRisk、Risk Gate | **已实现且验证** |
 | Execution | 仅执行已批准且能力可用的订单 | ReliableOrderExecutor、provider adapters | **Testnet 基础已验证；商业认证部分实现** |
-| Position | 跟踪持仓、保护、减仓和重新风险评估 | PositionManagement、保护单审计 | **部分实现** |
+| Position | 跟踪持仓、保护、减仓和重新风险评估 | PositionManagement、保护单审计 | **有限验收**：本地确定性数量、保护与外部仓位隔离门禁已通过；尚无实盘 Testnet provider 认证 |
 | Review | 交易前审批；交易后事实归因和改进 | DecisionReviewer、audit、memory | **部分实现，需拆分 pre-trade / post-trade** |
 | Teacher | 只把可追踪交易事实解释成课程和客户内容 | 无独立实现 | **未实现** |
 

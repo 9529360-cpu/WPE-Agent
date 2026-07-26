@@ -43,6 +43,14 @@ public sealed class PositionReconciliationTests : IDisposable
     }
 
     [Fact]
+    public async Task PositionAndIsolationAuditRowsAreDatabaseAppendOnly()
+    {
+        var store=new AgentSqliteStore(Database);var position=PositionReconciliationServiceV1.Reconcile([],[],Now,Now);var isolation=ExternalPositionIsolationServiceV1.Evaluate([],[],Now,Now);Assert.True(await store.SavePositionReconciliationAsync(position,default));Assert.True(await store.SaveExternalPositionIsolationAsync(isolation,default));
+        await using var connection=new SqliteConnection($"Data Source={Database}");await connection.OpenAsync();
+        foreach(var sql in new[]{"UPDATE position_reconciliation_audits SET state='Conflicting'","DELETE FROM position_reconciliation_audits","UPDATE external_position_isolation_audits SET state='Isolated'","DELETE FROM external_position_isolation_audits"}){await using var command=connection.CreateCommand();command.CommandText=sql;await Assert.ThrowsAsync<SqliteException>(()=>command.ExecuteNonQueryAsync());}
+    }
+
+    [Fact]
     public async Task ExecutionLedgerPreservesDecimalQuantityWithoutFloatingPointAggregation()
     {
         var store=new AgentSqliteStore(Database);var first=Intent("open-a",false,.123456789123456789m);var second=Intent("open-b",false,.000000000000000001m);await store.RecordExecutionAsync("a",first,Order(first,"FILLED",first.Quantity),"v1",default);await store.RecordExecutionAsync("b",second,Order(second,"FILLED",second.Quantity),"v1",default);Assert.Equal(.123456789123456790m,Assert.Single(await store.GetExecutionPositionLedgerAsync(default)).Quantity);
@@ -51,7 +59,14 @@ public sealed class PositionReconciliationTests : IDisposable
     [Fact]
     public void ProductionRiskIncreaseGateConsumesPositionReconciliation()
     {
-        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("PositionReconciliationServiceV1.Reconcile",source,StringComparison.Ordinal);Assert.Contains("&&positionReconciliation.AllowsRiskIncrease",source,StringComparison.Ordinal);Assert.Contains("ExecutePositionManagementRecoveryAsync",source,StringComparison.Ordinal);
+        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("PositionReconciliationServiceV1.Reconcile",source,StringComparison.Ordinal);Assert.Contains("&&positionReconciliation.AllowsRiskIncrease",source,StringComparison.Ordinal);Assert.Contains("ExecutePositionManagementRecoveryAsync",source,StringComparison.Ordinal);Assert.Contains("ApplyPositionMutationInvalidation",source,StringComparison.Ordinal);Assert.Contains("position.reconciliation-invalidated-by-recovery",source,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SuccessfulRecoveryMutationInvalidatesCurrentCyclePositionAuthority()
+    {
+        var unchanged=币安量化机器人.Services.AutoTradingAgent.ApplyPositionMutationInvalidation(true,"position.reconciliation-confirmed",false);Assert.True(unchanged.SafeToIncreaseRisk);Assert.Equal("position.reconciliation-confirmed",unchanged.SafetyMessage);
+        var changed=币安量化机器人.Services.AutoTradingAgent.ApplyPositionMutationInvalidation(true,"position.reconciliation-confirmed",true);Assert.False(changed.SafeToIncreaseRisk);Assert.Equal("position.reconciliation-invalidated-by-recovery",changed.SafetyMessage);
     }
 
     [Fact]

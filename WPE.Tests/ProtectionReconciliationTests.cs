@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using 币安量化机器人.Services.Agent;
+using 币安量化机器人.Services.Exchange;
 
 namespace WPE.Tests;
 
@@ -24,10 +25,19 @@ public sealed class ProtectionReconciliationTests : IDisposable
     }
 
     [Fact]
-    public void SeparateStopAndTakeOrTwoGenericTriggersAreConfirmed()
+    public void SeparateStopAndTakeAreConfirmedButGenericOrDuplicateTriggersFailClosed()
     {
         var separate=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("sl","STOP_MARKET"),Protection("tp","TAKE_PROFIT_MARKET")],Now,Now);Assert.True(separate.AllowsRiskIncrease);Assert.Equal("separate",Assert.Single(separate.Legs).ProofKind);
-        var generic=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("a","TRIGGER"),Protection("b","TRIGGER")],Now,Now);Assert.True(generic.AllowsRiskIncrease);
+        var explicitTriggers=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("sl2","STOP_TRIGGER"),Protection("tp2","TAKE_PROFIT_TRIGGER")],Now,Now);Assert.True(explicitTriggers.AllowsRiskIncrease);
+        var generic=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("a","TRIGGER"),Protection("b","TRIGGER")],Now,Now);Assert.Equal(ProtectionReconciliationStateV1.Incomplete,generic.State);Assert.False(generic.AllowsRiskIncrease);
+        var duplicateStops=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("s1","STOP_TRIGGER"),Protection("s2","STOP_TRIGGER")],Now,Now);Assert.Equal(ProtectionReconciliationStateV1.Incomplete,duplicateStops.State);Assert.Contains(duplicateStops.ReasonCodes,x=>x.Contains("missing-take-profit",StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ProviderProtectionTypesAreExplicitOrUnclassified()
+    {
+        Assert.Equal("TAKE_PROFIT_TRIGGER",GateExchangeProvider.ProtectionType(1,PositionSide.Long));Assert.Equal("STOP_TRIGGER",GateExchangeProvider.ProtectionType(2,PositionSide.Long));Assert.Equal("STOP_TRIGGER",GateExchangeProvider.ProtectionType(1,PositionSide.Short));Assert.Equal("TAKE_PROFIT_TRIGGER",GateExchangeProvider.ProtectionType(2,PositionSide.Short));Assert.Equal("TRIGGER_UNCLASSIFIED",GateExchangeProvider.ProtectionType(0,PositionSide.Long));
+        Assert.Equal("STOP_TRIGGER",BitgetExchangeProvider.ProtectionType("loss_plan","external"));Assert.Equal("TAKE_PROFIT_TRIGGER",BitgetExchangeProvider.ProtectionType("profit_plan","external"));Assert.Equal("STOP_TRIGGER",BitgetExchangeProvider.ProtectionType("","wpe-sl"));Assert.Equal("TPSL_UNCLASSIFIED",BitgetExchangeProvider.ProtectionType("","external"));
     }
 
     [Fact]
@@ -49,6 +59,13 @@ public sealed class ProtectionReconciliationTests : IDisposable
     {
         var report=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("p1","OCO")],Now,Now);var store=new AgentSqliteStore(Database);Assert.True(await store.SaveProtectionReconciliationAsync(report,default));Assert.False(await new AgentSqliteStore(Database).SaveProtectionReconciliationAsync(report,default));
         await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveProtectionReconciliationAsync(report with{CanonicalBytes=[..report.CanonicalBytes,0]},default));await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveProtectionReconciliationAsync(report with{State=ProtectionReconciliationStateV1.Incomplete,AllowsRiskIncrease=false},default));
+    }
+
+    [Fact]
+    public async Task ProtectionAuditRowsAreDatabaseAppendOnly()
+    {
+        var store=new AgentSqliteStore(Database);var report=ProtectionReconciliationServiceV1.Reconcile([],[],Now,Now);Assert.True(await store.SaveProtectionReconciliationAsync(report,default));await using var connection=new SqliteConnection($"Data Source={Database}");await connection.OpenAsync();
+        foreach(var sql in new[]{"UPDATE protection_reconciliation_audits SET state='Incomplete'","DELETE FROM protection_reconciliation_audits"}){await using var command=connection.CreateCommand();command.CommandText=sql;await Assert.ThrowsAsync<SqliteException>(()=>command.ExecuteNonQueryAsync());}
     }
 
     [Fact]

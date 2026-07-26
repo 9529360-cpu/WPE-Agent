@@ -49,6 +49,14 @@ public sealed class ModelOffCapabilityMaturityTests
         Assert.Equal("partial",String(audit,"maturity"));Assert.False(Bool(audit,"accepted"));
     }
 
+    [Fact]
+    public void PositionAcceptanceIsBoundedAndDoesNotUpgradeExecutionOrRecoveryAggregates()
+    {
+        var root=LoadCanonical();var position=root["capabilities"]!.AsArray().Single(Capability("position"));var aggregates=root["aggregates"]!.AsArray();
+        Assert.Equal("yes",String(position,"maturity"));Assert.True(Bool(position,"implemented"));Assert.True(Bool(position,"accepted"));Assert.Contains("same-cycle mutation invalidation",String(position,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no live Testnet provider certification",String(position,"acceptance_scope"),StringComparison.Ordinal);
+        foreach(var id in new[]{"execution","recovery"}){var aggregate=aggregates.Single(node=>String(node,"id")==id);Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));}
+    }
+
     [Theory]
     [InlineData("missing")]
     [InlineData("duplicate")]

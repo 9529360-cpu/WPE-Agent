@@ -248,6 +248,8 @@ public static class AutoTradingAgent
                 {
                     await runtime.TransitionAsync(cycle,WorkflowNode.SafetyExecution,new{RiskReducingIntents=management.Intents.Count,ProtectionAdjustments=management.ProtectionAdjustments.Count},ct);
                     managementActivity=await ExecutePositionManagementRecoveryAsync(recoveryServices.Recovery,cycle,management.Intents,positions,ct)>0;
+                    (safeToIncreaseRisk,safetyMessage)=ApplyPositionMutationInvalidation(safeToIncreaseRisk,safetyMessage,managementActivity);
+                    if(managementActivity)await Db.SetStateAsync("authorization.position-reconciliation","position.reconciliation-invalidated-by-recovery",ct);
                     if(management.ProtectionAdjustments.Count>0){var blocked=executionGateway.AssessUnverifiedAutomaticMutation(AutomaticMutationPath.PositionManagement,management.ProtectionAdjustments.Count);safeToIncreaseRisk=false;safetyMessage=blocked.Code;await Db.SetStateAsync("authorization.position-management",blocked.Code,ct);}
                 }
 
@@ -376,6 +378,9 @@ public static class AutoTradingAgent
         }
         finally{ExecutionGate.Release();}
     }
+
+    internal static (bool SafeToIncreaseRisk,string SafetyMessage) ApplyPositionMutationInvalidation(bool safeToIncreaseRisk,string safetyMessage,bool positionChanged)=>
+        positionChanged?(false,"position.reconciliation-invalidated-by-recovery"):(safeToIncreaseRisk,safetyMessage);
 
     internal static async Task<ModelOffProductionCycleResultV1?> RunModelOffProductionShadowAsync(
         AgentSqliteStore auditStore,string cycleId,DateTimeOffset evaluationTimeUtc,EvidencePack evidence,
