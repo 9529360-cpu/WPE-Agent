@@ -8,14 +8,16 @@ namespace WPE.Tests;
 public sealed class MarketAggregateAcceptanceTests
 {
     private static readonly DateTimeOffset Start=new(2026,7,27,12,0,0,TimeSpan.Zero);
+    private static readonly MarketAcceptanceCandidateV1 Candidate=new("3.6.0",Hash("candidate"));
 
     [Fact]
     public async Task FourFreshCanonicalSamplesProduceEligibleSustainedEvidence()
     {
         var now=Start;await using var source=new FakeSource(()=>Market(now.AddMinutes(-5),50000m+now.Minute));
-        var artifact=await MarketAggregateAcceptanceCollectorV1.CollectAsync(source,MarketAggregateEvidenceCanonicalizerV1.SustainedFreshnessRequirement,"BTCUSDT",4,TimeSpan.FromMinutes(5),()=>now,(span,_)=>{now+=span;return Task.CompletedTask;});
+        var artifact=await MarketAggregateAcceptanceCollectorV1.CollectAsync(source,MarketAggregateEvidenceCanonicalizerV1.SustainedFreshnessRequirement,"BTCUSDT",Candidate,4,TimeSpan.FromMinutes(5),()=>now,(span,_)=>{now+=span;return Task.CompletedTask;});
 
         Assert.True(MarketAggregateEvidenceCanonicalizerV1.IsCanonical(artifact,now));Assert.Equal(4,artifact.Samples.Count);Assert.Equal(TimeSpan.FromMinutes(15),artifact.CompletedAtUtc-artifact.StartedAtUtc);
+        Assert.True(MarketAggregateEvidenceCanonicalizerV1.TryParseCanonical(artifact.CanonicalBytes,out var parsed));Assert.Equal(artifact.CanonicalSha256,parsed!.CanonicalSha256);
         var evidence=MarketAggregateEvidenceCanonicalizerV1.ToAcceptanceEvidence(artifact,now);Assert.Equal(AcceptanceEvidenceEnvironmentV1.Target,evidence.Environment);Assert.Equal(artifact.CanonicalSha256,evidence.ArtifactSha256);
     }
 
@@ -23,22 +25,23 @@ public sealed class MarketAggregateAcceptanceTests
     public void ShortWindowStaleSourceDuplicateAndTamperingFailClosed()
     {
         var samples=new[]{Sample(Start,Start.AddMinutes(-5),"a"),Sample(Start.AddMinutes(5),Start,"b"),Sample(Start.AddMinutes(10),Start.AddMinutes(5),"c"),Sample(Start.AddMinutes(14),Start.AddMinutes(9),"d")};
-        var shortWindow=MarketAggregateEvidenceCanonicalizerV1.Create(MarketAggregateEvidenceCanonicalizerV1.SustainedFreshnessRequirement,"binance-futures","Testnet","BTCUSDT",samples);
+        var shortWindow=MarketAggregateEvidenceCanonicalizerV1.Create(MarketAggregateEvidenceCanonicalizerV1.SustainedFreshnessRequirement,"binance-futures","Testnet","BTCUSDT",Candidate,samples);
         Assert.False(MarketAggregateEvidenceCanonicalizerV1.IsCanonical(shortWindow,Start.AddMinutes(14)));
 
-        var valid=MarketAggregateEvidenceCanonicalizerV1.Create(MarketAggregateEvidenceCanonicalizerV1.SustainedFreshnessRequirement,"binance-futures","Testnet","BTCUSDT",samples.Select((x,i)=>x with{ObservedAtUtc=Start.AddMinutes(i*5),SourceAtUtc=Start.AddMinutes(i*5-5)}).ToArray());
+        var valid=MarketAggregateEvidenceCanonicalizerV1.Create(MarketAggregateEvidenceCanonicalizerV1.SustainedFreshnessRequirement,"binance-futures","Testnet","BTCUSDT",Candidate,samples.Select((x,i)=>x with{ObservedAtUtc=Start.AddMinutes(i*5),SourceAtUtc=Start.AddMinutes(i*5-5)}).ToArray());
         Assert.True(MarketAggregateEvidenceCanonicalizerV1.IsCanonical(valid,Start.AddMinutes(15)));
         Assert.False(MarketAggregateEvidenceCanonicalizerV1.IsCanonical(valid with{Samples=valid.Samples.Select((x,i)=>i==0?x with{SourceAtUtc=x.ObservedAtUtc.AddMinutes(-21)}:x).ToArray()},Start.AddMinutes(15)));
         Assert.False(MarketAggregateEvidenceCanonicalizerV1.IsCanonical(valid with{Samples=valid.Samples.Select(x=>x with{MarketEvidenceSha256=valid.Samples[0].MarketEvidenceSha256}).ToArray()},Start.AddMinutes(15)));
         Assert.False(MarketAggregateEvidenceCanonicalizerV1.IsCanonical(valid with{CanonicalBytes=Encoding.UTF8.GetBytes("tampered")},Start.AddMinutes(15)));
+        Assert.False(MarketAggregateEvidenceCanonicalizerV1.TryParseCanonical(Encoding.UTF8.GetBytes("{\"schema\":\"bad\"}"),out _));
     }
 
     [Fact]
     public async Task TypedMarketArtifactsSatisfyOnlyTheTwoLiveMarketRequirements()
     {
         var now=Start;await using var source=new FakeSource(()=>Market(now.AddMinutes(-5),50000m+now.Minute));
-        var read=await MarketAggregateAcceptanceCollectorV1.CollectAsync(source,MarketAggregateEvidenceCanonicalizerV1.LiveReadRequirement,"BTCUSDT",1,TimeSpan.Zero,()=>now,(_,_)=>Task.CompletedTask);
-        var sustained=await MarketAggregateAcceptanceCollectorV1.CollectAsync(source,MarketAggregateEvidenceCanonicalizerV1.SustainedFreshnessRequirement,"BTCUSDT",4,TimeSpan.FromMinutes(5),()=>now,(span,_)=>{now+=span;return Task.CompletedTask;});
+        var read=await MarketAggregateAcceptanceCollectorV1.CollectAsync(source,MarketAggregateEvidenceCanonicalizerV1.LiveReadRequirement,"BTCUSDT",Candidate,1,TimeSpan.Zero,()=>now,(_,_)=>Task.CompletedTask);
+        var sustained=await MarketAggregateAcceptanceCollectorV1.CollectAsync(source,MarketAggregateEvidenceCanonicalizerV1.SustainedFreshnessRequirement,"BTCUSDT",Candidate,4,TimeSpan.FromMinutes(5),()=>now,(span,_)=>{now+=span;return Task.CompletedTask;});
         var evidence=new List<AggregateAcceptanceEvidenceV1>{Local("market.canonical-contract"),Local("market.adversarial-fail-closed"),MarketAggregateEvidenceCanonicalizerV1.ToAcceptanceEvidence(read,now),MarketAggregateEvidenceCanonicalizerV1.ToAcceptanceEvidence(sustained,now)};
 
         var result=ModelOffAggregateAcceptanceGateV1.Evaluate(ModelOffAggregateAgentV1.Market,evidence,now);
