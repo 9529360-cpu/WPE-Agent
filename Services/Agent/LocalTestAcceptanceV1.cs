@@ -32,6 +32,24 @@ public static class LocalTestAcceptanceCanonicalizerV1
             "WPE.Tests.RealtimeMarketIntegrityTests.OnlyCompleteFreshConnectedSnapshotIsEligibleForEnrichment",
             "WPE.Tests.RealtimeMarketIntegrityTests.UnknownAndMalformedKnownEventsDoNotRefreshMarketState",
             "WPE.Tests.RealtimeMarketIntegrityTests.ValidKnownEventsAloneAdvanceMessageCount"
+        ],
+        ["research.canonical-contract"]=
+        [
+            "WPE.Tests.ModelOffLiveCycleInputComposerTests.CanonicalNewsEvidenceEntersResearchByHashWithoutBodyText",
+            "WPE.Tests.ModelOffLiveCycleInputComposerTests.ResearchBindsTechnicalAssessmentToCanonicalMarketEvidence",
+            "WPE.Tests.ModelOffResearchCapabilityTests.AdjacentInvariantsPreserveExplicitFactsAndCanonicalSourceOrdering",
+            "WPE.Tests.ModelOffResearchCapabilityTests.BacktestFactsAreCanonicalRepeatableAndBoundToExactStrategySource",
+            "WPE.Tests.ModelOffResearchCapabilityTests.CapabilitySpecificEntryPointsProduceTheSameCanonicalContract",
+            "WPE.Tests.ModelOffResearchCapabilityTests.FundamentalCapabilityRecordsOnlyValidatedObservedFacts",
+            "WPE.Tests.ModelOffResearchCapabilityTests.MacroFactsProduceCanonicalRepeatableOutputWithoutModelInference"
+        ],
+        ["research.point-in-time-replay"]=
+        [
+            "WPE.Tests.HistoricalNewsResearchTests.HistoricalQueryReturnsOnlyTheRequestedSymbolAndPointInTimeRange",
+            "WPE.Tests.HistoricalNewsResearchTests.NewsMomentumBacktestUsesOnlyNewsPublishedBeforeEachClosedCandle",
+            "WPE.Tests.ModelOffLiveCycleInputComposerTests.BacktestValidationSourceRetainsItsOwnValidationTime",
+            "WPE.Tests.ModelOffLiveCycleInputComposerTests.ProductionResearchRejectsMacroEvidenceOutsideTheBoundedWindow",
+            "WPE.Tests.ModelOffLiveCycleInputComposerTests.ProductionResearchUsesSourceSpecificFreshnessWithoutRelabelingEvidence"
         ]
     };
 
@@ -56,7 +74,7 @@ public static class LocalTestAcceptanceCanonicalizerV1
     public static AggregateAcceptanceEvidenceV1 ToAcceptanceEvidence(LocalTestAcceptanceArtifactV1 value,DateTimeOffset evaluatedAtUtc,string expectedCandidateSha256)
     {
         if(!IsCanonical(value,evaluatedAtUtc,expectedCandidateSha256))throw new InvalidOperationException("Local test evidence is not canonical or eligible.");
-        return new(value.RequirementId,ModelOffAggregateAgentV1.Market,AcceptanceEvidenceEnvironmentV1.Local,value.ObservedAtUtc,value.ObservedAtUtc.AddDays(180),true,value.CanonicalSha256,value.CanonicalBytes,null);
+        return new(value.RequirementId,Agent(value.RequirementId),AcceptanceEvidenceEnvironmentV1.Local,value.ObservedAtUtc,value.ObservedAtUtc.AddDays(180),true,value.CanonicalSha256,value.CanonicalBytes,null);
     }
 
     public static bool TryParseCanonical(byte[]? bytes,out LocalTestAcceptanceArtifactV1? value)
@@ -98,4 +116,5 @@ public static class LocalTestAcceptanceCanonicalizerV1
     }
     private static string Hash(byte[] bytes)=>Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     private static bool Sha(string value)=>value is{Length:64}&&value.All(x=>x is>='0'and<='9'or>='a'and<='f');
+    private static ModelOffAggregateAgentV1 Agent(string requirementId)=>requirementId.StartsWith("market.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Market:requirementId.StartsWith("research.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Research:throw new InvalidOperationException("Unsupported local acceptance Agent.");
 }
