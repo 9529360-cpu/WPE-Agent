@@ -266,6 +266,8 @@ public static class DeterministicResearchCapabilityProducerV1
                 yield return reason;
         if(input.Capability==ModelOffResearchCapabilityV1.Technical)
             foreach(var reason in ValidateTechnicalFacts(input))yield return reason;
+        if(input.Capability==ModelOffResearchCapabilityV1.Backtest)
+            foreach(var reason in ValidateBacktestFacts(input))yield return reason;
 
         foreach (var source in input.Sources)
         {
@@ -332,10 +334,53 @@ public static class DeterministicResearchCapabilityProducerV1
         if(observed&&ValidSha(hash)&&!input.Sources.Any(x=>x.Kind==ModelOffSourceKindV1.Market&&x.AsOfUtc>=observedAt&&x.ArtifactHash=="sha256:"+hash&&x.SourceId=="market:"+symbol))yield return "research.invalid.technical_source";
     }
 
+    private static IEnumerable<string> ValidateBacktestFacts(ModelOffResearchInputV1 input)
+    {
+        var facts=input.Facts;
+        if(!StringFact(facts,"schema",out var schema)||schema!=BacktestValidationCanonicalizerV1.Schema)yield return "research.invalid.backtest_schema";
+        if(!StringFact(facts,"symbol",out var symbol)||!CanonicalSymbol(symbol))yield return "research.invalid.backtest_symbol";
+        if(!StringFact(facts,"strategyVersion",out var strategyVersion)||strategyVersion.Length>128||!strategyVersion.All(c=>char.IsLetterOrDigit(c)||c is '-' or '_' or '.'))yield return "research.invalid.backtest_strategy_version";
+        var validated=UtcFact(facts,"validatedAtUtc",out var validatedAt);
+        if(!validated)yield return "research.invalid.backtest_validation_time";
+        else if(validatedAt>input.EvaluationTimeUtc)yield return "research.invalid.backtest_future";
+        else if(input.EvaluationTimeUtc-validatedAt>TimeSpan.FromHours(24))yield return "research.invalid.backtest_stale";
+        if(!IntFact(facts,"sampleSize",out var sampleSize)||sampleSize<1)yield return "research.invalid.backtest_sample_size";
+        if(!IntFact(facts,"trades",out var trades)||trades<0||trades>sampleSize)yield return "research.invalid.backtest_trades";
+        if(!IntFact(facts,"outOfSampleTrades",out var outOfSampleTrades)||outOfSampleTrades<0||outOfSampleTrades>trades)yield return "research.invalid.backtest_oos_trades";
+        if(!IntFact(facts,"coverageDays",out var coverageDays)||coverageDays<0)yield return "research.invalid.backtest_coverage";
+        foreach(var name in new[]{"winRate","maxDrawdown","walkForwardScore","monteCarloLossProbability","qualityScore"})
+            if(!FiniteFact(facts,name,out var value)||value is<0 or>1)yield return $"research.invalid.backtest_{name.ToLowerInvariant()}";
+        if(!FiniteFact(facts,"profitFactor",out var profitFactor)||profitFactor<0)yield return "research.invalid.backtest_profit_factor";
+        foreach(var name in new[]{"expectancy","sharpe","outOfSampleReturn"})if(!FiniteFact(facts,name,out _))yield return $"research.invalid.backtest_{name.ToLowerInvariant()}";
+        if(!BoolFact(facts,"approved",out var approved))yield return "research.invalid.backtest_approved";
+        if(!BoolFact(facts,"promoted",out var promoted))yield return "research.invalid.backtest_promoted";
+        if(promoted&&!approved)yield return "research.invalid.backtest_lifecycle";
+        if(!StringFact(facts,"canonicalSha256",out var canonicalHash)||!ValidSha(canonicalHash))yield return "research.invalid.backtest_hash";
+        if(validated&&CanonicalSymbol(symbol)&&!string.IsNullOrWhiteSpace(strategyVersion)&&ValidSha(canonicalHash)&&
+           sampleSize>=1&&trades>=0&&trades<=sampleSize&&outOfSampleTrades>=0&&outOfSampleTrades<=trades&&coverageDays>=0&&
+           FiniteFact(facts,"winRate",out var winRate)&&FiniteFact(facts,"profitFactor",out profitFactor)&&FiniteFact(facts,"expectancy",out var expectancy)&&
+           FiniteFact(facts,"maxDrawdown",out var maxDrawdown)&&FiniteFact(facts,"sharpe",out var sharpe)&&FiniteFact(facts,"outOfSampleReturn",out var oosReturn)&&
+           FiniteFact(facts,"walkForwardScore",out var walkForward)&&FiniteFact(facts,"monteCarloLossProbability",out var monteCarlo)&&FiniteFact(facts,"qualityScore",out var qualityScore)&&
+           BoolFact(facts,"approved",out approved)&&BoolFact(facts,"promoted",out promoted))
+        {
+            var expected=BacktestValidationCanonicalizerV1.Create(symbol,strategyVersion,validatedAt,sampleSize,trades,outOfSampleTrades,coverageDays,winRate,profitFactor,expectancy,maxDrawdown,sharpe,oosReturn,walkForward,monteCarlo,qualityScore,approved,promoted);
+            if(!string.Equals(expected.CanonicalSha256,canonicalHash,StringComparison.Ordinal))yield return "research.invalid.backtest_canonical_hash";
+            if(!input.Sources.Any(x=>x.Kind==ModelOffSourceKindV1.Strategy&&x.SourceId==$"backtest:{symbol}:{strategyVersion}"&&x.AsOfUtc>=validatedAt&&x.ArtifactHash=="sha256:"+canonicalHash))yield return "research.invalid.backtest_source";
+        }
+    }
+
     private static bool ValidSha(string value)=>value.Length==64&&value.All(Uri.IsHexDigit);
     private static bool CanonicalSymbol(string value)=>value.Length is>=5 and<=30&&value.All(c=>c is>='A' and<='Z' or>='0' and<='9');
     private static bool CanonicalAsset(string value)=>value.Length is>=2 and<=16&&value.All(c=>c is>='A' and<='Z' or>='0' and<='9');
     private static bool FiniteFact(JsonElement facts,string name,out double value){value=0;return facts.TryGetProperty(name,out var element)&&element.ValueKind==JsonValueKind.Number&&element.TryGetDouble(out value)&&double.IsFinite(value);}
+    private static bool IntFact(JsonElement facts,string name,out int value){value=0;return facts.TryGetProperty(name,out var element)&&element.ValueKind==JsonValueKind.Number&&element.TryGetInt32(out value);}
+    private static bool BoolFact(JsonElement facts,string name,out bool value)
+    {
+        value=false;
+        if(!facts.TryGetProperty(name,out var element)||element.ValueKind is not (JsonValueKind.True or JsonValueKind.False))return false;
+        value=element.GetBoolean();
+        return true;
+    }
 
     private static bool StringFact(JsonElement facts, string name, out string value)
     {

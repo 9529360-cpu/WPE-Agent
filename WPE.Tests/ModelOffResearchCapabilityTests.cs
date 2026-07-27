@@ -14,7 +14,12 @@ public sealed class ModelOffResearchCapabilityTests
     [InlineData(ModelOffResearchCapabilityV1.Backtest, ModelOffSourceKindV1.Strategy)]
     public void SupportedCapabilitiesProduceVersionedCanonicalRepeatableOutputs(ModelOffResearchCapabilityV1 capability, ModelOffSourceKindV1 kind)
     {
-        var input = capability==ModelOffResearchCapabilityV1.Technical?TechnicalInput():Input(capability, [Source(kind)]);
+        var input = capability switch
+        {
+            ModelOffResearchCapabilityV1.Technical => TechnicalInput(),
+            ModelOffResearchCapabilityV1.Backtest => BacktestInput(),
+            _ => Input(capability, [Source(kind)])
+        };
         var first = DeterministicResearchCapabilityProducerV1.Produce(input);
         var second = DeterministicResearchCapabilityProducerV1.Produce(input);
         var firstDocument = ModelOffCanonicalSerializerV1.Serialize(first);
@@ -27,7 +32,8 @@ public sealed class ModelOffResearchCapabilityTests
         Assert.Equal(firstDocument.Sha256, secondDocument.Sha256);
         Assert.Equal(firstDocument.Utf8Bytes, secondDocument.Utf8Bytes);
         Assert.DoesNotContain("recommend", firstDocument.Json, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("probability", firstDocument.Json, StringComparison.OrdinalIgnoreCase);
+        if(capability!=ModelOffResearchCapabilityV1.Backtest)
+            Assert.DoesNotContain("probability", firstDocument.Json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("caus", firstDocument.Json, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -66,6 +72,39 @@ public sealed class ModelOffResearchCapabilityTests
     {
         var input=TechnicalInput();var facts=TechnicalFacts(rsi:fixture=="rsi"?101:55,observedAt:fixture switch{"future"=>Now.AddSeconds(1),"stale"=>Now.AddMinutes(-6),_=>Now},schema:fixture=="schema"?"wpe.technical-assessment/2.0":"wpe.technical-assessment/1.0",hash:fixture=="hash"?"bad":new string('a',64),symbol:fixture switch{"symbol-case"=>"btcusdt","symbol-space"=>" BTCUSDT",_=>"BTCUSDT"},marketSymbol:fixture=="symbol-mismatch"?"ETHUSDT":"BTCUSDT");if(fixture=="source")input=input with{Sources=[Source(ModelOffSourceKindV1.Market)]};input=input with{Facts=facts};
         var output=StrategyResearchAgent.ProduceTechnicalModelOff(input);Assert.Equal(ModelOffOutputStatusV1.Abstained,output.Status);Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(output));Assert.NotEmpty(output.Decision.ReasonCodes);
+    }
+
+    [Theory]
+    [InlineData("schema")]
+    [InlineData("symbol")]
+    [InlineData("strategy")]
+    [InlineData("future")]
+    [InlineData("stale")]
+    [InlineData("trades")]
+    [InlineData("metric")]
+    [InlineData("lifecycle")]
+    [InlineData("hash")]
+    [InlineData("source")]
+    public void InvalidBacktestFactsAbstain(string fixture)
+    {
+        var input=BacktestInput(fixture);
+        var output=StrategyResearchAgent.ProduceBacktestModelOff(input);
+        Assert.Equal(ModelOffOutputStatusV1.Abstained,output.Status);
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(output));
+        Assert.Contains(output.Decision.ReasonCodes,reason=>reason.StartsWith("research.invalid.backtest",StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void BacktestFactsAreCanonicalRepeatableAndBoundToExactStrategySource()
+    {
+        var input=BacktestInput();
+        var first=StrategyResearchAgent.ProduceBacktestModelOff(input);
+        var second=StrategyResearchAgent.ProduceBacktestModelOff(input);
+        Assert.Equal(ModelOffOutputStatusV1.Succeeded,first.Status);
+        Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(first));
+        Assert.Equal(ModelOffCanonicalSerializerV1.Serialize(first).Sha256,ModelOffCanonicalSerializerV1.Serialize(second).Sha256);
+        Assert.Equal("BTCUSDT",first.Facts.GetProperty("symbol").GetString());
+        Assert.Equal("trend-v1",first.Facts.GetProperty("strategyVersion").GetString());
     }
 
     [Fact]
@@ -227,7 +266,7 @@ public sealed class ModelOffResearchCapabilityTests
     public void CapabilitySpecificEntryPointsProduceTheSameCanonicalContract()
     {
         var technical = TechnicalInput();
-        var backtest = Input(ModelOffResearchCapabilityV1.Backtest, [Source(ModelOffSourceKindV1.Strategy)]);
+        var backtest = BacktestInput();
         var news = Input(ModelOffResearchCapabilityV1.News, [Source(ModelOffSourceKindV1.News)]);
         var macro = MacroInput();
         var fundamental=FundamentalInput();
@@ -255,6 +294,23 @@ public sealed class ModelOffResearchCapabilityTests
     private static JsonElement TechnicalFacts(double rsi=55,DateTimeOffset? observedAt=null,string schema="wpe.technical-assessment/1.0",string? hash=null,string symbol="BTCUSDT",string marketSymbol="BTCUSDT")=>JsonSerializer.SerializeToElement(new{schema,symbol,marketSymbol,observedAtUtc=observedAt??Now,marketEvidenceSha256=hash??new string('a',64),rsi,trend15m=.1,trend1h=.2,trend4h=.3});
 
     private static ModelOffResearchInputV1 FundamentalInput(string provider="binance-futures",string symbol="BTCUSDT",string baseAsset="BTC",string quoteAsset="USDT"){var fact=CryptoInstrumentFundamentalCanonicalizerV1.Create(provider,"Testnet",symbol,symbol,baseAsset,quoteAsset,quoteAsset,"PERPETUAL","TRADING",Now.AddYears(-2),Now.AddMinutes(-1),new string('a',64));return new(ModelOffResearchCapabilityV1.Fundamental,"fundamental-output","cycle-1",Now,"wpe.research-input/1.0","wpe.fundamental-method","1.0",[Source(ModelOffSourceKindV1.Fundamental) with{AsOfUtc=Now.AddMinutes(-1),ArtifactHash="sha256:"+fact.CanonicalSha256}],JsonSerializer.SerializeToElement(new{schema=fact.Schema,providerId=fact.ProviderId,environment=fact.Environment,symbol=fact.Symbol,nativeSymbol=fact.NativeSymbol,baseAsset=fact.BaseAsset,quoteAsset=fact.QuoteAsset,marginAsset=fact.MarginAsset,contractType=fact.ContractType,tradingStatus=fact.TradingStatus,onboardAtUtc=fact.OnboardAtUtc,observedAtUtc=fact.ObservedAtUtc,sourceArtifactSha256=fact.SourceArtifactSha256,canonicalSha256=fact.CanonicalSha256}),[]);}
+
+    private static ModelOffResearchInputV1 BacktestInput(string? fixture=null)
+    {
+        var validatedAt=fixture switch{"future"=>Now.AddSeconds(1),"stale"=>Now.AddHours(-25),_=>Now.AddMinutes(-2)};
+        var symbol=fixture=="symbol"?"btcusdt":"BTCUSDT";
+        var strategy=fixture=="strategy"?" ":"trend-v1";
+        var sampleSize=1000;
+        var trades=fixture=="trades"?1001:80;
+        var winRate=fixture=="metric"?1.1:.58;
+        var approved=fixture!="lifecycle";
+        var promoted=true;
+        var fact=BacktestValidationCanonicalizerV1.Create(symbol,strategy,validatedAt,sampleSize,trades,40,180,winRate,1.5,.002,.12,1.2,.08,.7,.2,.78,approved,promoted);
+        var hash=fixture=="hash"?new string('f',64):fact.CanonicalSha256;
+        var facts=JsonSerializer.SerializeToElement(new{schema=fixture=="schema"?"wpe.backtest-validation/2.0":fact.Schema,symbol=fact.Symbol,strategyVersion=fact.StrategyVersion,validatedAtUtc=fact.ValidatedAtUtc,sampleSize=fact.SampleSize,trades=fact.Trades,outOfSampleTrades=fact.OutOfSampleTrades,coverageDays=fact.CoverageDays,winRate=fact.WinRate,profitFactor=fact.ProfitFactor,expectancy=fact.Expectancy,maxDrawdown=fact.MaxDrawdown,sharpe=fact.Sharpe,outOfSampleReturn=fact.OutOfSampleReturn,walkForwardScore=fact.WalkForwardScore,monteCarloLossProbability=fact.MonteCarloLossProbability,qualityScore=fact.QualityScore,approved=fact.Approved,promoted=fact.Promoted,canonicalSha256=hash});
+        var source=Source(ModelOffSourceKindV1.Strategy) with{SourceId=fixture=="source"?"backtest:ETHUSDT:trend-v1":$"backtest:{symbol}:{strategy}",AsOfUtc=validatedAt,ArtifactHash="sha256:"+hash};
+        return new(ModelOffResearchCapabilityV1.Backtest,"backtest-output","cycle-1",Now,"wpe.research-input/1.0","wpe.backtest-method","1.0",[source],facts,[]);
+    }
 
     private static JsonElement MacroFacts(
         string schema = "wpe.macro-facts/1.0",
