@@ -204,6 +204,8 @@ public sealed record RuntimePluginV1(
     IReadOnlyList<string> Permissions,
     bool Enabled,
     bool DefaultEnabled,
+    bool Active,
+    string RuntimeStatus,
     bool TestnetOnly,
     string CompatibilityStatus,
     string SignatureStatus,

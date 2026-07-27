@@ -300,6 +300,8 @@ export type RuntimePlugin = {
   permissions: string[]
   enabled: boolean
   defaultEnabled: boolean
+  active: boolean
+  runtimeStatus: 'running' | 'stale' | 'unavailable' | 'not-configured'
   testnetOnly: boolean
   compatibilityStatus: 'compatible' | 'incompatible'
   signatureStatus: 'metadataPresent'
@@ -554,11 +556,12 @@ function normalizePlugin(input: unknown): RuntimePlugin | null {
   const compatibilityStatus = nonEmptyString(value.compatibilityStatus)
   const signatureStatus = nonEmptyString(value.signatureStatus)
   const riskLevel = nonEmptyString(value.riskLevel) as RuntimePlugin['riskLevel'] | null
-  const booleansValid = [value.enabled, value.defaultEnabled, value.testnetOnly].every((item) => typeof item === 'boolean')
+  const runtimeStatus = nonEmptyString(value.runtimeStatus)
+  const booleansValid = [value.enabled, value.defaultEnabled, value.active, value.testnetOnly].every((item) => typeof item === 'boolean')
   const permissionsValid = Array.isArray(value.permissions) && permissions.every((item): item is string => item !== null) &&
     new Set(permissions).size === permissions.length && type !== null && pluginTypes.has(type) && permissions.every((permission) => pluginPermissions[type].has(permission))
   const statusMessageValid = value.statusMessage === null || value.statusMessage === undefined || typeof value.statusMessage === 'string'
-  if (!id || !name || !type || !pluginTypes.has(type) || !version || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(version) || !publisherId || !publisherName || entryKind !== 'wpe-contract' || !permissionsValid || !booleansValid || !compatibilityStatus || !['compatible', 'incompatible'].includes(compatibilityStatus) || signatureStatus !== 'metadataPresent' || !riskLevel || !pluginRiskLevels.has(riskLevel) || !statusMessageValid) return null
+  if (!id || !name || !type || !pluginTypes.has(type) || !version || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(version) || !publisherId || !publisherName || entryKind !== 'wpe-contract' || !permissionsValid || !booleansValid || !runtimeStatus || !['running', 'stale', 'unavailable', 'not-configured'].includes(runtimeStatus) || !compatibilityStatus || !['compatible', 'incompatible'].includes(compatibilityStatus) || signatureStatus !== 'metadataPresent' || !riskLevel || !pluginRiskLevels.has(riskLevel) || !statusMessageValid) return null
   return {
     id,
     name,
@@ -570,6 +573,8 @@ function normalizePlugin(input: unknown): RuntimePlugin | null {
     permissions,
     enabled: value.enabled as boolean,
     defaultEnabled: value.defaultEnabled as boolean,
+    active: value.active as boolean,
+    runtimeStatus: runtimeStatus as RuntimePlugin['runtimeStatus'],
     testnetOnly: value.testnetOnly as boolean,
     compatibilityStatus: compatibilityStatus as RuntimePlugin['compatibilityStatus'],
     signatureStatus: 'metadataPresent',

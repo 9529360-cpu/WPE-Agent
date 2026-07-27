@@ -1621,7 +1621,7 @@ function PluginsMonitoring({ runtime }: { runtime: WpeRuntimeState }) {
         { key: 'type', label: '类型' },
         { key: 'version', label: '版本' },
         { key: 'publisher', label: '发布方' },
-        { key: 'enabled', label: '启用' },
+        { key: 'enabled', label: '运行状态' },
         { key: 'testnet', label: '仅 Testnet' },
         { key: 'compatibility', label: '兼容性' },
         { key: 'risk', label: '风险等级' },
@@ -1632,11 +1632,11 @@ function PluginsMonitoring({ runtime }: { runtime: WpeRuntimeState }) {
         type: item.type,
         version: item.version,
         publisher: item.publisherName,
-        enabled: <Badge tone={item.enabled ? 'success' : 'neutral'}>{item.enabled ? '已启用' : '未启用'}</Badge>,
+        enabled: <Badge tone={item.active ? 'success' : item.runtimeStatus === 'stale' || item.runtimeStatus === 'unavailable' ? 'warning' : 'neutral'}>{item.runtimeStatus === 'running' ? '运行中' : item.runtimeStatus === 'stale' ? '状态过期' : item.runtimeStatus === 'unavailable' ? '连接不可用' : '未配置'}</Badge>,
         testnet: booleanLabel(item.testnetOnly),
         compatibility: <Badge tone={item.compatibilityStatus === 'compatible' ? 'success' : 'danger'}>{item.compatibilityStatus}</Badge>,
         risk: item.riskLevel,
-        message: item.statusMessage ?? <EmptyCell />,
+        message: item.active ? '当前 Testnet 连接正在使用此适配器' : item.statusMessage ?? (item.runtimeStatus === 'not-configured' ? '尚未配置为当前交易连接' : <EmptyCell />),
       }))} />
     </CollectionGate>
   )

@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using WpeAgent.RuntimeContracts;
 using WpeAgent.RuntimeServices;
 using WpeAgent.Equities;
+using WpeAgent.Plugins;
 using 币安量化机器人.Services.Agent;
 using 币安量化机器人.Core.Models;
 using 币安量化机器人.Core.MarketData;
@@ -11,6 +12,30 @@ namespace WPE.Tests;
 
 public sealed class RuntimeSnapshotV1Tests
 {
+    [Fact]
+    public void Create_ProjectsOnlyTheConnectedExchangeAdapterAsRunning()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var connection = new RuntimeConnectionStatusV1(
+            "binance-testnet", "Binance Futures Testnet", "binance-futures", "Testnet",
+            "configured", "ready", now.UtcDateTime, true, true, true, false, null);
+        var connectionState = new RuntimeConnectionState(RuntimeCollectionState.Available, connection, now, null);
+
+        var snapshot = RuntimeSnapshotFactory.Create(
+            new SystemState { LastUpdated = now.UtcDateTime }, now.UtcDateTime,
+            connectionState: connectionState, pluginRegistry: LocalPluginRegistry.CreateDefault().List());
+
+        var binance = Assert.Single(snapshot.Plugins.Items, item => item.Id == "wpe.exchange.binance-futures");
+        Assert.True(binance.Active);
+        Assert.Equal("running", binance.RuntimeStatus);
+        Assert.False(binance.Enabled);
+        Assert.All(snapshot.Plugins.Items.Where(item => item.Id != binance.Id), item =>
+        {
+            Assert.False(item.Active);
+            Assert.Equal("not-configured", item.RuntimeStatus);
+        });
+    }
+
     [Fact]
     public void Create_ProjectsPublicTickerReadModel()
     {

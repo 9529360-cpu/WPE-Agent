@@ -92,7 +92,7 @@ public static class RuntimeSnapshotFactory
         var auditCollectionState = auditStale ? RuntimeCollectionState.Stale : runtimeAudit.State;
         var auditMessage = auditStale ? "Audit projection is older than the freshness threshold." : runtimeAudit.Message;
         var pluginItems = runtimePlugins.State == RuntimeCollectionState.Available
-            ? runtimePlugins.Items.Select(ToRuntimePlugin).ToArray()
+            ? runtimePlugins.Items.Select(plugin=>ToRuntimePlugin(plugin,runtimeConnection,connectionCollectionState)).ToArray()
             : Array.Empty<RuntimePluginV1>();
         var runtimeNotifications=notificationState??RuntimeNotificationState.Unsupported("Notification state is not connected.");
         var notificationAge=runtimeNotifications.UpdatedAt is null?double.PositiveInfinity:Math.Max(0,(generatedAtUtc-runtimeNotifications.UpdatedAt.Value.UtcDateTime).TotalSeconds);
@@ -265,7 +265,15 @@ public static class RuntimeSnapshotFactory
     private static string? SafeMessage(RuntimeCollectionState state,string? message,string summary,DateTime time)=>
         state==RuntimeCollectionState.Error?UiDiagnostic.FormatText(message,summary,time):message;
 
-    private static RuntimePluginV1 ToRuntimePlugin(RegisteredPlugin plugin) => new(
+    private static RuntimePluginV1 ToRuntimePlugin(RegisteredPlugin plugin,RuntimeConnectionState connection,RuntimeCollectionState connectionState)
+    {
+        var providerId=plugin.Manifest.Id.StartsWith("wpe.exchange.",StringComparison.OrdinalIgnoreCase)
+            ? plugin.Manifest.Id["wpe.exchange.".Length..]
+            : null;
+        var selected=providerId is not null&&connection.Value is not null&&string.Equals(providerId,connection.Value.ProviderId,StringComparison.OrdinalIgnoreCase);
+        var active=selected&&connectionState==RuntimeCollectionState.Available&&connection.Value!.ExchangeConnected&&string.Equals(connection.Value.AdapterStatus,"ready",StringComparison.OrdinalIgnoreCase);
+        var runtimeStatus=active?"running":selected&&connectionState==RuntimeCollectionState.Stale?"stale":selected?"unavailable":"not-configured";
+        return new(
         plugin.Manifest.Id,
         plugin.Manifest.Name,
         plugin.Manifest.Type,
@@ -276,9 +284,12 @@ public static class RuntimeSnapshotFactory
         plugin.Manifest.Permissions.ToArray(),
         plugin.Enabled,
         plugin.Manifest.Lifecycle.DefaultEnabled,
+        active,
+        runtimeStatus,
         plugin.Manifest.Lifecycle.TestnetOnly,
         plugin.CompatibilityStatus.ToString().ToLowerInvariant(),
         "metadataPresent",
         plugin.RiskLevel.ToString().ToLowerInvariant(),
         UiDiagnostic.SafeText(plugin.StatusMessage));
+    }
 }
