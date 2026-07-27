@@ -58,11 +58,11 @@ public sealed class ModelOffCapabilityMaturityTests
     }
 
     [Fact]
-    public void OrchestratorAcceptanceDoesNotUpgradeTheSixUnacceptedAggregates()
+    public void OrchestratorAcceptanceDoesNotUpgradeTheFiveUnacceptedAggregates()
     {
         var root=LoadCanonical();var orchestrator=root["capabilities"]!.AsArray().Single(Capability("orchestrator"));var aggregates=root["aggregates"]!.AsArray();
         Assert.Equal("yes",String(orchestrator,"maturity"));Assert.True(Bool(orchestrator,"implemented"));Assert.True(Bool(orchestrator,"accepted"));Assert.Contains("atomic append-only output/handoff persistence",String(orchestrator,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no live Testnet mutation certification",String(orchestrator,"acceptance_scope"),StringComparison.Ordinal);
-        foreach(var aggregate in aggregates.Where(node=>String(node,"id")!="market")){Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));}
+        foreach(var aggregate in aggregates.Where(node=>String(node,"id") is not ("market" or "research"))){Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));}
     }
 
     [Fact]
@@ -77,7 +77,7 @@ public sealed class ModelOffCapabilityMaturityTests
     public void TechnicalAcceptanceIsBoundedAndDoesNotUpgradeResearchAggregate()
     {
         var root=LoadCanonical();var capability=root["capabilities"]!.AsArray().Single(Capability("technical"));var aggregate=root["aggregates"]!.AsArray().Single(node=>String(node,"id")=="research");
-        Assert.Equal("yes",String(capability,"maturity"));Assert.True(Bool(capability,"implemented"));Assert.True(Bool(capability,"accepted"));Assert.Contains("deterministic weighted signal aggregation",String(capability,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no independent recomputation or live certification",String(capability,"acceptance_scope"),StringComparison.Ordinal);Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));
+        Assert.Equal("yes",String(capability,"maturity"));Assert.True(Bool(capability,"implemented"));Assert.True(Bool(capability,"accepted"));Assert.Contains("deterministic weighted signal aggregation",String(capability,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no independent recomputation or live certification",String(capability,"acceptance_scope"),StringComparison.Ordinal);AssertResearchAggregate(aggregate);
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public sealed class ModelOffCapabilityMaturityTests
     {
         var root=LoadCanonical();var capability=root["capabilities"]!.AsArray().Single(Capability("news"));var aggregate=root["aggregates"]!.AsArray().Single(node=>String(node,"id")=="research");
         Assert.Equal("yes",String(capability,"maturity"));Assert.True(Bool(capability,"implemented"));Assert.True(Bool(capability,"accepted"));Assert.Contains("allowlisted publisher/HTTPS-host identity",String(capability,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no live source availability certification or narrative truth claim",String(capability,"acceptance_scope"),StringComparison.Ordinal);
-        Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));
+        AssertResearchAggregate(aggregate);
     }
 
     [Fact]
@@ -101,7 +101,7 @@ public sealed class ModelOffCapabilityMaturityTests
     {
         var root=LoadCanonical();var capability=root["capabilities"]!.AsArray().Single(Capability("macro"));var aggregate=root["aggregates"]!.AsArray().Single(node=>String(node,"id")=="research");
         Assert.Equal("yes",String(capability,"maturity"));Assert.True(Bool(capability,"implemented"));Assert.True(Bool(capability,"accepted"));Assert.Contains("two allowlisted official BLS series",String(capability,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no forecast, causal trading claim or target-machine live availability certification",String(capability,"acceptance_scope"),StringComparison.Ordinal);
-        Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));
+        AssertResearchAggregate(aggregate);
     }
 
     [Fact]
@@ -109,7 +109,7 @@ public sealed class ModelOffCapabilityMaturityTests
     {
         var root=LoadCanonical();var capability=root["capabilities"]!.AsArray().Single(Capability("fundamental"));var aggregate=root["aggregates"]!.AsArray().Single(node=>String(node,"id")=="research");
         Assert.Equal("yes",String(capability,"maturity"));Assert.True(Bool(capability,"implemented"));Assert.True(Bool(capability,"accepted"));Assert.Contains("Binance Futures Testnet venue-instrument facts",String(capability,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no protocol, issuer, tokenomics, on-chain, valuation or investment conclusion",String(capability,"acceptance_scope"),StringComparison.Ordinal);
-        Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));
+        AssertResearchAggregate(aggregate);
     }
 
     [Theory]
@@ -257,7 +257,9 @@ public sealed class ModelOffCapabilityMaturityTests
         Require(aggregateIds.ToHashSet(StringComparer.Ordinal).SetEquals(AggregateIds), "unknown aggregate inventory", errors);
         var marketAggregate=aggregates.SingleOrDefault(node=>String(node,"id")=="market");
         Require(String(marketAggregate,"maturity")=="yes"&&Bool(marketAggregate,"accepted")==true&&!string.IsNullOrWhiteSpace(String(marketAggregate,"acceptance_scope"))&&String(marketAggregate,"acceptance_scope")!.Contains("Binance Futures Testnet",StringComparison.Ordinal)&&String(marketAggregate,"acceptance_scope")!.Contains("excludes Mainnet",StringComparison.Ordinal)&&IsSha(String(marketAggregate,"evidence_set_sha256")),"Market aggregate acceptance is unbounded or unproven",errors);
-        Require(aggregates.Where(node=>String(node,"id")!="market").All(node => String(node, "maturity") == "partial" && Bool(node, "accepted") == false), "unaccepted aggregate upgraded", errors);
+        var researchAggregate=aggregates.SingleOrDefault(node=>String(node,"id")=="research");
+        Require(String(researchAggregate,"maturity")=="yes"&&Bool(researchAggregate,"accepted")==true&&!string.IsNullOrWhiteSpace(String(researchAggregate,"acceptance_scope"))&&String(researchAggregate,"acceptance_scope")!.Contains("model-off BTCUSDT Research cycle",StringComparison.Ordinal)&&String(researchAggregate,"acceptance_scope")!.Contains("excludes Mainnet",StringComparison.Ordinal)&&IsSha(String(researchAggregate,"evidence_set_sha256")),"Research aggregate acceptance is unbounded or unproven",errors);
+        Require(aggregates.Where(node=>String(node,"id") is not ("market" or "research")).All(node => String(node, "maturity") == "partial" && Bool(node, "accepted") == false), "unaccepted aggregate upgraded", errors);
 
         var capabilityIds = capabilities.Select(node => String(node, "id")).ToArray();
         Require(capabilityIds.Length == 13 && capabilityIds.Distinct(StringComparer.Ordinal).Count() == 13, "missing or duplicate capability", errors);
@@ -300,6 +302,7 @@ public sealed class ModelOffCapabilityMaturityTests
     private static bool? Bool(JsonNode? node, string name) => node?[name] is JsonValue value && value.TryGetValue<bool>(out var result) ? result : null;
     private static int? Int(JsonNode? node, string name) => node?[name] is JsonValue value && value.TryGetValue<int>(out var result) ? result : null;
     private static bool IsSha(string? value)=>value is{Length:64}&&value.All(x=>x is>='0'and<='9'or>='a'and<='f');
+    private static void AssertResearchAggregate(JsonNode? aggregate){Assert.Equal("yes",String(aggregate,"maturity"));Assert.True(Bool(aggregate,"accepted"));Assert.Contains("model-off BTCUSDT Research cycle",String(aggregate,"acceptance_scope"),StringComparison.Ordinal);Assert.True(IsSha(String(aggregate,"evidence_set_sha256")));}
 
     private static void Require(bool condition, string error, ICollection<string> errors)
     {

@@ -38,6 +38,22 @@ public sealed class BlsMacroDataClientTests
         Assert.Equal("cpi-202607@bls.gov",facts.GetProperty("releaseCalendarEventId").GetString());
     }
 
+    [Fact]
+    public async Task OfficialFootnotedUnavailableMonthDoesNotDiscardLatestValidObservation()
+    {
+        var response="{\"status\":\"REQUEST_SUCCEEDED\",\"Results\":{\"series\":[{\"seriesID\":\"CUUR0000SA0\",\"data\":[{\"year\":\"2026\",\"period\":\"M06\",\"value\":\"333.952\",\"footnotes\":[{}]},{\"year\":\"2025\",\"period\":\"M10\",\"value\":\"-\",\"footnotes\":[{\"code\":\"X\",\"text\":\"Data unavailable due to a lapse in appropriations\"}]}]}]}}";
+        var result=await new BlsMacroDataClient(new FakeTransport(response)).FetchLatestAsync("CUUR0000SA0",2025,2026,Now);
+        Assert.Equal(BlsMacroFetchStatus.Available,result.Status);Assert.Equal(333.952m,result.Observation!.Facts.GetProperty("value").GetDecimal());
+    }
+
+    [Fact]
+    public async Task OfficialNumericUnavailableFootnoteIsAcceptedButArbitraryFootnoteIsNot()
+    {
+        const string template="{\"status\":\"REQUEST_SUCCEEDED\",\"Results\":{\"series\":[{\"seriesID\":\"CUUR0000SA0\",\"data\":[{\"year\":\"2026\",\"period\":\"M06\",\"value\":\"333.952\",\"footnotes\":[{}]},{\"year\":\"2025\",\"period\":\"M10\",\"value\":\"-\",\"footnotes\":[{\"code\":\"9\",\"text\":\"TEXT\"}]}]}]}}";
+        var accepted=await new BlsMacroDataClient(new FakeTransport(template.Replace("TEXT","Data unavailable due to the 2025 lapse in appropriations.",StringComparison.Ordinal))).FetchLatestAsync("CUUR0000SA0",2025,2026,Now);Assert.Equal(BlsMacroFetchStatus.Available,accepted.Status);
+        var rejected=await new BlsMacroDataClient(new FakeTransport(template.Replace("TEXT","Unverified arbitrary marker",StringComparison.Ordinal))).FetchLatestAsync("CUUR0000SA0",2025,2026,Now);Assert.NotEqual(BlsMacroFetchStatus.Available,rejected.Status);
+    }
+
     [Theory]
     [InlineData("UNKNOWN", 2025, 2026, "macro.bls.series-unsupported")]
     [InlineData("CUUR0000SA0", 2026, 2025, "macro.bls.request-invalid")]

@@ -4,7 +4,7 @@
     "id": "MO-01",
     "status": "current",
     "as_of": "2026-07-27",
-    "source": "QAA-0025",
+    "source": "QAA-0026",
     "target": "private_autonomous_testnet",
     "human_per_cycle_approval": false,
     "mainnet": "disabled",
@@ -20,7 +20,7 @@
   },
   "aggregates": [
     { "id": "market", "name": "Market", "maturity": "yes", "accepted": true, "acceptance_scope": "deterministic BTCUSDT market sensing through Binance Futures Testnet public read-only data, including canonical confirmed-candle provenance, adversarial fail-closed integrity, immediate provider availability and four-sample sustained freshness over at least 15 minutes; candidate 3.6.0.0 SHA-256 5d06653b099e46b222aeaee47e022ef61d28bb3e3bb188c9b6b88a494b7ec5be; excludes Mainnet, mutation, credentials, private account data, other symbols and other providers", "evidence_set_sha256": "91052bbc85bec2ea70a9c171eb3e21bddcf37d4adda329a41629f7948881f7f7" },
-    { "id": "research", "name": "Research", "maturity": "partial", "accepted": false },
+    { "id": "research", "name": "Research", "maturity": "yes", "accepted": true, "acceptance_scope": "deterministic model-off BTCUSDT Research cycle using Binance Futures Testnet public read-only market and venue-instrument facts, two official BLS series, allowlisted HTTPS news feeds, fresh confirmed one-minute technical provenance, canonical five-capability outputs and point-in-time historical replay; candidate 3.6.0.0 SHA-256 f723385351cfccc44a69c5aa835ac24958f2047ba172ee4c48c50903e6e01a8d; excludes Mainnet, mutation, credentials, other symbols and providers, narrative truth certification, forecasts, causal claims and strategy profitability", "evidence_set_sha256": "c8544de4a56f700a64e2fa67496cb096611ee499f4af06e0eea838bf5fac3792" },
     { "id": "strategy", "name": "Strategy", "maturity": "partial", "accepted": false },
     { "id": "risk", "name": "Risk", "maturity": "partial", "accepted": false },
     { "id": "execution", "name": "Execution", "maturity": "partial", "accepted": false },

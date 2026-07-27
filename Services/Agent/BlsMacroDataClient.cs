@@ -102,7 +102,8 @@ public sealed class BlsMacroDataClient(IBlsMacroDataTransport transport)
                 return Fail(BlsMacroFetchStatus.Error, "macro.bls.response-series-invalid");
 
             var monthlyRows=data.EnumerateArray().Where(IsMonthlyRow).ToArray();
-            var parsed=monthlyRows.Select(ParseObservation).ToArray();
+            var parsed=monthlyRows.Where(item=>!IsOfficialUnavailableObservation(item)).Select(ParseObservation).ToArray();
+            if(monthlyRows.Any(item=>ParseObservation(item) is null&&!IsOfficialUnavailableObservation(item)))return Fail(BlsMacroFetchStatus.Error,"macro.bls.response-invalid");
             if(parsed.Any(item=>item is null))return Fail(BlsMacroFetchStatus.Error,"macro.bls.response-invalid");
             var observations=parsed.Select(item=>item!.Value).ToArray();
             if(observations.Any(item=>item.Year<startYear||item.Year>endYear||new DateTimeOffset(item.Year,item.Month,1,0,0,0,TimeSpan.Zero)>fetchedAtUtc)||
@@ -147,6 +148,11 @@ public sealed class BlsMacroDataClient(IBlsMacroDataTransport transport)
     }
 
     private static bool IsMonthlyRow(JsonElement item)=>item.TryGetProperty("period",out var periodValue)&&periodValue.GetString() is {Length:3} period&&period[0]=='M'&&period[1..] is not "13";
+    private static bool IsOfficialUnavailableObservation(JsonElement item)
+    {
+        if(!item.TryGetProperty("value",out var value)||value.GetString()!="-"||!item.TryGetProperty("footnotes",out var footnotes)||footnotes.ValueKind!=JsonValueKind.Array)return false;
+        return footnotes.EnumerateArray().Any(x=>x.ValueKind==JsonValueKind.Object&&x.TryGetProperty("code",out var code)&&code.GetString() is {Length:>0 and<=8} token&&token.All(char.IsAsciiLetterOrDigit)&&x.TryGetProperty("text",out var text)&&text.GetString() is {Length:>0 and<=512} message&&message.Contains("Data unavailable",StringComparison.OrdinalIgnoreCase));
+    }
 
     private static BlsMacroFetchResult Fail(BlsMacroFetchStatus status, string reasonCode) => new(status, null, reasonCode);
     private readonly record struct SeriesDefinition(string Geography, string Frequency, string Unit);
