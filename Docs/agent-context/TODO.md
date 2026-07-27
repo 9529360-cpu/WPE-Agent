@@ -11,6 +11,7 @@
 - [x] Connect the read-only trading-authorization projection to the Reference UI runtime snapshot: `BuildRuntimeJson()` refreshes and supplies `RuntimeAuthorization`; `MainWindowRuntimeBridgeTests` `2/2` passed. This is visibility only, not approval mutation or approved-order processing.
 
 ## P1
+- [x] Establish a machine-enforced formal acceptance gate for all seven aggregate Agents. Require four Agent-specific evidence classes with exact environment, UTC validity, artifact SHA-256 and live provider identity; fail closed on missing, duplicate, stale, malformed, cross-Agent or wrong-environment evidence, and never auto-edit maturity authority.
 - [x] Bind Macro revisions and the current-instrument Technical assessment as explicit canonical Research sources. Duplicate/invalid Macro facts and missing/conflicting/cross-identity Technical evidence fail closed before Strategy; facts-only evidence is not sufficient.
 - [x] Give Backtest/Research validation its own persisted UTC validation time. Reject absent, non-UTC, future, and older-than-24-hour validation so a new cycle cannot relabel stale research as current.
 - [x] Replace the generic Backtest capability admission with a versioned canonical validation fact. Bind exact symbol and strategy identity, validation freshness, coherent sample/trade counts, finite bounded metrics, lifecycle state and source hash; reject tampering, replay, cross-strategy sources and malformed metrics.
