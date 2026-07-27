@@ -17,3 +17,5 @@ The current gates cover:
 - Audit: append-only enforcement, seven-role correlation, live-cycle completeness, restart durability.
 
 The gate produces a deterministic evidence-set hash but does not edit the maturity authority. Promotion requires an explicit reviewed update to `model-off-capability-maturity.json` after the gate accepts the corresponding aggregate.
+
+Market live evidence is produced only by `--market-aggregate-acceptance`. The runner uses the official Binance Futures Testnet endpoint with execution disabled and empty credentials. It emits one immediate read artifact and four five-minute samples spanning at least 15 minutes. Every sample must contain canonical Market provenance, at least 31 confirmed candles, quality score 65 or higher, a source no older than 20 minutes, and the sustained artifact must contain at least two distinct canonical market states. The runner exposes no account, order, placement, cancellation, or mutation method.
