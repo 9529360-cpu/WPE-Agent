@@ -45,6 +45,12 @@ public sealed class LocalTestAcceptanceTests
         Assert.Throws<InvalidOperationException>(()=>LocalTestAcceptanceCanonicalizerV1.Create("strategy.anti-overfit","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(StrategyOverfitNames[..^1])));
     }
 
+    [Fact]
+    public void RiskEvidenceIsBoundToRiskAndExactDeterministicGateSet()
+    {
+        var artifact=LocalTestAcceptanceCanonicalizerV1.Create("risk.deterministic-gate","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(RiskGateNames));var candidate=Hash(Bytes("candidate"));Assert.True(LocalTestAcceptanceCanonicalizerV1.IsCanonical(artifact,Now,candidate));var evidence=LocalTestAcceptanceCanonicalizerV1.ToAcceptanceEvidence(artifact,Now,candidate);Assert.Equal(ModelOffAggregateAgentV1.Risk,evidence.Agent);Assert.Throws<InvalidOperationException>(()=>LocalTestAcceptanceCanonicalizerV1.Create("risk.deterministic-gate","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(RiskGateNames[..^1])));
+    }
+
     private static LocalTestAcceptanceArtifactV1 Create(string[] names)=>LocalTestAcceptanceCanonicalizerV1.Create("market.canonical-contract","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(names));
     private static byte[] Trx(string[] names,string outcome="Passed")
     {
@@ -62,6 +68,10 @@ public sealed class LocalTestAcceptanceTests
     private static readonly string[] StrategyOverfitNames=
     [
         "WPE.Tests.StrategyRegimeValidationTests.LegacyPassedFlagCannotBypassRegimePromotionGate","WPE.Tests.StrategyRegimeValidationTests.PerformanceConcentratedInEarlyHistoryFailsOverfitGate","WPE.Tests.StrategyRegimeValidationTests.RobustnessEvaluationIsDeterministic","WPE.Tests.StrategyRegimeValidationTests.StablePerformanceAcrossChronologicalRegimesPasses"
+    ];
+    private static readonly string[] RiskGateNames=
+    [
+        "WPE.Tests.ModelOffStrategyRiskContractTests.AvailableInputsProduceStableIntentAndRuleLedgerHashes","WPE.Tests.ModelOffStrategyRiskContractTests.EmptyMalformedFutureAndExpiredInputsBlockRiskIncrease","WPE.Tests.ModelOffStrategyRiskContractTests.MainnetUnknownActionAndInvalidTimesAlwaysBlock","WPE.Tests.ModelOffStrategyRiskContractTests.RiskReductionDoesNotBecomeRiskIncreaseAndStillRecordsFailedInputs","WPE.Tests.RiskGateTests.Approve_RejectsQuantityAboveConfiguredCap","WPE.Tests.RiskGateTests.Approve_RejectsWhenRiskSnapshotIsStale","WPE.Tests.RiskGateTests.Planner_RejectsRiskIncreaseWhenEvidenceIsIncomplete"
     ];
     private static byte[] Bytes(string value)=>Encoding.UTF8.GetBytes(value);
     private static string Hash(byte[] value)=>Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();

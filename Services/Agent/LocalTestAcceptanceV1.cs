@@ -73,6 +73,29 @@ public static class LocalTestAcceptanceCanonicalizerV1
             "WPE.Tests.ModelOffLiveCycleInputComposerTests.LiveLoopInvokesShadowAfterRiskReviewAndBeforeOrderAuthorization",
             "WPE.Tests.ModelOffLiveCycleInputComposerTests.ProductionShadowPersistsSevenOutputsWithoutChangingExecution",
             "WPE.Tests.ModelOffLiveCycleInputComposerTests.RiskIncreaseGateRequiresCompletePersistedSevenAgentCycle"
+        ],
+        ["risk.deterministic-gate"]=
+        [
+            "WPE.Tests.ModelOffStrategyRiskContractTests.AvailableInputsProduceStableIntentAndRuleLedgerHashes",
+            "WPE.Tests.ModelOffStrategyRiskContractTests.EmptyMalformedFutureAndExpiredInputsBlockRiskIncrease",
+            "WPE.Tests.ModelOffStrategyRiskContractTests.MainnetUnknownActionAndInvalidTimesAlwaysBlock",
+            "WPE.Tests.ModelOffStrategyRiskContractTests.RiskReductionDoesNotBecomeRiskIncreaseAndStillRecordsFailedInputs",
+            "WPE.Tests.RiskGateTests.Approve_RejectsQuantityAboveConfiguredCap",
+            "WPE.Tests.RiskGateTests.Approve_RejectsWhenRiskSnapshotIsStale",
+            "WPE.Tests.RiskGateTests.Planner_RejectsRiskIncreaseWhenEvidenceIsIncomplete"
+        ],
+        ["risk.adversarial-bypass"]=
+        [
+            "WPE.Tests.AutoTradingAuthorizationBoundaryTests.AutomaticRun_DoesNotCallReliableExecutorMutationMethodsDirectly",
+            "WPE.Tests.AutoTradingAuthorizationBoundaryTests.LiveSmokeMutation_IsCommandLineGatedAndUsesSharedAuthorizationGateway",
+            "WPE.Tests.AutoTradingAuthorizationBoundaryTests.ManualEmergencyClose_UsesSharedAuthorizationGateway",
+            "WPE.Tests.ModelOffLiveCycleInputComposerTests.RiskIncreaseGateRequiresCompletePersistedSevenAgentCycle",
+            "WPE.Tests.SafetyGateRegressionTests.Mainnet_IsRejectedBeforeAnyExchangeMutation",
+            "WPE.Tests.SafetyGateRegressionTests.NonPositiveEquity_DoesNotGenerateRiskIncreasingIntent",
+            "WPE.Tests.TradingExecutionGatewayTests.TestnetSmoke_ExpiredAuthorizationFailsBeforeApprovalOrMutation",
+            "WPE.Tests.TradingExecutionGatewayTests.TestnetSmoke_MainnetFailsBeforeApprovalOrMutation",
+            "WPE.Tests.TradingExecutionGatewayTests.TestnetSmoke_MissingAuthorizationFailsBeforeApprovalOrMutation",
+            "WPE.Tests.TradingExecutionGatewayTests.TestnetSmoke_ReplayedAuthorizationAndIntentDoesNotMutateAgain"
         ]
     };
 
@@ -139,5 +162,5 @@ public static class LocalTestAcceptanceCanonicalizerV1
     }
     private static string Hash(byte[] bytes)=>Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     private static bool Sha(string value)=>value is{Length:64}&&value.All(x=>x is>='0'and<='9'or>='a'and<='f');
-    private static ModelOffAggregateAgentV1 Agent(string requirementId)=>requirementId.StartsWith("market.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Market:requirementId.StartsWith("research.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Research:requirementId.StartsWith("strategy.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Strategy:throw new InvalidOperationException("Unsupported local acceptance Agent.");
+    private static ModelOffAggregateAgentV1 Agent(string requirementId)=>requirementId.StartsWith("market.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Market:requirementId.StartsWith("research.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Research:requirementId.StartsWith("strategy.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Strategy:requirementId.StartsWith("risk.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Risk:throw new InvalidOperationException("Unsupported local acceptance Agent.");
 }
