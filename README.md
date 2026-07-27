@@ -1,149 +1,79 @@
-# 币安量化机器人 (Binance Quantitative Trading Bot)
+# WPE Agent
 
-基于 .NET 8.0 和 WPF 的币安合约量化交易机器人。
+WPE Agent is a local-first, auditable trading Agent platform for Windows. The current production boundary targets private autonomous Testnet operation with deterministic risk, execution, recovery, and audit controls. Local Only remains useful without a local or online language model.
 
-## 快速开始
+## Current Status
 
-### 系统要求
+- Version: `3.6.0`
+- Platform: Windows 10/11, .NET 8, WPF with a read-only WebView runtime UI
+- Default environment: Testnet/Paper
+- Mainnet: disabled
+- Remote or local LLM: optional advisory layer only
+- User state: `%LOCALAPPDATA%\WPE Agent\`
 
-- **操作系统：** Windows 10/11
-- **.NET SDK：** 8.0 或更高版本
-- **IDE：** Visual Studio 2022 或 VS Code
-- **NuGet 包管理器：** 已集成在 Visual Studio 中
+Accepted capabilities are deliberately bounded. Current accepted components include the seven-role orchestrator, Market Data, Technical, Backtest, Risk Gate, execution contract boundary, Position safety gates, post-trade review, and the opt-in Teacher market brief. The seven aggregate Agents remain partially accepted until their full production and live Testnet evidence gates are complete. The machine-readable authority is [`Docs/product/model-off-capability-maturity.json`](Docs/product/model-off-capability-maturity.json).
 
-### 编译项目
+## Safety Boundary
 
-```bash
-# 1. 克隆仓库
-git clone https://github.com/9529360-cpu/WPE-.git
-cd WPE-
+- Unknown, stale, unsupported, inconsistent, or tampered evidence fails closed.
+- LLM output cannot place orders or bypass deterministic validation.
+- Every mutation must pass the Risk Gate and `ReliableOrderExecutor` path.
+- Mainnet is not an authorized runtime result.
+- Testnet provider support is not claimed without provider-specific evidence.
+- Secrets and configuration writes belong to the WPF host, not the Web UI.
+- Application files are separate from local databases, logs, credentials, and user settings.
 
-# 2. 还原 NuGet 包
-dotnet restore
+This software does not promise returns and is not ready for real-money production trading.
 
-# 3. 构建项目
-dotnet build -c Debug
+## Repository
+
+```powershell
+git clone https://github.com/9529360-cpu/WPE-Agent.git
+cd WPE-Agent
 ```
 
-### 在 Visual Studio 中打开
+The current solution and main project retain historical Chinese filenames. Do not rename them casually; a coordinated project-boundary migration is planned after the seven-Agent backend closes.
 
-1. 打开 Visual Studio 2022
-2. 选择 "打开项目或解决方案"
-3. 选择 `币安量化机器人.csproj` 文件
-4. 按 `Ctrl+Shift+B` 构建项目
+## Build And Test
 
-## 最近更新 (Recent Updates)
-
-### ✅ 编译问题修复 (2025-11-18)
-
-修复了以下编译错误，确保项目可在 Visual Studio 2022+ 中成功编译：
-
-1. **重复程序集属性错误** - 禁用自动生成 AssemblyInfo
-2. **异步迭代器警告 (CS8425)** - 添加 `[EnumeratorCancellation]` 特性
-3. **ScottPlot 5.x API 兼容性** - 更新为新版 API
-
-详细信息请查看：
-- [中文文档](Docs/CompilationFixes.md)
-- [English Documentation](Docs/CompilationFixes.en.md)
-
-## 功能特性
-
-### 市场与行情
-- 📊 实时行情监控
-- 💰 资金费率分析
-- 📈 技术指标计算
-
-### 策略与 AI
-- 🤖 AI 预测模型 (LSTM)
-- 📋 策略配置管理
-- 📚 策略模板库
-- 🔍 策略优化 (Walk-Forward)
-
-### 交易与风控
-- 💼 实盘交易
-- 📝 纸上交易模拟
-- 🛡️ 风险管理中心
-- ⚠️ 实时预警系统
-
-### 账户管理
-- 👤 多账户支持
-- 🔑 API 密钥管理
-- 💵 资金与持仓查看
-
-### 系统功能
-- ⚙️ 系统设置
-- 🔧 诊断工具
-- 📊 性能监控
-
-## 项目结构
-
-```
-├── Application/          # 应用层（回测、优化等）
-├── Core/                 # 核心业务逻辑
-├── Data/                 # 数据文件
-├── Docs/                 # 文档
-├── Infrastructure/       # 基础设施（数据管道）
-├── Models/               # 数据模型
-├── Modules/              # UI 模块
-├── Monitoring/           # 监控服务
-├── Services/             # 服务层
-└── Tests/                # 测试
-
+```powershell
+dotnet restore "币安量化机器人.sln"
+dotnet build "币安量化机器人.sln" -c Release --no-restore
+dotnet test "WPE.Tests\WPE.Tests.csproj" -c Release --no-build -- xUnit.ParallelizeTestCollections=false
 ```
 
-## 技术栈
+Run the desktop reference UI after a successful build:
 
-- **UI 框架：** WPF (Windows Presentation Foundation)
-- **图表库：** ScottPlot 5.0.56
-- **交易所 API：** Binance.Net 8.3.0
-- **数据库：** SQLite (Microsoft.Data.Sqlite 8.0.4)
-- **AI 框架：** 自定义 LSTM 实现
-- **目标框架：** .NET 8.0
+```powershell
+dotnet run --project "币安量化机器人.csproj" -- --reference-ui
+```
 
-## 安全提示
+## Source Of Truth
 
-⚠️ **重要：** 本项目涉及金融交易，请注意：
+- Product priorities: [`Docs/product/master-backlog.md`](Docs/product/master-backlog.md)
+- Current state: [`Docs/agent-context/PROJECT_STATE.md`](Docs/agent-context/PROJECT_STATE.md)
+- Architecture: [`Docs/agent-context/ARCHITECTURE.md`](Docs/agent-context/ARCHITECTURE.md)
+- Decisions: [`Docs/agent-context/DECISIONS.md`](Docs/agent-context/DECISIONS.md)
+- Remaining work: [`Docs/agent-context/TODO.md`](Docs/agent-context/TODO.md)
+- Local-first design: [`Docs/architecture/wpe_multi_agent_local_first_design.md`](Docs/architecture/wpe_multi_agent_local_first_design.md)
 
-1. **不要提交 API 密钥**到代码仓库
-2. 使用前请先在**纸上交易模式**测试
-3. 设置合理的**风险控制参数**
-4. 了解量化交易的**风险**
-5. **投资有风险，入市需谨慎**
+## Repository Layout
 
-## 开发指南
+- `Core/`: contracts and domain primitives
+- `Services/Agent/`: deterministic Agent, risk, execution, recovery, and audit services
+- `Services/Exchange/`: provider-neutral exchange adapters
+- `Infrastructure/`: local infrastructure
+- `Modules/`: desktop modules and quarantined migration references
+- `WebUi/`: reference runtime UI
+- `WPE.Tests/`: xUnit safety and regression suite
+- `Docs/`: product, architecture, evidence, and handoff records
 
-### 添加新模块
+Files excluded from the production project are not production authority. Do not reuse legacy Binance-bound modules for new execution paths.
 
-1. 在 `Modules/` 下创建新文件夹
-2. 创建 `.xaml` 和 `.xaml.cs` 文件
-3. 在 `MainWindow.xaml.cs` 的 `_viewMap` 中注册
+## Local Data And Secrets
 
-### 添加新策略
+Never commit API keys, credentials, certificates, databases, WAL/SHM files, logs, runtime settings, or order-state files. Templates must contain placeholders only. Runtime state belongs under `%LOCALAPPDATA%\WPE Agent\`, not beside the executable.
 
-1. 实现 `ITradingStrategy` 接口
-2. 在 `Core/Strategies/` 中添加策略类
-3. 在策略模板库中注册
+## Release Direction
 
-## 贡献指南
-
-欢迎提交 Pull Request 和 Issue！
-
-在提交代码前，请确保：
-- [ ] 代码编译无错误
-- [ ] 遵循现有代码风格
-- [ ] 添加必要的注释
-- [ ] 更新相关文档
-
-## 许可证
-
-本项目仅供学习和研究使用。
-
-## 联系方式
-
-- GitHub Issues: [提交问题](https://github.com/9529360-cpu/WPE-/issues)
-- 文档中心: [查看文档](Docs/)
-
----
-
-**最后更新：** 2025-11-18  
-**版本：** 1.0.0 (Alpha)
+The planned Windows portable package will keep immutable application files separate from local user state, include a hash manifest, and support side-by-side candidate and last-known-good rollback. Portable packaging is not yet the completed release result.

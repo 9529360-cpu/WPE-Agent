@@ -19,10 +19,24 @@ jobs:
         dotnet-version: '8.0.x'
 
     - name: Restore
-      run: dotnet restore
+      run: dotnet restore "币安量化机器人.sln"
 
     - name: Build
-      run: dotnet build --configuration Release --no-restore
+      run: dotnet build "币安量化机器人.sln" --configuration Release --no-restore
 
     - name: Test
-      run: dotnet test --configuration Release --no-build
+      run: dotnet test "WPE.Tests/WPE.Tests.csproj" --configuration Release --no-build -- xUnit.ParallelizeTestCollections=false
+
+    - name: Publish candidate
+      run: dotnet publish "币安量化机器人.csproj" --configuration Release --no-restore --output artifacts/publish
+
+    - name: Verify publish boundary
+      shell: pwsh
+      run: |
+        if (-not (Get-ChildItem artifacts/publish -Filter *.exe)) { throw "Published executable is missing." }
+        $forbidden = Get-ChildItem artifacts/publish -Recurse -File | Where-Object {
+          $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
+          $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)$' -or
+          $_.Name -match '(?i)\.(db|sqlite|sqlite3)-(wal|shm)$'
+        }
+        if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }

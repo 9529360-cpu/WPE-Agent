@@ -322,15 +322,17 @@ public static class DeterministicResearchCapabilityProducerV1
     private static IEnumerable<string> ValidateTechnicalFacts(ModelOffResearchInputV1 input)
     {
         var facts=input.Facts;if(!StringFact(facts,"schema",out var schema)||schema!="wpe.technical-assessment/1.0")yield return "research.invalid.technical_schema";
-        if(!StringFact(facts,"symbol",out _))yield return "research.missing.technical_symbol";
+        if(!StringFact(facts,"symbol",out var symbol)||!CanonicalSymbol(symbol))yield return "research.invalid.technical_symbol";
+        if(!StringFact(facts,"marketSymbol",out var marketSymbol)||!CanonicalSymbol(marketSymbol)||!string.Equals(symbol,marketSymbol,StringComparison.Ordinal))yield return "research.invalid.technical_symbol_binding";
         if(!StringFact(facts,"marketEvidenceSha256",out var hash)||!ValidSha(hash))yield return "research.invalid.technical_hash";
         var observed=UtcFact(facts,"observedAtUtc",out var observedAt);if(!observed)yield return "research.invalid.technical_observed_time";else{if(observedAt>input.EvaluationTimeUtc)yield return "research.invalid.technical_future";if(input.EvaluationTimeUtc-observedAt>TimeSpan.FromMinutes(5))yield return "research.invalid.technical_stale";}
         foreach(var name in new[]{"trend15m","trend1h","trend4h"})if(!FiniteFact(facts,name,out var value)||Math.Abs(value)>100)yield return $"research.invalid.technical_{name.ToLowerInvariant()}";
         if(!FiniteFact(facts,"rsi",out var rsi)||rsi is <0 or >100)yield return "research.invalid.technical_rsi";
-        if(observed&&ValidSha(hash)&&!input.Sources.Any(x=>x.Kind==ModelOffSourceKindV1.Market&&x.AsOfUtc>=observedAt&&x.ArtifactHash=="sha256:"+hash))yield return "research.invalid.technical_source";
+        if(observed&&ValidSha(hash)&&!input.Sources.Any(x=>x.Kind==ModelOffSourceKindV1.Market&&x.AsOfUtc>=observedAt&&x.ArtifactHash=="sha256:"+hash&&x.SourceId=="market:"+symbol))yield return "research.invalid.technical_source";
     }
 
     private static bool ValidSha(string value)=>value.Length==64&&value.All(Uri.IsHexDigit);
+    private static bool CanonicalSymbol(string value)=>value.Length is>=5 and<=30&&value.All(c=>c is>='A' and<='Z' or>='0' and<='9');
     private static bool FiniteFact(JsonElement facts,string name,out double value){value=0;return facts.TryGetProperty(name,out var element)&&element.ValueKind==JsonValueKind.Number&&element.TryGetDouble(out value)&&double.IsFinite(value);}
 
     private static bool StringFact(JsonElement facts, string name, out string value)

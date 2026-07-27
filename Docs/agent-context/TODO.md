@@ -1,6 +1,8 @@
 # TODO
 
 ## P0
+- [ ] Restore a real GitHub Actions gate. Current private-repository pushes end in `startup_failure` before any job starts even though Actions is enabled; diagnose account/runner billing or platform eligibility, then require a successful remote build/test/publish-boundary run before treating CI as authoritative.
+- [ ] Enable protected-main enforcement when the repository plan supports private-repository branch protection, or make an explicit repository-visibility/plan decision. The GitHub API currently returns HTTP 403 stating that Pro or a public repository is required.
 - [x] Add focused Setup Bridge message tests.
 - Keep the active safety suites in the release gate; add new collection-contract tests only together with the corresponding orders, equity, backtest, skill-call, or audit backend protocol.
 - [x] Re-enable Agent settings resilience and Brain endpoint validation suites with the stage 2A configuration migration.
