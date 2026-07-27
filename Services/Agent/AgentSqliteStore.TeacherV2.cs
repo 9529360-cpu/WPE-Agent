@@ -20,6 +20,7 @@ public sealed partial class AgentSqliteStore
         CREATE TABLE IF NOT EXISTS teacher_public_evidence(evidence_hash TEXT PRIMARY KEY,schema TEXT NOT NULL,source_id TEXT NOT NULL,identity TEXT NOT NULL,observed_at_utc TEXT NOT NULL,retrieved_at_utc TEXT NOT NULL,status TEXT NOT NULL,canonical_json TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS ix_teacher_public_evidence_latest ON teacher_public_evidence(source_id,identity,observed_at_utc DESC);
         CREATE TABLE IF NOT EXISTS teacher_source_health_events(id INTEGER PRIMARY KEY AUTOINCREMENT,source_id TEXT NOT NULL,checked_at_utc TEXT NOT NULL,status TEXT NOT NULL,diagnostic_code TEXT NOT NULL,evidence_hash TEXT,UNIQUE(source_id,checked_at_utc,diagnostic_code));
+        CREATE TABLE IF NOT EXISTS teacher_event_fingerprints(fingerprint TEXT PRIMARY KEY,event_id TEXT NOT NULL,first_seen_at_utc TEXT NOT NULL,expires_at_utc TEXT NOT NULL,evidence_hash TEXT NOT NULL);
         CREATE TRIGGER IF NOT EXISTS teacher_lessons_no_update BEFORE UPDATE ON teacher_lessons BEGIN SELECT RAISE(ABORT,'teacher lessons are append-only'); END;
         CREATE TRIGGER IF NOT EXISTS teacher_lessons_no_delete BEFORE DELETE ON teacher_lessons BEGIN SELECT RAISE(ABORT,'teacher lessons are append-only'); END;
         CREATE TRIGGER IF NOT EXISTS teacher_lesson_evidence_no_update BEFORE UPDATE ON teacher_lesson_evidence BEGIN SELECT RAISE(ABORT,'teacher evidence is append-only'); END;
@@ -36,6 +37,8 @@ public sealed partial class AgentSqliteStore
         CREATE TRIGGER IF NOT EXISTS teacher_public_evidence_no_delete BEFORE DELETE ON teacher_public_evidence BEGIN SELECT RAISE(ABORT,'teacher public evidence is append-only'); END;
         CREATE TRIGGER IF NOT EXISTS teacher_source_health_no_update BEFORE UPDATE ON teacher_source_health_events BEGIN SELECT RAISE(ABORT,'teacher source health is append-only'); END;
         CREATE TRIGGER IF NOT EXISTS teacher_source_health_no_delete BEFORE DELETE ON teacher_source_health_events BEGIN SELECT RAISE(ABORT,'teacher source health is append-only'); END;
+        CREATE TRIGGER IF NOT EXISTS teacher_event_fingerprints_no_update BEFORE UPDATE ON teacher_event_fingerprints BEGIN SELECT RAISE(ABORT,'teacher event fingerprints are append-only'); END;
+        CREATE TRIGGER IF NOT EXISTS teacher_event_fingerprints_no_delete BEFORE DELETE ON teacher_event_fingerprints BEGIN SELECT RAISE(ABORT,'teacher event fingerprints are append-only'); END;
         """;q.ExecuteNonQuery();
     }
 
@@ -81,5 +84,17 @@ public sealed partial class AgentSqliteStore
     public async Task RecordTeacherSourceHealthAsync(string sourceId,DateTimeOffset checkedAtUtc,string status,string diagnosticCode,string? evidenceHash,CancellationToken ct)
     {
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="INSERT OR IGNORE INTO teacher_source_health_events(source_id,checked_at_utc,status,diagnostic_code,evidence_hash) VALUES($source,$checked,$status,$code,$hash)";AddParameters(q,("$source",sourceId),("$checked",DbInstant(checkedAtUtc)),("$status",status),("$code",diagnosticCode),("$hash",evidenceHash));await q.ExecuteNonQueryAsync(ct);
+    }
+    public async Task<bool> TryClaimTeacherEventAsync(TeacherMarketEventV2 value,TimeSpan deduplicationWindow,CancellationToken ct)
+    {
+        if(value.Schema!="wpe.teacher-market-event/2.0"||value.Fingerprint.Length!=64||deduplicationWindow<=TimeSpan.Zero)return false;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="INSERT OR IGNORE INTO teacher_event_fingerprints VALUES($fingerprint,$event,$first,$expires,$hash); SELECT changes();";AddParameters(q,("$fingerprint",value.Fingerprint),("$event",value.EventId),("$first",DbInstant(value.ObservedAtUtc)),("$expires",DbInstant(value.ObservedAtUtc.Add(deduplicationWindow))),("$hash",value.CurrentEvidenceHash));return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1;
+    }
+    public async Task<string?> GetLatestTeacherEligibleCycleIdAsync(CancellationToken ct)
+    {
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT cycle_id FROM model_off_canonical_audits WHERE status='succeeded' GROUP BY cycle_id HAVING COUNT(DISTINCT output_kind)=7 ORDER BY MAX(recorded_at_utc) DESC LIMIT 1";return (string?)await q.ExecuteScalarAsync(ct);
+    }
+    public async Task<bool> TryQueueTeacherDeliveryAsync(string deliveryId,string lessonId,string destinationKind,DateTimeOffset recordedAtUtc,CancellationToken ct)
+    {
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="INSERT OR IGNORE INTO teacher_delivery_events(delivery_id,lesson_id,destination_kind,state,attempt,recorded_at_utc,reason_code) VALUES($delivery,$lesson,$destination,'queued',1,$recorded,'teacher.delivery.queued'); SELECT changes();";AddParameters(q,("$delivery",deliveryId),("$lesson",lessonId),("$destination",destinationKind),("$recorded",DbInstant(recordedAtUtc)));return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1;
     }
 }

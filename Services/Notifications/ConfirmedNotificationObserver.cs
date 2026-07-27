@@ -95,7 +95,7 @@ public static class ConfirmedNotificationTruth
         string eventKey,NotificationEventKind kind,string provider,string environment,
         DateTime occurredAtUtc,string diagnosticCode,string? symbol=null,string? side=null,string? content=null)
     {
-        if(kind is not(NotificationEventKind.RiskBlocked or NotificationEventKind.AgentDegraded or NotificationEventKind.MarketBrief or NotificationEventKind.Test))
+        if(kind is not(NotificationEventKind.RiskBlocked or NotificationEventKind.AgentDegraded or NotificationEventKind.MarketBrief or NotificationEventKind.TeacherMorningLesson or NotificationEventKind.TeacherAfternoonLesson or NotificationEventKind.TeacherEveningLesson or NotificationEventKind.TeacherEventLesson or NotificationEventKind.TeacherRecommendation or NotificationEventKind.TeacherCorrection or NotificationEventKind.Test))
             throw new ArgumentOutOfRangeException(nameof(kind));
         return new(eventKey,kind,environment,provider,symbol,side,null,null,null,null,
             occurredAtUtc.ToUniversalTime(),diagnosticCode,content);

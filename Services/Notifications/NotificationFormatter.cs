@@ -51,6 +51,12 @@ public sealed class NotificationFormatter
         NotificationEventKind.RiskBlocked=>"Risk blocked",
         NotificationEventKind.AgentDegraded=>"Agent degraded",
         NotificationEventKind.MarketBrief=>"Market brief",
+        NotificationEventKind.TeacherMorningLesson=>"Teacher morning lesson",
+        NotificationEventKind.TeacherAfternoonLesson=>"Teacher afternoon lesson",
+        NotificationEventKind.TeacherEveningLesson=>"Teacher evening lesson",
+        NotificationEventKind.TeacherEventLesson=>"Teacher event lesson",
+        NotificationEventKind.TeacherRecommendation=>"Teacher recommendation",
+        NotificationEventKind.TeacherCorrection=>"Teacher correction",
         NotificationEventKind.Test=>"Test notification",
         _=>value.ToString()
     };

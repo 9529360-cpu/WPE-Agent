@@ -19,6 +19,12 @@ namespace 币安量化机器人;
 public partial class SetupWindow:Window
 {
     private readonly CheckBox _notifyMarketBrief=new(){Tag=NotificationEventKind.MarketBrief.ToString(),Margin=new(0,4,18,4)};
+    private readonly CheckBox _notifyTeacherMorning=new(){Tag=NotificationEventKind.TeacherMorningLesson.ToString(),Margin=new(0,4,18,4)};
+    private readonly CheckBox _notifyTeacherAfternoon=new(){Tag=NotificationEventKind.TeacherAfternoonLesson.ToString(),Margin=new(0,4,18,4)};
+    private readonly CheckBox _notifyTeacherEvening=new(){Tag=NotificationEventKind.TeacherEveningLesson.ToString(),Margin=new(0,4,18,4)};
+    private readonly CheckBox _notifyTeacherEvent=new(){Tag=NotificationEventKind.TeacherEventLesson.ToString(),Margin=new(0,4,18,4)};
+    private readonly CheckBox _notifyTeacherRecommendation=new(){Tag=NotificationEventKind.TeacherRecommendation.ToString(),Margin=new(0,4,18,4)};
+    private readonly CheckBox _notifyTeacherCorrection=new(){Tag=NotificationEventKind.TeacherCorrection.ToString(),Margin=new(0,4,18,4)};
     private readonly AgentSettingsStore _store=new();private readonly AgentSqliteStore _auditStore=new();private readonly AccessReadinessService _readiness=new();private readonly RuntimeAuthorizationStateStore _authorizationState;private readonly LocalTradingReviewContextProvider _reviewContext;private readonly TradingReviewApprovalService _reviewApprovals;private AgentSettings _settings;private AccessReadinessReport? _last;private static LocalizationService I18n=>LocalizationService.Current;public bool SetupCompleted{get;private set;}
     public SetupWindow(string user,bool configurationMode=false){InitializeComponent();if(!ProviderBox.Items.OfType<ComboBoxItem>().Any(x=>string.Equals(x.Content?.ToString(),"WPE Local Brain",StringComparison.OrdinalIgnoreCase)))ProviderBox.Items.Insert(0,new ComboBoxItem{Content="WPE Local Brain"});_settings=_store.Load();UseLocalBrainWhenRemoteIsUnconfigured();_settings.ActiveUser=user;_reviewContext=new LocalTradingReviewContextProvider(_store,_auditStore);_reviewApprovals=new TradingReviewApprovalService(_auditStore,_reviewContext);_authorizationState=new RuntimeAuthorizationStateStore(_store,_auditStore);UserText.Text="● "+user;LoadSettings();if(configurationMode){WizardTabs.SelectedIndex=1;}I18n.LanguageChanged+=LanguageChanged;}
     private void UseLocalBrainWhenRemoteIsUnconfigured(){if(_settings.Brains.TryGetValue(_settings.ActiveBrain,out var active)&&!active.IsLocal&&!string.IsNullOrWhiteSpace(active.EncryptedKey))return;const string name="WPE Local Brain";if(!_settings.Brains.ContainsKey(name))_settings.Brains[name]=new BrainSlot{Provider=name,Endpoint=string.Empty,Model="deterministic-local-v1",IsLocal=true,PromptVersion="wpe-local-deterministic-v1",EnableFallback=false};_settings.ActiveBrain=name;_store.Save(_settings);}
@@ -87,8 +93,9 @@ public partial class SetupWindow:Window
     private CheckBox[] NotificationEventBoxes()
     {
         _notifyMarketBrief.Content=I18n.CurrentCode switch{"zh_CN"=>"每日市场简报","zh_TW"=>"每日市場簡報","ja_JP"=>"毎日のマーケットレポート","ko_KR"=>"일일 시장 브리핑","it_IT"=>"Briefing giornaliero di mercato",_=>"Daily market brief"};
-        if(_notifyMarketBrief.Parent is null&&NotifyTest.Parent is Panel panel)panel.Children.Insert(Math.Max(0,panel.Children.IndexOf(NotifyTest)),_notifyMarketBrief);
-        return[NotifyOrderFilled,NotifyPositionOpened,NotifyPositionClosed,NotifyProtection,NotifyProtectionFailed,NotifyRiskBlocked,NotifyAgentDegraded,_notifyMarketBrief,NotifyTest];
+        var chinese=I18n.CurrentCode.StartsWith("zh",StringComparison.OrdinalIgnoreCase);_notifyTeacherMorning.Content=chinese?"老师早课":"Teacher morning lesson";_notifyTeacherAfternoon.Content=chinese?"老师午课":"Teacher afternoon lesson";_notifyTeacherEvening.Content=chinese?"老师晚课":"Teacher evening lesson";_notifyTeacherEvent.Content=chinese?"老师市场异动课":"Teacher market event lesson";_notifyTeacherRecommendation.Content=chinese?"老师研究候选":"Teacher research candidate";_notifyTeacherCorrection.Content=chinese?"老师更正":"Teacher correction";
+        if(NotifyTest.Parent is Panel panel)foreach(var box in new[]{_notifyMarketBrief,_notifyTeacherMorning,_notifyTeacherAfternoon,_notifyTeacherEvening,_notifyTeacherEvent,_notifyTeacherRecommendation,_notifyTeacherCorrection})if(box.Parent is null)panel.Children.Insert(Math.Max(0,panel.Children.IndexOf(NotifyTest)),box);
+        return[NotifyOrderFilled,NotifyPositionOpened,NotifyPositionClosed,NotifyProtection,NotifyProtectionFailed,NotifyRiskBlocked,NotifyAgentDegraded,_notifyMarketBrief,_notifyTeacherMorning,_notifyTeacherAfternoon,_notifyTeacherEvening,_notifyTeacherEvent,_notifyTeacherRecommendation,_notifyTeacherCorrection,NotifyTest];
     }
     private void LoadNotificationSettings()
     {

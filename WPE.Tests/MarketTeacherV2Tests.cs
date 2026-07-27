@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using 币安量化机器人.Services.Agent;
+using WpeAgent.Notifications;
 
 namespace WPE.Tests;
 
@@ -49,5 +50,12 @@ public sealed class MarketTeacherV2Tests:IDisposable
 
     [Fact] public void NumericProvenanceRejectsChangedGeneratedNumbers(){Assert.True(TeacherNumericProvenanceGuardV2.PreservesDeterministicValues("BTC 123.45，评分 72%","结论：BTC 123.45，评分 72%"));Assert.False(TeacherNumericProvenanceGuardV2.PreservesDeterministicValues("BTC 123.45","BTC 124.00"));}
 
-    private static TeacherEvidenceReferenceV2[] Refs()=>new[]{"market","research","strategy","risk","execution","recovery","audit"}.Select((role,i)=>new TeacherEvidenceReferenceV2(role,role+"-output","cycle-1",new string("abcdef0"[i],64),Now.AddMinutes(-7+i),TeacherEvidenceAvailabilityV2.Available)).ToArray();
+    [Fact] public async Task LessonKindsRequireIndependentExplicitConsentAndQueueOnce()
+    {
+        var lesson=MarketTeacherComposerV2.Compose(TeacherLessonKindV2.Morning,Now,Refs(),generatedAtUtc:Now);var store=new AgentSqliteStore(Db);Assert.True((await store.SaveTeacherLessonAsync(lesson,default)).Succeeded);var observer=new RecordingObserver();var denied=new TeacherLessonNotificationPublisherV2(store,observer,_=>false);Assert.False(await denied.PublishIfAllowedAsync(lesson,"binance","Testnet",default));Assert.Empty(observer.Events);var allowed=new TeacherLessonNotificationPublisherV2(store,observer,x=>x==NotificationEventKind.TeacherMorningLesson);Assert.True(await allowed.PublishIfAllowedAsync(lesson,"binance","Testnet",default));Assert.False(await allowed.PublishIfAllowedAsync(lesson,"binance","Testnet",default));Assert.Equal(NotificationEventKind.TeacherMorningLesson,Assert.Single(observer.Events).Kind);
+    }
+    [Fact] public void DesktopSettingsExposeIndependentTeacherConsentKinds(){var source=File.ReadAllText(Path.Combine(ProjectRoot(),"SetupWindow.xaml.cs"));foreach(var kind in new[]{"TeacherMorningLesson","TeacherAfternoonLesson","TeacherEveningLesson","TeacherEventLesson","TeacherRecommendation","TeacherCorrection"})Assert.Contains(kind,source,StringComparison.Ordinal);}
+
+    private static TeacherEvidenceReferenceV2[] Refs()=>new[]{"market","research","strategy","risk","execution","recovery","audit"}.Select((role,i)=>new TeacherEvidenceReferenceV2(role,role+"-output","cycle-1",new string("abcdef0"[i],64),Now.AddMinutes(-7+i),TeacherEvidenceAvailabilityV2.Available)).ToArray();private static string ProjectRoot()=>Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
+    private sealed class RecordingObserver:IConfirmedNotificationObserver{public List<ConfirmedNotificationEvent> Events{get;}=[];public Task ObserveAsync(ConfirmedNotificationEvent value,CancellationToken ct){Events.Add(value);return Task.CompletedTask;}}
 }
