@@ -17,6 +17,9 @@ public sealed partial class AgentSqliteStore
         CREATE TABLE IF NOT EXISTS teacher_corrections(correction_id TEXT PRIMARY KEY,superseded_lesson_id TEXT NOT NULL REFERENCES teacher_lessons(lesson_id),issued_at_utc TEXT NOT NULL,reason_code TEXT NOT NULL,sha256 TEXT NOT NULL,canonical_json TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS teacher_delivery_events(id INTEGER PRIMARY KEY AUTOINCREMENT,delivery_id TEXT NOT NULL,lesson_id TEXT NOT NULL REFERENCES teacher_lessons(lesson_id),destination_kind TEXT NOT NULL,state TEXT NOT NULL,attempt INTEGER NOT NULL,recorded_at_utc TEXT NOT NULL,reason_code TEXT NOT NULL,UNIQUE(delivery_id,attempt));
         CREATE TABLE IF NOT EXISTS teacher_memories(memory_id TEXT PRIMARY KEY,tier TEXT NOT NULL,recorded_at_utc TEXT NOT NULL,expires_at_utc TEXT,kind TEXT NOT NULL,canonical_reference TEXT NOT NULL,summary_hash TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS teacher_public_evidence(evidence_hash TEXT PRIMARY KEY,schema TEXT NOT NULL,source_id TEXT NOT NULL,identity TEXT NOT NULL,observed_at_utc TEXT NOT NULL,retrieved_at_utc TEXT NOT NULL,status TEXT NOT NULL,canonical_json TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS ix_teacher_public_evidence_latest ON teacher_public_evidence(source_id,identity,observed_at_utc DESC);
+        CREATE TABLE IF NOT EXISTS teacher_source_health_events(id INTEGER PRIMARY KEY AUTOINCREMENT,source_id TEXT NOT NULL,checked_at_utc TEXT NOT NULL,status TEXT NOT NULL,diagnostic_code TEXT NOT NULL,evidence_hash TEXT,UNIQUE(source_id,checked_at_utc,diagnostic_code));
         CREATE TRIGGER IF NOT EXISTS teacher_lessons_no_update BEFORE UPDATE ON teacher_lessons BEGIN SELECT RAISE(ABORT,'teacher lessons are append-only'); END;
         CREATE TRIGGER IF NOT EXISTS teacher_lessons_no_delete BEFORE DELETE ON teacher_lessons BEGIN SELECT RAISE(ABORT,'teacher lessons are append-only'); END;
         CREATE TRIGGER IF NOT EXISTS teacher_lesson_evidence_no_update BEFORE UPDATE ON teacher_lesson_evidence BEGIN SELECT RAISE(ABORT,'teacher evidence is append-only'); END;
@@ -29,6 +32,10 @@ public sealed partial class AgentSqliteStore
         CREATE TRIGGER IF NOT EXISTS teacher_delivery_events_no_delete BEFORE DELETE ON teacher_delivery_events BEGIN SELECT RAISE(ABORT,'teacher delivery events are append-only'); END;
         CREATE TRIGGER IF NOT EXISTS teacher_memories_no_update BEFORE UPDATE ON teacher_memories BEGIN SELECT RAISE(ABORT,'teacher memories are append-only'); END;
         CREATE TRIGGER IF NOT EXISTS teacher_memories_no_delete BEFORE DELETE ON teacher_memories BEGIN SELECT RAISE(ABORT,'teacher memories are append-only'); END;
+        CREATE TRIGGER IF NOT EXISTS teacher_public_evidence_no_update BEFORE UPDATE ON teacher_public_evidence BEGIN SELECT RAISE(ABORT,'teacher public evidence is append-only'); END;
+        CREATE TRIGGER IF NOT EXISTS teacher_public_evidence_no_delete BEFORE DELETE ON teacher_public_evidence BEGIN SELECT RAISE(ABORT,'teacher public evidence is append-only'); END;
+        CREATE TRIGGER IF NOT EXISTS teacher_source_health_no_update BEFORE UPDATE ON teacher_source_health_events BEGIN SELECT RAISE(ABORT,'teacher source health is append-only'); END;
+        CREATE TRIGGER IF NOT EXISTS teacher_source_health_no_delete BEFORE DELETE ON teacher_source_health_events BEGIN SELECT RAISE(ABORT,'teacher source health is append-only'); END;
         """;q.ExecuteNonQuery();
     }
 
@@ -59,5 +66,20 @@ public sealed partial class AgentSqliteStore
     public async Task<TeacherPersistenceResult> SaveTeacherCorrectionAsync(TeacherCorrectionV2 value,CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(value);var json=JsonSerializer.Serialize(value);await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="INSERT OR IGNORE INTO teacher_corrections VALUES($id,$lesson,$issued,$reason,$hash,$json); SELECT changes();";AddParameters(q,("$id",value.CorrectionId),("$lesson",value.SupersededLessonId),("$issued",DbInstant(value.IssuedAtUtc)),("$reason",value.ReasonCode),("$hash",value.Sha256),("$json",json));return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1?new(true,false,"teacher.correction-persisted"):new(true,true,"teacher.correction-idempotent");
+    }
+
+    public async Task<TeacherPersistenceResult> SaveTeacherCryptoEvidenceAsync(TeacherCryptoMarketFactV2 value,CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(value);if(!TeacherCryptoMarketFactCanonicalizerV2.IsCanonical(value))return new(false,false,"teacher.evidence-invalid");var json=JsonSerializer.Serialize(value);await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+        await using(var q=c.CreateCommand()){q.Transaction=tx;q.CommandText="INSERT OR IGNORE INTO teacher_public_evidence VALUES($hash,$schema,$source,$identity,$observed,$retrieved,$status,$json); SELECT changes();";AddParameters(q,("$hash",value.CanonicalSha256),("$schema",value.Schema),("$source",value.SourceId),("$identity",value.Symbol),("$observed",DbInstant(value.ObservedAtUtc)),("$retrieved",DbInstant(value.RetrievedAtUtc)),("$status",value.Status),("$json",json));var inserted=Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1;if(!inserted){await tx.RollbackAsync(ct);return new(true,true,"teacher.evidence-idempotent");}}
+        await using(var q=c.CreateCommand()){q.Transaction=tx;q.CommandText="INSERT INTO teacher_source_health_events(source_id,checked_at_utc,status,diagnostic_code,evidence_hash) VALUES($source,$checked,'available',$code,$hash)";AddParameters(q,("$source",value.SourceId),("$checked",DbInstant(value.RetrievedAtUtc)),("$code",value.DiagnosticCode),("$hash",value.CanonicalSha256));await q.ExecuteNonQueryAsync(ct);}await tx.CommitAsync(ct);return new(true,false,"teacher.evidence-persisted");
+    }
+    public async Task<TeacherCryptoMarketFactV2?> GetLatestTeacherCryptoEvidenceAsync(string symbol,DateTimeOffset asOfUtc,TimeSpan maximumAge,CancellationToken ct)
+    {
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT canonical_json FROM teacher_public_evidence WHERE source_id='binance-futures-public' AND identity=$identity AND observed_at_utc<=$asof ORDER BY observed_at_utc DESC LIMIT 1";AddParameters(q,("$identity",symbol.ToUpperInvariant()),("$asof",DbInstant(asOfUtc)));if(await q.ExecuteScalarAsync(ct) is not string json)return null;var value=JsonSerializer.Deserialize<TeacherCryptoMarketFactV2>(json);return value is not null&&TeacherCryptoMarketFactCanonicalizerV2.IsCanonical(value)&&asOfUtc.ToUniversalTime()-value.ObservedAtUtc<=maximumAge?value:null;
+    }
+    public async Task RecordTeacherSourceHealthAsync(string sourceId,DateTimeOffset checkedAtUtc,string status,string diagnosticCode,string? evidenceHash,CancellationToken ct)
+    {
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="INSERT OR IGNORE INTO teacher_source_health_events(source_id,checked_at_utc,status,diagnostic_code,evidence_hash) VALUES($source,$checked,$status,$code,$hash)";AddParameters(q,("$source",sourceId),("$checked",DbInstant(checkedAtUtc)),("$status",status),("$code",diagnosticCode),("$hash",evidenceHash));await q.ExecuteNonQueryAsync(ct);
     }
 }

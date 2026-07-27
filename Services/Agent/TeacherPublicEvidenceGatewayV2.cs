@@ -5,7 +5,7 @@ using System.IO;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed record TeacherPublicSourceV2(string SourceId,string Tier,string Host,IReadOnlyList<string> PathPrefixes,IReadOnlyList<string> ContentTypes,int MaximumResponseBytes,TimeSpan Timeout,bool Enabled=true);
+public sealed record TeacherPublicSourceV2(string SourceId,string Tier,string Host,IReadOnlyList<string> PathPrefixes,IReadOnlyList<string> ContentTypes,int MaximumResponseBytes,TimeSpan Timeout,bool Enabled=true,string AuthenticationClass="none",string Attribution="source-required",string Redistribution="unknown",string CommercialUse="unknown",string? PolicyUrl=null,DateOnly? PolicyReviewedOn=null);
 public sealed record TeacherNetworkBudgetV2(int MaximumRequests,long MaximumBytes,int MaximumRetries,TimeSpan MaximumElapsed)
 {
     public static TeacherNetworkBudgetV2 Default { get; }=new(6,2_000_000,1,TimeSpan.FromSeconds(20));
@@ -27,7 +27,7 @@ public sealed class TeacherPublicEvidenceGatewayV2:IDisposable
     public TeacherPublicEvidenceGatewayV2(IEnumerable<TeacherPublicSourceV2> sources,Func<DateTimeOffset>? utcNow=null):this(sources,CreateClient(),true,utcNow){}
     internal TeacherPublicEvidenceGatewayV2(IEnumerable<TeacherPublicSourceV2> sources,HttpClient client,bool ownsClient=false,Func<DateTimeOffset>? utcNow=null)
     {
-        _sources=sources.ToDictionary(x=>x.SourceId,StringComparer.Ordinal);_client=client;_ownsClient=ownsClient;_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);
+        var configured=sources.ToArray();if(configured.Any(x=>string.IsNullOrWhiteSpace(x.SourceId)||string.IsNullOrWhiteSpace(x.Host)||x.PathPrefixes.Count==0||x.ContentTypes.Count==0||x.MaximumResponseBytes is <1 or >5_000_000||x.Timeout<=TimeSpan.Zero||x.Timeout>TimeSpan.FromSeconds(30)||x.AuthenticationClass!="none"))throw new ArgumentException("Teacher public source policy is invalid.",nameof(sources));_sources=configured.ToDictionary(x=>x.SourceId,StringComparer.Ordinal);_client=client;_ownsClient=ownsClient;_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);
     }
     public async Task<TeacherPublicEvidenceResponseV2> GetAsync(string sourceId,Uri uri,TeacherNetworkBudgetStateV2 budget,CancellationToken ct)
     {
