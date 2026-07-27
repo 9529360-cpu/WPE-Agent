@@ -6,6 +6,15 @@ using System.Text.Json;
 namespace 币安量化机器人.Services.Agent;
 
 public sealed record TeacherCryptoMarketFactV2(string Schema,string SourceId,string Symbol,DateTimeOffset ObservedAtUtc,DateTimeOffset RetrievedAtUtc,decimal MarkPrice,decimal IndexPrice,decimal FundingRate,DateTimeOffset NextFundingAtUtc,decimal OpenInterest,decimal PriceChangePercent24h,decimal QuoteVolume24h,IReadOnlyList<string> RawEvidenceHashes,string CanonicalSha256,string Status,string DiagnosticCode);
+public sealed record TeacherPublicEvidenceCorrectionV2(string CorrectionId,string Schema,string SourceId,string Identity,string SupersededHash,string ReplacementHash,DateTimeOffset IssuedAtUtc,string ReasonCode,string CanonicalSha256);
+
+public static class TeacherPublicEvidenceCorrectionCanonicalizerV2
+{
+    public static TeacherPublicEvidenceCorrectionV2 Create(TeacherCryptoMarketFactV2 superseded,TeacherCryptoMarketFactV2 replacement,DateTimeOffset issuedAtUtc,string reasonCode)
+    {
+        if(!TeacherCryptoMarketFactCanonicalizerV2.IsCanonical(superseded)||!TeacherCryptoMarketFactCanonicalizerV2.IsCanonical(replacement)||superseded.SourceId!=replacement.SourceId||superseded.Symbol!=replacement.Symbol||superseded.ObservedAtUtc!=replacement.ObservedAtUtc||superseded.CanonicalSha256==replacement.CanonicalSha256||replacement.RetrievedAtUtc<superseded.RetrievedAtUtc||string.IsNullOrWhiteSpace(reasonCode))throw new InvalidOperationException("Teacher public evidence correction is invalid.");var id="correction-"+MarketTeacherComposerV2.Hash(superseded.CanonicalSha256+replacement.CanonicalSha256)[..16];var draft=new TeacherPublicEvidenceCorrectionV2(id,"wpe.teacher-public-evidence-correction/2.0",superseded.SourceId,superseded.Symbol,superseded.CanonicalSha256,replacement.CanonicalSha256,issuedAtUtc.ToUniversalTime(),reasonCode,string.Empty);return draft with{CanonicalSha256=MarketTeacherComposerV2.Hash(System.Text.Json.JsonSerializer.Serialize(draft))};
+    }
+}
 
 public static class TeacherCryptoMarketFactCanonicalizerV2
 {

@@ -72,6 +72,15 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
+        if (e.Args.Any(x => string.Equals(x, "--teacher-v2-acceptance", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await TeacherV2AcceptanceRunner.RunAsync(e.Args);
+            Log.Information("Teacher V2 acceptance collection completed. Success={Success}; Directory={Directory}; Errors={Errors}",result.Success,result.ArtifactDirectory,string.Join(',',result.Errors));
+            Shutdown(result.Success?0:31);
+            return;
+        }
+
         if (e.Args.Any(x => string.Equals(x, "--market-aggregate-acceptance", StringComparison.OrdinalIgnoreCase)))
         {
             ShutdownMode=ShutdownMode.OnExplicitShutdown;
