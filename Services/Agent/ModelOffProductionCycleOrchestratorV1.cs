@@ -31,6 +31,9 @@ internal sealed class ModelOffProductionCycleOrchestratorV1
 {
     internal const string InputSchema = "wpe.model-off-production-cycle/1.0";
     private static readonly TimeSpan DefaultMaximumInputAge = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MaximumResearchNewsAge = TimeSpan.FromDays(7);
+    private static readonly TimeSpan MaximumResearchMacroAge = TimeSpan.FromDays(62);
+    private static readonly TimeSpan MaximumResearchValidationAge = TimeSpan.FromHours(24);
     private static readonly ModelOffAgentV1[] UpstreamRoles =
         [ModelOffAgentV1.Market, ModelOffAgentV1.Research, ModelOffAgentV1.Strategy, ModelOffAgentV1.Risk];
     private static readonly ModelOffAgentV1[] OrderedRoles = Enum.GetValues<ModelOffAgentV1>();
@@ -134,7 +137,7 @@ internal sealed class ModelOffProductionCycleOrchestratorV1
         if (!ModelOffEligibilityV1.IsEligibleForDownstream(input.Output)) reasons.Add($"production.{Token(role)}.ineligible");
         if (!Fresh(input.Output.GeneratedAtUtc, request.EvaluationTimeUtc, maximumAge) ||
             !Fresh(input.Output.EvaluationTimeUtc, request.EvaluationTimeUtc, maximumAge) ||
-            input.Output.Sources.Any(x => !x.AsOfUtc.HasValue || !Fresh(x.AsOfUtc.Value, request.EvaluationTimeUtc, maximumAge)))
+            input.Output.Sources.Any(x => !SourceFresh(role, x, request.EvaluationTimeUtc, maximumAge)))
             reasons.Add($"production.{Token(role)}.stale");
         if (previous is not null && !input.Output.Sources.Any(x =>
                 string.Equals(x.ArtifactHash, "sha256:" + previous.Sha256, StringComparison.Ordinal)))
@@ -156,6 +159,20 @@ internal sealed class ModelOffProductionCycleOrchestratorV1
 
     private static bool Fresh(DateTimeOffset value, DateTimeOffset now, TimeSpan maximumAge) =>
         value.Offset == TimeSpan.Zero && value <= now && now - value <= maximumAge;
+
+    private static bool SourceFresh(ModelOffAgentV1 role, ModelOffSourceV1 source, DateTimeOffset now, TimeSpan cycleMaximumAge)
+    {
+        if (!source.AsOfUtc.HasValue || !source.ReceivedAtUtc.HasValue ||
+            !Fresh(source.ReceivedAtUtc.Value, now, cycleMaximumAge)) return false;
+        var maximumAge = role == ModelOffAgentV1.Research ? source.Kind switch
+        {
+            ModelOffSourceKindV1.News => MaximumResearchNewsAge,
+            ModelOffSourceKindV1.Macro => MaximumResearchMacroAge,
+            ModelOffSourceKindV1.Fundamental or ModelOffSourceKindV1.Strategy => MaximumResearchValidationAge,
+            _ => cycleMaximumAge
+        } : cycleMaximumAge;
+        return Fresh(source.AsOfUtc.Value, now, maximumAge);
+    }
 
     private static ModelOffAgentOutputV1 Derived(
         ModelOffAgentV1 role, string suffix, string action, ModelOffProductionCycleRequestV1 request,

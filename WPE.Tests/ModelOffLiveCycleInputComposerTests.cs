@@ -344,6 +344,60 @@ public sealed class ModelOffLiveCycleInputComposerTests
     }
 
     [Fact]
+    public async Task ProductionResearchUsesSourceSpecificFreshnessWithoutRelabelingEvidence()
+    {
+        var directory=Path.Combine(Path.GetTempPath(),"wpe-research-freshness-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(directory);
+        try
+        {
+            var request=Request();
+            var research=request.Research.ToDictionary(x=>x.Key,x=>CopyResearch(x.Value,validatedAt:Now.AddHours(-12)));
+            var fundamentals=request.Evidence.Fundamentals.ToDictionary(x=>x.Key,x=>Fundamental(x.Key,Now.AddHours(-12).UtcDateTime));
+            var oldNews=News() with{PublishedAt=Now.AddDays(-6).UtcDateTime,CollectedAt=Now.AddMinutes(-1).UtcDateTime};
+            var evidence=CopyEvidence(request.Evidence,news:[oldNews]);
+            evidence=new EvidencePack{CollectedAt=evidence.CollectedAt,Completeness=evidence.Completeness,Account=evidence.Account,Positions=evidence.Positions,Markets=evidence.Markets,News=evidence.News,Fundamentals=fundamentals,MissingSources=evidence.MissingSources};
+            var macro=new PersistedMacroObservation("CUUR0000SA0",new(2026,6,1,0,0,0,TimeSpan.Zero),1,"US","monthly","index",334.1m,"bls-public-api-v2",new string('a',64),Now.AddDays(-30));
+            var inputs=ModelOffLiveCycleInputComposerV1.Compose(request with{Evidence=evidence,Research=research,MacroObservations=[macro]});
+            var result=await new ModelOffProductionCycleOrchestratorV1(new AgentSqliteStore(Path.Combine(directory,"agent.db"),()=>Now)).RunAsync(new(request.CycleId,Now,inputs),CancellationToken.None);
+
+            Assert.True(result.EligibleForRiskIncrease);
+            Assert.Equal("model-off.production-cycle-ready",result.Code);
+            var canonicalResearch=result.Outputs[ModelOffAgentV1.Research];
+            Assert.Contains(canonicalResearch.Sources,x=>x.Kind==ModelOffSourceKindV1.News&&x.AsOfUtc==Now.AddDays(-6));
+            Assert.Contains(canonicalResearch.Sources,x=>x.Kind==ModelOffSourceKindV1.Macro&&x.AsOfUtc==Now.AddDays(-30));
+            Assert.Contains(canonicalResearch.Sources,x=>x.Kind==ModelOffSourceKindV1.Fundamental&&x.AsOfUtc==Now.AddHours(-12));
+            Assert.Contains(canonicalResearch.Sources,x=>x.Kind==ModelOffSourceKindV1.Strategy&&x.AsOfUtc==Now.AddHours(-12));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try{Directory.Delete(directory,true);}catch(IOException){}
+        }
+    }
+
+    [Fact]
+    public async Task ProductionResearchRejectsMacroEvidenceOutsideTheBoundedWindow()
+    {
+        var directory=Path.Combine(Path.GetTempPath(),"wpe-research-stale-macro-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(directory);
+        try
+        {
+            var request=Request();
+            var macro=new PersistedMacroObservation("CUUR0000SA0",Now.AddDays(-70),1,"US","monthly","index",334.1m,"bls-public-api-v2",new string('a',64),Now.AddDays(-63));
+            var inputs=ModelOffLiveCycleInputComposerV1.Compose(request with{MacroObservations=[macro]});
+            Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(inputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output));
+
+            var result=await new ModelOffProductionCycleOrchestratorV1(new AgentSqliteStore(Path.Combine(directory,"agent.db"),()=>Now)).RunAsync(new(request.CycleId,Now,inputs),CancellationToken.None);
+
+            Assert.False(result.EligibleForRiskIncrease);
+            Assert.Contains("production.research.stale",result.Outputs[ModelOffAgentV1.Research].Decision.ReasonCodes);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try{Directory.Delete(directory,true);}catch(IOException){}
+        }
+    }
+
+    [Fact]
     public void LiveLoopInvokesShadowAfterRiskReviewAndBeforeOrderAuthorization()
     {
         var source = File.ReadAllText(Path.Combine(ProjectRoot(), "Services", "AutoTradingAgent.cs"));
