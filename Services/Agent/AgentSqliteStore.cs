@@ -840,6 +840,17 @@ public sealed class AgentSqliteStore
         if(result.ValidatedAtUtc==default||result.ValidatedAtUtc.Offset!=TimeSpan.Zero)throw new ArgumentException("Research validation requires an explicit UTC validation time.",nameof(result));
         return Exec("INSERT INTO research_validations(created_at,symbol,strategy_version,approved,quality_score,result_json) VALUES($t,$s,$v,$a,$q,$j)",ct,("$t",result.ValidatedAtUtc.ToString("O")),("$s",result.Symbol),("$v",result.StrategyVersion),("$a",result.Approved?1:0),("$q",result.QualityScore),("$j",JsonSerializer.Serialize(result)));
     }
+    public async Task<IReadOnlyList<NewsFeature>> GetHistoricalNewsFeaturesAsync(string symbol,DateTimeOffset fromUtc,DateTimeOffset toUtc,int limit,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(symbol)||fromUtc.Offset!=TimeSpan.Zero||toUtc.Offset!=TimeSpan.Zero||fromUtc>toUtc)throw new ArgumentException("A canonical symbol and ordered UTC news range are required.");
+        var normalized=symbol.Trim().ToUpperInvariant();var list=new List<NewsFeature>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT assets,sentiment,confidence,corroborating_sources,event_type,published_at FROM news_documents WHERE published_at IS NOT NULL AND published_at >= $from AND published_at <= $to ORDER BY published_at,id LIMIT $limit";q.Parameters.AddWithValue("$from",fromUtc.UtcDateTime.ToString("O"));q.Parameters.AddWithValue("$to",toUtc.UtcDateTime.ToString("O"));q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,20000));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))
+        {
+            var assets=JsonSerializer.Deserialize<string[]>(r.GetString(0))??[];if(!DateTimeOffset.TryParse(r.GetString(5),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out var published)||published.Offset!=TimeSpan.Zero)continue;
+            foreach(var asset in assets.Select(x=>x.Trim().ToUpperInvariant()).Where(x=>x.Length>0).Distinct(StringComparer.Ordinal))
+                if(asset==normalized||normalized.StartsWith(asset,StringComparison.Ordinal))list.Add(new(asset,r.GetDouble(1),r.GetDouble(2),r.GetInt32(3),r.GetString(4),published.UtcDateTime));
+        }
+        return list;
+    }
     public async Task RecordSkillCallAsync(string skill,string status,long duration,string input,string output,string? error,CancellationToken ct,string? mode=null,bool? remoteLlmUsed=null,int? tokens=null,decimal? costUsd=null,int? contextChars=null,int? inputTokens=null,int? outputTokens=null,bool? cacheHit=null,string? llmOutcome=null,string? tokenSource=null)
     {
         var occurred=DateTime.UtcNow;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);long sourceId;

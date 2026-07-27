@@ -34,11 +34,16 @@ public sealed class StrategyResearchAgent
     public async Task<StrategyResearchSnapshot> RunOnceAsync(IReadOnlyList<string> symbols, RiskLimits limits, CancellationToken ct)
     {
         var candidates = await EnsureCandidatesAsync(symbols, ct);
-        var news = await _database.GetRecentNewsFeaturesAsync(48, ct);
+        var newsBySymbol=new Dictionary<string,IReadOnlyList<NewsFeature>>(StringComparer.Ordinal);
         var validated = 0;
         foreach (var profile in candidates.Where(x => x.Lifecycle == StrategyLifecycle.Draft || (x.BuiltIn && x.ValidationTrades == 0)).ToArray())
         {
             var candles = await _database.LoadHistoricalCandlesAsync(profile.Symbol, "1h", 5000, ct);
+            if(!newsBySymbol.TryGetValue(profile.Symbol,out var news))
+            {
+                news=candles.Count==0?[]:await _database.GetHistoricalNewsFeaturesAsync(profile.Symbol,new DateTimeOffset(candles[0].OpenTime.ToUniversalTime()).AddHours(-48),new DateTimeOffset(candles[^1].OpenTime.ToUniversalTime()),20000,ct);
+                newsBySymbol[profile.Symbol]=news;
+            }
             var validation = _engine.Validate(profile, candles, news, limits);
             await _database.SaveStrategyValidationAsync(validation, ct);
             var validationCompletedAt = DateTime.UtcNow;
@@ -57,8 +62,9 @@ public sealed class StrategyResearchAgent
 
         var snapshot = await _database.GetStrategySnapshotAsync(ct);
         var completedAt = DateTime.UtcNow;
-        var completed = snapshot with { Status = "LOCAL_RESEARCH_COMPLETE", LastRunAtUtc = completedAt, LastMessage = $"validated={validated}; news_features={news.Count}" };
-        await _database.SetStateAsync("strategy-research:last-run", JsonSerializer.Serialize(new { snapshot = completed, NewsFeatures = news.Count, validated }), ct);
+        var newsFeatureCount=newsBySymbol.Values.Sum(x=>x.Count);
+        var completed = snapshot with { Status = "LOCAL_RESEARCH_COMPLETE", LastRunAtUtc = completedAt, LastMessage = $"validated={validated}; news_features={newsFeatureCount}" };
+        await _database.SetStateAsync("strategy-research:last-run", JsonSerializer.Serialize(new { snapshot = completed, NewsFeatures = newsFeatureCount, validated }), ct);
         return completed;
     }
 
@@ -143,7 +149,25 @@ internal sealed class HistoricalResearchEngine
     }
 
     private static List<(double Return, bool Trade)> Simulate(StrategyProfile profile, IReadOnlyList<CandleEvidence> candles, IReadOnlyList<NewsFeature> news)
-    { var result = new List<(double, bool)>(); var engine = new HistoricalResearchEngine(); for (var i = profile.Parameters.SlowPeriod + 1; i < candles.Count; i++) { var prefix = candles.Take(i + 1).ToArray(); var market = new MarketEvidence(profile.Symbol, prefix[^1].Close, prefix.TakeLast(48).Min(x => x.Low), prefix.TakeLast(48).Max(x => x.High), 50, 0, 0, 0, new(0, 0, 1, 1, 1, 1, 0), DateTime.UtcNow) { Candles = prefix }; var signal = engine.Signal(profile, market, Array.Empty<NewsEvidence>()); var r = signal.Direction * (double)(candles[i].Close / candles[i - 1].Close - 1) - (signal.Direction != 0 ? .0014 : 0); result.Add((r, signal.Direction != 0)); } return result; }
+    {
+        var result=new List<(double,bool)>();var engine=new HistoricalResearchEngine();
+        for(var i=profile.Parameters.SlowPeriod+1;i<candles.Count;i++)
+        {
+            var prefix=candles.Take(i).ToArray();var asOf=prefix[^1].OpenTime.ToUniversalTime();
+            var market=new MarketEvidence(profile.Symbol,prefix[^1].Close,prefix.TakeLast(48).Min(x=>x.Low),prefix.TakeLast(48).Max(x=>x.High),50,0,0,0,new(0,0,1,1,1,1,0),asOf){Candles=prefix};
+            int direction;
+            if(profile.Family==StrategyFamily.NewsMomentum)
+            {
+                var weighted=news.Where(x=>x.PublishedAtUtc.Kind==DateTimeKind.Utc&&x.PublishedAtUtc<=asOf&&x.PublishedAtUtc>asOf.AddHours(-48)&&
+                    (x.Asset.Equals(profile.Symbol,StringComparison.OrdinalIgnoreCase)||profile.Symbol.StartsWith(x.Asset,StringComparison.OrdinalIgnoreCase)))
+                    .OrderByDescending(x=>x.PublishedAtUtc).Take(5).Select(x=>x.Sentiment*x.Confidence).ToArray();
+                var sentiment=weighted.Length==0?0:weighted.Average();direction=sentiment>=profile.Parameters.NewsSentimentThreshold?1:sentiment<=-profile.Parameters.NewsSentimentThreshold?-1:0;
+            }
+            else direction=engine.Signal(profile,market,Array.Empty<NewsEvidence>()).Direction;
+            var value=direction*(double)(candles[i].Close/candles[i-1].Close-1)-(direction!=0?.0014:0);result.Add((value,direction!=0));
+        }
+        return result;
+    }
     private static (double WinRate, double ProfitFactor, double Expectancy, double MaxDrawdown, double Sharpe, double TotalReturn) Metrics(IReadOnlyList<(double Return, bool Trade)> values) { var r = values.Select(x => x.Return).ToArray(); if (r.Length == 0) return (0, 0, 0, 1, 0, 0); var wins = r.Where(x => x > 0).Sum(); var losses = -r.Where(x => x < 0).Sum(); var equity = 1d; var high = 1d; var dd = 0d; foreach (var x in r) { equity *= Math.Max(.01, 1 + x); high = Math.Max(high, equity); dd = Math.Max(dd, (high - equity) / high); } var avg = r.Average(); var sd = Math.Sqrt(r.Select(x => (x - avg) * (x - avg)).Average()); return (r.Count(x => x > 0) / (double)r.Length, losses > 0 ? wins / losses : wins > 0 ? 9 : 0, avg, dd, sd > 0 ? avg / sd * Math.Sqrt(24 * 365) : 0, equity - 1); }
     private double WalkForward(StrategyProfile p, IReadOnlyList<CandleEvidence> c, IReadOnlyList<NewsFeature> n) { var scores = new List<double>(); for (var i = 0; i < 4; i++) { var start = i * c.Count / 8; var length = Math.Min(c.Count - start, c.Count / 2); scores.Add(Math.Clamp(.5 + Metrics(Simulate(p, c.Skip(start).Take(length).ToArray(), n)).Expectancy * 100 - Metrics(Simulate(p, c.Skip(start).Take(length).ToArray(), n)).MaxDrawdown, 0, 1)); } return scores.DefaultIfEmpty(0).Average(); }
     private static double MonteCarlo(IReadOnlyList<(double Return, bool Trade)> values) { var r = values.Select(x => x.Return).ToArray(); if (r.Length == 0) return 1; var random = new Random(73); var losses = 0; for (var n = 0; n < 250; n++) { var equity = 1d; for (var i = 0; i < Math.Min(r.Length, 2000); i++) equity *= Math.Max(.01, 1 + r[random.Next(r.Length)]); if (equity < 1) losses++; } return losses / 250d; }
