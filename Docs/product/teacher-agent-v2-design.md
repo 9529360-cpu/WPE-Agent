@@ -180,6 +180,8 @@ Example chain:
 
 Each arrow is classified as `observed`, `supported`, `plausible`, or `unknown`. The lesson must not state “war caused oil to rise” when inventory, production policy, currency, demand, positioning, or timing evidence remains unresolved.
 
+Every material conclusion also has an evidence argument map: supporting evidence, contradicting evidence, missing evidence, and the strongest alternative explanation. Optional model-generated bull and bear arguments are drafts only; a deterministic evidence judge checks source eligibility, time ordering, contradiction and coverage before the conclusion enters a lesson.
+
 ## 8. Recommendation Contract
 
 Schema: `wpe.teacher-recommendation/2.0`
@@ -223,6 +225,8 @@ Crypto profile may include market regime, technical structure, liquidity, deriva
 
 The report displays component scores, missing components, profile version, evidence coverage, and the fact that the score cannot authorize a trade.
 
+All numeric fields pass through a numeric-provenance barrier. Prices, changes, returns, valuation inputs, scores, confidence, risk/reward, benchmarks and performance metrics must originate from typed deterministic operators. A language model cannot calculate, round, replace or “repair” them.
+
 ## 10. Teaching Levels And Memory
 
 User-selectable levels:
@@ -240,6 +244,20 @@ Teacher memory stores only local, bounded learning state:
 - user-authored notes when explicitly saved.
 
 Teacher does not diagnose a user's psychology. Deterministic behaviors may be described as possible discipline risks, with the exact supporting events. Personalization and message delivery are opt-in and locally auditable.
+
+Memory is layered:
+
+- working memory: evidence and lesson deltas for the current schedule window;
+- episodic memory: lessons, recommendations, corrections and outcomes for bounded recent periods;
+- long-term memory: only accepted definitions, durable user preferences, validated historical cases and repeated calibrated findings.
+
+Free-text model summaries never become long-term facts without deterministic reconstruction from canonical evidence.
+
+## 10A. Point-In-Time Lessons And Recommendation Outcomes
+
+Historical teaching and recommendation evaluation must prevent look-ahead. A lesson replay receives only evidence published or observed by the simulated lesson time. Later price action, filings, corrections and outcomes appear only in a separately timestamped review.
+
+Every recommendation declares evaluation horizons and a benchmark. The outcome ledger records absolute return, benchmark-relative return, maximum adverse/favorable excursion, invalidation timing, evidence availability and whether the original conditions were followed. Corporate actions, stale prices, delistings and missing benchmark data fail the affected metric closed. Teacher learns calibration and explanation quality from this ledger; it does not reward a lucky outcome produced by an invalid process.
 
 ## 11. Local-Only And Optional Model Behavior
 
@@ -280,6 +298,8 @@ Public read-only adapters        Seven-Agent canonical store
 
 Teacher has no dependency edge into `TradingExecutionGateway`, `ReliableOrderExecutor`, provider secret stores, or configuration mutation.
 
+Report output is a collection of typed blocks rather than one opaque paragraph: cited fact, table, chart specification, hypothesis, counterargument, recommendation, risk, unknown, correction and provenance footer. Each block has its own hash so clients can render, diff and cite it without reparsing prose.
+
 ## 13. Persistence And Audit
 
 Persist append-only:
@@ -294,6 +314,14 @@ Persist append-only:
 - corrections, retractions, and reason codes.
 
 The current lesson may be projected read-only, but historical versions are never overwritten or deleted by ordinary runtime operations.
+
+The provider registry also records source terms, attribution, redistribution permission, commercial-use status, authentication class, rate limit, expected delay and target-machine health. Open-source software licenses and financial-data rights are evaluated separately; repository availability never implies permission to redistribute its data or embed its code.
+
+## 13A. Network Budgets And Isolation
+
+Each lesson run has configured maximum domains, requests, response bytes, retries and elapsed time. Redirects stay within the source policy, content types are allowlisted and responses are parsed out of process or through bounded parsers where practical. Budget exhaustion marks only the affected section unavailable and cannot delay or degrade the seven-Agent trading/recovery loop.
+
+Official source existence is not enough for acceptance. Endpoint correctness, policy-compliant identification, current-machine access, freshness and sustained availability are separately tested. A denied or timed-out official source remains unavailable; Teacher cannot silently replace it with a lower-tier source while preserving the original confidence.
 
 ## 14. Delivery Policy
 
@@ -325,6 +353,8 @@ Quiet hours, timezone, deduplication, maximum messages per window, and event sev
 - recommendation revisions and invalidation;
 - historical analogue store and differences-first teaching;
 - weekly, post-trade, and growth reports.
+- point-in-time replay, benchmark-relative recommendation outcomes and leakage diagnostics;
+- deterministic support/counterevidence maps and recommendation calibration.
 
 ### Phase D: equities expansion
 
@@ -350,5 +380,11 @@ Teacher V2 remains unaccepted until all of the following pass together:
 - model-off output equivalence for facts, scores, risks, and recommendation states;
 - opt-in delivery, quiet hours, deduplication, and bounded retries;
 - source-current Target evidence for every asset class claimed as available.
+- point-in-time replay and look-ahead leakage rejection;
+- numeric-provenance rejection when generated prose changes a computed value;
+- bounded network budgets, provider-policy metadata and lower-tier fallback visibility;
+- benchmarked recommendation calibration without promoting lucky but invalid processes.
 
 Passing Teacher acceptance does not change Mainnet status or the accepted boundaries of the seven core Agents.
+
+The external comparison and license notes supporting these additions are recorded in [`../research/teacher-agent-v2-landscape-2026-07-27.md`](../research/teacher-agent-v2-landscape-2026-07-27.md).
