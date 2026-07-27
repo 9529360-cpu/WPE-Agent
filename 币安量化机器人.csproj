@@ -13,6 +13,7 @@
 		<AssemblyVersion>3.6.0.0</AssemblyVersion>
 		<FileVersion>3.6.0.0</FileVersion>
 		<AssemblyTitle>WPE Agent</AssemblyTitle>
+		<AssemblyName>WPE-Agent</AssemblyName>
 		<Product>WPE Agent Multi-Exchange</Product>
 		<Company>WPE</Company>
 		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
@@ -65,6 +66,12 @@
       <Compile Remove="Services\BinanceReadFacade.cs" />
       <Compile Remove="Services\AiForecastService.cs" />
       <Compile Remove="Infrastructure\Data\BinanceDataCollectionService.cs" />
+      <!-- Dormant pre-production implementations retained only as migration references. -->
+      <Compile Remove="Services\RiskEngine.cs" />
+      <Compile Remove="Application\Backtesting\WalkForwardOptimizer.cs" />
+      <Compile Remove="Infrastructure\Data\FileDataSource.cs" />
+      <Compile Remove="Infrastructure\Data\DataQualityRules.cs" />
+      <Compile Remove="Services\Agent\AgentMemoryStore.cs" />
     </ItemGroup>
 
     <ItemGroup>

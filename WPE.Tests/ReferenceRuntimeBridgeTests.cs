@@ -9,6 +9,16 @@ public sealed class ReferenceRuntimeBridgeTests
 {
     private static readonly DateTime Now = new(2026, 7, 23, 13, 30, 0, DateTimeKind.Utc);
 
+    [Fact]
+    public void WebViewUserDataLivesOutsideTheImmutableInstallDirectory()
+    {
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        var source = File.ReadAllText(Path.Combine(root, "ReferenceUiWindow.xaml.cs"));
+        Assert.Contains("Path.Combine(AppDataPaths.RuntimeDirectory, \"WebView2\")", source, StringComparison.Ordinal);
+        Assert.Contains("CoreWebView2Environment.CreateAsync(userDataFolder: webViewDataDirectory)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("EnsureCoreWebView2Async();", source, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("open-settings")]
     [InlineData("agent-start")]

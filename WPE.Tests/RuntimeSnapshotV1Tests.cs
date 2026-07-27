@@ -132,7 +132,7 @@ public sealed class RuntimeSnapshotV1Tests
     }
 
     [Fact]
-    public void Create_LabelsCapabilitySourceStaleAndDoesNotInventMarkets()
+    public void Create_KeepsCapabilitySourceAvailableInsideItsRefreshWindow()
     {
         var now = DateTime.UtcNow;
         var store = new RuntimeMarketStateStore();
@@ -141,6 +141,23 @@ public sealed class RuntimeSnapshotV1Tests
             ["SOLUSDT"] = new("binance", "binance-testnet", "SOLUSDT", "SOLUSDT", MarketType.Perpetual, CapabilityStatus.Available, true, true, true, now.AddMinutes(-1))
         });
         var snapshot = RuntimeSnapshotFactory.Create(new SystemState { LastUpdated = now }, now, store.Read());
+        Assert.Equal(RuntimeCollectionState.Available, snapshot.Markets.State);
+        Assert.Single(snapshot.Markets.Items);
+        Assert.Single(snapshot.Capabilities.Items);
+    }
+
+    [Fact]
+    public void Create_LabelsExpiredCapabilitySourceStaleAndDoesNotInventMarkets()
+    {
+        var now = DateTime.UtcNow;
+        var store = new RuntimeMarketStateStore();
+        store.Publish(new Dictionary<string, ExchangeCapability>
+        {
+            ["SOLUSDT"] = new("binance", "binance-testnet", "SOLUSDT", "SOLUSDT", MarketType.Perpetual, CapabilityStatus.Available, true, true, true, now - RuntimeMarketStateStore.StaleAfter - TimeSpan.FromSeconds(1))
+        });
+
+        var snapshot = RuntimeSnapshotFactory.Create(new SystemState { LastUpdated = now }, now, store.Read());
+
         Assert.Equal(RuntimeCollectionState.Stale, snapshot.Markets.State);
         Assert.Empty(snapshot.Markets.Items);
         Assert.Empty(snapshot.Capabilities.Items);
@@ -204,7 +221,7 @@ public sealed class RuntimeSnapshotV1Tests
     }
 
     [Fact]
-    public void Create_LabelsExpiredTradingObservationStaleWithoutServingItems()
+    public void Create_KeepsTradingObservationAvailableInsideItsRefreshWindow()
     {
         var now = DateTime.UtcNow;
         var store = new RuntimeTradingStateStore();
@@ -212,6 +229,24 @@ public sealed class RuntimeSnapshotV1Tests
             [new ManagedPosition("SOLUSDT", PositionSide.Short, 1m, 150m, 149m, 1m, 3m, false, 200m)],
             [],
             now.AddMinutes(-1));
+
+        var snapshot = RuntimeSnapshotFactory.Create(new SystemState { LastUpdated = now }, now, tradingState: store.Read());
+
+        Assert.Equal(RuntimeCollectionState.Available, snapshot.Positions.State);
+        Assert.Equal(RuntimeCollectionState.Available, snapshot.Orders.State);
+        Assert.Single(snapshot.Positions.Items);
+        Assert.Empty(snapshot.Orders.Items);
+    }
+
+    [Fact]
+    public void Create_LabelsExpiredTradingObservationStaleWithoutServingItems()
+    {
+        var now = DateTime.UtcNow;
+        var store = new RuntimeTradingStateStore();
+        store.Publish(
+            [new ManagedPosition("SOLUSDT", PositionSide.Short, 1m, 150m, 149m, 1m, 3m, false, 200m)],
+            [new ExchangeOrder("SOLUSDT", "order-42", "client-42", "NEW", 1m, 149m, "LIMIT", PositionSide.Short, false, now)],
+            now - RuntimeTradingStateStore.StaleAfter - TimeSpan.FromSeconds(1));
 
         var snapshot = RuntimeSnapshotFactory.Create(new SystemState { LastUpdated = now }, now, tradingState: store.Read());
 

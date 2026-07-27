@@ -25,6 +25,26 @@ public sealed class TradingReviewProductionWiringTests
     }
 
     [Fact]
+    public void RuntimeObservation_IsIndependentReadOnlyAndDashboardUsesLiveMarketFeed()
+    {
+        var source=Source("Services","AutoTradingAgent.cs");
+        var run=Slice(source,"private static async Task Run","private static void UpdateAccount");
+        var observer=Slice(source,"private static async Task ObserveTradingRuntimeAsync","internal static async Task<int> ExecutePositionManagementRecoveryAsync");
+
+        Assert.Contains("tradingObservationTask=ObserveTradingRuntimeAsync(exchange,TimeSpan.FromSeconds(10),ct)",run,StringComparison.Ordinal);
+        Assert.Contains("if(tradingObservationTask is not null)try{await tradingObservationTask;}",run,StringComparison.Ordinal);
+        Assert.Contains("ReadAccountStateAsync(exchange,ct)",observer,StringComparison.Ordinal);
+        Assert.DoesNotContain("Execute",observer,StringComparison.Ordinal);
+        Assert.DoesNotContain("Place",observer,StringComparison.Ordinal);
+
+        var ui=Source("WebUi","components","console","wpe-console.tsx");
+        var dashboard=Slice(ui,"function HomePage","function AgentsPage");
+        Assert.Contains("collectionState(runtime, 'publicMarkets')",dashboard,StringComparison.Ordinal);
+        Assert.Contains("runtime.publicMarkets?.items",dashboard,StringComparison.Ordinal);
+        Assert.DoesNotContain("title=\"市场事实\"",dashboard,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ProductionRun_UsesDurableQueueAndSingleMutationChain()
     {
         var source=Source("Services","AutoTradingAgent.cs");

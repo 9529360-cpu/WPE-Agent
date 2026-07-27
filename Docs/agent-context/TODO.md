@@ -8,7 +8,7 @@
 - [x] Re-enable Agent settings resilience and Brain endpoint validation suites with the stage 2A configuration migration.
 - [x] Verify order placement cannot bypass Risk Gate across all provider paths: current production order-path audit found no bypass evidence, and `TradingExecutionGatewayTests` adds a production-composition root guard around `ReliableOrderExecutor`; `43/43` passed, but this remains a source-wiring guard rather than a live exchange proof.
 - [x] Audit logs and exception messages for secret redaction: audited and fixed redaction before `RealTimeDataPipeline` error-frame persistence and before both runners write `report.Cases`; `SensitiveDataRedactorTests` `6/6` and `AccessRunnerRedactionTests` `4/4` passed.
-- [x] Connect the read-only trading-authorization projection to the Reference UI runtime snapshot: `BuildRuntimeJson()` refreshes and supplies `RuntimeAuthorization`; `MainWindowRuntimeBridgeTests` `2/2` passed. This is visibility only, not approval mutation or approved-order processing.
+- [x] Connect the read-only trading-authorization projection to the Reference UI runtime snapshot: `DesktopRuntimeHost.BuildRuntimeJson()` refreshes and supplies `RuntimeAuthorization`; the desktop runtime-host regression tests pass. This is visibility only, not approval mutation or approved-order processing.
 
 ## P1
 - [x] Establish a machine-enforced formal acceptance gate for all seven aggregate Agents. Require four Agent-specific evidence classes with exact environment, UTC validity, artifact SHA-256 and live provider identity; fail closed on missing, duplicate, stale, malformed, cross-Agent or wrong-environment evidence, and never auto-edit maturity authority.

@@ -5,12 +5,9 @@ using WpeAgent.Equities;
 using 币安量化机器人.Services.Security;
 using 币安量化机器人.Services.MarketData;
 using 币安量化机器人.Services.Exchange.Binance;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
-using 币安量化机器人.Application.Backtesting;
 using 币安量化机器人.Services.Agent;
 using Serilog;
 using 币安量化机器人.Application.Services;
@@ -35,7 +32,6 @@ public static class ServiceLocator
         return cache;
     });
 
-    private static readonly Lazy<RiskEngine> RiskFactory = new(() => new RiskEngine(Cache));
     private static readonly Lazy<Serilog.ILogger> LoggerFactory = new(() =>
     {
         // Simple Serilog-based logger for services to use
@@ -74,11 +70,8 @@ public static class ServiceLocator
     private static readonly Lazy<IMultiTimeframeAnalyzer> AnalyzerFactory = new(() => new MultiTimeframeAnalyzer());
     private static readonly Lazy<IMachineLearningSignalGenerator> MlFactory = new(() => new RandomForestSignalGenerator());
     private static readonly Lazy<ITradeMonitoringHub> MonitoringHubFactory = new(() => new InMemoryTradeMonitoringHub());
-    private static readonly Lazy<GridSearchStrategyOptimizer> OptimizerFactory = new(() => new GridSearchStrategyOptimizer());
-    private static readonly Lazy<WalkForwardOptimizer> WalkForwardFactory = new(() => new WalkForwardOptimizer(OptimizerFactory.Value, new DefaultBacktestEngine()));
 
     public static DataCacheService Cache => CacheFactory.Value;
-    public static RiskEngine Risk => RiskFactory.Value;
     public static AppSettings Settings => SettingsFactory.Value;
     public static SystemState SystemState => SystemStateFactory.Value;
     public static RuntimeMarketStateStore RuntimeMarkets => RuntimeMarketFactory.Value;
@@ -103,7 +96,6 @@ public static class ServiceLocator
     public static LocalPluginRegistry PluginRegistry => PluginRegistryFactory.Value;
     public static IMultiTimeframeAnalyzer Analyzer => AnalyzerFactory.Value;
     public static IMachineLearningSignalGenerator MachineLearning => MlFactory.Value;
-    public static WalkForwardOptimizer WalkForward => WalkForwardFactory.Value;
     public static ITradeMonitoringHub MonitoringHub => MonitoringHubFactory.Value;
     public static Serilog.ILogger Logger => LoggerFactory.Value;
     private static SystemState InitializeSystemState()
@@ -132,50 +124,4 @@ public static class ServiceLocator
             await PublicMarketFactory.Value.DisposeAsync().ConfigureAwait(false);
     }
 
-    private sealed class DefaultBacktestEngine : IBacktestEngine
-    {
-        public async ValueTask<BacktestResult> RunAsync(BacktestRequest request, CancellationToken cancellationToken = default)
-        {
-            var random = new Random(42);
-            var observations = GenerateSyntheticData(request.Symbol, request.Start, request.End);
-            var signals = new List<TradeSignal>();
-            await foreach (var decision in request.Strategy.RunAsync(observations, cancellationToken))
-            {
-                signals.Add(new TradeSignal(request.Symbol, decision.Action, decision.Confidence, decision.MlSignal));
-            }
-
-            var equity = signals.Count(s => s.Action.ActionType != TradeActionType.Hold) * random.NextDouble() * 10;
-            var sharpe = signals.Count == 0 ? 0.1 : 1.5;
-
-            return new BacktestResult(request.Strategy.Name, equity, sharpe, sharpe / 1.2, 0.1, sharpe / 2, 0.55, 1.4, signals);
-        }
-
-        private static async IAsyncEnumerable<MarketObservation> GenerateSyntheticData(string symbol, DateTime start, DateTime end)
-        {
-            var random = new Random(7);
-            var timestamp = start;
-            var price = 100d;
-            while (timestamp < end)
-            {
-                var change = random.NextDouble() - 0.5;
-                var open = price;
-                var close = price + change;
-                var high = Math.Max(open, close) + random.NextDouble();
-                var low = Math.Min(open, close) - random.NextDouble();
-                var volume = random.NextDouble() * 100;
-                var indicators = new Dictionary<string, double>
-                {
-                    ["sma"] = (open + close) / 2,
-                    ["std"] = Math.Abs(change) + 0.1,
-                    ["momentum_1"] = change
-                };
-
-                yield return new MarketObservation(symbol, TimeSpan.FromMinutes(1), timestamp, open, high, low, close, volume, indicators);
-
-                price = close;
-                timestamp = timestamp.AddMinutes(1);
-                await Task.Yield();
-            }
-        }
-    }
 }

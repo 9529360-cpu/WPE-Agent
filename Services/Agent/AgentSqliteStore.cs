@@ -876,10 +876,12 @@ public sealed partial class AgentSqliteStore
         foreach(var call in await GetRecentRuntimeSkillCallsAsync(300,ct))
         {
             var role=RoleForSkill(call.Skill);if(role is null||activities.ContainsKey(role))continue;
-            var status=call.Status.Contains("BLOCK",StringComparison.OrdinalIgnoreCase)?"blocked":call.Status.Contains("FAIL",StringComparison.OrdinalIgnoreCase)||call.Status.Contains("ERROR",StringComparison.OrdinalIgnoreCase)?"degraded":"idle";
+            var status=call.Status.Contains("FAIL",StringComparison.OrdinalIgnoreCase)||call.Status.Contains("ERROR",StringComparison.OrdinalIgnoreCase)?"degraded":"idle";
             activities[role]=new(role,status,call.OccurredAtUtc,$"Skill {SafeAuditToken(call.Skill,"unknown")} {SafeAuditToken(call.Status,"UNKNOWN")}",NormalizeAgentMode(call.Mode));
         }
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);
+        // Canonical model-off audits are acceptance evidence, not production worker telemetry.
+        // They remain queryable through the audit surfaces and must never override live operations.
         await using(var q=c.CreateCommand())
         {
             q.CommandText="SELECT current_node,updated_at FROM workflow_runs WHERE status='RUNNING' ORDER BY updated_at DESC LIMIT 20";
@@ -912,16 +914,16 @@ public sealed partial class AgentSqliteStore
 
     private static string? RoleForSkill(string skill)=>skill switch
     {
-        "EvidenceCollector" or "BrainPlanner" or "DeterministicPlan" or "DecisionCritic" or "DecisionReviewer" or "RuntimeMonitor"=>"orchestrator",
-        "DataQuality" or "SignalAggregation" or "MarketRegime"=>"data-quality",
-        "NewsResearch"=>"news-ingest",
-        "HistoricalData" or "StrategyResearch" or "ExperienceReplay"=>"strategy-research",
+        "EvidenceCollector" or "DataQuality" or "MarketRegime"=>"market",
+        "NewsResearch" or "HistoricalData" or "StrategyResearch" or "ExperienceReplay"=>"research",
+        "BrainPlanner" or "DeterministicPlan" or "SignalAggregation" or "DecisionCritic" or "DecisionReviewer"=>"strategy",
         "PortfolioRisk" or "IndependentRiskManager" or "RiskAndPositionPlanner"=>"risk",
         "ReliableOrderExecutor" or "PositionManagement" or "EmergencyClose"=>"execution",
-        "ProtectionRecovery" or "ProtectionAudit"=>"order-recovery",
+        "ProtectionRecovery" or "ProtectionAudit"=>"recovery",
+        "RuntimeMonitor"=>"audit",
         _=>null
     };
-    private static string? RoleForNode(string node)=>node.ToUpperInvariant() switch{"BOOT" or "RECOVERY" or "OBSERVATION" or "PLANNER" or "CRITIC" or "REVIEWER" or "WAITING" or "PAUSED"=>"orchestrator","RESEARCH" or "REFLECTION"=>"strategy-research","AGGREGATION"=>"data-quality","POSITIONMANAGEMENT" or "EXECUTION"=>"execution","SAFETYEXECUTION"=>"order-recovery","RISK"=>"risk",_=>null};
+    private static string? RoleForNode(string node)=>node.ToUpperInvariant() switch{"BOOT" or "OBSERVATION"=>"market","RESEARCH"=>"research","PLANNER" or "AGGREGATION" or "CRITIC" or "REVIEWER"=>"strategy","POSITIONMANAGEMENT" or "RISK"=>"risk","EXECUTION"=>"execution","RECOVERY" or "SAFETYEXECUTION"=>"recovery","REFLECTION" or "WAITING" or "PAUSED"=>"audit",_=>null};
     private static string NodeName(JsonElement value)=>value.ValueKind==JsonValueKind.Number&&value.TryGetInt32(out var number)&&Enum.IsDefined(typeof(WorkflowNode),number)?((WorkflowNode)number).ToString():value.ValueKind==JsonValueKind.String?value.GetString()??string.Empty:string.Empty;
     private static string NormalizeAgentMode(string? mode)=>mode?.Replace("-",string.Empty,StringComparison.Ordinal).Replace(" ",string.Empty,StringComparison.Ordinal).ToUpperInvariant() switch{"HYBRID"=>"Hybrid","AIRESEARCH"=>"AI Research",_=>"Local Only"};
     public Task RecordRealtimeEventAsync(RealtimeAgentEvent value,CancellationToken ct)=>Exec("INSERT INTO realtime_events(occurred_at,event_type,symbol,status,summary,payload_hash) VALUES($t,$e,$s,$st,$m,$h)",ct,("$t",value.OccurredAt.ToString("O")),("$e",value.EventType),("$s",value.Symbol),("$st",value.Status),("$m",value.Summary),("$h",value.PayloadHash));

@@ -37,14 +37,13 @@ export type RoleRegistry = {
 }
 
 export const ROLE_IDS = [
-  'orchestrator',
-  'data-quality',
-  'news-ingest',
-  'strategy-research',
-  'backtest',
+  'market',
+  'research',
+  'strategy',
   'risk',
   'execution',
-  'order-recovery',
+  'recovery',
+  'audit',
 ] as const
 
 export const roleRegistryData = roleRegistry as RoleRegistry

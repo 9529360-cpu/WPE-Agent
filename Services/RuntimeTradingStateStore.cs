@@ -6,6 +6,8 @@ namespace WpeAgent.RuntimeServices;
 /// <summary>Thread-safe, provider-neutral positions and open orders observed from the active provider.</summary>
 public sealed class RuntimeTradingStateStore
 {
+    public static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(2);
+
     private readonly object _gate = new();
     private RuntimeTradingState _current = RuntimeTradingState.Unsupported("Trading runtime has not started.");
 

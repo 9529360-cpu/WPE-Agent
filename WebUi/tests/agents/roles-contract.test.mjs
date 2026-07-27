@@ -13,17 +13,16 @@ const agentsPageSource = await readFile(agentsPageUrl, 'utf8')
 
 test('role registry is local only and complete', () => {
   assert.equal(registry.localOnly, true)
-  assert.equal(registry.roles.length, 8)
+  assert.equal(registry.roles.length, 7)
   const ids = registry.roles.map((role) => role.id).sort()
   assert.deepEqual(ids, [
-    'backtest',
-    'data-quality',
+    'audit',
     'execution',
-    'news-ingest',
-    'orchestrator',
-    'order-recovery',
+    'market',
+    'recovery',
+    'research',
     'risk',
-    'strategy-research',
+    'strategy',
   ])
 })
 
@@ -61,6 +60,13 @@ test('risk and execution authorization is machine-only', () => {
   assert.ok(!risk.typedAuthorization.humanLifecycleGovernance.includes('allow'))
   assert.ok(!execution.typedAuthorization.humanLifecycleGovernance.includes('submit-via-executor'))
   assert.ok(!execution.typedAuthorization.humanExternalPublicationReview.includes('submit-via-executor'))
+})
+
+test('Agent cards distinguish workflow availability from order authority', () => {
+  assert.ok(agentsPageSource.includes('workflowAvailability'))
+  assert.ok(agentsPageSource.includes('tradingAuthority'))
+  assert.ok(agentsPageSource.includes('noOrderAuthority'))
+  assert.ok(agentsPageSource.includes('authorization.machineExecutionEligibility.length>0'))
 })
 
 test('safety actions are immediate and lifecycle governance cannot authorize orders', () => {

@@ -5,6 +5,8 @@ namespace WpeAgent.RuntimeServices;
 /// <summary>Thread-safe, provider-neutral market state published by a live capability probe.</summary>
 public sealed class RuntimeMarketStateStore
 {
+    public static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(5);
+
     private readonly object _gate = new();
     private RuntimeMarketState _current = RuntimeMarketState.Unsupported("Provider capability probe has not run.");
     public RuntimeMarketState Read() { lock (_gate) return _current; }

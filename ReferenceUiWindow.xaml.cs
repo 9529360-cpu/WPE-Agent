@@ -11,11 +11,16 @@ namespace WpeAgent
     {
         private readonly Func<string> _stateJson;
         private readonly Action _openSetup;
+        private readonly Func<System.Threading.Tasks.Task<bool>> _startAgent;
 
-        public ReferenceUiWindow(Func<string> stateJson, Action? openSetup = null)
+        public ReferenceUiWindow(
+            Func<string> stateJson,
+            Action? openSetup = null,
+            Func<System.Threading.Tasks.Task<bool>>? startAgent = null)
         {
             _stateJson = stateJson;
             _openSetup = openSetup ?? (() => { });
+            _startAgent = startAgent ?? (() => System.Threading.Tasks.Task.FromResult(false));
             InitializeComponent();
             Loaded += async (_, _) => await InitializeAsync();
         }
@@ -35,16 +40,19 @@ namespace WpeAgent
                 return;
             }
 
-            await ReferenceBrowser.EnsureCoreWebView2Async();
+            var webViewDataDirectory = Path.Combine(AppDataPaths.RuntimeDirectory, "WebView2");
+            Directory.CreateDirectory(webViewDataDirectory);
+            var webViewEnvironment = await CoreWebView2Environment.CreateAsync(userDataFolder: webViewDataDirectory);
+            await ReferenceBrowser.EnsureCoreWebView2Async(webViewEnvironment);
             ReferenceBrowser.CoreWebView2.WebMessageReceived += async (_, e) =>
             {
                 try
                 {
                     if (!TryGetHostCommand(e.WebMessageAsJson, out var command)) return;
                     if (command == "open-settings") Dispatcher.Invoke(_openSetup);
-                    else if (command == "agent-start" && IsTrustedRuntimeJson(_stateJson(), requireAuthority: true))
-                        AutoTradingAgent.StartDefault();
-                    else if (command == "agent-stop" && IsTrustedRuntimeJson(_stateJson(), requireAuthority: true))
+                    else if (command == "agent-start")
+                        await _startAgent();
+                    else if (command == "agent-stop")
                         await AutoTradingAgent.StopAsync();
                 }
                 catch (Exception ex)
@@ -119,5 +127,12 @@ namespace WpeAgent
             _ = ReferenceBrowser.CoreWebView2.ExecuteScriptAsync(
                 $"window.dispatchEvent(new CustomEvent('wpe-runtime', {{detail: {json}}}));");
         }
+
+        private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+        private void Maximize_Click(object sender, RoutedEventArgs e)
+            => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+        private void Close_Click(object sender, RoutedEventArgs e) => Close();
     }
 }

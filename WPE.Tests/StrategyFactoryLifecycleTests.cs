@@ -12,6 +12,12 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
     public StrategyFactoryLifecycleTests()=>Directory.CreateDirectory(_directory);
 
     [Fact]
+    public void ContinuousResearchCadenceIsBoundedAndDoesNotSleepForAnHour()
+    {
+        Assert.Equal(TimeSpan.FromMinutes(5),StrategyResearchScheduler.ResearchInterval);
+    }
+
+    [Fact]
     public async Task UnvalidatedSeedsNeverStartActiveAndFailedFamiliesReceiveBoundedReplacements()
     {
         var store=new AgentSqliteStore(DatabasePath);var agent=new StrategyResearchAgent(store);var limits=new RiskLimits();

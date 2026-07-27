@@ -51,12 +51,12 @@ public static class RuntimeSnapshotFactory
             : "Runtime source is older than the freshness threshold.";
         var runtimeMarkets = marketState ?? RuntimeMarketState.Unsupported("Provider capability probe has not run.");
         var marketAge = runtimeMarkets.UpdatedAt is null ? double.PositiveInfinity : Math.Max(0, (generatedAtUtc - runtimeMarkets.UpdatedAt.Value.UtcDateTime).TotalSeconds);
-        var marketStale = runtimeMarkets.UpdatedAt is not null && marketAge > StaleAfter.TotalSeconds;
+        var marketStale = runtimeMarkets.UpdatedAt is not null && marketAge > RuntimeMarketStateStore.StaleAfter.TotalSeconds;
         var marketCollectionState = marketStale ? RuntimeCollectionState.Stale : runtimeMarkets.State;
         var marketMessage = marketStale ? "Market capability source is older than the freshness threshold." : runtimeMarkets.Message;
         var runtimeTrading = tradingState ?? RuntimeTradingState.Unsupported("Trading runtime has not started.");
         var tradingAge = runtimeTrading.UpdatedAt is null ? double.PositiveInfinity : Math.Max(0, (generatedAtUtc - runtimeTrading.UpdatedAt.Value.UtcDateTime).TotalSeconds);
-        var tradingStale = runtimeTrading.State == RuntimeCollectionState.Available && tradingAge > StaleAfter.TotalSeconds;
+        var tradingStale = runtimeTrading.State == RuntimeCollectionState.Available && tradingAge > RuntimeTradingStateStore.StaleAfter.TotalSeconds;
         var tradingCollectionState = tradingStale ? RuntimeCollectionState.Stale : runtimeTrading.State;
         var tradingMessage = tradingStale ? "Trading source is older than the freshness threshold." : runtimeTrading.Message;
         var runtimePositions = tradingCollectionState == RuntimeCollectionState.Available ? runtimeTrading.Positions : Array.Empty<RuntimePositionV1>();
@@ -221,6 +221,8 @@ public static class RuntimeSnapshotFactory
                 ["btcPrice"] = (double)state.BtcPrice, ["ethPrice"] = (double)state.EthPrice,
                 ["walletBalance"] = (double)state.WalletBalance, ["availableBalance"] = (double)state.AvailableBalance,
                 ["positionQuantity"] = (double)state.PositionQuantity, ["status"] = state.Status.ToString(),
+                ["agentIsRunning"] = AutoTradingAgent.IsRunning,
+                ["nextCycleAtUtc"] = state.NextCycleAtUtc,
                 ["environment"] = state.Mode.ToString(), ["runtimeFresh"] = fresh, ["runtimeAgeSeconds"] = age,
                 ["workflowNode"] = state.WorkflowNode, ["thinkingProgress"] = state.ThinkingProgress,
                 ["riskLoad"] = state.RiskLoad, ["riskSummary"] = UiDiagnostic.SafeText(state.RiskSummary),

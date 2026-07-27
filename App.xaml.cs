@@ -408,24 +408,17 @@ public partial class App : global::System.Windows.Application
             var setup = new SetupWindow(localIdentity);
             if (setup.ShowDialog() != true || !setup.SetupCompleted) { Shutdown(); return; }
         }
-        var main = new MainWindow(localIdentity);
-        MainWindow = main;
+        var runtimeHost = new DesktopRuntimeHost(localIdentity);
+        await runtimeHost.RefreshAccessAsync();
         ShutdownMode = ShutdownMode.OnMainWindowClose;
-        main.Show();
-
-        if (e.Args.Any(x => string.Equals(x, "--reference-ui", StringComparison.OrdinalIgnoreCase))
-            && File.Exists(Path.Combine(AppContext.BaseDirectory, "WebUi", "out", "index.html")))
+        var reference = new WpeAgent.ReferenceUiWindow(runtimeHost.BuildRuntimeJson, () =>
         {
-            var reference = new WpeAgent.ReferenceUiWindow(main.BuildRuntimeJson, () =>
-            {
-                var setup = new SetupWindow(main.UserName, true);
-                setup.ShowDialog();
-                _ = main.RefreshAccessForReferenceAsync();
-            });
-            MainWindow = reference;
-            main.Hide();
-            reference.Show();
-        }
+            var setup = new SetupWindow(runtimeHost.UserName, true);
+            setup.ShowDialog();
+            _ = runtimeHost.RefreshAccessAsync();
+        }, runtimeHost.StartAgentAsync);
+        MainWindow = reference;
+        reference.Show();
 
         // Agent 由用户在总控台明确启动，应用打开时不自动下单。
     }

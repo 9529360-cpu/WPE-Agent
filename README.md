@@ -45,7 +45,7 @@ dotnet test "WPE.Tests\WPE.Tests.csproj" -c Release --no-build -- xUnit.Parallel
 Run the desktop reference UI after a successful build:
 
 ```powershell
-dotnet run --project "币安量化机器人.csproj" -- --reference-ui
+dotnet run --project "币安量化机器人.csproj"
 ```
 
 ## Source Of Truth

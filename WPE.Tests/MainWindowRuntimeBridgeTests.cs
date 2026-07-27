@@ -1,6 +1,6 @@
 namespace WPE.Tests;
 
-public sealed class MainWindowRuntimeBridgeTests
+public sealed class DesktopRuntimeHostTests
 {
     [Fact]
     public void BuildRuntimeJson_RefreshesAuthorizationStateBeforeSnapshotCreation()
@@ -82,11 +82,11 @@ public sealed class MainWindowRuntimeBridgeTests
     private static string BuildRuntimeJsonMethod()
     {
         var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-        var source = File.ReadAllText(Path.Combine(root, "MainWindow.xaml.cs"));
+        var source = File.ReadAllText(Path.Combine(root, "Services", "DesktopRuntimeHost.cs"));
         var start = source.IndexOf("public string BuildRuntimeJson()", StringComparison.Ordinal);
-        var end = source.IndexOf("private void ApplyTheme(", start, StringComparison.Ordinal);
+        var end = source.IndexOf("private static void PublishAccess(", start, StringComparison.Ordinal);
 
-        Assert.True(start >= 0 && end > start, "Could not locate MainWindow.BuildRuntimeJson in source.");
+        Assert.True(start >= 0 && end > start, "Could not locate DesktopRuntimeHost.BuildRuntimeJson in source.");
         return source[start..end];
     }
 }

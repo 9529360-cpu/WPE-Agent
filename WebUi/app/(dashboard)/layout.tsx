@@ -11,7 +11,8 @@ import { RuntimeEvidenceStrip } from './_components/runtime-evidence-strip'
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const { locale } = useI18n()
-  if (pathname === '/' && locale === 'zh_CN') return children
+  const isConsoleRoot = pathname === '/' || pathname === '/index.html'
+  if (isConsoleRoot && locale === 'zh_CN') return children
 
   return (
     <div className="flex h-dvh overflow-hidden bg-background">

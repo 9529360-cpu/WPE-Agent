@@ -9,7 +9,7 @@
 - Authoritative product/assembly version: the application project's `<Version>` (`3.6.0` at this milestone). Runtime, plugin compatibility, release reports and packaging read the generated assembly/project version.
 - `WPE-Agent-3.8.2-P0-Truth` is a historical validation label, not an assembly version or a distributable release version.
 - Mutable runtime data lives under `%LOCALAPPDATA%\WPE Agent\`; the application installation directory is treated as read-only.
-- Desktop entry: `币安量化机器人.exe --reference-ui`.
+- Desktop entry: `WPE-Agent.exe`; the current Reference UI is the only user-facing shell. Missing Web assets fail visibly instead of falling back to the retired desktop UI.
 - Setup Bridge opens the existing secure WPF `SetupWindow` from `/settings`.
 - Runtime environment now comes from `SystemState.Mode`; stale runtime data is exposed to Web UI.
 - Access, architecture, strategy lifecycle, frontend, .NET build, publish, and launch checks pass.

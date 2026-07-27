@@ -34,6 +34,22 @@ public sealed class ReadOnlyFacadeContractTests
     }
 
     [Fact]
+    public void ProductionAssembly_DoesNotContainDormantLegacyImplementations()
+    {
+        var forbidden = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "RiskEngine", "WalkForwardOptimizer",
+            "FileDataSource", "NullValueQualityRule", "RangeQualityRule",
+            "SpikeDetectionRule", "AgentMemoryStore"
+        };
+
+        Assert.DoesNotContain(typeof(ServiceLocator).Assembly.GetTypes(), type => forbidden.Contains(type.Name));
+        Assert.DoesNotContain(
+            typeof(ServiceLocator).GetMembers(BindingFlags.Public | BindingFlags.Static),
+            member => member.Name is "Risk" or "WalkForward");
+    }
+
+    [Fact]
     public void ServiceLocator_PublicSurfaceDoesNotExposeLegacyBinanceReadStack()
     {
         Assert.DoesNotContain(

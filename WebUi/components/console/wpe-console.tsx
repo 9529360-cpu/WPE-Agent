@@ -1,12 +1,14 @@
 'use client'
 
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   postRuntimeHostCommand,
   useWpeRuntime,
   type RuntimeCollectionState,
   type WpeRuntimeState,
 } from '@/components/runtime-bridge'
+import { useI18n } from '@/lib/i18n/context'
+import { localeMeta, locales, type Locale } from '@/lib/i18n/dictionaries'
 
 type PageId = 'home' | 'agents' | 'teacher' | 'trading' | 'research' | 'risk' | 'monitoring' | 'settings'
 type HostCommand = 'open-settings' | 'agent-start' | 'agent-stop'
@@ -15,19 +17,19 @@ type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
 const AGENT_CHAIN = ['Market', 'Research', 'Strategy', 'Risk', 'Execution', 'Recovery', 'Audit'] as const
 
 const AGENT_LABELS: Record<string, string> = {
-  Market: '市场 Agent',
-  Research: '研究 Agent',
-  Strategy: '策略 Agent',
-  Risk: '风险 Agent',
-  Execution: '执行 Agent',
-  Recovery: '恢复 Agent',
-  Audit: '审计 Agent',
+  Market: '市场感知',
+  Research: '研究分析',
+  Strategy: '策略引擎',
+  Risk: '风控中枢',
+  Execution: '交易执行',
+  Recovery: '异常恢复',
+  Audit: '审计复盘',
 }
 
 const PAGE_META: Record<PageId, { title: string; description: string; glyph: string }> = {
   home: { title: '运行总览', description: '系统可信度、账户、风险与工作流状态', glyph: '总' },
-  agents: { title: '七 Agent', description: '固定交易链路、当前活动与交接记录', glyph: 'A7' },
-  teacher: { title: '金融教师', description: '课程、研究候选、修正与结果复盘', glyph: '师' },
+  agents: { title: '智能体团队', description: '核心角色、协作链路与交接记录', glyph: '协' },
+  teacher: { title: '金融导师', description: '市场讲解、研究候选、纪律提醒与结果复盘', glyph: '师' },
   trading: { title: '交易', description: '持仓、订单、待审核事项与历史记录', glyph: '交' },
   research: { title: '策略与研究', description: '策略注册表、生命周期、回测与研究证据', glyph: '策' },
   risk: { title: '风险', description: '风险准备、熔断、暴露与授权状态', glyph: '风' },
@@ -116,7 +118,7 @@ function collectionState(runtime: WpeRuntimeState, key: string, fallback?: Runti
 
 function stateLabel(state: RuntimeCollectionState): string {
   if (state === 'available') return '可用'
-  if (state === 'stale') return '数据已过期'
+  if (state === 'stale') return '等待最新同步'
   if (state === 'error') return '读取错误'
   return '当前不支持'
 }
@@ -131,17 +133,20 @@ function stateTone(state: RuntimeCollectionState): Tone {
 function agentStatusLabel(status: unknown): string {
   switch (status) {
     case 'running': return '运行中'
-    case 'idle': return '空闲'
+    case 'monitoring': return '持续监控'
+    case 'waiting': return '待命中'
     case 'degraded': return '降级运行'
-    case 'blocked': return '已阻塞'
+    case 'stopped': return '已停止'
     default: return text(status, '状态未知')
   }
 }
 
 function agentStatusTone(status: unknown): Tone {
   if (status === 'running') return 'success'
+  if (status === 'monitoring') return 'success'
+  if (status === 'waiting') return 'neutral'
   if (status === 'degraded') return 'warning'
-  if (status === 'blocked') return 'danger'
+  if (status === 'stopped') return 'neutral'
   return 'neutral'
 }
 
@@ -178,6 +183,42 @@ function modeLabel(value: unknown): string {
     Auto: '自动模式',
   }
   return labels[String(value)] ?? text(value)
+}
+
+function runtimeValueLabel(value: unknown): string {
+  const key = String(value ?? '').trim().toUpperCase()
+  const labels: Record<string, string> = {
+    READY: '就绪', RUNNING: '运行中', IDLE: '空闲', DEGRADED: '降级运行', BLOCKED: '已阻塞',
+    OBSERVATION: '观察阶段', MARKET_CONNECTED: '市场已连接', CONNECTED: '已连接', DISCONNECTED: '未连接',
+    UNKNOWN: '未知', UNAVAILABLE: '不可用', PENDING: '等待中', APPROVED: '已批准', REJECTED: '已拒绝',
+  }
+  return labels[key] ?? text(value)
+}
+
+function strategyFamilyLabel(value: unknown): string {
+  const labels: Record<string, string> = {
+    TrendBreakout: '趋势突破', MeanReversion: '均值回归', NewsMomentum: '新闻动量',
+  }
+  return labels[String(value)] ?? text(value)
+}
+
+function lifecycleLabel(value: unknown): string {
+  const labels: Record<string, string> = {
+    Draft: '草稿', Backtested: '已回测', Shadow: '影子观察', Active: '运行中', Degraded: '已降级', Retired: '已退役',
+  }
+  return labels[String(value)] ?? runtimeValueLabel(value)
+}
+
+function strategyResultLabel(value: unknown): string {
+  const reason = String(value ?? '')
+  if (!reason) return '未提供结果'
+  if (/passed=False/i.test(reason)) return '回测未通过，已退出候选'
+  if (/degraded/i.test(reason)) return '表现退化，已停止参与'
+  if (/shadow/i.test(reason)) return '已进入影子观察阶段'
+  if (/active|promot/i.test(reason)) return '已通过门禁并进入运行阶段'
+  if (/deterministic.*seed/i.test(reason)) return '本地确定性初始候选'
+  if (/bounded.*child|qualified.*parent/i.test(reason)) return '由合格策略生成的受限参数候选'
+  return '结果已记录，详见审计事件'
 }
 
 function postHostCommand(type: HostCommand): boolean {
@@ -257,7 +298,7 @@ function StateNotice({ state, message, emptyMessage }: {
 }) {
   const tone = stateTone(state)
   const body = state === 'stale'
-    ? '为避免误导，当前可操作数值已隐藏。'
+    ? '正在等待下一次有效采样，期间不展示旧的可操作数值。'
     : state === 'unsupported'
       ? '当前运行环境尚未连接此能力，不显示模拟数据。'
       : state === 'error'
@@ -421,7 +462,7 @@ function RuntimeDisconnected({ runtime }: { runtime: WpeRuntimeState }) {
       <div className="wpe-startup__checks">
         <div><span>01</span><strong>连接宿主</strong><p>运行快照只由本地 WPF 宿主注入。</p></div>
         <div><span>02</span><strong>确认环境</strong><p>测试网与实盘凭据、权限和状态完全隔离。</p></div>
-        <div><span>03</span><strong>启动工作流</strong><p>七 Agent、风险门和审计链就绪后才允许运行。</p></div>
+        <div><span>03</span><strong>启动工作流</strong><p>核心智能体、风险门和审计链就绪后才允许运行。</p></div>
       </div>
     </div>
   )
@@ -475,12 +516,13 @@ function Topbar({ runtime, page, onRequestAction }: {
   page: PageId
   onRequestAction: (command: 'agent-start' | 'agent-stop') => void
 }) {
+  const { locale, setLocale } = useI18n()
   const meta = PAGE_META[page]
   const fresh = Boolean(runtime.runtimeFresh ?? runtime.freshness?.fresh)
   const age = runtime.runtimeAgeSeconds ?? runtime.freshness?.ageSeconds
   const stopAvailable = runtime.agentStopAllowed === true
   const startAvailable = runtime.agentStartAllowed === true
-  const action: 'agent-start' | 'agent-stop' = stopAvailable && String(runtime.status).toLowerCase().includes('run') ? 'agent-stop' : 'agent-start'
+  const action: 'agent-start' | 'agent-stop' = runtime.agentIsRunning === true ? 'agent-stop' : 'agent-start'
   const enabled = action === 'agent-stop' ? stopAvailable : startAvailable
   const reason = runtime.hostConnected !== true
     ? 'WPF 宿主未连接'
@@ -495,6 +537,12 @@ function Topbar({ runtime, page, onRequestAction }: {
         <div><strong>{meta.title}</strong><small>{meta.description}</small></div>
       </div>
       <div className="wpe-topbar__status">
+        <label className="wpe-language-select" title="切换界面语言">
+          <span>语言</span>
+          <select value={locale} onChange={event => setLocale(event.target.value as Locale)} aria-label="切换界面语言">
+            {locales.map(item => <option key={item} value={item}>{localeMeta[item].name}</option>)}
+          </select>
+        </label>
         <EnvironmentControl runtime={runtime} compact />
         <span className="wpe-topbar__provider">{text(runtime.runtimeProviderId, '提供方未确认')}</span>
         <span className={fresh ? 'wpe-freshness is-fresh' : 'wpe-freshness is-stale'}>
@@ -590,14 +638,14 @@ function HomePage({ runtime, goTo }: { runtime: WpeRuntimeState; goTo: (page: Pa
   const riskState = collectionState(runtime, 'risk')
   const positionState = collectionState(runtime, 'positions')
   const orderState = collectionState(runtime, 'orders')
-  const marketState = collectionState(runtime, 'markets')
+  const marketState = collectionState(runtime, 'publicMarkets')
   const auditState = collectionState(runtime, 'auditEvents', runtime.auditEvents?.state)
   const connectionState = collectionState(runtime, 'connectionStatus', runtime.connectionStatus?.state)
   const positions = runtime.positions ?? []
   const orders = runtime.orders ?? []
   const audits = runtime.auditEvents?.items ?? []
   const latestHandoff = [...(runtime.agentHandoffs ?? [])].sort((a, b) => b.occurredAtUtc.localeCompare(a.occurredAtUtc))[0]
-  const markets = runtime.markets ?? []
+  const markets = runtime.publicMarkets?.items ?? []
 
   return (
     <div className="wpe-page-stack">
@@ -612,7 +660,7 @@ function HomePage({ runtime, goTo }: { runtime: WpeRuntimeState; goTo: (page: Pa
       </div>
 
       <div className="wpe-grid wpe-grid--2-home">
-        <Panel title="七 Agent 工作流" description="固定顺序，不包含金融教师" action={<button className="wpe-link-button" type="button" onClick={() => goTo('agents')}>查看详情</button>}>
+        <Panel title="智能体协作链" description="七个核心角色按交易职责依次协作，金融导师独立于交易权限之外" action={<button className="wpe-link-button" type="button" onClick={() => goTo('agents')}>查看详情</button>}>
           <CollectionGate state={collectionState(runtime, 'agentOperations')} empty={!runtime.agentOperations?.length} emptyMessage="当前没有 Agent 运行记录。">
             <AgentChain runtime={runtime} compact />
             <div className="wpe-latest-handoff">
@@ -627,10 +675,10 @@ function HomePage({ runtime, goTo }: { runtime: WpeRuntimeState; goTo: (page: Pa
 
         <Panel title="系统运行" description="宿主提供的当前状态">
           <dl className="wpe-kv-grid">
-            <KeyValue label="Agent 状态" value={text(runtime.status, '状态未知')} />
+            <KeyValue label="智能体状态" value={runtimeValueLabel(runtime.status)} />
             <KeyValue label="授权模式" value={modeLabel(runtime.authorizationMode?.value?.mode)} />
-            <KeyValue label="当前流程节点" value={text(runtime.workflowNode)} />
-            <KeyValue label="实时状态" value={text(runtime.realtimeStatus)} />
+            <KeyValue label="当前流程节点" value={runtimeValueLabel(runtime.workflowNode)} />
+            <KeyValue label="实时状态" value={runtimeValueLabel(runtime.realtimeStatus)} />
             <KeyValue label="恢复状态" value={text(runtime.runtimeRecoveryStatus)} />
             <KeyValue label="运行事件序号" value={formatInteger(runtime.runtimeEventSequence)} />
           </dl>
@@ -682,21 +730,23 @@ function HomePage({ runtime, goTo }: { runtime: WpeRuntimeState; goTo: (page: Pa
       </div>
 
       <div className="wpe-grid wpe-grid--2">
-        <Panel title="市场事实" description="只显示宿主已验证的市场目录">
-          <CollectionGate state={marketState} empty={!markets.length} emptyMessage="当前没有可用的市场事实。">
+        <Panel title="实时行情" description="来自公开市场数据流；交易权限与品种能力由后台独立校验">
+          <CollectionGate state={marketState} message={runtime.publicMarkets?.message} empty={!markets.length} emptyMessage="当前没有可用的实时行情。">
             <DenseTable
               columns={[
                 { key: 'symbol', label: '品种' },
-                { key: 'provider', label: '提供方' },
-                { key: 'exchange', label: '交易所' },
-                { key: 'state', label: '状态' },
+                { key: 'price', label: '最新价', align: 'right' },
+                { key: 'change', label: '24h 涨跌', align: 'right' },
+                { key: 'source', label: '数据源' },
+                { key: 'updated', label: '更新时间' },
               ]}
-              rows={markets.slice(0, 6).map((market, index) => ({
-                __key: `${market.exchangeId}-${market.symbol}-${index}`,
+              rows={markets.slice(0, 6).map(market => ({
+                __key: market.symbol,
                 symbol: <strong>{market.symbol}</strong>,
-                provider: market.providerId,
-                exchange: market.exchangeId,
-                state: <Badge tone={String(market.state).toLowerCase().includes('avail') ? 'success' : 'neutral'}>{text(market.state)}</Badge>,
+                price: formatNumber(market.price),
+                change: <span className={typeof market.changePercent === 'number' && market.changePercent > 0 ? 'wpe-positive' : typeof market.changePercent === 'number' && market.changePercent < 0 ? 'wpe-negative' : undefined}>{formatPercent(market.changePercent)}</span>,
+                source: market.source,
+                updated: formatUtc(market.updatedAt),
               }))}
             />
           </CollectionGate>
@@ -757,7 +807,7 @@ function AgentsPage({ runtime }: { runtime: WpeRuntimeState }) {
   return (
     <div className="wpe-page-stack">
       <SectionTitle
-        title="七 Agent"
+        title="智能体协作中心"
         description="Market → Research → Strategy → Risk → Execution → Recovery → Audit"
         side={<Badge tone="neutral">金融教师不属于交易链</Badge>}
       />
@@ -1178,11 +1228,11 @@ function StrategyRegistry({ runtime }: { runtime: WpeRuntimeState }) {
         id: <strong>{item.id}</strong>,
         version: item.version,
         symbol: item.symbol,
-        family: item.family,
-        lifecycle: <Badge>{item.lifecycle}</Badge>,
+        family: strategyFamilyLabel(item.family),
+        lifecycle: <Badge>{lifecycleLabel(item.lifecycle)}</Badge>,
         quality: formatNumber(item.qualityScore),
         changed: item.stateChangedAtUtc ? <span title={item.stateChangedAtUtc}>{formatUtc(item.stateChangedAtUtc)}</span> : <EmptyCell />,
-        reason: <span className="wpe-cell-wrap">{item.lastReason}</span>,
+        reason: <span className="wpe-cell-wrap" title={item.lastReason}>{strategyResultLabel(item.lastReason)}</span>,
       }))} />
     </CollectionGate>
   )
@@ -1203,7 +1253,7 @@ function LifecycleTable({ runtime }: { runtime: WpeRuntimeState }) {
         __key: item.id,
         id: item.id,
         strategy: <strong>{item.strategyId}</strong>,
-        transition: <span>{item.fromState} → {item.toState}</span>,
+        transition: <span>{lifecycleLabel(item.fromState)} → {lifecycleLabel(item.toState)}</span>,
         time: <span title={item.occurredAtUtc}>{formatUtc(item.occurredAtUtc)}</span>,
         reason: <span className="wpe-cell-wrap">{item.reason}</span>,
       }))} />
@@ -1259,7 +1309,7 @@ function ResearchEvidence({ runtime }: { runtime: WpeRuntimeState }) {
             </header>
             <dl className="wpe-kv-grid wpe-kv-grid--compact">
               <KeyValue label="研究状态" value={item.status} />
-              <KeyValue label="生命周期" value={item.lifecycle} />
+              <KeyValue label="生命周期" value={lifecycleLabel(item.lifecycle)} />
               <KeyValue label="策略版本" value={item.strategyVersion} mono />
               <KeyValue label="评估时间" value={formatUtc(item.evaluatedAtUtc)} title={item.evaluatedAtUtc} />
             </dl>
@@ -1637,6 +1687,7 @@ function MonitoringPage({ runtime }: { runtime: WpeRuntimeState }) {
 }
 
 function SettingsPage({ runtime }: { runtime: WpeRuntimeState }) {
+  const [telegramView, setTelegramView] = useState<'direct' | 'subscribers'>('direct')
   const collection = runtime.securityStorage
   const state = collectionState(runtime, 'securityStorage', collection?.state)
   const value = collection?.value
@@ -1692,8 +1743,12 @@ function SettingsPage({ runtime }: { runtime: WpeRuntimeState }) {
           </dl>
         </Panel>
       </div>
-      <Panel title="Telegram 通知" description="交易提醒、风险拦截和系统事件可发送到用户自己的 Telegram；令牌只保存在本地加密存储中">
-        <div className="wpe-notification-quick">
+      <Panel title="Telegram 通知" description="两版通知方案共用同一个本地加密 Bot；订阅分发版需要新增授权登记后端，当前用于确认交互方案">
+        <div className="wpe-telegram-switch" role="tablist" aria-label="Telegram 通知方案">
+          <button type="button" role="tab" aria-selected={telegramView === 'direct'} className={telegramView === 'direct' ? 'is-active' : ''} onClick={() => setTelegramView('direct')}>版本 A · 直达通知</button>
+          <button type="button" role="tab" aria-selected={telegramView === 'subscribers'} className={telegramView === 'subscribers' ? 'is-active' : ''} onClick={() => setTelegramView('subscribers')}>版本 B · 订阅分发</button>
+        </div>
+        {telegramView === 'direct' ? <div className="wpe-notification-quick">
           <div className="wpe-notification-quick__identity">
             <span className="wpe-notification-quick__mark">TG</span>
             <div>
@@ -1707,15 +1762,26 @@ function SettingsPage({ runtime }: { runtime: WpeRuntimeState }) {
             <span><small>发送失败</small><strong>{formatInteger(notification?.deadLetterCount)}</strong></span>
           </div>
           <button type="button" className="wpe-button wpe-button--primary" onClick={() => postHostCommand('open-settings')}>{notification?.telegramStored ? '管理 Telegram' : '配置 Telegram'}</button>
-        </div>
-      </Panel>
-      <Panel title="安全边界">
-        <ul className="wpe-policy-list">
-          <li>生产页面不调用 fetch、XHR、WebSocket、EventSource、交易所端点或远程分析服务。</li>
-          <li>页面只发送 open-settings、agent-start 和 agent-stop 三个宿主命令。</li>
-          <li>前端不能直接下单、撤单、修改策略、批准风险或写入 SQLite；实盘只能在本地安全设置中显式配置并切换。</li>
-          <li>陈旧、不支持和错误数据会被隐藏，不会被展示为零。</li>
-        </ul>
+        </div> : <div className="wpe-subscriber-design">
+          <div className="wpe-subscriber-design__intro">
+            <span className="wpe-notification-quick__mark">TG</span>
+            <div><strong>Bot 订阅者管理</strong><p>用户向 Bot 发送 /start 后进入待批准列表；只有本机明确批准的人才能收到所选通知，取消授权立即停止发送。</p></div>
+            <Badge tone="warning">后端待接通</Badge>
+          </div>
+          <div className="wpe-grid wpe-grid--3">
+            <Metric label="待批准" value="0" />
+            <Metric label="已授权" value="0" />
+            <Metric label="已停用" value="0" />
+          </div>
+          <div className="wpe-subscriber-flow" aria-label="订阅授权流程">
+            <span><b>01</b> 关注 Bot / 发送 start</span><span><b>02</b> 本机核对并批准</span><span><b>03</b> 选择可接收事件</span><span><b>04</b> 加密保存并审计</span>
+          </div>
+          <div className="wpe-empty-state wpe-empty-state--compact">尚未接入订阅者注册表，因此这里不显示虚构用户。接通后将展示 Telegram 昵称、脱敏 Chat ID、授权状态、事件范围和最后投递状态。</div>
+          <div className="wpe-settings-action">
+            <div><strong>安全规则</strong><p>“关注 Bot”只产生待批准申请，不自动获得交易、账户或风险通知；Bot Token 和完整 Chat ID 永不进入 Web UI。</p></div>
+            <button type="button" className="wpe-button" disabled>管理订阅者 · 待接通</button>
+          </div>
+        </div>}
       </Panel>
     </div>
   )
@@ -1727,6 +1793,9 @@ export function WpeConsole() {
   const [confirmCommand, setConfirmCommand] = useState<'agent-start' | 'agent-stop' | null>(null)
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false)
   const connected = runtime.hostConnected === true
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }, [page])
   const mainContent = useMemo(() => {
     switch (page) {
       case 'agents': return <AgentsPage runtime={runtime} />

@@ -9,6 +9,7 @@ namespace 币安量化机器人.Services.Agent;
 /// </summary>
 public sealed class StrategyResearchScheduler
 {
+    internal static readonly TimeSpan ResearchInterval = TimeSpan.FromMinutes(5);
     private readonly StrategyResearchAgent _research;
     private readonly AgentSqliteStore _database;
 
@@ -54,11 +55,11 @@ public sealed class StrategyResearchScheduler
                 {
                     status = "RUNNING",
                     snapshot.LastRunAtUtc,
-                    nextRunAtUtc = DateTime.UtcNow.AddHours(1),
+                    nextRunAtUtc = DateTime.UtcNow.Add(ResearchInterval),
                     snapshot.Candidates,
                     snapshot.ActiveCandidates
                 }), ct);
-                delay = TimeSpan.FromHours(1);
+                delay = ResearchInterval;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (Exception ex)
@@ -76,6 +77,11 @@ public sealed class StrategyResearchScheduler
     {
         var healthy = status is "WAITING" or "RUNNING";
         _research.SetSchedulerHealth(healthy);
+        WpeAgent.RuntimeServices.AgentRoleRuntimeRegistry.Shared.Publish("strategy",
+            status == "RUNNING" ? "running" : status is "WAITING" or "STARTING" ? "monitoring" : "degraded",
+            status == "RUNNING" ? "Generating, backtesting and evaluating strategy candidates." :
+            status == "WAITING" ? "Monitoring strategy evidence until the next candidate research window." :
+            status == "STARTING" ? "Strategy research scheduler is starting and monitoring its persisted schedule." : "Strategy research retry is scheduled.");
         return _database.SetStateAsync("strategy-research:health", JsonSerializer.Serialize(new
         {
             status,

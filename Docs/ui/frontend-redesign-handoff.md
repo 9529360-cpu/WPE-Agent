@@ -35,7 +35,7 @@ No other command is supported. In particular, the Web UI cannot save credentials
 - Contract version: `1.0`.
 - Canonical TypeScript contract and validation: `WebUi/components/runtime-bridge.tsx`.
 - Canonical C# contract: `Core/Contracts/RuntimeSnapshotV1.cs`.
-- Host composition: `Services/RuntimeSnapshotFactory.cs` and `MainWindow.BuildRuntimeJson()`.
+- Host composition: `Services/RuntimeSnapshotFactory.cs` and `Services/DesktopRuntimeHost.cs`.
 - A snapshot is accepted only for `environment=Testnet`, valid UTC timestamps, valid freshness, and the exact contract version.
 - The runtime bridge replaces the previous snapshot atomically; it must never merge fresh fields into stale or preview state.
 

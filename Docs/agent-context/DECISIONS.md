@@ -6,7 +6,7 @@
 - Build order is `pnpm build`, then `dotnet build`, tests, publish, and launch verification.
 - Preserve Shadow, Active, Degraded, and Retired strategy lifecycle semantics.
 - WebView host commands use an explicit allowlist. Currently only `open-settings` is accepted.
-- `Modules/Trade/TradeView` and `Services/Execution/ExecutionService` are legacy Binance-direct code and are not mounted by the current MainWindow/Web UI; do not reuse them for new trading flows.
+- `Modules/Trade/TradeView` and `Services/Execution/ExecutionService` are legacy Binance-direct code and are not mounted by the current Reference UI; do not reuse them for new trading flows.
 - Remote Brain token/cost attribution flows from `LlmRequestGovernor` into `runtime_skill_calls`; cache hits and blocked remote attempts record zero billable token/cost in skill audit views.
 - Token-reduction priority order is: `two-level planner prompt slimming` first, `structured short memory` second, and `runtime/UI governance visibility` in parallel as an observation baseline.
 - `structured short memory` must preserve Local Only behavior and fail-closed trading semantics; any compressed history contract that weakens risk, execution, or recovery context is rejected.

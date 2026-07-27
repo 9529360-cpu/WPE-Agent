@@ -31,6 +31,8 @@ export type WpeRuntimeState = {
   positionQuantity?: number
   workflowNode?: string
   status?: string
+  agentIsRunning?: boolean
+  nextCycleAtUtc?: string
   environment?: string
   thinkingProgress?: number
   reflectionStatus?: string
@@ -190,7 +192,7 @@ export type RuntimeSkillCall = { id:string; occurredAtUtc:string; skill:string; 
 export type RuntimeDiagnosticCollection={state:RuntimeCollectionState;value?:{code:string;timeUtc:string;summary:string}}
 export type RuntimeMemoryStatusCollection={state:RuntimeCollectionState;message?:string;value?:{workingCount:number;episodicCount:number;longTermCount:number;lastRetrievedAtUtc:string|null}}
 export type RuntimeMemoryRetrieval={id:number;tier:string;symbol:string|null;providerId:string|null;strategyId:string|null;occurredAtUtc:string;result:string;source:string;resultCount:number}
-export type RuntimeAgentOperation={roleId:string;status:'idle'|'running'|'degraded'|'blocked';lastActivityAtUtc:string|null;activity:string|null;mode:'Local Only'|'Hybrid'|'AI Research'}
+export type RuntimeAgentOperation={roleId:string;status:'running'|'monitoring'|'waiting'|'degraded'|'stopped';lastActivityAtUtc:string|null;activity:string|null;mode:'Local Only'|'Hybrid'|'AI Research'}
 export type RuntimeAgentHandoff={id:string;occurredAtUtc:string;sourceRoleId:string;targetRoleId:string;result:string}
 export type RuntimeTeacherBlock={blockId:string;kind:string;heading:string;content:string;evidenceHashes:string[];sha256:string}
 export type RuntimeTeacherLesson={lessonId:string;kind:string;timeZoneId:string;scheduledForUtc:string;generatedAtUtc:string;language:string;teachingLevel:string;personaVersion:string;blocks:RuntimeTeacherBlock[];contentSha256:string;executionAuthority:false}
@@ -421,7 +423,7 @@ function normalizeStrategyEvent(input: unknown): RuntimeStrategyLifecycleEvent |
   if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>;const id=finiteNumber(x.id),strategyId=nonEmptyString(x.strategyId),fromState=nonEmptyString(x.fromState),toState=nonEmptyString(x.toState),occurredAtUtc=nonEmptyString(x.occurredAtUtc),reason=nonEmptyString(x.reason);if(id===null||!Number.isInteger(id)||!strategyId||!fromState||!toState||!occurredAtUtc||Number.isNaN(Date.parse(occurredAtUtc))||!reason)return null;return{id,strategyId,fromState,toState,occurredAtUtc,reason}
 }
 function normalizeSkillCall(input:unknown):RuntimeSkillCall|null{if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>,id=nonEmptyString(x.id),occurredAtUtc=nonEmptyString(x.occurredAtUtc),skill=nonEmptyString(x.skill),status=nonEmptyString(x.status),durationMs=finiteNumber(x.durationMs);const mode=x.mode===null?null:nonEmptyString(x.mode);const remoteLlmUsed=x.remoteLlmUsed===null?null:typeof x.remoteLlmUsed==='boolean'?x.remoteLlmUsed:undefined;const tokens=x.tokens===null?null:finiteNumber(x.tokens);const costUsd=x.costUsd===null?null:finiteNumber(x.costUsd);if(!id||!occurredAtUtc||Number.isNaN(Date.parse(occurredAtUtc))||!skill||!status||durationMs===null||durationMs<0||remoteLlmUsed===undefined||(tokens!==null&&(tokens<0||!Number.isInteger(tokens)))||(costUsd!==null&&costUsd<0))return null;return{id,occurredAtUtc,skill,status,durationMs,mode,remoteLlmUsed,tokens,costUsd}}
-function normalizeAgentOperation(input:unknown):RuntimeAgentOperation|null{if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>,roleId=nonEmptyString(x.roleId),status=nonEmptyString(x.status),activity=x.activity===null?null:nonEmptyString(x.activity),mode=nonEmptyString(x.mode),last=x.lastActivityAtUtc===null?null:nonEmptyString(x.lastActivityAtUtc);if(!roleId||!status||!['idle','running','degraded','blocked'].includes(status)||!mode||!['Local Only','Hybrid','AI Research'].includes(mode)||(last!==null&&Number.isNaN(Date.parse(last))))return null;return{roleId,status:status as RuntimeAgentOperation['status'],lastActivityAtUtc:last,activity,mode:mode as RuntimeAgentOperation['mode']}}
+function normalizeAgentOperation(input:unknown):RuntimeAgentOperation|null{if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>,roleId=nonEmptyString(x.roleId),status=nonEmptyString(x.status),activity=x.activity===null?null:nonEmptyString(x.activity),mode=nonEmptyString(x.mode),last=x.lastActivityAtUtc===null?null:nonEmptyString(x.lastActivityAtUtc);if(!roleId||!status||!['running','monitoring','waiting','degraded','stopped'].includes(status)||!mode||!['Local Only','Hybrid','AI Research'].includes(mode)||(last!==null&&Number.isNaN(Date.parse(last))))return null;return{roleId,status:status as RuntimeAgentOperation['status'],lastActivityAtUtc:last,activity,mode:mode as RuntimeAgentOperation['mode']}}
 function normalizeAgentHandoff(input:unknown):RuntimeAgentHandoff|null{if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>,id=nonEmptyString(x.id),occurredAtUtc=nonEmptyString(x.occurredAtUtc),sourceRoleId=nonEmptyString(x.sourceRoleId),targetRoleId=nonEmptyString(x.targetRoleId),result=nonEmptyString(x.result);if(!id||!occurredAtUtc||Number.isNaN(Date.parse(occurredAtUtc))||!sourceRoleId||!targetRoleId||sourceRoleId===targetRoleId||!result)return null;return{id,occurredAtUtc,sourceRoleId,targetRoleId,result}}
 
 function normalizeItems<T>(collection: unknown, normalize: (item: unknown) => T | null) {
@@ -764,8 +766,11 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
     sourceTimestampUtc:sourceUpdatedAtUtc,
     snapshotTimestampUtc:generatedAtUtc,
     runtimeDiagnosticReason:trusted?undefined:providerId===null?'Provider or Testnet connection metadata unavailable.':!currentAuthority?'Current runtime authority is unavailable.':'Runtime timestamp is stale or invalid.',
-    agentStartAllowed:trusted,
-    agentStopAllowed:trusted,
+    // A stale but structurally valid Testnet snapshot may request lifecycle control.
+    // The native host re-checks current provider authority before starting; stopping
+    // must remain available even when market/runtime evidence is stale.
+    agentStartAllowed:legacy.agentIsRunning !== true,
+    agentStopAllowed:legacy.agentIsRunning === true,
     previewMode: false,
   }
   if ((value.telemetry as { value?: unknown } | undefined)?.value) Object.assign(state, (value.telemetry as { value: object }).value)
