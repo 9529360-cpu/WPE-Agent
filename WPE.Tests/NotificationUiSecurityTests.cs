@@ -16,8 +16,10 @@ public sealed class NotificationUiSecurityTests:IDisposable
     public async Task RuntimeProjection_ContainsNoSecretOrRoutingIdentity_AndCorruptDpapiFailsClosed()
     {
         const string token="123456:super-secret-token",destination="-100998877";var settingsPath=Path.Combine(_dir,"settings.json");var settingsStore=new AgentSettingsStore(settingsPath);var settings=settingsStore.Load();settings.Notification=new(){Enabled=true,Telegram=new(){Enabled=true,EncryptedAccessToken=SecretVaultService.Encrypt(token),EncryptedDestination=SecretVaultService.Encrypt(destination)}};settingsStore.Save(settings);
-        var runtime=new RuntimeNotificationStateStore(settingsStore,new NotificationOutboxStore(Path.Combine(_dir,"outbox.db"),_clock));await runtime.RefreshAsync(default);var json=JsonSerializer.Serialize(runtime.Read());
+        var subscriberStore=new TelegramSubscriberStore(Path.Combine(_dir,"subscribers.db"),_clock,new ReversibleProtector());await subscriberStore.ApplyUpdateAsync(new(1,-100112233,"private","/start"),default);
+        var runtime=new RuntimeNotificationStateStore(settingsStore,new NotificationOutboxStore(Path.Combine(_dir,"outbox.db"),_clock),subscriberStore);await runtime.RefreshAsync(default);var json=JsonSerializer.Serialize(runtime.Read());
         Assert.DoesNotContain(token,json,StringComparison.Ordinal);Assert.DoesNotContain(destination,json,StringComparison.Ordinal);Assert.DoesNotContain("EventKey",json,StringComparison.OrdinalIgnoreCase);Assert.True(runtime.Read().Status!.TelegramStored);Assert.True(runtime.Read().Status!.TelegramReady);
+        var subscriber=Assert.Single(runtime.Read().Subscribers);Assert.Matches("^tg#[a-f0-9]{12}$",subscriber.SubscriberId);Assert.DoesNotContain("100112233",json,StringComparison.Ordinal);
         settings=settingsStore.Load();settings.Notification.Telegram.EncryptedAccessToken="corrupt-dpapi";settingsStore.Save(settings);await runtime.RefreshAsync(default);Assert.Equal(WpeAgent.RuntimeContracts.RuntimeCollectionState.Error,runtime.Read().State);Assert.Null(runtime.Read().Status);
     }
 
@@ -68,4 +70,5 @@ public sealed class NotificationUiSecurityTests:IDisposable
     private sealed class FailingCleaner:ILegacyNotificationSecretCleaner{public void ClearAfterConfirmedMigration()=>throw new IOException("legacy file locked");}
     private sealed class CountingCleaner:ILegacyNotificationSecretCleaner{public int Calls{get;private set;}public void ClearAfterConfirmedMigration()=>Calls++;}
     private sealed class FailingProtector:INotificationSecretProtector{public string Protect(string value)=>throw new InvalidOperationException("DPAPI unavailable");}
+    private sealed class ReversibleProtector:ITelegramSubscriberSecretProtector{public string Protect(string value)=>Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(new string(value.Reverse().ToArray())));public string Unprotect(string value)=>new string(System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(value)).Reverse().ToArray());}
 }

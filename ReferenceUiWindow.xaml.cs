@@ -11,15 +11,18 @@ namespace WpeAgent
     {
         private readonly Func<string> _stateJson;
         private readonly Action _openSetup;
+        private readonly Action _openNotificationSetup;
         private readonly Func<System.Threading.Tasks.Task<bool>> _startAgent;
 
         public ReferenceUiWindow(
             Func<string> stateJson,
             Action? openSetup = null,
+            Action? openNotificationSetup = null,
             Func<System.Threading.Tasks.Task<bool>>? startAgent = null)
         {
             _stateJson = stateJson;
             _openSetup = openSetup ?? (() => { });
+            _openNotificationSetup = openNotificationSetup ?? _openSetup;
             _startAgent = startAgent ?? (() => System.Threading.Tasks.Task.FromResult(false));
             InitializeComponent();
             Loaded += async (_, _) => await InitializeAsync();
@@ -50,6 +53,7 @@ namespace WpeAgent
                 {
                     if (!TryGetHostCommand(e.WebMessageAsJson, out var command)) return;
                     if (command == "open-settings") Dispatcher.Invoke(_openSetup);
+                    else if (command == "open-notification-settings") Dispatcher.Invoke(_openNotificationSetup);
                     else if (command == "agent-start")
                         await _startAgent();
                     else if (command == "agent-stop")
@@ -80,7 +84,7 @@ namespace WpeAgent
                     type.ValueKind != System.Text.Json.JsonValueKind.String)
                     return false;
                 command = type.GetString() ?? string.Empty;
-                return command is "open-settings" or "agent-start" or "agent-stop";
+                return command is "open-settings" or "open-notification-settings" or "agent-start" or "agent-stop";
             }
             catch (System.Text.Json.JsonException) { return false; }
         }

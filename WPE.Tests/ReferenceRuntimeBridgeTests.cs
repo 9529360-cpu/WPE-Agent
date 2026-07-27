@@ -21,6 +21,7 @@ public sealed class ReferenceRuntimeBridgeTests
 
     [Theory]
     [InlineData("open-settings")]
+    [InlineData("open-notification-settings")]
     [InlineData("agent-start")]
     [InlineData("agent-stop")]
     public void HostCommandAllowlist_AcceptsOnlyNamedCommands(string command)

@@ -12,6 +12,8 @@ public sealed class DesktopShellRetirementTests
         Assert.Contains("new DesktopRuntimeHost(localIdentity)", app, StringComparison.Ordinal);
         Assert.Contains("new WpeAgent.ReferenceUiWindow(runtimeHost.BuildRuntimeJson", app, StringComparison.Ordinal);
         Assert.Contains("runtimeHost.StartAgentAsync", app, StringComparison.Ordinal);
+        Assert.Contains("var accessReady = await runtimeHost.RefreshAccessAsync();", app, StringComparison.Ordinal);
+        Assert.Contains("if (accessReady) AutoTradingAgent.StartDefault();", app, StringComparison.Ordinal);
         Assert.DoesNotContain("new MainWindow", app, StringComparison.Ordinal);
         Assert.DoesNotContain("--legacy-ui", app, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("<AssemblyName>WPE-Agent</AssemblyName>", project, StringComparison.Ordinal);

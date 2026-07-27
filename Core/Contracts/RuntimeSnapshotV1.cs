@@ -229,6 +229,7 @@ public sealed record RuntimeMarketV1(string ExchangeId, string ProviderId, strin
 public sealed record RuntimeCapabilityV1(string ExchangeId, string ProviderId, string CanonicalSymbol, string NativeSymbol, MarketType MarketType, CapabilityStatus Status, bool CanRead, bool CanTrade, bool TestnetAvailable, DateTimeOffset CheckedAt, string? Failure = null);
 public sealed record RuntimeNotificationStatusV1(bool Enabled,bool TelegramStored,bool TelegramReady,bool WhatsAppStored,bool WhatsAppReady,bool LegacyMigrationPending,string? LegacyMigrationDiagnosticCode,IReadOnlyList<string> EventKinds,bool QuietHoursEnabled,string QuietHoursStart,string QuietHoursEnd,string QuietHoursTimeZone,int PendingCount,int RetryingCount,int SentCount,int DeadLetterCount);
 public sealed record RuntimeNotificationOutboxRowV1(long Id,string Channel,string Kind,string UiState,bool InFlight,int Attempts,int MaxAttempts,DateTime OccurredAtUtc,DateTime NextAttemptAtUtc,DateTime UpdatedAtUtc,string? DiagnosticCode);
+public sealed record RuntimeTelegramSubscriberV1(string SubscriberId,string ChatType,string State,IReadOnlyList<string> EventKinds,DateTime FirstSeenAtUtc,DateTime UpdatedAtUtc);
 public sealed record RuntimeAuthorizationModeV1(string Mode);
 public sealed record RuntimeSecurityStorageV1(string State,string ReasonCode,int EnvelopeVersion,int RecordCount,string? EvidenceSha256);
 public sealed record RuntimeAutomaticExecutionSummaryV1(string ExecutionId,string Status,string Code,int AttemptCount,DateTimeOffset UpdatedAtUtc);
@@ -332,6 +333,7 @@ public sealed class RuntimeSnapshotV1
     public RuntimeCollectionV1<RuntimePluginV1> Plugins { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Plugin registry is not connected.");
     public RuntimeValueV1<RuntimeNotificationStatusV1> NotificationStatus { get; init; } = new(RuntimeCollectionState.Unsupported, null, "Notification state is not connected.");
     public RuntimeCollectionV1<RuntimeNotificationOutboxRowV1> NotificationOutbox { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Notification outbox is not connected.");
+    public RuntimeCollectionV1<RuntimeTelegramSubscriberV1> TelegramSubscribers { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Telegram subscriber registry is not connected.");
     public RuntimeValueV1<RuntimeAuthorizationModeV1> AuthorizationMode { get; init; } = new(RuntimeCollectionState.Unsupported, null, "Trading authorization state is not connected.");
     public RuntimeValueV1<RuntimeSecurityStorageV1> SecurityStorage { get; init; } = new(RuntimeCollectionState.Unsupported, null, "Security storage runtime is not connected.");
     public RuntimeCollectionV1<RuntimeAutomaticExecutionSummaryV1> AutomaticExecutions { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Automatic execution persistence is not connected.");

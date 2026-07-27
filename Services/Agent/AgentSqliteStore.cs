@@ -892,7 +892,20 @@ public sealed partial class AgentSqliteStore
             }
         }
         var handoffs=new List<PersistedAgentHandoff>();
-        await using(var q=c.CreateCommand())
+        string? activeRunId=null;
+        await using(var heartbeat=c.CreateCommand())
+        {
+            heartbeat.CommandText="SELECT occurred_at,payload_json FROM runtime_events WHERE event_type='runtime.heartbeat' ORDER BY occurred_at DESC LIMIT 1";
+            await using var r=await heartbeat.ExecuteReaderAsync(ct);if(await r.ReadAsync(ct))
+            {
+                var at=DateTime.Parse(r.GetString(0),null,DateTimeStyles.RoundtripKind).ToUniversalTime();
+                if(DateTime.UtcNow-at<=TimeSpan.FromSeconds(30))
+                {
+                    try{using var doc=JsonDocument.Parse(r.GetString(1));var root=doc.RootElement;if((!root.TryGetProperty("LeaseRenewed",out var renewed)&&!root.TryGetProperty("leaseRenewed",out renewed))||renewed.ValueKind!=JsonValueKind.True)activeRunId=null;else if(root.TryGetProperty("RunId",out var run)||root.TryGetProperty("runId",out run))activeRunId=run.GetString();}catch(JsonException){}
+                }
+            }
+        }
+        if(!string.IsNullOrWhiteSpace(activeRunId))await using(var q=c.CreateCommand())
         {
             q.CommandText="SELECT event_id,occurred_at,payload_json FROM runtime_events WHERE event_type='workflow.node.entered' ORDER BY sequence DESC LIMIT 100";
             await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))
@@ -900,6 +913,7 @@ public sealed partial class AgentSqliteStore
                 try
                 {
                     using var doc=JsonDocument.Parse(r.GetString(2));var root=doc.RootElement;
+                    if((!root.TryGetProperty("RunId",out var run)&&!root.TryGetProperty("runId",out run))||!string.Equals(run.GetString(),activeRunId,StringComparison.Ordinal))continue;
                     if(!root.TryGetProperty("Previous",out var previous)&&!root.TryGetProperty("previous",out previous))continue;
                     if(!root.TryGetProperty("Node",out var node)&&!root.TryGetProperty("node",out node))continue;
                     var source=RoleForNode(NodeName(previous));var target=RoleForNode(NodeName(node));if(source is null||target is null||source==target)continue;

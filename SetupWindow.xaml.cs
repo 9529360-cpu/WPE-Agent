@@ -25,8 +25,12 @@ public partial class SetupWindow:Window
     private readonly CheckBox _notifyTeacherEvent=new(){Tag=NotificationEventKind.TeacherEventLesson.ToString(),Margin=new(0,4,18,4)};
     private readonly CheckBox _notifyTeacherRecommendation=new(){Tag=NotificationEventKind.TeacherRecommendation.ToString(),Margin=new(0,4,18,4)};
     private readonly CheckBox _notifyTeacherCorrection=new(){Tag=NotificationEventKind.TeacherCorrection.ToString(),Margin=new(0,4,18,4)};
+    private readonly ListView _telegramSubscriberList=new(){Height=180,Margin=new(0,8,0,8)};
+    private readonly Button _approveTelegramSubscriber=new(){Content="批准所选订阅者",Margin=new(0,0,8,0)};
+    private readonly Button _disableTelegramSubscriber=new(){Content="停用所选订阅者",Margin=new(0,0,8,0)};
+    private readonly Button _refreshTelegramSubscribers=new(){Content="刷新订阅者"};
     private readonly AgentSettingsStore _store=new();private readonly AgentSqliteStore _auditStore=new();private readonly AccessReadinessService _readiness=new();private readonly RuntimeAuthorizationStateStore _authorizationState;private readonly LocalTradingReviewContextProvider _reviewContext;private readonly TradingReviewApprovalService _reviewApprovals;private AgentSettings _settings;private AccessReadinessReport? _last;private static LocalizationService I18n=>LocalizationService.Current;public bool SetupCompleted{get;private set;}
-    public SetupWindow(string user,bool configurationMode=false){InitializeComponent();if(!ProviderBox.Items.OfType<ComboBoxItem>().Any(x=>string.Equals(x.Content?.ToString(),"WPE Local Brain",StringComparison.OrdinalIgnoreCase)))ProviderBox.Items.Insert(0,new ComboBoxItem{Content="WPE Local Brain"});_settings=_store.Load();UseLocalBrainWhenRemoteIsUnconfigured();_settings.ActiveUser=user;_reviewContext=new LocalTradingReviewContextProvider(_store,_auditStore);_reviewApprovals=new TradingReviewApprovalService(_auditStore,_reviewContext);_authorizationState=new RuntimeAuthorizationStateStore(_store,_auditStore);UserText.Text="● "+user;LoadSettings();if(configurationMode){WizardTabs.SelectedIndex=1;}I18n.LanguageChanged+=LanguageChanged;}
+    public SetupWindow(string user,bool configurationMode=false,int? selectedTab=null){InitializeComponent();if(!ProviderBox.Items.OfType<ComboBoxItem>().Any(x=>string.Equals(x.Content?.ToString(),"WPE Local Brain",StringComparison.OrdinalIgnoreCase)))ProviderBox.Items.Insert(0,new ComboBoxItem{Content="WPE Local Brain"});_settings=_store.Load();UseLocalBrainWhenRemoteIsUnconfigured();_settings.ActiveUser=user;_reviewContext=new LocalTradingReviewContextProvider(_store,_auditStore);_reviewApprovals=new TradingReviewApprovalService(_auditStore,_reviewContext);_authorizationState=new RuntimeAuthorizationStateStore(_store,_auditStore);UserText.Text="● "+user;LoadSettings();InitializeTelegramSubscriberManagement();if(selectedTab is not null){WizardTabs.SelectedIndex=selectedTab.Value;}else if(configurationMode){WizardTabs.SelectedIndex=1;}I18n.LanguageChanged+=LanguageChanged;}
     private void UseLocalBrainWhenRemoteIsUnconfigured(){if(_settings.Brains.TryGetValue(_settings.ActiveBrain,out var active)&&!active.IsLocal&&!string.IsNullOrWhiteSpace(active.EncryptedKey))return;const string name="WPE Local Brain";if(!_settings.Brains.ContainsKey(name))_settings.Brains[name]=new BrainSlot{Provider=name,Endpoint=string.Empty,Model="deterministic-local-v1",IsLocal=true,PromptVersion="wpe-local-deterministic-v1",EnableFallback=false};_settings.ActiveBrain=name;_store.Save(_settings);}
     protected override void OnClosed(EventArgs e){I18n.LanguageChanged-=LanguageChanged;base.OnClosed(e);}
     protected override void OnContentRendered(EventArgs e){base.OnContentRendered(e);AuthorizationModeBox.IsEnabled=false;AuthorizationReasonBox.IsEnabled=false;ApprovePendingReviewButton.Visibility=Visibility.Collapsed;RejectPendingReviewButton.Visibility=Visibility.Collapsed;RevokePendingReviewButton.Visibility=Visibility.Collapsed;PendingReviewReasonBox.IsEnabled=false;PendingReviewStatusText.Text="Historical Review records are read-only. Testnet automatic authorization is established only by successful initial readiness setup.";}
@@ -90,6 +94,41 @@ public partial class SetupWindow:Window
             return new(settings.ActiveUser,request.DeviceId,request.SessionId,settings.AuthorizationMode,true,profile.ProviderId);
         }
     }
+    private void InitializeTelegramSubscriberManagement()
+    {
+        if(TelegramEnabledBox.Parent is not Panel panel)return;
+        panel.Children.Add(new TextBlock{Text="Bot 订阅者",FontSize=16,FontWeight=FontWeights.SemiBold,Margin=new(0,18,0,4)});
+        panel.Children.Add(new TextBlock{Text="用户发送 /start 后进入待批准列表。批准时使用上方当前勾选的通知事件范围；订阅不获得任何交易或账户权限。",TextWrapping=TextWrapping.Wrap,Foreground=new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(84,125,141))});
+        _telegramSubscriberList.DisplayMemberPath=nameof(TelegramSubscriberRow.Display);
+        panel.Children.Add(_telegramSubscriberList);
+        var actions=new StackPanel{Orientation=Orientation.Horizontal};actions.Children.Add(_approveTelegramSubscriber);actions.Children.Add(_disableTelegramSubscriber);actions.Children.Add(_refreshTelegramSubscribers);panel.Children.Add(actions);
+        _approveTelegramSubscriber.Click+=async(_,_)=>await ApproveTelegramSubscriberAsync();
+        _disableTelegramSubscriber.Click+=async(_,_)=>await DisableTelegramSubscriberAsync();
+        _refreshTelegramSubscribers.Click+=async(_,_)=>await RefreshTelegramSubscribersAsync();
+        Loaded+=async(_,_)=>await RefreshTelegramSubscribersAsync();
+    }
+    private async Task RefreshTelegramSubscribersAsync()
+    {
+        try
+        {
+            var values=await new TelegramSubscriberStore().ListAsync(CancellationToken.None);
+            _telegramSubscriberList.ItemsSource=values.Select(x=>new TelegramSubscriberRow(x.SubscriberKey,$"tg#{x.SubscriberKey[..12].ToLowerInvariant()} · {x.ChatType} · {x.State} · {(x.AllowedEventKinds.Count==0?"未授权事件":string.Join(", ",x.AllowedEventKinds))}")).ToArray();
+        }
+        catch(Exception ex){NotificationStatus.Text=UiDiagnostic.Format(ex,"Telegram subscriber refresh failed.");}
+    }
+    private async Task ApproveTelegramSubscriberAsync()
+    {
+        if(_telegramSubscriberList.SelectedItem is not TelegramSubscriberRow row){NotificationStatus.Text="请选择订阅者。";return;}
+        var kinds=NotificationEventBoxes().Where(x=>x.IsChecked==true).Select(x=>Enum.Parse<NotificationEventKind>((string)x.Tag)).Where(x=>x!=NotificationEventKind.Test).ToHashSet();
+        if(kinds.Count==0){NotificationStatus.Text="批准前请至少勾选一个非测试通知事件。";return;}
+        try{await new TelegramSubscriberStore().ApproveAsync(row.SubscriberKey,kinds,_settings.ActiveUser,CancellationToken.None);await RefreshTelegramSubscribersAsync();NotificationStatus.Text="订阅者已批准。";}catch(Exception ex){NotificationStatus.Text=UiDiagnostic.Format(ex,"Telegram subscriber approval failed.");}
+    }
+    private async Task DisableTelegramSubscriberAsync()
+    {
+        if(_telegramSubscriberList.SelectedItem is not TelegramSubscriberRow row){NotificationStatus.Text="请选择订阅者。";return;}
+        try{await new TelegramSubscriberStore().DisableAsync(row.SubscriberKey,_settings.ActiveUser,CancellationToken.None);await RefreshTelegramSubscribersAsync();NotificationStatus.Text="订阅者已停用。";}catch(Exception ex){NotificationStatus.Text=UiDiagnostic.Format(ex,"Telegram subscriber disable failed.");}
+    }
+    private sealed record TelegramSubscriberRow(string SubscriberKey,string Display);
     private CheckBox[] NotificationEventBoxes()
     {
         _notifyMarketBrief.Content=I18n.CurrentCode switch{"zh_CN"=>"每日市场简报","zh_TW"=>"每日市場簡報","ja_JP"=>"毎日のマーケットレポート","ko_KR"=>"일일 시장 브리핑","it_IT"=>"Briefing giornaliero di mercato",_=>"Daily market brief"};

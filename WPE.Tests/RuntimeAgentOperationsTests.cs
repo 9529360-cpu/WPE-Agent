@@ -22,7 +22,8 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
         await db.RecordSkillCallAsync("IndependentRiskManager","BLOCKED",4,"input","output",null,default,"Hybrid",false);
         await db.BeginWorkflowRunAsync("run-1","cycle-1","{}",default);
         await db.SaveWorkflowCheckpointAsync(new("run-1","cycle-1",WorkflowNode.Execution,CheckpointPhase.Entered,"{}",DateTime.UtcNow),default);
-        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-1","workflow.node.entered","AgentRuntimeSupervisor",new{Previous=WorkflowNode.Risk,Node=WorkflowNode.Execution}),default);
+        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("run-1","runtime.heartbeat","AgentRuntimeSupervisor",new{RunId="run-1",LeaseRenewed=true}),default);
+        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-1","workflow.node.entered","AgentRuntimeSupervisor",new{RunId="run-1",Previous=WorkflowNode.Risk,Node=WorkflowNode.Execution}),default);
 
         var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath)).Read();
         Assert.Equal("stopped",state.Operations.Single(x=>x.RoleId=="market").Status);
@@ -35,14 +36,26 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
     public async Task WorkflowProjectionDoesNotInventResearchToExecutionBypass()
     {
         var db=new AgentSqliteStore(DatabasePath);
-        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-roles","workflow.node.entered","AgentRuntimeSupervisor",new{Previous=WorkflowNode.Research,Node=WorkflowNode.PositionManagement}),default);
-        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-roles","workflow.node.entered","AgentRuntimeSupervisor",new{Previous=WorkflowNode.Risk,Node=WorkflowNode.Reflection}),default);
+        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("run-roles","runtime.heartbeat","AgentRuntimeSupervisor",new{RunId="run-roles",LeaseRenewed=true}),default);
+        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-roles","workflow.node.entered","AgentRuntimeSupervisor",new{RunId="run-roles",Previous=WorkflowNode.Research,Node=WorkflowNode.PositionManagement}),default);
+        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-roles","workflow.node.entered","AgentRuntimeSupervisor",new{RunId="run-roles",Previous=WorkflowNode.Risk,Node=WorkflowNode.Reflection}),default);
 
         var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath),new AgentRoleRuntimeRegistry()).Read();
 
         Assert.Contains(state.Handoffs,x=>x.SourceRoleId=="research"&&x.TargetRoleId=="risk");
         Assert.Contains(state.Handoffs,x=>x.SourceRoleId=="risk"&&x.TargetRoleId=="audit");
         Assert.DoesNotContain(state.Handoffs,x=>x.SourceRoleId=="research"&&x.TargetRoleId=="execution");
+    }
+
+    [Fact]
+    public async Task HistoricalHandoffsAreHiddenWithoutAFreshMatchingRuntimeLease()
+    {
+        var db=new AgentSqliteStore(DatabasePath);
+        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("old-cycle","workflow.node.entered","AgentRuntimeSupervisor",new{RunId="old-run",Previous=WorkflowNode.Observation,Node=WorkflowNode.Research}) with { OccurredAtUtc=DateTime.UtcNow.AddDays(-8) },default);
+
+        var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath),new AgentRoleRuntimeRegistry()).Read();
+
+        Assert.Empty(state.Handoffs);
     }
 
     [Fact]

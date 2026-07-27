@@ -119,14 +119,23 @@ public static class NotificationRuntimeFactory
         {
             var configuration=new AgentNotificationConfigurationProvider();
             var store=new NotificationOutboxStore();
-            var observer=new ConfirmedNotificationObserver(new NotificationOutboxPublisher(store,configuration));
+            var subscriberStore=new TelegramSubscriberStore();
+            var telegramTransport=new TelegramNotificationTransport();
+            var observer=new ConfirmedNotificationObserver(new CompositeNotificationPublisher(
+                new NotificationOutboxPublisher(store,configuration),
+                new TelegramSubscriberNotificationPublisher(subscriberStore)));
             var dispatcher=new NotificationDispatcher(
                 store,configuration,
-                [new TelegramNotificationTransport(),new WhatsAppCloudNotificationTransport()]);
+                [telegramTransport,new WhatsAppCloudNotificationTransport()]);
+            var subscriberDispatcher=new TelegramSubscriberDispatcher(subscriberStore,configuration,telegramTransport);
+            var subscriberPoller=new TelegramSubscriptionPoller(subscriberStore,new HttpTelegramBotUpdateSource(),configuration);
             CurrentObserver=observer;
             return new(observer,async ct=>
             {
-                try{await dispatcher.RunAsync(TimeSpan.FromSeconds(5),ct);}
+                try{await Task.WhenAll(
+                    dispatcher.RunAsync(TimeSpan.FromSeconds(5),ct),
+                    subscriberDispatcher.RunAsync(ct),
+                    subscriberPoller.RunAsync(ct));}
                 catch(OperationCanceledException)when(ct.IsCancellationRequested){}
             });
         }

@@ -11,7 +11,7 @@ import { useI18n } from '@/lib/i18n/context'
 import { localeMeta, locales, type Locale } from '@/lib/i18n/dictionaries'
 
 type PageId = 'home' | 'agents' | 'teacher' | 'trading' | 'research' | 'risk' | 'monitoring' | 'settings'
-type HostCommand = 'open-settings' | 'agent-start' | 'agent-stop'
+type HostCommand = 'open-settings' | 'open-notification-settings' | 'agent-start' | 'agent-stop'
 type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
 
 const AGENT_CHAIN = ['Market', 'Research', 'Strategy', 'Risk', 'Execution', 'Recovery', 'Audit'] as const
@@ -479,7 +479,7 @@ function EnvironmentControl({ runtime, compact = false }: { runtime: WpeRuntimeS
     <div className={`wpe-environment ${compact ? 'is-compact' : ''}`} aria-label={`当前环境：${mainnet ? '实盘' : '测试网'}`}>
       {!compact && <span>交易环境</span>}
       <button type="button" className={!mainnet ? 'is-active' : ''} onClick={() => postHostCommand('open-settings')}>测试网</button>
-      <button type="button" className={mainnet ? 'is-active is-live' : ''} onClick={() => postHostCommand('open-settings')}>实盘</button>
+      <button type="button" className={mainnet ? 'is-active is-live' : ''} disabled title="当前版本尚未验收实盘交易">实盘未开放</button>
     </div>
   )
 }
@@ -1114,34 +1114,24 @@ function OrdersTable({ runtime }: { runtime: WpeRuntimeState }) {
   )
 }
 
-function ApprovalsTable({ runtime }: { runtime: WpeRuntimeState }) {
-  const state = collectionState(runtime, 'pendingApprovals', runtime.pendingApprovals?.state)
-  const items = runtime.pendingApprovals?.items ?? []
+function AutomaticExecutionsTable({ runtime }: { runtime: WpeRuntimeState }) {
+  const state = collectionState(runtime, 'automaticExecutions', runtime.automaticExecutions?.state)
+  const items = runtime.automaticExecutions?.items ?? []
   return (
-    <CollectionGate state={state} message={runtime.pendingApprovals?.message} empty={!items.length} emptyMessage="当前没有待审核事项。">
+    <CollectionGate state={state} message={runtime.automaticExecutions?.message} empty={!items.length} emptyMessage="当前没有自动执行记录。策略与风险门仍会持续运行，只有合格信号才进入执行队列。">
       <DenseTable columns={[
-        { key: 'id', label: '审核编号' },
-        { key: 'symbol', label: '品种' },
-        { key: 'side', label: '方向' },
-        { key: 'type', label: '类型' },
-        { key: 'quantity', label: '数量', align: 'right' },
-        { key: 'entry', label: '入场', align: 'right' },
-        { key: 'stop', label: '止损', align: 'right' },
-        { key: 'target', label: '止盈', align: 'right' },
-        { key: 'expires', label: '到期时间' },
+        { key: 'id', label: '执行编号' },
         { key: 'status', label: '状态' },
+        { key: 'code', label: '结果代码' },
+        { key: 'attempts', label: '尝试次数', align: 'right' },
+        { key: 'updated', label: '更新时间' },
       ]} rows={items.map(item => ({
-        __key: item.approvalId,
-        id: <HashValue value={item.approvalId} />,
-        symbol: item.symbol ?? <EmptyCell />,
-        side: item.side ?? <EmptyCell />,
-        type: item.orderType ?? <EmptyCell />,
-        quantity: item.quantity === null ? <EmptyCell /> : formatNumber(item.quantity, 8),
-        entry: item.entryPrice === null ? <EmptyCell /> : formatNumber(item.entryPrice, 8),
-        stop: item.stopLoss === null ? <EmptyCell /> : formatNumber(item.stopLoss, 8),
-        target: item.takeProfit === null ? <EmptyCell /> : formatNumber(item.takeProfit, 8),
-        expires: <span title={item.expiresAtUtc}>{formatUtc(item.expiresAtUtc)}</span>,
-        status: <Badge tone={item.status === 'Pending' ? 'warning' : 'neutral'}>{item.status}</Badge>,
+        __key: item.executionId,
+        id: <HashValue value={item.executionId} />,
+        status: <Badge tone={item.status === 'Succeeded' ? 'success' : item.status.includes('Blocked') || item.status.includes('Failed') ? 'danger' : 'warning'}>{item.status}</Badge>,
+        code: item.code,
+        attempts: formatInteger(item.attemptCount),
+        updated: <span title={item.updatedAtUtc}>{formatUtc(item.updatedAtUtc)}</span>,
       }))} />
     </CollectionGate>
   )
@@ -1186,23 +1176,21 @@ function TradingPage({ runtime }: { runtime: WpeRuntimeState }) {
       <Tabs value={tab} onChange={setTab} items={[
         { id: 'positions', label: '持仓' },
         { id: 'orders', label: '活跃订单' },
-        { id: 'approvals', label: '待审核事项' },
+        { id: 'execution', label: '自动执行' },
         { id: 'history', label: '历史订单' },
-        { id: 'execution', label: '执行状态' },
+        { id: 'recovery', label: '恢复状态' },
       ]} />
       {tab === 'positions' && <Panel title="开放持仓"><PositionsTable runtime={runtime} /></Panel>}
       {tab === 'orders' && <Panel title="活跃订单"><OrdersTable runtime={runtime} /></Panel>}
-      {tab === 'approvals' && <Panel title="待审核事项" description="当前合同没有 Web 审批命令，因此不显示批准或拒绝按钮"><ApprovalsTable runtime={runtime} /></Panel>}
+      {tab === 'execution' && <Panel title="自动执行队列" description="真实展示策略信号通过风险门后进入执行链的结果，不从订单记录推断"><AutomaticExecutionsTable runtime={runtime} /></Panel>}
       {tab === 'history' && <Panel title="历史订单"><HistoricalOrdersTable runtime={runtime} /></Panel>}
-      {tab === 'execution' && (
-        <Panel title="自动执行与恢复状态">
+      {tab === 'recovery' && (
+        <Panel title="恢复与运行状态">
           <dl className="wpe-kv-grid">
-            <KeyValue label="执行批准状态" value={text(runtime.executionApprovalStatus)} />
-            <KeyValue label="风险批准状态" value={text(runtime.riskApprovalStatus)} />
             <KeyValue label="运行恢复状态" value={text(runtime.runtimeRecoveryStatus)} />
             <KeyValue label="授权模式" value={modeLabel(runtime.authorizationMode?.value?.mode)} />
           </dl>
-          <div className="wpe-inline-note">当前 TypeScript 运行状态未提供独立的 automaticExecution 集合，因此不从订单记录推断自动执行结果。</div>
+          <div className="wpe-inline-note">恢复 Agent 只在执行状态不确定、订单超时或重启对账时采取动作；正常监控不等于停止运行。</div>
         </Panel>
       )}
     </div>
@@ -1382,13 +1370,13 @@ function RiskPage({ runtime }: { runtime: WpeRuntimeState }) {
           <Metric label="CVaR 99%" value={cvar99 === undefined ? '未提供' : formatNumber(cvar99)} />
           <Metric label="组合集中度" value={concentration === undefined ? '未提供' : formatNumber(concentration)} />
           <Metric label="组合相关性" value={correlation === undefined ? '未提供' : formatNumber(correlation)} />
-          <Metric label="风险批准状态" value={text(runtime.riskApprovalStatus)} />
-          <Metric label="执行批准状态" value={text(runtime.executionApprovalStatus)} />
+          <Metric label="最近执行状态" value={text(runtime.automaticExecutions?.items?.[0]?.status)} />
+          <Metric label="最近结果代码" value={text(runtime.automaticExecutions?.items?.[0]?.code)} />
         </div>
         <Panel title="风险结论" className="wpe-panel--nested">
           <div className="wpe-risk-summary">{text(runtime.riskSummary, '宿主未提供风险结论。')}</div>
         </Panel>
-        <Panel title="待审核事项" description="只读展示，不提供 Web 审批按钮" className="wpe-panel--nested"><ApprovalsTable runtime={runtime} /></Panel>
+        <Panel title="自动执行记录" description="只读展示风险门后的真实执行结果" className="wpe-panel--nested"><AutomaticExecutionsTable runtime={runtime} /></Panel>
       </CollectionGate>
     </div>
   )
@@ -1693,6 +1681,12 @@ function SettingsPage({ runtime }: { runtime: WpeRuntimeState }) {
   const value = collection?.value
   const connection = runtime.connectionStatus?.value
   const notification = runtime.notificationStatus?.value
+  const telegramSubscribers = runtime.telegramSubscribers ?? []
+  const subscriberCounts = {
+    pending: telegramSubscribers.filter(x => x.state === 'Pending').length,
+    approved: telegramSubscribers.filter(x => x.state === 'Approved').length,
+    disabled: telegramSubscribers.filter(x => x.state === 'Disabled').length,
+  }
   return (
     <div className="wpe-page-stack">
       <SectionTitle title="设置" description="密钥和敏感配置由 WPF 安全设置窗口管理" />
@@ -1761,25 +1755,40 @@ function SettingsPage({ runtime }: { runtime: WpeRuntimeState }) {
             <span><small>重试中</small><strong>{formatInteger(notification?.retryingCount)}</strong></span>
             <span><small>发送失败</small><strong>{formatInteger(notification?.deadLetterCount)}</strong></span>
           </div>
-          <button type="button" className="wpe-button wpe-button--primary" onClick={() => postHostCommand('open-settings')}>{notification?.telegramStored ? '管理 Telegram' : '配置 Telegram'}</button>
+          <button type="button" className="wpe-button wpe-button--primary" onClick={() => postHostCommand('open-notification-settings')}>{notification?.telegramStored ? '管理 Telegram' : '配置 Telegram'}</button>
         </div> : <div className="wpe-subscriber-design">
           <div className="wpe-subscriber-design__intro">
             <span className="wpe-notification-quick__mark">TG</span>
             <div><strong>Bot 订阅者管理</strong><p>用户向 Bot 发送 /start 后进入待批准列表；只有本机明确批准的人才能收到所选通知，取消授权立即停止发送。</p></div>
-            <Badge tone="warning">后端待接通</Badge>
+            <Badge tone={collectionState(runtime, 'telegramSubscribers') === 'available' ? 'success' : 'warning'}>{collectionState(runtime, 'telegramSubscribers') === 'available' ? '本地注册表已接通' : '注册表不可用'}</Badge>
           </div>
           <div className="wpe-grid wpe-grid--3">
-            <Metric label="待批准" value="0" />
-            <Metric label="已授权" value="0" />
-            <Metric label="已停用" value="0" />
+            <Metric label="待批准" value={formatInteger(subscriberCounts.pending)} />
+            <Metric label="已授权" value={formatInteger(subscriberCounts.approved)} />
+            <Metric label="已停用" value={formatInteger(subscriberCounts.disabled)} />
           </div>
           <div className="wpe-subscriber-flow" aria-label="订阅授权流程">
             <span><b>01</b> 关注 Bot / 发送 start</span><span><b>02</b> 本机核对并批准</span><span><b>03</b> 选择可接收事件</span><span><b>04</b> 加密保存并审计</span>
           </div>
-          <div className="wpe-empty-state wpe-empty-state--compact">尚未接入订阅者注册表，因此这里不显示虚构用户。接通后将展示 Telegram 昵称、脱敏 Chat ID、授权状态、事件范围和最后投递状态。</div>
+          <CollectionGate state={collectionState(runtime, 'telegramSubscribers')} empty={!telegramSubscribers.length} emptyMessage="当前没有订阅者。用户向 Bot 发送 /start 后会自动出现在这里。">
+            <DenseTable columns={[
+              { key: 'id', label: '订阅者' },
+              { key: 'type', label: '会话类型' },
+              { key: 'status', label: '状态' },
+              { key: 'events', label: '事件范围' },
+              { key: 'updated', label: '更新时间' },
+            ]} rows={telegramSubscribers.map(item => ({
+              __key: item.subscriberId,
+              id: <HashValue value={item.subscriberId} />,
+              type: item.chatType,
+              status: <Badge tone={item.state === 'Approved' ? 'success' : item.state === 'Pending' ? 'warning' : 'neutral'}>{item.state === 'Approved' ? '已授权' : item.state === 'Pending' ? '待批准' : '已停用'}</Badge>,
+              events: item.eventKinds.length ? item.eventKinds.join('、') : '未授权事件',
+              updated: <span title={item.updatedAtUtc}>{formatUtc(item.updatedAtUtc)}</span>,
+            }))} />
+          </CollectionGate>
           <div className="wpe-settings-action">
             <div><strong>安全规则</strong><p>“关注 Bot”只产生待批准申请，不自动获得交易、账户或风险通知；Bot Token 和完整 Chat ID 永不进入 Web UI。</p></div>
-            <button type="button" className="wpe-button" disabled>管理订阅者 · 待接通</button>
+            <button type="button" className="wpe-button" onClick={() => postHostCommand('open-notification-settings')}>打开本机通知管理</button>
           </div>
         </div>}
       </Panel>

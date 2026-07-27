@@ -409,18 +409,22 @@ public partial class App : global::System.Windows.Application
             if (setup.ShowDialog() != true || !setup.SetupCompleted) { Shutdown(); return; }
         }
         var runtimeHost = new DesktopRuntimeHost(localIdentity);
-        await runtimeHost.RefreshAccessAsync();
+        var accessReady = await runtimeHost.RefreshAccessAsync();
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         var reference = new WpeAgent.ReferenceUiWindow(runtimeHost.BuildRuntimeJson, () =>
         {
             var setup = new SetupWindow(runtimeHost.UserName, true);
             setup.ShowDialog();
             _ = runtimeHost.RefreshAccessAsync();
+        }, () =>
+        {
+            var setup = new SetupWindow(runtimeHost.UserName, true, 6);
+            setup.ShowDialog();
+            _ = runtimeHost.RefreshAccessAsync();
         }, runtimeHost.StartAgentAsync);
         MainWindow = reference;
         reference.Show();
-
-        // Agent 由用户在总控台明确启动，应用打开时不自动下单。
+        if (accessReady) AutoTradingAgent.StartDefault();
     }
 
     protected override async void OnExit(ExitEventArgs e)
