@@ -740,29 +740,27 @@ summary:focus-visible {
 
 .wpe-startup {
   display: grid;
-  max-width: 1040px;
-  margin: 64px auto;
-  gap: 14px;
+  max-width: 1100px;
+  margin: 88px auto;
+  gap: 34px;
 }
 
 .wpe-startup__hero {
   position: relative;
-  overflow: hidden;
-  min-height: 280px;
-  padding: 48px;
-  border: 1px solid #3f555a;
-  border-radius: 8px;
-  background: #101214;
-  box-shadow: 0 18px 48px rgba(22, 43, 50, 0.08);
+  min-height: 0;
+  padding: 22px 28px 28px 34px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .wpe-startup__hero::before {
   position: absolute;
-  top: 0;
-  right: 0;
+  top: 22px;
+  bottom: 28px;
   left: 0;
-  height: 4px;
-  background: #0d7b68;
+  width: 3px;
+  background: var(--wpe-gold);
   content: "";
 }
 
@@ -777,8 +775,8 @@ summary:focus-visible {
 
 .wpe-startup h1 {
   max-width: 620px;
-  margin: 28px 0 10px;
-  font-size: 30px;
+  margin: 22px 0 10px;
+  font-size: 32px;
   font-weight: 680;
   line-height: 1.28;
 }
@@ -802,16 +800,20 @@ summary:focus-visible {
 .wpe-startup__checks {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 0;
+  border-top: 1px solid var(--wpe-border);
+  border-bottom: 1px solid var(--wpe-border);
 }
 
 .wpe-startup__checks > div {
-  min-height: 128px;
-  padding: 18px;
-  border: 1px solid var(--wpe-border);
-  border-radius: 7px;
-  background: var(--wpe-surface);
+  min-height: 118px;
+  padding: 20px 24px;
+  border: 0;
+  border-right: 1px solid var(--wpe-border);
+  background: transparent;
 }
+
+.wpe-startup__checks > div:last-child { border-right: 0; }
 
 .wpe-startup__checks span {
   display: block;
@@ -1674,9 +1676,12 @@ summary {
   .wpe-topbar__status .wpe-environment { display: inline-flex; }
   .wpe-environment.is-compact button { min-width: 46px; padding-inline: 5px; }
   .wpe-startup { margin: 20px auto; }
-  .wpe-startup__hero { min-height: 0; padding: 28px 22px; }
+  .wpe-startup__hero { min-height: 0; padding: 24px 18px 26px 22px; }
+  .wpe-startup__hero::before { top: 24px; bottom: 26px; }
   .wpe-startup h1 { margin-top: 20px; font-size: 24px; }
   .wpe-startup__checks { grid-template-columns: 1fr; }
+  .wpe-startup__checks > div { border-right: 0; border-bottom: 1px solid var(--wpe-border); }
+  .wpe-startup__checks > div:last-child { border-bottom: 0; }
 
   .wpe-section-title {
     align-items: flex-start;
