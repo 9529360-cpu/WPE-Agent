@@ -12,7 +12,7 @@
 > - 审计只记录已发生的事实、输入、决定、理由、状态变化和结果，不承担授权或审批职能。
 > - Mainnet 继续禁用。当前桌面 Binance API 被视为 Testnet 假钱环境，且已明确授权系统执行自动 smoke；本文不代表 smoke 已执行或已通过。
 > - `model_off` 成熟度的当前机器权威是 [`model-off-capability-maturity.json`](model-off-capability-maturity.json)。它保留 13 个产品能力条目并映射到 7 个运行时聚合；聚合不得删除条目或提升条目成熟度。任何核心条目的 `no` / `partial` 都明确表示未实现且未验收。
-> - Teacher 保持冻结的未来、非核心能力，不进入当前实现或验收范围；Mainnet 保持 `disabled`，不得由任何成熟度或聚合结论隐式启用。
+> - Teacher V1 的确定性每日简报保持已验收边界；Teacher V2 已进入产品与系统设计阶段，设计见 [`teacher-agent-v2-design.md`](teacher-agent-v2-design.md)，尚未实现或验收。它只能读取事实、教学并生成可撤销的研究推荐，永远不获得交易权。Mainnet 保持 `disabled`，不得由任何成熟度或聚合结论隐式启用。
 >
 > 详细验收合同见 [`private-autonomous-deployment.md`](private-autonomous-deployment.md)。
 
