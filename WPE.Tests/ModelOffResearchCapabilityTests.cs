@@ -14,7 +14,7 @@ public sealed class ModelOffResearchCapabilityTests
     [InlineData(ModelOffResearchCapabilityV1.Backtest, ModelOffSourceKindV1.Strategy)]
     public void SupportedCapabilitiesProduceVersionedCanonicalRepeatableOutputs(ModelOffResearchCapabilityV1 capability, ModelOffSourceKindV1 kind)
     {
-        var input = Input(capability, [Source(kind)]);
+        var input = capability==ModelOffResearchCapabilityV1.Technical?TechnicalInput():Input(capability, [Source(kind)]);
         var first = DeterministicResearchCapabilityProducerV1.Produce(input);
         var second = DeterministicResearchCapabilityProducerV1.Produce(input);
         var firstDocument = ModelOffCanonicalSerializerV1.Serialize(first);
@@ -41,6 +41,19 @@ public sealed class ModelOffResearchCapabilityTests
     public void FundamentalCapabilityRejectsFabricatedCanonicalHash()
     {
         var input=FundamentalInput();using var facts=JsonDocument.Parse(input.Facts.GetRawText());var values=facts.RootElement.EnumerateObject().ToDictionary(x=>x.Name,x=>x.Value.Clone());values["canonicalSha256"]=JsonSerializer.SerializeToElement(new string('f',64));var tampered=input with{Facts=JsonSerializer.SerializeToElement(values.ToDictionary(x=>x.Key,x=>(object)x.Value))};var output=DeterministicMemoryService.ProduceFundamentalModelOff(tampered);Assert.Equal(ModelOffOutputStatusV1.Abstained,output.Status);Assert.Contains("research.invalid.fundamental_canonical_hash",output.Decision.ReasonCodes);
+    }
+
+    [Theory]
+    [InlineData("schema")]
+    [InlineData("hash")]
+    [InlineData("rsi")]
+    [InlineData("future")]
+    [InlineData("stale")]
+    [InlineData("source")]
+    public void InvalidTechnicalFactsAbstain(string fixture)
+    {
+        var input=TechnicalInput();var facts=TechnicalFacts(rsi:fixture=="rsi"?101:55,observedAt:fixture switch{"future"=>Now.AddSeconds(1),"stale"=>Now.AddMinutes(-6),_=>Now},schema:fixture=="schema"?"wpe.technical-assessment/2.0":"wpe.technical-assessment/1.0",hash:fixture=="hash"?"bad":new string('a',64));if(fixture=="source")input=input with{Sources=[Source(ModelOffSourceKindV1.Market)]};input=input with{Facts=facts};
+        var output=StrategyResearchAgent.ProduceTechnicalModelOff(input);Assert.Equal(ModelOffOutputStatusV1.Abstained,output.Status);Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(output));Assert.NotEmpty(output.Decision.ReasonCodes);
     }
 
     [Fact]
@@ -201,7 +214,7 @@ public sealed class ModelOffResearchCapabilityTests
     [Fact]
     public void CapabilitySpecificEntryPointsProduceTheSameCanonicalContract()
     {
-        var technical = Input(ModelOffResearchCapabilityV1.Technical, [Source(ModelOffSourceKindV1.Market)]);
+        var technical = TechnicalInput();
         var backtest = Input(ModelOffResearchCapabilityV1.Backtest, [Source(ModelOffSourceKindV1.Strategy)]);
         var news = Input(ModelOffResearchCapabilityV1.News, [Source(ModelOffSourceKindV1.News)]);
         var macro = MacroInput();
@@ -226,6 +239,8 @@ public sealed class ModelOffResearchCapabilityTests
         ModelOffResearchCapabilityV1.Macro, "macro-output", "cycle-1", Now,
         "wpe.research-input/1.0", "wpe.macro-method", "1.0",
         [Source(ModelOffSourceKindV1.Macro)], MacroFacts(), []);
+    private static ModelOffResearchInputV1 TechnicalInput()=>new(ModelOffResearchCapabilityV1.Technical,"technical-output","cycle-1",Now,"wpe.research-input/1.0","wpe.technical-method","1.0",[Source(ModelOffSourceKindV1.Market) with{AsOfUtc=Now,ArtifactHash="sha256:"+new string('a',64)}],TechnicalFacts(),[]);
+    private static JsonElement TechnicalFacts(double rsi=55,DateTimeOffset? observedAt=null,string schema="wpe.technical-assessment/1.0",string? hash=null)=>JsonSerializer.SerializeToElement(new{schema,symbol="BTCUSDT",observedAtUtc=observedAt??Now,marketEvidenceSha256=hash??new string('a',64),rsi,trend15m=.1,trend1h=.2,trend4h=.3});
 
     private static ModelOffResearchInputV1 FundamentalInput(){var fact=CryptoInstrumentFundamentalCanonicalizerV1.Create("binance-futures","Testnet","BTCUSDT","BTCUSDT","BTC","USDT","USDT","PERPETUAL","TRADING",Now.AddYears(-2),Now.AddMinutes(-1),new string('a',64));return new(ModelOffResearchCapabilityV1.Fundamental,"fundamental-output","cycle-1",Now,"wpe.research-input/1.0","wpe.fundamental-method","1.0",[Source(ModelOffSourceKindV1.Fundamental) with{AsOfUtc=Now.AddMinutes(-1),ArtifactHash="sha256:"+fact.CanonicalSha256}],JsonSerializer.SerializeToElement(new{schema=fact.Schema,providerId=fact.ProviderId,environment=fact.Environment,symbol=fact.Symbol,nativeSymbol=fact.NativeSymbol,baseAsset=fact.BaseAsset,quoteAsset=fact.QuoteAsset,marginAsset=fact.MarginAsset,contractType=fact.ContractType,tradingStatus=fact.TradingStatus,onboardAtUtc=fact.OnboardAtUtc,observedAtUtc=fact.ObservedAtUtc,sourceArtifactSha256=fact.SourceArtifactSha256,canonicalSha256=fact.CanonicalSha256}),[]);}
 

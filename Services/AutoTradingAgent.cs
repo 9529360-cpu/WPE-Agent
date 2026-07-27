@@ -76,10 +76,11 @@ public static class AutoTradingAgent
         var marketDocument=ModelOffCanonicalSerializerV1.Serialize(market);
 
         var researchSource=DownstreamSource("market-output",ModelOffSourceKindV1.Market,request.EvaluationTimeUtc,marketDocument,ModelOffEligibilityV1.IsEligibleForDownstream(market));
+        var marketEvidenceSha256=researchSource.ArtifactHash!["sha256:".Length..];
         var research=DeterministicResearchCapabilityProducerV1.Produce(new(
             ModelOffResearchCapabilityV1.Technical,Id(request,"research"),request.CycleId,request.EvaluationTimeUtc,
             DeterministicResearchCapabilityProducerV1.InputSchema,"wpe.technical-method",DeterministicResearchCapabilityProducerV1.MethodVersion,
-            [researchSource],System.Text.Json.JsonSerializer.SerializeToElement(new{state="observed",source="market-output"}),[]));
+            [researchSource],System.Text.Json.JsonSerializer.SerializeToElement(new{schema="wpe.technical-assessment/1.0",symbol="BTCUSDT",observedAtUtc=request.EvaluationTimeUtc,marketEvidenceSha256,rsi=50d,trend15m=0d,trend1h=0d,trend4h=0d}),[]));
         var researchDocument=ModelOffCanonicalSerializerV1.Serialize(research);
 
         var researchReady=ModelOffEligibilityV1.IsEligibleForDownstream(research);

@@ -71,8 +71,9 @@ public sealed class SignalAggregationSkill
         }
     }
 
-    private static bool ValidMarket(MarketEvidence? market)=>market is not null&&market.Derivatives is not null&&
+    private static bool ValidMarket(MarketEvidence? market)=>market is not null&&market.Derivatives is not null&&MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)&&
         !string.IsNullOrWhiteSpace(market.Symbol)&&market.Price>0&&market.CollectedAt!=default&&market.CollectedAt.Kind==DateTimeKind.Utc&&
+        market.Rsi is>=0 and<=100&&market.Support>0&&market.Support<=market.Price&&market.Resistance>=market.Price&&market.Quality.QualityScore is>=0 and<=100&&market.Quality.LiquidityScore is>=0 and<=1&&
         Finite(market.Rsi,market.Trend15m,market.Trend1h,market.Trend4h,market.Quality.OrderBookImbalance,market.Quality.RelativeVolume,market.Quality.AtrPercent,market.Quality.LiquidationIntensity);
     private static bool Finite(params double[] values)=>values.All(double.IsFinite);
     private static MarketDecisionAssessment InvalidMarket(string? symbol)=>new()
@@ -263,6 +264,8 @@ public static class DeterministicResearchCapabilityProducerV1
         if (input.Capability == ModelOffResearchCapabilityV1.Fundamental)
             foreach (var reason in ValidateFundamentalFacts(input))
                 yield return reason;
+        if(input.Capability==ModelOffResearchCapabilityV1.Technical)
+            foreach(var reason in ValidateTechnicalFacts(input))yield return reason;
 
         foreach (var source in input.Sources)
         {
@@ -316,7 +319,19 @@ public static class DeterministicResearchCapabilityProducerV1
         }
     }
 
+    private static IEnumerable<string> ValidateTechnicalFacts(ModelOffResearchInputV1 input)
+    {
+        var facts=input.Facts;if(!StringFact(facts,"schema",out var schema)||schema!="wpe.technical-assessment/1.0")yield return "research.invalid.technical_schema";
+        if(!StringFact(facts,"symbol",out _))yield return "research.missing.technical_symbol";
+        if(!StringFact(facts,"marketEvidenceSha256",out var hash)||!ValidSha(hash))yield return "research.invalid.technical_hash";
+        var observed=UtcFact(facts,"observedAtUtc",out var observedAt);if(!observed)yield return "research.invalid.technical_observed_time";else{if(observedAt>input.EvaluationTimeUtc)yield return "research.invalid.technical_future";if(input.EvaluationTimeUtc-observedAt>TimeSpan.FromMinutes(5))yield return "research.invalid.technical_stale";}
+        foreach(var name in new[]{"trend15m","trend1h","trend4h"})if(!FiniteFact(facts,name,out var value)||Math.Abs(value)>100)yield return $"research.invalid.technical_{name.ToLowerInvariant()}";
+        if(!FiniteFact(facts,"rsi",out var rsi)||rsi is <0 or >100)yield return "research.invalid.technical_rsi";
+        if(observed&&ValidSha(hash)&&!input.Sources.Any(x=>x.Kind==ModelOffSourceKindV1.Market&&x.AsOfUtc>=observedAt&&x.ArtifactHash=="sha256:"+hash))yield return "research.invalid.technical_source";
+    }
+
     private static bool ValidSha(string value)=>value.Length==64&&value.All(Uri.IsHexDigit);
+    private static bool FiniteFact(JsonElement facts,string name,out double value){value=0;return facts.TryGetProperty(name,out var element)&&element.ValueKind==JsonValueKind.Number&&element.TryGetDouble(out value)&&double.IsFinite(value);}
 
     private static bool StringFact(JsonElement facts, string name, out string value)
     {

@@ -60,6 +60,12 @@ public sealed class ModelOffSignalAggregationDeterminismTests
     }
 
     [Fact]
+    public void MarketMutationAfterCanonicalBindingFailsClosed()
+    {
+        var market=Market("BTCUSDT",Now.AddMinutes(-1).UtcDateTime);var altered=market with{Trend15m=market.Trend15m+1};var assessment=new SignalAggregationSkill().Analyze(Pack(altered),Policy(),Now).Single();Assert.False(assessment.EntryReady);Assert.Equal(DecisionAction.Hold,assessment.RecommendedAction);Assert.Contains("signal.invalid-market-evidence",assessment.MissingConditions);
+    }
+
+    [Fact]
     public void IdenticalInputsAndTimeProduceIdenticalOrderedAssessments()
     {
         var first=Pack(Market("ZZZUSDT",Now.AddMinutes(-1).UtcDateTime),Market("AAAUSDT",Now.AddMinutes(-1).UtcDateTime));
@@ -71,7 +77,9 @@ public sealed class ModelOffSignalAggregationDeterminismTests
 
     private static DecisionPolicy Policy()=>new(){MaximumEvidenceAgeMinutes=5,MinimumEvidenceCompleteness=0,MinimumConfidence=0,MinimumDirectionalScore=0,MaximumConflictRatio=1,MinimumMarketQuality=0};
     private static EvidencePack Pack(params MarketEvidence[] markets)=>new(){Completeness=100,Markets=markets.ToDictionary(x=>x.Symbol,StringComparer.Ordinal)};
-    private static MarketEvidence Market(string symbol,DateTime collected,double trend=.01)=>new(
-        symbol,50_000m,49_000m,51_000m,55,trend,trend,trend,new(0,1m,1m,1m,1m,1.1m,0),collected)
-        {Quality=new(){QualityScore=100,OrderBookImbalance=.1,RelativeVolume=1.2,AtrPercent=.01,LiquidationIntensity=.1}};
+    private static MarketEvidence Market(string symbol,DateTime collected,double trend=.01)
+    {
+        var market=new MarketEvidence(symbol,50_000m,49_000m,51_000m,55,trend,trend,trend,new(0,1m,1m,1m,1m,1.1m,0),collected){Quality=new(){QualityScore=100,OrderBookImbalance=.1,RelativeVolume=1.2,AtrPercent=.01,LiquidationIntensity=.1}};
+        return double.IsFinite(trend)?market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,"test-provider","Testnet")}:market;
+    }
 }

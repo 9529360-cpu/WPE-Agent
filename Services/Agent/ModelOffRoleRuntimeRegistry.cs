@@ -45,7 +45,7 @@ public static class ModelOffRoleRuntimeRegistryBuilderV1
         Capability("market-data", [ModelOffRuntimeRoleV1.Market], "yes", true, true, "current", "deterministic confirmed-candle market facts with source-time freshness, Testnet provider-bound canonical provenance and complete realtime enrichment gates; no raw HTTP response retention or live provider certification"),
         Capability("news", [ModelOffRuntimeRoleV1.Research], "partial"),
         Capability("macro", [ModelOffRuntimeRoleV1.Research], "partial"),
-        Capability("technical", [ModelOffRuntimeRoleV1.Research], "partial"),
+        Capability("technical", [ModelOffRuntimeRoleV1.Research], "yes", true, true, "current", "versioned technical fact validation and deterministic weighted signal aggregation over canonical Market evidence; no independent recomputation or live certification of provider multi-timeframe indicators"),
         Capability("fundamental", [ModelOffRuntimeRoleV1.Research], "partial"),
         Capability("strategy", [ModelOffRuntimeRoleV1.Strategy], "partial"),
         Capability("backtest", [ModelOffRuntimeRoleV1.Research], "yes", true, true, "current", "basic deterministic backtest component only"),
