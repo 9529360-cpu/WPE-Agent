@@ -1,10 +1,10 @@
 :root {
-  --wpe-bg: #111719;
-  --wpe-surface: #1a2326;
-  --wpe-surface-subtle: #202b2e;
-  --wpe-surface-strong: #273438;
-  --wpe-border: #334247;
-  --wpe-border-strong: #465a60;
+  --wpe-bg: #070809;
+  --wpe-surface: #111315;
+  --wpe-surface-subtle: #17191c;
+  --wpe-surface-strong: #1d2023;
+  --wpe-border: #2b2f33;
+  --wpe-border-strong: #41474c;
   --wpe-text: #e8efed;
   --wpe-text-secondary: #aabbb7;
   --wpe-text-muted: #7f918e;
@@ -72,8 +72,8 @@ summary:focus-visible {
   flex-direction: column;
   width: var(--wpe-sidebar);
   height: 100dvh;
-  border-right: 1px solid #304044;
-  background: #0c1214;
+  border-right: 1px solid #292d30;
+  background: #030405;
   color: #e6edf3;
 }
 
@@ -214,7 +214,7 @@ summary:focus-visible {
   gap: 18px;
   padding: 8px 18px;
   border-bottom: 1px solid var(--wpe-border);
-  background: rgba(20, 28, 30, 0.96);
+  background: rgba(8, 9, 10, 0.97);
   backdrop-filter: blur(8px);
 }
 
@@ -643,7 +643,7 @@ summary:focus-visible {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: #222e31;
+  background: #181a1d;
   color: #b6c6c3;
   font-size: 10px;
   font-weight: 700;
@@ -656,7 +656,7 @@ summary:focus-visible {
 }
 
 .wpe-table tbody tr:hover {
-  background: #202c2f;
+  background: #191c1f;
 }
 
 .wpe-table .is-right {
@@ -752,7 +752,7 @@ summary:focus-visible {
   padding: 48px;
   border: 1px solid #3f555a;
   border-radius: 8px;
-  background: #192326;
+  background: #101214;
   box-shadow: 0 18px 48px rgba(22, 43, 50, 0.08);
 }
 
@@ -857,7 +857,7 @@ summary:focus-visible {
 
 .wpe-environment button.is-active {
   border-color: #4f7880;
-  background: #263438;
+  background: #202326;
   color: var(--wpe-blue);
   box-shadow: 0 1px 2px rgba(20, 32, 39, 0.08);
 }
@@ -1038,7 +1038,7 @@ summary:focus-visible {
 
 .wpe-agent-node:hover {
   border-color: #4f747b;
-  background: #233135;
+  background: #1b1e21;
 }
 
 .wpe-agent-node__index {
