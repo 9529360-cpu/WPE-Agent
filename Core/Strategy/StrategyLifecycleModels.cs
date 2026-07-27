@@ -1,5 +1,9 @@
 namespace 币安量化机器人.Core.Strategy;
 
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+
 public enum StrategyFamily { TrendBreakout, MeanReversion, NewsMomentum }
 public enum StrategyLifecycle { Draft, Backtested, Shadow, Active, Degraded, Retired }
 
@@ -16,9 +20,37 @@ public sealed record LocalStrategyParameters(
         StrategyFamily.MeanReversion => new(12 + variant * 4, 48 + variant * 8, 0, 1.4 + variant * .2, 0),
         _ => new(12, 48, .0005, 0, .15 + variant * .05)
     };
+
+    public static LocalStrategyParameters Derive(StrategyFamily family,LocalStrategyParameters parent,int generation)
+    {
+        var direction=generation%2==0?-1:1;
+        var step=(generation+1)/2;
+        return family switch
+        {
+            StrategyFamily.TrendBreakout=>new(Math.Clamp(parent.FastPeriod+direction*step*2,8,48),Math.Clamp(parent.SlowPeriod+direction*step*8,32,160),Math.Clamp(parent.BreakoutBuffer+direction*step*.0001,.0002,.003),0,0),
+            StrategyFamily.MeanReversion=>new(Math.Clamp(parent.FastPeriod+direction*step*2,8,48),Math.Clamp(parent.SlowPeriod+direction*step*4,24,120),0,Math.Clamp(parent.MeanReversionZ+direction*step*.1,.8,3),0),
+            _=>new(12,48,.0005,0,Math.Clamp(parent.NewsSentimentThreshold+direction*step*.025,.05,.5))
+        };
+    }
+
+    public static string Hash(LocalStrategyParameters value)
+        =>Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value))));
+
+    public static bool IsValid(StrategyFamily family,LocalStrategyParameters value)=>family switch
+    {
+        StrategyFamily.TrendBreakout=>value.FastPeriod is>=8 and<=48&&value.SlowPeriod is>=32 and<=160&&value.FastPeriod<value.SlowPeriod&&value.BreakoutBuffer is>=.0002 and<=.003&&value.MeanReversionZ==0&&value.NewsSentimentThreshold==0,
+        StrategyFamily.MeanReversion=>value.FastPeriod is>=8 and<=48&&value.SlowPeriod is>=24 and<=120&&value.FastPeriod<value.SlowPeriod&&value.BreakoutBuffer==0&&value.MeanReversionZ is>=.8 and<=3&&value.NewsSentimentThreshold==0,
+        _=>value.FastPeriod==12&&value.SlowPeriod==48&&value.BreakoutBuffer==.0005&&value.MeanReversionZ==0&&value.NewsSentimentThreshold is>=.05 and<=.5
+    };
 }
 
 public sealed record StrategySignal(string StrategyId, string Symbol, int Direction, double Confidence, string Reason);
+
+public static class StrategyLineage
+{
+    public static string Hash(string symbol,StrategyFamily family,string? parentId,string? parentVersion,int generation,string parametersHash)
+        =>Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{symbol.ToUpperInvariant()}|{family}|{parentId??string.Empty}|{parentVersion??string.Empty}|{generation}|{parametersHash}")));
+}
 
 public sealed class StrategyProfile
 {
@@ -29,6 +61,11 @@ public sealed class StrategyProfile
     public LocalStrategyParameters Parameters { get; init; } = LocalStrategyParameters.For(StrategyFamily.TrendBreakout, 0);
     public StrategyLifecycle Lifecycle { get; set; } = StrategyLifecycle.Draft;
     public bool BuiltIn { get; init; }
+    public string? ParentStrategyId { get; init; }
+    public string? ParentStrategyVersion { get; init; }
+    public int Generation { get; init; }
+    public string ParametersHash { get; init; } = string.Empty;
+    public string LineageHash { get; init; } = string.Empty;
     public DateTime CreatedAtUtc { get; init; } = DateTime.UtcNow;
     public DateTime? StateChangedAtUtc { get; set; }
     public double QualityScore { get; set; }
