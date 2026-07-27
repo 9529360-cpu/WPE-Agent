@@ -50,6 +50,29 @@ public static class LocalTestAcceptanceCanonicalizerV1
             "WPE.Tests.ModelOffLiveCycleInputComposerTests.BacktestValidationSourceRetainsItsOwnValidationTime",
             "WPE.Tests.ModelOffLiveCycleInputComposerTests.ProductionResearchRejectsMacroEvidenceOutsideTheBoundedWindow",
             "WPE.Tests.ModelOffLiveCycleInputComposerTests.ProductionResearchUsesSourceSpecificFreshnessWithoutRelabelingEvidence"
+        ],
+        ["strategy.lifecycle-contract"]=
+        [
+            "WPE.Tests.StrategyFactoryLifecycleTests.DegradedStrategyIsArchivedAndCannotRemainSelectable",
+            "WPE.Tests.StrategyFactoryLifecycleTests.QualifiedParentProducesBoundedHashedDraftChildren",
+            "WPE.Tests.StrategyFactoryLifecycleTests.RetiredBuiltInStrategyCannotBeSelectedAsActiveFallback",
+            "WPE.Tests.StrategyFactoryLifecycleTests.TamperedLineageHashIsRejectedBeforePersistence",
+            "WPE.Tests.StrategyFactoryLifecycleTests.TamperedParameterHashIsRejectedBeforePersistence",
+            "WPE.Tests.StrategyFactoryLifecycleTests.UnqualifiedActiveProfileCannotBecomeAParent",
+            "WPE.Tests.StrategyFactoryLifecycleTests.UnvalidatedSeedsNeverStartActiveAndFailedFamiliesReceiveBoundedReplacements"
+        ],
+        ["strategy.anti-overfit"]=
+        [
+            "WPE.Tests.StrategyRegimeValidationTests.LegacyPassedFlagCannotBypassRegimePromotionGate",
+            "WPE.Tests.StrategyRegimeValidationTests.PerformanceConcentratedInEarlyHistoryFailsOverfitGate",
+            "WPE.Tests.StrategyRegimeValidationTests.RobustnessEvaluationIsDeterministic",
+            "WPE.Tests.StrategyRegimeValidationTests.StablePerformanceAcrossChronologicalRegimesPasses"
+        ],
+        ["strategy.no-risk-bypass"]=
+        [
+            "WPE.Tests.ModelOffLiveCycleInputComposerTests.LiveLoopInvokesShadowAfterRiskReviewAndBeforeOrderAuthorization",
+            "WPE.Tests.ModelOffLiveCycleInputComposerTests.ProductionShadowPersistsSevenOutputsWithoutChangingExecution",
+            "WPE.Tests.ModelOffLiveCycleInputComposerTests.RiskIncreaseGateRequiresCompletePersistedSevenAgentCycle"
         ]
     };
 
@@ -116,5 +139,5 @@ public static class LocalTestAcceptanceCanonicalizerV1
     }
     private static string Hash(byte[] bytes)=>Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     private static bool Sha(string value)=>value is{Length:64}&&value.All(x=>x is>='0'and<='9'or>='a'and<='f');
-    private static ModelOffAggregateAgentV1 Agent(string requirementId)=>requirementId.StartsWith("market.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Market:requirementId.StartsWith("research.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Research:throw new InvalidOperationException("Unsupported local acceptance Agent.");
+    private static ModelOffAggregateAgentV1 Agent(string requirementId)=>requirementId.StartsWith("market.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Market:requirementId.StartsWith("research.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Research:requirementId.StartsWith("strategy.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Strategy:throw new InvalidOperationException("Unsupported local acceptance Agent.");
 }

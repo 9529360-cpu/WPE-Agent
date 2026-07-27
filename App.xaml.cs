@@ -107,6 +107,14 @@ public partial class App : global::System.Windows.Application
             Shutdown(result.Success?0:20);
             return;
         }
+        if (e.Args.Any(x => string.Equals(x, "--strategy-local-acceptance", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await WpeAgent.ModelOff.StrategyLocalAcceptanceRunnerV1.RunAsync(e.Args);
+            Log.Information("Strategy local acceptance collection completed. Success={Success}; Directory={Directory}; Errors={Errors}",result.Success,result.ArtifactDirectory,string.Join(',',result.Errors));
+            Shutdown(result.Success?0:23);
+            return;
+        }
 
         if (e.Args.Any(x => string.Equals(x, "--research-aggregate-acceptance", StringComparison.OrdinalIgnoreCase)))
         {

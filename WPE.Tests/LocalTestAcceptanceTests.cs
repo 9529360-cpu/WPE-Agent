@@ -38,6 +38,13 @@ public sealed class LocalTestAcceptanceTests
         Assert.Throws<InvalidOperationException>(()=>LocalTestAcceptanceCanonicalizerV1.Create("research.point-in-time-replay","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(ResearchReplayNames[..^1])));
     }
 
+    [Fact]
+    public void StrategyEvidenceIsBoundToStrategyAndExactAntiOverfitSet()
+    {
+        var artifact=LocalTestAcceptanceCanonicalizerV1.Create("strategy.anti-overfit","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(StrategyOverfitNames));var candidate=Hash(Bytes("candidate"));Assert.True(LocalTestAcceptanceCanonicalizerV1.IsCanonical(artifact,Now,candidate));var evidence=LocalTestAcceptanceCanonicalizerV1.ToAcceptanceEvidence(artifact,Now,candidate);Assert.Equal(ModelOffAggregateAgentV1.Strategy,evidence.Agent);Assert.Equal("strategy.anti-overfit",evidence.RequirementId);
+        Assert.Throws<InvalidOperationException>(()=>LocalTestAcceptanceCanonicalizerV1.Create("strategy.anti-overfit","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(StrategyOverfitNames[..^1])));
+    }
+
     private static LocalTestAcceptanceArtifactV1 Create(string[] names)=>LocalTestAcceptanceCanonicalizerV1.Create("market.canonical-contract","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(names));
     private static byte[] Trx(string[] names,string outcome="Passed")
     {
@@ -51,6 +58,10 @@ public sealed class LocalTestAcceptanceTests
     private static readonly string[] ResearchReplayNames=
     [
         "WPE.Tests.HistoricalNewsResearchTests.HistoricalQueryReturnsOnlyTheRequestedSymbolAndPointInTimeRange","WPE.Tests.HistoricalNewsResearchTests.NewsMomentumBacktestUsesOnlyNewsPublishedBeforeEachClosedCandle","WPE.Tests.ModelOffLiveCycleInputComposerTests.BacktestValidationSourceRetainsItsOwnValidationTime","WPE.Tests.ModelOffLiveCycleInputComposerTests.ProductionResearchRejectsMacroEvidenceOutsideTheBoundedWindow","WPE.Tests.ModelOffLiveCycleInputComposerTests.ProductionResearchUsesSourceSpecificFreshnessWithoutRelabelingEvidence"
+    ];
+    private static readonly string[] StrategyOverfitNames=
+    [
+        "WPE.Tests.StrategyRegimeValidationTests.LegacyPassedFlagCannotBypassRegimePromotionGate","WPE.Tests.StrategyRegimeValidationTests.PerformanceConcentratedInEarlyHistoryFailsOverfitGate","WPE.Tests.StrategyRegimeValidationTests.RobustnessEvaluationIsDeterministic","WPE.Tests.StrategyRegimeValidationTests.StablePerformanceAcrossChronologicalRegimesPasses"
     ];
     private static byte[] Bytes(string value)=>Encoding.UTF8.GetBytes(value);
     private static string Hash(byte[] value)=>Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
