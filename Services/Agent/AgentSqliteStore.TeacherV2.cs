@@ -21,6 +21,7 @@ public sealed partial class AgentSqliteStore
         CREATE INDEX IF NOT EXISTS ix_teacher_public_evidence_latest ON teacher_public_evidence(source_id,identity,observed_at_utc DESC);
         CREATE TABLE IF NOT EXISTS teacher_source_health_events(id INTEGER PRIMARY KEY AUTOINCREMENT,source_id TEXT NOT NULL,checked_at_utc TEXT NOT NULL,status TEXT NOT NULL,diagnostic_code TEXT NOT NULL,evidence_hash TEXT,UNIQUE(source_id,checked_at_utc,diagnostic_code));
         CREATE TABLE IF NOT EXISTS teacher_event_fingerprints(fingerprint TEXT PRIMARY KEY,event_id TEXT NOT NULL,first_seen_at_utc TEXT NOT NULL,expires_at_utc TEXT NOT NULL,evidence_hash TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS teacher_recommendation_outcomes(outcome_id TEXT PRIMARY KEY,recommendation_id TEXT NOT NULL,recommendation_version INTEGER NOT NULL,evaluated_at_utc TEXT NOT NULL,process_state TEXT NOT NULL,canonical_sha256 TEXT NOT NULL,canonical_json TEXT NOT NULL,UNIQUE(recommendation_id,recommendation_version,evaluated_at_utc));
         CREATE TRIGGER IF NOT EXISTS teacher_lessons_no_update BEFORE UPDATE ON teacher_lessons BEGIN SELECT RAISE(ABORT,'teacher lessons are append-only'); END;
         CREATE TRIGGER IF NOT EXISTS teacher_lessons_no_delete BEFORE DELETE ON teacher_lessons BEGIN SELECT RAISE(ABORT,'teacher lessons are append-only'); END;
         CREATE TRIGGER IF NOT EXISTS teacher_lesson_evidence_no_update BEFORE UPDATE ON teacher_lesson_evidence BEGIN SELECT RAISE(ABORT,'teacher evidence is append-only'); END;
@@ -39,6 +40,8 @@ public sealed partial class AgentSqliteStore
         CREATE TRIGGER IF NOT EXISTS teacher_source_health_no_delete BEFORE DELETE ON teacher_source_health_events BEGIN SELECT RAISE(ABORT,'teacher source health is append-only'); END;
         CREATE TRIGGER IF NOT EXISTS teacher_event_fingerprints_no_update BEFORE UPDATE ON teacher_event_fingerprints BEGIN SELECT RAISE(ABORT,'teacher event fingerprints are append-only'); END;
         CREATE TRIGGER IF NOT EXISTS teacher_event_fingerprints_no_delete BEFORE DELETE ON teacher_event_fingerprints BEGIN SELECT RAISE(ABORT,'teacher event fingerprints are append-only'); END;
+        CREATE TRIGGER IF NOT EXISTS teacher_recommendation_outcomes_no_update BEFORE UPDATE ON teacher_recommendation_outcomes BEGIN SELECT RAISE(ABORT,'teacher recommendation outcomes are append-only'); END;
+        CREATE TRIGGER IF NOT EXISTS teacher_recommendation_outcomes_no_delete BEFORE DELETE ON teacher_recommendation_outcomes BEGIN SELECT RAISE(ABORT,'teacher recommendation outcomes are append-only'); END;
         """;q.ExecuteNonQuery();
     }
 
@@ -79,7 +82,7 @@ public sealed partial class AgentSqliteStore
     }
     public async Task<TeacherCryptoMarketFactV2?> GetLatestTeacherCryptoEvidenceAsync(string symbol,DateTimeOffset asOfUtc,TimeSpan maximumAge,CancellationToken ct)
     {
-        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT canonical_json FROM teacher_public_evidence WHERE source_id='binance-futures-public' AND identity=$identity AND observed_at_utc<=$asof ORDER BY observed_at_utc DESC LIMIT 1";AddParameters(q,("$identity",symbol.ToUpperInvariant()),("$asof",DbInstant(asOfUtc)));if(await q.ExecuteScalarAsync(ct) is not string json)return null;var value=JsonSerializer.Deserialize<TeacherCryptoMarketFactV2>(json);return value is not null&&TeacherCryptoMarketFactCanonicalizerV2.IsCanonical(value)&&asOfUtc.ToUniversalTime()-value.ObservedAtUtc<=maximumAge?value:null;
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT canonical_json FROM teacher_public_evidence WHERE source_id='binance-futures-public' AND identity=$identity AND observed_at_utc<=$asof AND retrieved_at_utc<=$asof ORDER BY observed_at_utc DESC LIMIT 1";AddParameters(q,("$identity",symbol.ToUpperInvariant()),("$asof",DbInstant(asOfUtc)));if(await q.ExecuteScalarAsync(ct) is not string json)return null;var value=JsonSerializer.Deserialize<TeacherCryptoMarketFactV2>(json);return value is not null&&TeacherCryptoMarketFactCanonicalizerV2.IsCanonical(value)&&asOfUtc.ToUniversalTime()-value.ObservedAtUtc<=maximumAge?value:null;
     }
     public async Task RecordTeacherSourceHealthAsync(string sourceId,DateTimeOffset checkedAtUtc,string status,string diagnosticCode,string? evidenceHash,CancellationToken ct)
     {
@@ -96,5 +99,21 @@ public sealed partial class AgentSqliteStore
     public async Task<bool> TryQueueTeacherDeliveryAsync(string deliveryId,string lessonId,string destinationKind,DateTimeOffset recordedAtUtc,CancellationToken ct)
     {
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="INSERT OR IGNORE INTO teacher_delivery_events(delivery_id,lesson_id,destination_kind,state,attempt,recorded_at_utc,reason_code) VALUES($delivery,$lesson,$destination,'queued',1,$recorded,'teacher.delivery.queued'); SELECT changes();";AddParameters(q,("$delivery",deliveryId),("$lesson",lessonId),("$destination",destinationKind),("$recorded",DbInstant(recordedAtUtc)));return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1;
+    }
+    public async Task<IReadOnlyList<TeacherCryptoMarketFactV2>> GetTeacherCryptoEvidenceRangeAsync(string symbol,DateTimeOffset fromUtc,DateTimeOffset asOfUtc,CancellationToken ct)
+    {
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT canonical_json FROM teacher_public_evidence WHERE source_id='binance-futures-public' AND identity=$identity AND observed_at_utc>=$from AND observed_at_utc<=$asof AND retrieved_at_utc<=$asof ORDER BY observed_at_utc";AddParameters(q,("$identity",symbol.ToUpperInvariant()),("$from",DbInstant(fromUtc)),("$asof",DbInstant(asOfUtc)));await using var r=await q.ExecuteReaderAsync(ct);var result=new List<TeacherCryptoMarketFactV2>();while(await r.ReadAsync(ct)){var value=JsonSerializer.Deserialize<TeacherCryptoMarketFactV2>(r.GetString(0));if(value is not null&&TeacherCryptoMarketFactCanonicalizerV2.IsCanonical(value))result.Add(value);}return result;
+    }
+    public async Task<TeacherPersistenceResult> SaveTeacherRecommendationOutcomeAsync(TeacherRecommendationOutcomeV2 value,CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(value);if(value.Schema!="wpe.teacher-recommendation-outcome/2.0"||value.CanonicalSha256.Length!=64||value.ProcessState is not("invalidated" or "conditions-followed"))return new(false,false,"teacher.outcome-invalid");var json=JsonSerializer.Serialize(value);await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="INSERT OR IGNORE INTO teacher_recommendation_outcomes VALUES($id,$recommendation,$version,$evaluated,$state,$hash,$json); SELECT changes();";AddParameters(q,("$id",value.OutcomeId),("$recommendation",value.RecommendationId),("$version",value.RecommendationVersion),("$evaluated",DbInstant(value.EvaluatedAtUtc)),("$state",value.ProcessState),("$hash",value.CanonicalSha256),("$json",json));return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1?new(true,false,"teacher.outcome-persisted"):new(true,true,"teacher.outcome-idempotent");
+    }
+    public async Task<TeacherCryptoMarketFactV2?> GetTeacherCryptoEvidenceByHashAsync(string hash,CancellationToken ct)
+    {
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT canonical_json FROM teacher_public_evidence WHERE evidence_hash=$hash";q.Parameters.AddWithValue("$hash",hash);if(await q.ExecuteScalarAsync(ct) is not string json)return null;var value=JsonSerializer.Deserialize<TeacherCryptoMarketFactV2>(json);return value is not null&&TeacherCryptoMarketFactCanonicalizerV2.IsCanonical(value)?value:null;
+    }
+    public async Task<IReadOnlyList<TeacherRecommendationV2>> GetDueTeacherRecommendationsAsync(DateTimeOffset asOfUtc,CancellationToken ct)
+    {
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT r.canonical_json FROM teacher_recommendations r LEFT JOIN teacher_recommendation_outcomes o ON o.recommendation_id=r.recommendation_id AND o.recommendation_version=r.version WHERE r.expires_at_utc<=$asof AND r.state NOT IN ('Expired','Unavailable') AND o.outcome_id IS NULL ORDER BY r.expires_at_utc LIMIT 50";q.Parameters.AddWithValue("$asof",DbInstant(asOfUtc));await using var r=await q.ExecuteReaderAsync(ct);var result=new List<TeacherRecommendationV2>();while(await r.ReadAsync(ct)){var value=JsonSerializer.Deserialize<TeacherRecommendationV2>(r.GetString(0));if(value is not null&&!value.ExecutionAuthority)result.Add(value);}return result;
     }
 }

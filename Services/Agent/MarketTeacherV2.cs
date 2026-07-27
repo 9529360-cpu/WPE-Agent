@@ -74,11 +74,11 @@ public static class TeacherNumericProvenanceGuardV2
 
 public static class TeacherRecommendationEngineV2
 {
-    public static TeacherRecommendationV2 CreateCrypto(string id,string instrument,TeacherRecommendationStateV2 state,string horizon,DateTimeOffset issuedAtUtc,TimeSpan lifetime,string thesis,IReadOnlyList<TeacherEvidenceReferenceV2> evidence,IReadOnlyList<string> confirmation,IReadOnlyList<string> invalidation,IReadOnlyList<string> risks,int version=1,string? supersedesId=null)
+    public static TeacherRecommendationV2 CreateCrypto(string id,string instrument,TeacherRecommendationStateV2 state,string horizon,DateTimeOffset issuedAtUtc,TimeSpan lifetime,string thesis,IReadOnlyList<TeacherEvidenceReferenceV2> evidence,IReadOnlyList<string> confirmation,IReadOnlyList<string> invalidation,IReadOnlyList<string> risks,int version=1,string? supersedesId=null,IReadOnlyList<string>? additionalEvidenceHashes=null)
     {
         if(state is TeacherRecommendationStateV2.Expired or TeacherRecommendationStateV2.Unavailable)throw new ArgumentException("A new crypto recommendation must start in an actionable research state.",nameof(state));
         MarketTeacherComposerV2.ValidateEvidence(evidence,issuedAtUtc);if(lifetime<=TimeSpan.Zero||string.IsNullOrWhiteSpace(instrument)||confirmation.Count==0||invalidation.Count==0||risks.Count==0)throw new ArgumentException("Recommendation conditions and bounded lifetime are required.");
-        return new(id,"wpe.teacher-recommendation/2.0",version,instrument,"crypto",state,horizon,issuedAtUtc.ToUniversalTime(),issuedAtUtc.ToUniversalTime().Add(lifetime),thesis,evidence.Select(x=>x.CanonicalSha256).Distinct().Order().ToArray(),confirmation,invalidation,risks,supersedesId,false);
+        var hashes=evidence.Select(x=>x.CanonicalSha256).Concat(additionalEvidenceHashes??[]).Distinct().Order().ToArray();if(hashes.Any(x=>x.Length!=64||!x.All(Uri.IsHexDigit)))throw new ArgumentException("Recommendation evidence hash is invalid.");return new(id,"wpe.teacher-recommendation/2.0",version,instrument,"crypto",state,horizon,issuedAtUtc.ToUniversalTime(),issuedAtUtc.ToUniversalTime().Add(lifetime),thesis,hashes,confirmation,invalidation,risks,supersedesId,false);
     }
     public static TeacherRecommendationV2 CurrentEquityUnavailable(string id,string instrument,DateTimeOffset issuedAtUtc)=>new(id,"wpe.teacher-recommendation/2.0",1,instrument,"equity",TeacherRecommendationStateV2.Unavailable,"unavailable",issuedAtUtc.ToUniversalTime(),issuedAtUtc.ToUniversalTime(),"当前股票实时证据尚未接入，不能生成实时推荐。",[],[],[],["equity-provider-unavailable"],null,false);
     public static TeacherRecommendationV2 Expire(TeacherRecommendationV2 current,DateTimeOffset nowUtc,string reason)
