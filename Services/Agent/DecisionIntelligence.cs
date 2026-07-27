@@ -305,11 +305,12 @@ public static class DeterministicResearchCapabilityProducerV1
     {
         var facts=input.Facts;if(!StringFact(facts,"schema",out var schema)||schema!="wpe.crypto-instrument-fundamental/1.0")yield return "research.invalid.fundamental_schema";
         var required=new[]{"providerId","environment","symbol","nativeSymbol","baseAsset","quoteAsset","marginAsset","contractType","tradingStatus","sourceArtifactSha256","canonicalSha256"};foreach(var name in required)if(!StringFact(facts,name,out _))yield return $"research.missing.fundamental_{name.ToLowerInvariant()}";
+        if(StringFact(facts,"providerId",out var providerId)&&providerId!="binance-futures")yield return "research.invalid.fundamental_provider";
         if(StringFact(facts,"environment",out var environment)&&environment!="Testnet")yield return "research.invalid.fundamental_environment";
         if(StringFact(facts,"contractType",out var contract)&&contract!="PERPETUAL")yield return "research.invalid.fundamental_contract";
         if(StringFact(facts,"tradingStatus",out var status)&&status!="TRADING")yield return "research.invalid.fundamental_status";
-        if(StringFact(facts,"symbol",out var symbol)&&StringFact(facts,"baseAsset",out var baseAsset)&&StringFact(facts,"quoteAsset",out var quoteAsset)&&!string.Equals(symbol,baseAsset+quoteAsset,StringComparison.OrdinalIgnoreCase))yield return "research.invalid.fundamental_symbol";
-        if(StringFact(facts,"quoteAsset",out quoteAsset)&&StringFact(facts,"marginAsset",out var marginAsset)&&!string.Equals(quoteAsset,marginAsset,StringComparison.OrdinalIgnoreCase))yield return "research.invalid.fundamental_margin";
+        if(StringFact(facts,"symbol",out var symbol)&&StringFact(facts,"nativeSymbol",out var nativeSymbol)&&StringFact(facts,"baseAsset",out var baseAsset)&&StringFact(facts,"quoteAsset",out var quoteAsset)&&(!CanonicalSymbol(symbol)||nativeSymbol!=symbol||symbol!=baseAsset+quoteAsset))yield return "research.invalid.fundamental_symbol";
+        if(StringFact(facts,"quoteAsset",out quoteAsset)&&StringFact(facts,"marginAsset",out var marginAsset)&&(quoteAsset!=marginAsset||!CanonicalAsset(quoteAsset)||!CanonicalAsset(marginAsset)))yield return "research.invalid.fundamental_margin";
         if(StringFact(facts,"sourceArtifactSha256",out var sourceHash)&&!ValidSha(sourceHash)||StringFact(facts,"canonicalSha256",out var canonicalHash)&&!ValidSha(canonicalHash))yield return "research.invalid.fundamental_hash";
         var onboard=UtcFact(facts,"onboardAtUtc",out var onboardAt);var observed=UtcFact(facts,"observedAtUtc",out var observedAt);if(!onboard)yield return "research.invalid.fundamental_onboard_time";if(!observed)yield return "research.invalid.fundamental_observed_time";if(onboard&&observed&&onboardAt>observedAt)yield return "research.invalid.fundamental_temporal_order";if(observed&&observedAt>input.EvaluationTimeUtc)yield return "research.invalid.fundamental_future";if(observed&&input.EvaluationTimeUtc-observedAt>TimeSpan.FromHours(24))yield return "research.invalid.fundamental_stale";
         if(observed&&StringFact(facts,"canonicalSha256",out canonicalHash)&&!input.Sources.Any(x=>x.Kind==ModelOffSourceKindV1.Fundamental&&x.AsOfUtc>=observedAt&&x.ArtifactHash=="sha256:"+canonicalHash))yield return "research.invalid.fundamental_source_asof";
@@ -333,6 +334,7 @@ public static class DeterministicResearchCapabilityProducerV1
 
     private static bool ValidSha(string value)=>value.Length==64&&value.All(Uri.IsHexDigit);
     private static bool CanonicalSymbol(string value)=>value.Length is>=5 and<=30&&value.All(c=>c is>='A' and<='Z' or>='0' and<='9');
+    private static bool CanonicalAsset(string value)=>value.Length is>=2 and<=16&&value.All(c=>c is>='A' and<='Z' or>='0' and<='9');
     private static bool FiniteFact(JsonElement facts,string name,out double value){value=0;return facts.TryGetProperty(name,out var element)&&element.ValueKind==JsonValueKind.Number&&element.TryGetDouble(out value)&&double.IsFinite(value);}
 
     private static bool StringFact(JsonElement facts, string name, out string value)

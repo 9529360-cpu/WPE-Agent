@@ -44,6 +44,15 @@ public sealed class ModelOffResearchCapabilityTests
     }
 
     [Theory]
+    [InlineData("other-provider")]
+    [InlineData("lowercase-symbol")]
+    public void FundamentalCapabilityRejectsSelfConsistentUnsupportedIdentity(string fixture)
+    {
+        var input=fixture=="other-provider"?FundamentalInput(provider:"other"):FundamentalInput(symbol:"btcusdt",baseAsset:"btc",quoteAsset:"usdt");
+        var output=DeterministicMemoryService.ProduceFundamentalModelOff(input);Assert.Equal(ModelOffOutputStatusV1.Abstained,output.Status);Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(output));
+    }
+
+    [Theory]
     [InlineData("schema")]
     [InlineData("hash")]
     [InlineData("rsi")]
@@ -245,7 +254,7 @@ public sealed class ModelOffResearchCapabilityTests
     private static ModelOffResearchInputV1 TechnicalInput()=>new(ModelOffResearchCapabilityV1.Technical,"technical-output","cycle-1",Now,"wpe.research-input/1.0","wpe.technical-method","1.0",[Source(ModelOffSourceKindV1.Market) with{SourceId="market:BTCUSDT",AsOfUtc=Now,ArtifactHash="sha256:"+new string('a',64)}],TechnicalFacts(),[]);
     private static JsonElement TechnicalFacts(double rsi=55,DateTimeOffset? observedAt=null,string schema="wpe.technical-assessment/1.0",string? hash=null,string symbol="BTCUSDT",string marketSymbol="BTCUSDT")=>JsonSerializer.SerializeToElement(new{schema,symbol,marketSymbol,observedAtUtc=observedAt??Now,marketEvidenceSha256=hash??new string('a',64),rsi,trend15m=.1,trend1h=.2,trend4h=.3});
 
-    private static ModelOffResearchInputV1 FundamentalInput(){var fact=CryptoInstrumentFundamentalCanonicalizerV1.Create("binance-futures","Testnet","BTCUSDT","BTCUSDT","BTC","USDT","USDT","PERPETUAL","TRADING",Now.AddYears(-2),Now.AddMinutes(-1),new string('a',64));return new(ModelOffResearchCapabilityV1.Fundamental,"fundamental-output","cycle-1",Now,"wpe.research-input/1.0","wpe.fundamental-method","1.0",[Source(ModelOffSourceKindV1.Fundamental) with{AsOfUtc=Now.AddMinutes(-1),ArtifactHash="sha256:"+fact.CanonicalSha256}],JsonSerializer.SerializeToElement(new{schema=fact.Schema,providerId=fact.ProviderId,environment=fact.Environment,symbol=fact.Symbol,nativeSymbol=fact.NativeSymbol,baseAsset=fact.BaseAsset,quoteAsset=fact.QuoteAsset,marginAsset=fact.MarginAsset,contractType=fact.ContractType,tradingStatus=fact.TradingStatus,onboardAtUtc=fact.OnboardAtUtc,observedAtUtc=fact.ObservedAtUtc,sourceArtifactSha256=fact.SourceArtifactSha256,canonicalSha256=fact.CanonicalSha256}),[]);}
+    private static ModelOffResearchInputV1 FundamentalInput(string provider="binance-futures",string symbol="BTCUSDT",string baseAsset="BTC",string quoteAsset="USDT"){var fact=CryptoInstrumentFundamentalCanonicalizerV1.Create(provider,"Testnet",symbol,symbol,baseAsset,quoteAsset,quoteAsset,"PERPETUAL","TRADING",Now.AddYears(-2),Now.AddMinutes(-1),new string('a',64));return new(ModelOffResearchCapabilityV1.Fundamental,"fundamental-output","cycle-1",Now,"wpe.research-input/1.0","wpe.fundamental-method","1.0",[Source(ModelOffSourceKindV1.Fundamental) with{AsOfUtc=Now.AddMinutes(-1),ArtifactHash="sha256:"+fact.CanonicalSha256}],JsonSerializer.SerializeToElement(new{schema=fact.Schema,providerId=fact.ProviderId,environment=fact.Environment,symbol=fact.Symbol,nativeSymbol=fact.NativeSymbol,baseAsset=fact.BaseAsset,quoteAsset=fact.QuoteAsset,marginAsset=fact.MarginAsset,contractType=fact.ContractType,tradingStatus=fact.TradingStatus,onboardAtUtc=fact.OnboardAtUtc,observedAtUtc=fact.ObservedAtUtc,sourceArtifactSha256=fact.SourceArtifactSha256,canonicalSha256=fact.CanonicalSha256}),[]);}
 
     private static JsonElement MacroFacts(
         string schema = "wpe.macro-facts/1.0",

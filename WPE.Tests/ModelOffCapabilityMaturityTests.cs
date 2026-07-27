@@ -104,6 +104,14 @@ public sealed class ModelOffCapabilityMaturityTests
         Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));
     }
 
+    [Fact]
+    public void FundamentalAcceptanceIsBoundedAndDoesNotUpgradeResearchAggregate()
+    {
+        var root=LoadCanonical();var capability=root["capabilities"]!.AsArray().Single(Capability("fundamental"));var aggregate=root["aggregates"]!.AsArray().Single(node=>String(node,"id")=="research");
+        Assert.Equal("yes",String(capability,"maturity"));Assert.True(Bool(capability,"implemented"));Assert.True(Bool(capability,"accepted"));Assert.Contains("Binance Futures Testnet venue-instrument facts",String(capability,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no protocol, issuer, tokenomics, on-chain, valuation or investment conclusion",String(capability,"acceptance_scope"),StringComparison.Ordinal);
+        Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));
+    }
+
     [Theory]
     [InlineData("missing")]
     [InlineData("duplicate")]
@@ -131,9 +139,11 @@ public sealed class ModelOffCapabilityMaturityTests
                 root["authority"]!["status"] = "historical";
                 break;
             case "core-partial-implemented":
+                capabilities.Single(Capability("fundamental"))!["maturity"] = "partial";
                 capabilities.Single(Capability("fundamental"))!["implemented"] = true;
                 break;
             case "core-no-accepted":
+                capabilities.Single(Capability("fundamental"))!["maturity"] = "no";
                 capabilities.Single(Capability("fundamental"))!["accepted"] = true;
                 break;
         }

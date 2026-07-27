@@ -31,6 +31,9 @@ public sealed class ModelOffRoleRuntimeRegistryTests
         var macro=registry.Capabilities.Single(x=>x.Id=="macro");
         Assert.Equal("yes",macro.Maturity);Assert.True(macro.Implemented);Assert.True(macro.Accepted);
         Assert.Contains("append-only revisions",macro.AcceptanceScope,StringComparison.Ordinal);
+        var fundamental=registry.Capabilities.Single(x=>x.Id=="fundamental");
+        Assert.Equal("yes",fundamental.Maturity);Assert.True(fundamental.Implemented);Assert.True(fundamental.Accepted);
+        Assert.Contains("exact provider/environment/symbol identity",fundamental.AcceptanceScope,StringComparison.Ordinal);
     }
 
     [Fact]
