@@ -81,6 +81,24 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
+        if (e.Args.Any(x => string.Equals(x, "--market-local-acceptance", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await WpeAgent.ModelOff.MarketLocalAcceptanceRunnerV1.RunAsync(e.Args);
+            Log.Information("Market local acceptance collection completed. Success={Success}; Directory={Directory}; Errors={Errors}",result.Success,result.ArtifactDirectory,string.Join(',',result.Errors));
+            Shutdown(result.Success?0:18);
+            return;
+        }
+
+        if (e.Args.Any(x => string.Equals(x, "--market-acceptance-assess", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await WpeAgent.ModelOff.MarketAcceptanceAssessmentRunnerV1.RunAsync(e.Args);
+            Log.Information("Market aggregate assessment completed. Accepted={Accepted}; Report={Report}; Errors={Errors}",result.Accepted,result.ReportPath,string.Join(',',result.Errors));
+            Shutdown(result.Accepted?0:19);
+            return;
+        }
+
         if (e.Args.Any(x => string.Equals(x, "--architecture-test", StringComparison.OrdinalIgnoreCase)))
         {
             ShutdownMode=ShutdownMode.OnExplicitShutdown;

@@ -58,19 +58,19 @@ public sealed class ModelOffCapabilityMaturityTests
     }
 
     [Fact]
-    public void OrchestratorAcceptanceIsBoundedAndDoesNotUpgradeSevenAggregates()
+    public void OrchestratorAcceptanceDoesNotUpgradeTheSixUnacceptedAggregates()
     {
         var root=LoadCanonical();var orchestrator=root["capabilities"]!.AsArray().Single(Capability("orchestrator"));var aggregates=root["aggregates"]!.AsArray();
         Assert.Equal("yes",String(orchestrator,"maturity"));Assert.True(Bool(orchestrator,"implemented"));Assert.True(Bool(orchestrator,"accepted"));Assert.Contains("atomic append-only output/handoff persistence",String(orchestrator,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no live Testnet mutation certification",String(orchestrator,"acceptance_scope"),StringComparison.Ordinal);
-        foreach(var aggregate in aggregates){Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));}
+        foreach(var aggregate in aggregates.Where(node=>String(node,"id")!="market")){Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));}
     }
 
     [Fact]
-    public void MarketDataAcceptanceIsBoundedAndDoesNotUpgradeMarketAggregate()
+    public void MarketAggregateAcceptanceIsExplicitlyBoundedAndEvidenceBound()
     {
         var root=LoadCanonical();var capability=root["capabilities"]!.AsArray().Single(Capability("market-data"));var aggregate=root["aggregates"]!.AsArray().Single(node=>String(node,"id")=="market");
         Assert.Equal("yes",String(capability,"maturity"));Assert.True(Bool(capability,"implemented"));Assert.True(Bool(capability,"accepted"));Assert.Contains("Testnet provider-bound canonical provenance",String(capability,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no raw HTTP response retention or live provider certification",String(capability,"acceptance_scope"),StringComparison.Ordinal);
-        Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));
+        Assert.Equal("yes",String(aggregate,"maturity"));Assert.True(Bool(aggregate,"accepted"));Assert.Contains("Binance Futures Testnet",String(aggregate,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("excludes Mainnet",String(aggregate,"acceptance_scope"),StringComparison.Ordinal);Assert.True(IsSha(String(aggregate,"evidence_set_sha256")));
     }
 
     [Fact]
@@ -255,7 +255,9 @@ public sealed class ModelOffCapabilityMaturityTests
         var aggregateIds = aggregates.Select(node => String(node, "id")).ToArray();
         Require(aggregateIds.Length == 7 && aggregateIds.Distinct(StringComparer.Ordinal).Count() == 7, "missing or duplicate aggregate", errors);
         Require(aggregateIds.ToHashSet(StringComparer.Ordinal).SetEquals(AggregateIds), "unknown aggregate inventory", errors);
-        Require(aggregates.All(node => String(node, "maturity") == "partial" && Bool(node, "accepted") == false), "aggregate upgraded", errors);
+        var marketAggregate=aggregates.SingleOrDefault(node=>String(node,"id")=="market");
+        Require(String(marketAggregate,"maturity")=="yes"&&Bool(marketAggregate,"accepted")==true&&!string.IsNullOrWhiteSpace(String(marketAggregate,"acceptance_scope"))&&String(marketAggregate,"acceptance_scope")!.Contains("Binance Futures Testnet",StringComparison.Ordinal)&&String(marketAggregate,"acceptance_scope")!.Contains("excludes Mainnet",StringComparison.Ordinal)&&IsSha(String(marketAggregate,"evidence_set_sha256")),"Market aggregate acceptance is unbounded or unproven",errors);
+        Require(aggregates.Where(node=>String(node,"id")!="market").All(node => String(node, "maturity") == "partial" && Bool(node, "accepted") == false), "unaccepted aggregate upgraded", errors);
 
         var capabilityIds = capabilities.Select(node => String(node, "id")).ToArray();
         Require(capabilityIds.Length == 13 && capabilityIds.Distinct(StringComparer.Ordinal).Count() == 13, "missing or duplicate capability", errors);
@@ -297,6 +299,7 @@ public sealed class ModelOffCapabilityMaturityTests
     private static string? StringValue(JsonNode? node) => node is JsonValue value && value.TryGetValue<string>(out var result) ? result : null;
     private static bool? Bool(JsonNode? node, string name) => node?[name] is JsonValue value && value.TryGetValue<bool>(out var result) ? result : null;
     private static int? Int(JsonNode? node, string name) => node?[name] is JsonValue value && value.TryGetValue<int>(out var result) ? result : null;
+    private static bool IsSha(string? value)=>value is{Length:64}&&value.All(x=>x is>='0'and<='9'or>='a'and<='f');
 
     private static void Require(bool condition, string error, ICollection<string> errors)
     {

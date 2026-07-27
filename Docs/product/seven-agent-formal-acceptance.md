@@ -2,7 +2,7 @@
 
 Machine gate: `wpe.model-off-aggregate-acceptance/1.0` in `Services/Agent/ModelOffAggregateAcceptanceV1.cs`.
 
-The seven aggregate Agents remain `partial` until their own four required evidence classes pass together. Component acceptance, a passing unit test, a live process, or a public price response cannot promote an aggregate.
+Each aggregate Agent remains `partial` until its own four required evidence classes pass together. Component acceptance, a passing unit test, a live process, or a public price response cannot promote an aggregate. Market is the first formally accepted aggregate, bounded to the exact Binance Futures Testnet BTCUSDT read-only scope recorded in the maturity authority; the other six aggregates remain `partial`.
 
 Every evidence record must bind one requirement and Agent to the required `Local`, `Target`, or `Testnet` environment, a UTC observation and bounded expiry, a passing result, canonical artifact bytes whose recomputed lowercase SHA-256 matches the declared identity, and a bounded provider identity for live evidence. Missing, duplicate, cross-Agent, unexpected, stale, overlong, failed, malformed, hash-mismatched, or wrong-environment evidence fails closed. Mainnet is not an accepted evidence environment.
 
@@ -19,3 +19,5 @@ The current gates cover:
 The gate produces a deterministic evidence-set hash but does not edit the maturity authority. Promotion requires an explicit reviewed update to `model-off-capability-maturity.json` after the gate accepts the corresponding aggregate.
 
 Market live evidence is produced only by `--market-aggregate-acceptance`. The runner uses the official Binance Futures Testnet endpoint with execution disabled and empty credentials. It emits one immediate read artifact and four five-minute samples spanning at least 15 minutes. Every artifact binds the executing assembly version and SHA-256, is atomically persisted, then independently reread, strictly parsed, canonicalized and hash-verified. Every sample must contain canonical Market provenance, at least 31 confirmed candles, quality score 65 or higher, a source no older than 20 minutes, and the sustained artifact must contain at least two distinct canonical market states. The runner exposes no account, order, placement, cancellation, or mutation method.
+
+Market local evidence is produced by two independent focused TRX runs and packaged with `--market-local-acceptance`. The structural TRX parser requires the exact allowlisted test identities, matching definitions and results, all-pass counters, and no missing, duplicate, failed, or extra tests. Each canonical artifact binds its requirement ID, candidate version and DLL SHA-256, test DLL SHA-256, raw TRX SHA-256, UTC completion time, and exact sorted test set. The command is read-only and cannot promote maturity by itself.

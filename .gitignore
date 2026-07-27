@@ -368,6 +368,7 @@ MigrationBackup/
 .ionide/
 
 # WPE Agent local credentials and runtime state
+.artifacts/
 .env
 .env.*
 appsettings.Local.json

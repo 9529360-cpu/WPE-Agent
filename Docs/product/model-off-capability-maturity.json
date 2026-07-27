@@ -4,7 +4,7 @@
     "id": "MO-01",
     "status": "current",
     "as_of": "2026-07-27",
-    "source": "QAA-0024",
+    "source": "QAA-0025",
     "target": "private_autonomous_testnet",
     "human_per_cycle_approval": false,
     "mainnet": "disabled",
@@ -19,7 +19,7 @@
     "yes_is_bounded_to_acceptance_scope": true
   },
   "aggregates": [
-    { "id": "market", "name": "Market", "maturity": "partial", "accepted": false },
+    { "id": "market", "name": "Market", "maturity": "yes", "accepted": true, "acceptance_scope": "deterministic BTCUSDT market sensing through Binance Futures Testnet public read-only data, including canonical confirmed-candle provenance, adversarial fail-closed integrity, immediate provider availability and four-sample sustained freshness over at least 15 minutes; candidate 3.6.0.0 SHA-256 5d06653b099e46b222aeaee47e022ef61d28bb3e3bb188c9b6b88a494b7ec5be; excludes Mainnet, mutation, credentials, private account data, other symbols and other providers", "evidence_set_sha256": "91052bbc85bec2ea70a9c171eb3e21bddcf37d4adda329a41629f7948881f7f7" },
     { "id": "research", "name": "Research", "maturity": "partial", "accepted": false },
     { "id": "strategy", "name": "Strategy", "maturity": "partial", "accepted": false },
     { "id": "risk", "name": "Risk", "maturity": "partial", "accepted": false },
