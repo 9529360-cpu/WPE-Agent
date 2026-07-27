@@ -47,7 +47,7 @@ public static class ModelOffRoleRuntimeRegistryBuilderV1
         Capability("macro", [ModelOffRuntimeRoleV1.Research], "partial"),
         Capability("technical", [ModelOffRuntimeRoleV1.Research], "yes", true, true, "current", "versioned technical fact validation and deterministic weighted signal aggregation over canonical Market evidence; no independent recomputation or live certification of provider multi-timeframe indicators"),
         Capability("fundamental", [ModelOffRuntimeRoleV1.Research], "partial"),
-        Capability("strategy", [ModelOffRuntimeRoleV1.Strategy], "partial"),
+        Capability("strategy", [ModelOffRuntimeRoleV1.Strategy], "yes", true, true, "current", "deterministic current-instrument executable-plan validation bound to one eligible assessment and the exact approved/promoted research strategy version, with bounded confidence/tier and directional price geometry; no autonomous strategy discovery, full lifecycle acceptance or live Testnet performance certification"),
         Capability("backtest", [ModelOffRuntimeRoleV1.Research], "yes", true, true, "current", "basic deterministic backtest component only"),
         Capability("risk", [ModelOffRuntimeRoleV1.Risk], "yes", true, true, "current", "covered crypto Risk Gate only"),
         Capability("execution", [ModelOffRuntimeRoleV1.Execution], "yes", true, true, "current", "deterministic execution contract boundary only; no Testnet claim"),

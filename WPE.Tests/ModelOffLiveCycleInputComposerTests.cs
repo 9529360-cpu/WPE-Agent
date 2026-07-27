@@ -128,6 +128,11 @@ public sealed class ModelOffLiveCycleInputComposerTests
     [InlineData("bad-stop")]
     [InlineData("bad-take")]
     [InlineData("bad-rr")]
+    [InlineData("bad-confidence")]
+    [InlineData("bad-tier")]
+    [InlineData("version-conflict")]
+    [InlineData("lowercase-assessment")]
+    [InlineData("bad-assessment-confidence")]
     public void StrategyAgentIndependentlyRejectsInvalidExecutablePlan(string defect)
     {
         var request=Request();var assessments=request.Assessments;var review=request.DecisionReview;
@@ -137,6 +142,11 @@ public sealed class ModelOffLiveCycleInputComposerTests
         if(defect=="bad-stop")review=Review(true,stop:101000m);
         if(defect=="bad-take")review=Review(true,take:99000m);
         if(defect=="bad-rr")review=Review(true,riskReward:0);
+        if(defect=="bad-confidence")review=Review(true,confidence:1.1);
+        if(defect=="bad-tier")review=Review(true,targetTier:4);
+        if(defect=="version-conflict")review=Review(true,strategyVersion:"strategy-v2");
+        if(defect=="lowercase-assessment")assessments=[Assessment(symbol:"btcusdt")];
+        if(defect=="bad-assessment-confidence")assessments=[Assessment(confidence:1.1)];
         var strategy=ModelOffLiveCycleInputComposerV1.Compose(request with{Assessments=assessments,DecisionReview=review}).Single(x=>x.Output.Agent==ModelOffAgentV1.Strategy).Output;Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(strategy));Assert.Contains(strategy.Decision.ReasonCodes,reason=>reason.StartsWith("live.strategy.",StringComparison.Ordinal));
     }
 
@@ -382,11 +392,11 @@ public sealed class ModelOffLiveCycleInputComposerTests
     private static ResearchValidationResult Research(string symbol) => new()
     { Symbol = symbol, StrategyVersion = "strategy-v1", SampleSize = 200, Trades = 30, QualityScore = .8, Approved = true, Promoted = true, CoverageDays = 90 };
     private static ResearchValidationResult CopyResearch(ResearchValidationResult value,bool? approved=null,bool? promoted=null,double? qualityScore=null)=>new(){Symbol=value.Symbol,StrategyVersion=value.StrategyVersion,SampleSize=value.SampleSize,Trades=value.Trades,WinRate=value.WinRate,ProfitFactor=value.ProfitFactor,Expectancy=value.Expectancy,MaxDrawdown=value.MaxDrawdown,Sharpe=value.Sharpe,OutOfSampleReturn=value.OutOfSampleReturn,WalkForwardScore=value.WalkForwardScore,MonteCarloLossProbability=value.MonteCarloLossProbability,QualityScore=qualityScore??value.QualityScore,Approved=approved??value.Approved,Promoted=promoted??value.Promoted,CoverageDays=value.CoverageDays,OutOfSampleTrades=value.OutOfSampleTrades,StrategyReturn=value.StrategyReturn,BenchmarkReturn=value.BenchmarkReturn,RegimeReturns=value.RegimeReturns,Summary=value.Summary};
-    private static MarketDecisionAssessment Assessment(bool fresh=true,DecisionAction recommended=DecisionAction.OpenLong)=>new(){Symbol="BTCUSDT",Fresh=fresh,EntryReady=true,RecommendedAction=recommended,Confidence=.8,NetScore=.5,ConflictRatio=.1};
-    private static DecisionReview Review(bool accepted,decimal stop=98000m,decimal take=104000m,double riskReward=2) => new()
+    private static MarketDecisionAssessment Assessment(bool fresh=true,DecisionAction recommended=DecisionAction.OpenLong,string symbol="BTCUSDT",double confidence=.8)=>new(){Symbol=symbol,Fresh=fresh,EntryReady=true,RecommendedAction=recommended,Confidence=confidence,NetScore=.5,ConflictRatio=.1};
+    private static DecisionReview Review(bool accepted,decimal stop=98000m,decimal take=104000m,double riskReward=2,double confidence=.8,int targetTier=1,string strategyVersion="strategy-v1") => new()
     {
         Accepted = accepted,
-        Decision = new DecisionPlan { Action = DecisionAction.OpenLong, Instrument = "BTCUSDT", Confidence = .8,
+        Decision = new DecisionPlan { Action = DecisionAction.OpenLong, Instrument = "BTCUSDT", Confidence = confidence,TargetTier=targetTier,StrategyVersion=strategyVersion,
             EntryPrice = 100000m, StopLossPrice = stop, TakeProfitPrice = take, RiskRewardRatio = riskReward }
     };
     private static IndependentRiskReview Risk(bool approved) => new()

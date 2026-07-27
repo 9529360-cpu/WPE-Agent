@@ -25,6 +25,9 @@ public sealed class ModelOffRoleRuntimeRegistryTests
         var news=registry.Capabilities.Single(x=>x.Id=="news");
         Assert.Equal("yes",news.Maturity);Assert.True(news.Implemented);Assert.True(news.Accepted);
         Assert.Contains("article-text exclusion",news.AcceptanceScope,StringComparison.Ordinal);
+        var strategy=registry.Capabilities.Single(x=>x.Id=="strategy");
+        Assert.Equal("yes",strategy.Maturity);Assert.True(strategy.Implemented);Assert.True(strategy.Accepted);
+        Assert.Contains("directional price geometry",strategy.AcceptanceScope,StringComparison.Ordinal);
     }
 
     [Fact]

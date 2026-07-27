@@ -121,13 +121,16 @@ internal static class ModelOffLiveCycleInputComposerV1
         var decision = request.DecisionReview.Decision;
         var strategyReasons = new List<string>();
         if (!request.DecisionReview.Accepted) strategyReasons.Add("live.strategy.review-blocked");
+        if (!Enum.IsDefined(decision.Action)) strategyReasons.Add("live.strategy.action-invalid");
         if (!SafeToken(decision.Instrument)) strategyReasons.Add("live.strategy.instrument-invalid");
-        if (!Finite(decision.Confidence) || !Finite(decision.RiskRewardRatio)) strategyReasons.Add("live.strategy.numeric-invalid");
+        if (!Finite(decision.Confidence) || decision.Confidence is <0 or >1 || !Finite(decision.RiskRewardRatio) || decision.TargetTier is <0 or >3) strategyReasons.Add("live.strategy.numeric-invalid");
+        if (!SafeIdentityToken(decision.StrategyVersion)) strategyReasons.Add("live.strategy.version-invalid");
+        if(targetResearchValid&&!string.Equals(decision.StrategyVersion,targetResearch!.StrategyVersion,StringComparison.Ordinal))strategyReasons.Add("live.strategy.version-conflict");
         var assessmentMatches=request.Assessments.Where(x=>string.Equals(x.Symbol,decision.Instrument,StringComparison.OrdinalIgnoreCase)).ToArray();
         var targetAssessment=assessmentMatches.Length==1?assessmentMatches[0]:null;
         if(assessmentMatches.Length==0)strategyReasons.Add("live.strategy.assessment-missing");
         if(assessmentMatches.Length>1)strategyReasons.Add("live.strategy.assessment-conflicting");
-        if(targetAssessment is not null&&(!targetAssessment.Fresh||!targetAssessment.EntryReady||!Finite(targetAssessment.Confidence)||!Finite(targetAssessment.NetScore)||!Finite(targetAssessment.ConflictRatio)))strategyReasons.Add("live.strategy.assessment-ineligible");
+        if(targetAssessment is not null&&(!string.Equals(targetAssessment.Symbol,decision.Instrument,StringComparison.Ordinal)||!SafeToken(targetAssessment.Symbol)||!Enum.IsDefined(targetAssessment.Regime)||!Enum.IsDefined(targetAssessment.RecommendedAction)||!targetAssessment.Fresh||!targetAssessment.EntryReady||!Finite(targetAssessment.Confidence)||targetAssessment.Confidence is <0 or >1||!Finite(targetAssessment.NetScore)||targetAssessment.NetScore is <-1 or >1||!Finite(targetAssessment.ConflictRatio)||targetAssessment.ConflictRatio is <0 or >1))strategyReasons.Add("live.strategy.assessment-ineligible");
         if(targetAssessment is not null&&!RecommendationMatches(decision.Action,targetAssessment.RecommendedAction))strategyReasons.Add("live.strategy.direction-conflict");
         if(DeterministicPlanSkill.IsRiskIncreasing(decision.Action)&&!ValidPlanGeometry(decision))strategyReasons.Add("live.strategy.plan-geometry-invalid");
         if (!ModelOffEligibilityV1.IsEligibleForDownstream(research)) strategyReasons.Add("live.strategy.research-invalid");

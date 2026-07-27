@@ -88,6 +88,14 @@ public sealed class ModelOffCapabilityMaturityTests
         Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));
     }
 
+    [Fact]
+    public void StrategyAcceptanceIsBoundedAndDoesNotUpgradeStrategyAggregate()
+    {
+        var root=LoadCanonical();var capability=root["capabilities"]!.AsArray().Single(Capability("strategy"));var aggregate=root["aggregates"]!.AsArray().Single(node=>String(node,"id")=="strategy");
+        Assert.Equal("yes",String(capability,"maturity"));Assert.True(Bool(capability,"implemented"));Assert.True(Bool(capability,"accepted"));Assert.Contains("exact approved/promoted research strategy version",String(capability,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no autonomous strategy discovery",String(capability,"acceptance_scope"),StringComparison.Ordinal);
+        Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));
+    }
+
     [Theory]
     [InlineData("missing")]
     [InlineData("duplicate")]
