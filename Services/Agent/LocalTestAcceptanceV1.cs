@@ -111,6 +111,23 @@ public static class LocalTestAcceptanceCanonicalizerV1
             "WPE.Tests.TradingExecutionGatewayTests.EmergencyReduction_ReplayDoesNotMutateAgain",
             "WPE.Tests.TradingExecutionGatewayTests.Review_ReplayRejectsWithoutAdditionalMutation",
             "WPE.Tests.TradingExecutionGatewayTests.TestnetSmoke_ReplayedAuthorizationAndIntentDoesNotMutateAgain"
+        ],
+        ["recovery.restart-reconciliation"]=
+        [
+            "WPE.Tests.ModelOffExecutionRecoveryContractTests.UnknownOutcomeAfterRestartIsQuarantinedAndNeverResubmitted",
+            "WPE.Tests.SqliteResilienceTests.CommittedIntent_SurvivesStoreLossAndIsRecoverableAfterRestart",
+            "WPE.Tests.SqliteResilienceTests.ExchangeFilledBeforeLocalStatusUpdate_IsReconciledWithoutSecondOrder",
+            "WPE.Tests.TradingReviewRestartRecoveryTests.AmbiguousExecution_AfterRestartReconcilesWithoutResubmission",
+            "WPE.Tests.TradingReviewRestartRecoveryTests.ConcurrentRestartReconcilers_ReconcileAmbiguousReviewAtMostOnce",
+            "WPE.Tests.TradingReviewRestartRecoveryTests.TerminalReview_IsNotReplayedAfterRestart"
+        ],
+        ["recovery.unknown-quarantine"]=
+        [
+            "WPE.Tests.AutomaticExecutionProcessorTests.UnknownOutcome_ReconcilesByQueryAndNeverResubmits",
+            "WPE.Tests.ExecutionMutationBoundaryTests.ReduceOnlyRecovery_ExistingUnknownStateNeverResubmits",
+            "WPE.Tests.ModelOffExecutionRecoveryContractTests.ProductionMutationChainAndRecoveryContainNoResubmitPath",
+            "WPE.Tests.OrderFaultInjectionTests.CancelFailure_RemainsUnknownAndRecoverable",
+            "WPE.Tests.UnknownOrderRecoveryTests.RecoverPending_UnknownExchangeStateDoesNotSubmitReplacementOrder"
         ]
     };
 
@@ -177,5 +194,5 @@ public static class LocalTestAcceptanceCanonicalizerV1
     }
     private static string Hash(byte[] bytes)=>Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     private static bool Sha(string value)=>value is{Length:64}&&value.All(x=>x is>='0'and<='9'or>='a'and<='f');
-    private static ModelOffAggregateAgentV1 Agent(string requirementId)=>requirementId.StartsWith("market.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Market:requirementId.StartsWith("research.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Research:requirementId.StartsWith("strategy.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Strategy:requirementId.StartsWith("risk.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Risk:requirementId.StartsWith("execution.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Execution:throw new InvalidOperationException("Unsupported local acceptance Agent.");
+    private static ModelOffAggregateAgentV1 Agent(string requirementId)=>requirementId.StartsWith("market.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Market:requirementId.StartsWith("research.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Research:requirementId.StartsWith("strategy.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Strategy:requirementId.StartsWith("risk.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Risk:requirementId.StartsWith("execution.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Execution:requirementId.StartsWith("recovery.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Recovery:throw new InvalidOperationException("Unsupported local acceptance Agent.");
 }

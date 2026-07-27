@@ -60,6 +60,12 @@ public sealed class LocalTestAcceptanceTests
         Assert.Throws<InvalidOperationException>(()=>LocalTestAcceptanceCanonicalizerV1.Create("execution.mutation-route","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(ExecutionMutationNames[..^1])));
     }
 
+    [Fact]
+    public void RecoveryEvidenceIsBoundToRecoveryAndExactUnknownQuarantineSet()
+    {
+        var artifact=LocalTestAcceptanceCanonicalizerV1.Create("recovery.unknown-quarantine","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(RecoveryQuarantineNames));var candidate=Hash(Bytes("candidate"));Assert.True(LocalTestAcceptanceCanonicalizerV1.IsCanonical(artifact,Now,candidate));var evidence=LocalTestAcceptanceCanonicalizerV1.ToAcceptanceEvidence(artifact,Now,candidate);Assert.Equal(ModelOffAggregateAgentV1.Recovery,evidence.Agent);Assert.Throws<InvalidOperationException>(()=>LocalTestAcceptanceCanonicalizerV1.Create("recovery.unknown-quarantine","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(RecoveryQuarantineNames[..^1])));
+    }
+
     private static LocalTestAcceptanceArtifactV1 Create(string[] names)=>LocalTestAcceptanceCanonicalizerV1.Create("market.canonical-contract","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(names));
     private static byte[] Trx(string[] names,string outcome="Passed")
     {
@@ -85,6 +91,10 @@ public sealed class LocalTestAcceptanceTests
     private static readonly string[] ExecutionMutationNames=
     [
         "WPE.Tests.TradingExecutionGatewayTests.Auto_ValidTestnetRiskReceiptUsesReliableExecutor","WPE.Tests.TradingExecutionGatewayTests.AutomaticOrderObserverConfirmsMatchingExchangeOrderWithoutMutation","WPE.Tests.TradingExecutionGatewayTests.ProductionCompositionRoot_WiresTradingExecutionGatewayToReliableOrderExecutor","WPE.Tests.TradingExecutionGatewayTests.ReliableOrderExecutor_ImplementsSingleMutationBoundary","WPE.Tests.TradingExecutionGatewayTests.TestnetSmoke_ExplicitAuthorizationBindsOpeningAndCleanupToOneCorrelation"
+    ];
+    private static readonly string[] RecoveryQuarantineNames=
+    [
+        "WPE.Tests.AutomaticExecutionProcessorTests.UnknownOutcome_ReconcilesByQueryAndNeverResubmits","WPE.Tests.ExecutionMutationBoundaryTests.ReduceOnlyRecovery_ExistingUnknownStateNeverResubmits","WPE.Tests.ModelOffExecutionRecoveryContractTests.ProductionMutationChainAndRecoveryContainNoResubmitPath","WPE.Tests.OrderFaultInjectionTests.CancelFailure_RemainsUnknownAndRecoverable","WPE.Tests.UnknownOrderRecoveryTests.RecoverPending_UnknownExchangeStateDoesNotSubmitReplacementOrder"
     ];
     private static byte[] Bytes(string value)=>Encoding.UTF8.GetBytes(value);
     private static string Hash(byte[] value)=>Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();

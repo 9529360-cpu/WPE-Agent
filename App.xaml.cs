@@ -179,6 +179,14 @@ public partial class App : global::System.Windows.Application
             Shutdown(result.Accepted?0:31);
             return;
         }
+        if (e.Args.Any(x => string.Equals(x, "--recovery-local-acceptance", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await WpeAgent.ModelOff.RecoveryLocalAcceptanceRunnerV1.RunAsync(e.Args);
+            Log.Information("Recovery local acceptance collection completed. Success={Success}; Directory={Directory}; Errors={Errors}",result.Success,result.ArtifactDirectory,string.Join(',',result.Errors));
+            Shutdown(result.Success?0:32);
+            return;
+        }
 
         if (e.Args.Any(x => string.Equals(x, "--research-aggregate-acceptance", StringComparison.OrdinalIgnoreCase)))
         {
