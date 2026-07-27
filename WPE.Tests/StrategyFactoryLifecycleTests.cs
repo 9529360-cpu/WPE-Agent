@@ -116,7 +116,19 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
         var now=DateTime.UtcNow;var old=now-StrategyResearchAgent.ExplorationCooldown-TimeSpan.FromMinutes(1);var store=new AgentSqliteStore(DatabasePath);
         foreach(var family in Enum.GetValues<StrategyFamily>())
         for(var variant=0;variant<StrategyResearchAgent.MaximumVariantsPerFamily;variant++)
-            await store.UpsertStrategyAsync(new StrategyProfile{Id=$"BTCUSDT-{family}-{variant}",Version=$"retired-{variant}",Symbol="BTCUSDT",Family=family,Parameters=LocalStrategyParameters.For(family,variant),Lifecycle=StrategyLifecycle.Retired,CreatedAtUtc=old,StateChangedAtUtc=old},CancellationToken.None);
+        {
+            var parameters=family==StrategyFamily.MeanReversion
+                ?new LocalStrategyParameters(12+variant*4,48+variant*8,0,1.4+variant*.2,0)
+                :LocalStrategyParameters.For(family,variant);
+            var id=$"BTCUSDT-{family}-{variant}";
+            await store.UpsertStrategyAsync(new StrategyProfile{Id=id,Version=$"retired-{variant}",Symbol="BTCUSDT",Family=family,Parameters=parameters,Lifecycle=StrategyLifecycle.Retired,CreatedAtUtc=old,StateChangedAtUtc=old},CancellationToken.None);
+            var legacyJson=System.Text.Json.JsonSerializer.Serialize(new{parameters.FastPeriod,parameters.SlowPeriod,parameters.BreakoutBuffer,parameters.MeanReversionZ,parameters.NewsSentimentThreshold});
+            var legacyHash=LocalStrategyParameters.LegacyHash(parameters);var legacyLineage=StrategyLineage.Hash("BTCUSDT",family,null,null,0,legacyHash);
+            await using var connection=new SqliteConnection($"Data Source={DatabasePath}");await connection.OpenAsync();await using var command=connection.CreateCommand();
+            command.CommandText="UPDATE strategy_registry SET parameters_json=$json, parameters_hash=$hash, lineage_hash=$lineage WHERE id=$id";
+            command.Parameters.AddWithValue("$json",legacyJson);command.Parameters.AddWithValue("$hash",legacyHash);command.Parameters.AddWithValue("$lineage",legacyLineage);command.Parameters.AddWithValue("$id",id);
+            Assert.Equal(1,await command.ExecuteNonQueryAsync());
+        }
 
         await new StrategyResearchAgent(store,utcNow:()=>now).RunOnceAsync(["BTCUSDT"],new RiskLimits(),CancellationToken.None);
         var rows=await store.GetStrategiesAsync(CancellationToken.None);var explored=rows.Where(x=>x.Id.Contains("-explore-",StringComparison.Ordinal)).ToArray();
@@ -133,7 +145,7 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
     [Fact]
     public async Task LegacyFiveFieldParametersRemainReadableAfterUpgrade()
     {
-        var store=new AgentSqliteStore(DatabasePath);var family=StrategyFamily.MeanReversion;var parameters=LocalStrategyParameters.For(family,0);
+        var store=new AgentSqliteStore(DatabasePath);var family=StrategyFamily.MeanReversion;var parameters=new LocalStrategyParameters(20,64,0,1.7999999999999998,0);
         var profile=new StrategyProfile{Id="legacy-five-field",Version="v1",Symbol="BTCUSDT",Family=family,Parameters=parameters,Lifecycle=StrategyLifecycle.Retired};
         await store.UpsertStrategyAsync(profile,CancellationToken.None);
         var legacyJson=System.Text.Json.JsonSerializer.Serialize(new{parameters.FastPeriod,parameters.SlowPeriod,parameters.BreakoutBuffer,parameters.MeanReversionZ,parameters.NewsSentimentThreshold});
