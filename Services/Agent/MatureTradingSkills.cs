@@ -128,11 +128,11 @@ public sealed class StrategyResearchSkill
     private const double FeeRate=.0004,SlippageRate=.0003,FundingRate=.00005;
     public ResearchValidationResult Evaluate(MarketEvidence market,string version="wpe-core-v2")
     {
-        var candles=market.Candles;if(candles.Count<80)return new(){Symbol=market.Symbol,StrategyVersion=version,SampleSize=candles.Count,QualityScore=.5,Approved=true,Summary="insufficient_history_observe_only"};
+        var validatedAt=DateTimeOffset.UtcNow;var candles=market.Candles;if(candles.Count<80)return new(){ValidatedAtUtc=validatedAt,Symbol=market.Symbol,StrategyVersion=version,SampleSize=candles.Count,QualityScore=.5,Approved=true,Summary="insufficient_history_observe_only"};
         var returns=Simulate(candles);var split=Math.Max(1,(int)(returns.Count*.60));var train=returns.Take(split).ToArray();var test=returns.Skip(split).ToArray();var all=Metrics(returns);var outSample=Metrics(test);var walk=WalkForward(candles);var mc=MonteCarloLossProbability(returns);
         var score=Math.Clamp(.25*(all.ProfitFactor/2)+.20*Math.Max(0,all.Expectancy*100)+.20*Math.Max(0,1-all.MaxDrawdown/.20)+.20*Math.Max(0,(outSample.TotalReturn+.10)/.20)+.15*walk,0,1);
         var approved=returns.Count<5||(outSample.Expectancy>=-.001&&all.MaxDrawdown<=.20&&mc<=.75);
-        return new(){Symbol=market.Symbol,StrategyVersion=version,SampleSize=candles.Count,Trades=returns.Count,WinRate=all.WinRate,ProfitFactor=all.ProfitFactor,Expectancy=all.Expectancy,MaxDrawdown=all.MaxDrawdown,Sharpe=all.Sharpe,OutOfSampleReturn=outSample.TotalReturn,WalkForwardScore=walk,MonteCarloLossProbability=mc,QualityScore=score,Approved=approved,Summary=$"{market.Symbol} trades={returns.Count} win={all.WinRate:P0} PF={all.ProfitFactor:F2} exp={all.Expectancy:P2} DD={all.MaxDrawdown:P1} OOS={outSample.TotalReturn:P1} WF={walk:F2} MC-loss={mc:P0}"};
+        return new(){ValidatedAtUtc=validatedAt,Symbol=market.Symbol,StrategyVersion=version,SampleSize=candles.Count,Trades=returns.Count,WinRate=all.WinRate,ProfitFactor=all.ProfitFactor,Expectancy=all.Expectancy,MaxDrawdown=all.MaxDrawdown,Sharpe=all.Sharpe,OutOfSampleReturn=outSample.TotalReturn,WalkForwardScore=walk,MonteCarloLossProbability=mc,QualityScore=score,Approved=approved,Summary=$"{market.Symbol} trades={returns.Count} win={all.WinRate:P0} PF={all.ProfitFactor:F2} exp={all.Expectancy:P2} DD={all.MaxDrawdown:P1} OOS={outSample.TotalReturn:P1} WF={walk:F2} MC-loss={mc:P0}"};
     }
     private static List<double> Simulate(IReadOnlyList<CandleEvidence> c)
     {

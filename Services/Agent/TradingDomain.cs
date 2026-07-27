@@ -153,6 +153,7 @@ public sealed class IndependentRiskReview
 }
 public sealed class ResearchValidationResult
 {
+    public DateTimeOffset ValidatedAtUtc { get; init; }
     public string Symbol { get; init; } = string.Empty;
     public string StrategyVersion { get; init; } = string.Empty;
     public int SampleSize { get; init; }
