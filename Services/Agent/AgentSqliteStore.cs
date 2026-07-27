@@ -27,12 +27,12 @@ public sealed record PersistedModelOffHandoff(
     string HandoffId,string CycleId,string FromAgent,string ToAgent,string CanonicalOutputId,
     string CanonicalSha256,string Status,DateTimeOffset RecordedAtUtc,string HandoffSha256,byte[] CanonicalBytes);
 
-public sealed class AgentSqliteStore
+public sealed partial class AgentSqliteStore
 {
     private readonly string _cs;
     private readonly Func<DateTimeOffset> _utcNow;
     public AgentSqliteStore(string? path=null):this(path,null){}
-    internal AgentSqliteStore(string? path,Func<DateTimeOffset>? utcNow) { path??=AppDataPaths.File("agent.db");Directory.CreateDirectory(Path.GetDirectoryName(path)!);_cs=$"Data Source={path}";_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);Initialize();EnsureMacroReleaseColumns();EnsureExecutionQualityColumns();EnsureStrategyLineageColumns(); }
+    internal AgentSqliteStore(string? path,Func<DateTimeOffset>? utcNow) { path??=AppDataPaths.File("agent.db");Directory.CreateDirectory(Path.GetDirectoryName(path)!);_cs=$"Data Source={path}";_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);Initialize();InitializeTeacherV2();EnsureMacroReleaseColumns();EnsureExecutionQualityColumns();EnsureStrategyLineageColumns(); }
     private void EnsureMacroReleaseColumns(){using var c=new SqliteConnection(_cs);c.Open();EnsureColumn(c,"macro_observation_revisions","released_at","TEXT");EnsureColumn(c,"macro_observation_revisions","release_time_basis","TEXT NOT NULL DEFAULT 'official-endpoint-first-observed'");EnsureColumn(c,"macro_observation_revisions","release_calendar_hash","TEXT");EnsureColumn(c,"macro_observation_revisions","release_calendar_event_id","TEXT");}
     private void EnsureExecutionQualityColumns(){using var c=new SqliteConnection(_cs);c.Open();EnsureColumn(c,"execution_events","expected_price","TEXT NOT NULL DEFAULT '0'");EnsureColumn(c,"execution_events","exchange_updated_at","TEXT");EnsureColumn(c,"trade_outcomes","entry_slippage_amount","TEXT NOT NULL DEFAULT '0'");EnsureColumn(c,"trade_outcomes","exit_slippage_amount","TEXT NOT NULL DEFAULT '0'");EnsureColumn(c,"trade_outcomes","total_slippage_amount","TEXT NOT NULL DEFAULT '0'");EnsureColumn(c,"trade_outcomes","slippage_basis","TEXT NOT NULL DEFAULT 'unavailable'");EnsureColumn(c,"trade_outcomes","close_expected_price","TEXT NOT NULL DEFAULT '0'");EnsureColumn(c,"trade_outcomes","funding_amount","TEXT NOT NULL DEFAULT '0'");EnsureColumn(c,"trade_outcomes","funding_basis","TEXT NOT NULL DEFAULT 'unavailable'");}
     private void EnsureStrategyLineageColumns(){using var c=new SqliteConnection(_cs);c.Open();EnsureColumn(c,"strategy_registry","parent_strategy_id","TEXT");EnsureColumn(c,"strategy_registry","parent_strategy_version","TEXT");EnsureColumn(c,"strategy_registry","generation","INTEGER NOT NULL DEFAULT 0");EnsureColumn(c,"strategy_registry","parameters_hash","TEXT NOT NULL DEFAULT ''");EnsureColumn(c,"strategy_registry","lineage_hash","TEXT NOT NULL DEFAULT ''");}

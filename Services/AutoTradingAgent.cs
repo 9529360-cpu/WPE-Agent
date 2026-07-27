@@ -282,6 +282,8 @@ public static class AutoTradingAgent
                     positionReconciliation,protectionReconciliation,externalPositionIsolation,ct);
                 if(settings.Notification.Enabled&&settings.Notification.EventKinds.Contains(WpeAgent.Notifications.NotificationEventKind.MarketBrief.ToString(),StringComparer.OrdinalIgnoreCase)&&modelOffCycle is not null&&modelOffCycle.Outputs.TryGetValue(WpeAgent.ModelOff.ModelOffAgentV1.Research,out var canonicalResearch)&&WpeAgent.ModelOff.ModelOffEligibilityV1.IsEligibleForDownstream(canonicalResearch))
                     try{await MarketTeacherBriefPublisherV1.PublishDailyAsync(Db,notifications.Observer,canonicalResearch,exchange.ProviderId,exchange.Environment.ToString(),ct,LocalizationService.Current.CurrentCode);}catch(Exception ex){await Db.RecordErrorAsync("MARKET_TEACHER_BRIEF",ex,CancellationToken.None);}
+                if(modelOffCycle is not null)
+                    try{await MarketTeacherRuntimeV2.GenerateDueLocalLessonAsync(Db,cycle,DateTimeOffset.UtcNow,ct,LocalizationService.Current.CurrentCode);}catch(Exception ex){await Db.RecordErrorAsync("MARKET_TEACHER_V2",ex,CancellationToken.None);}
                 var gatedIntents=ApplyModelOffProductionRiskIncreaseGate(intents,modelOffCycle);
                 if(gatedIntents.Count!=intents.Count)
                 {

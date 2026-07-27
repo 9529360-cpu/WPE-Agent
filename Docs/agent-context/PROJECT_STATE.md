@@ -1,6 +1,7 @@
 # Project State
 
 - Current source: `WPE-` worktree.
+- Teacher V2 Phase A is implemented and production-wired as a non-blocking local cognitive layer after canonical seven-Agent persistence. It generates idempotent Beijing-time morning/afternoon/evening Chinese lessons from exactly seven current-cycle canonical hashes, persists append-only lessons/evidence/recommendation revisions/corrections/delivery events/memory, rejects unavailable or tampered evidence, exposes no execution authority, and preserves V1 compatibility. Focused V1/V2 tests and the full suite pass `1842/1842`. Public read-only network adapters, event lessons, separate delivery consent, history/outcome calibration and formal aggregate acceptance remain open.
 - Authoritative product/assembly version: the application project's `<Version>` (`3.6.0` at this milestone). Runtime, plugin compatibility, release reports and packaging read the generated assembly/project version.
 - `WPE-Agent-3.8.2-P0-Truth` is a historical validation label, not an assembly version or a distributable release version.
 - Mutable runtime data lives under `%LOCALAPPDATA%\WPE Agent\`; the application installation directory is treated as read-only.
