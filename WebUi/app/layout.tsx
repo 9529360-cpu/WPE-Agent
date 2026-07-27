@@ -1,21 +1,16 @@
 import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
+import './console.css'
 import { RuntimeBridge } from '@/components/runtime-bridge'
 import { I18nProvider } from '@/lib/i18n/context'
 
-const geistSans = Geist({
-  subsets: ['latin'],
-  variable: '--font-geist-sans',
-})
-const geistMono = Geist_Mono({
-  subsets: ['latin'],
-  variable: '--font-geist-mono',
-})
+const geistSans = Geist({ subsets: ['latin'], variable: '--font-geist-sans' })
+const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono' })
 
 export const metadata: Metadata = {
-  title: 'WPE Agent | Trading Command Center',
-  description: 'Local-first trading Agent command center for markets, decisions, risk, and execution state.',
+  title: 'WPE Agent | 本地金融运行控制台',
+  description: '面向私人投资者的本地金融研究与 Testnet 交易运行控制台。',
   icons: {
     icon: [
       { url: '/icon-light-32x32.png', media: '(prefers-color-scheme: light)' },
@@ -27,15 +22,17 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  colorScheme: 'dark',
-  themeColor: '#0b0d10',
+  colorScheme: 'light',
+  themeColor: '#f4f6f8',
 }
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN" className={`dark ${geistSans.variable} ${geistMono.variable}`}>
       <body className="bg-background font-sans antialiased">
-        <I18nProvider><RuntimeBridge>{children}</RuntimeBridge></I18nProvider>
+        <I18nProvider>
+          <RuntimeBridge>{children}</RuntimeBridge>
+        </I18nProvider>
       </body>
     </html>
   )
