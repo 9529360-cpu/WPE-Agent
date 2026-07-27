@@ -51,6 +51,15 @@ public sealed class LocalTestAcceptanceTests
         var artifact=LocalTestAcceptanceCanonicalizerV1.Create("risk.deterministic-gate","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(RiskGateNames));var candidate=Hash(Bytes("candidate"));Assert.True(LocalTestAcceptanceCanonicalizerV1.IsCanonical(artifact,Now,candidate));var evidence=LocalTestAcceptanceCanonicalizerV1.ToAcceptanceEvidence(artifact,Now,candidate);Assert.Equal(ModelOffAggregateAgentV1.Risk,evidence.Agent);Assert.Throws<InvalidOperationException>(()=>LocalTestAcceptanceCanonicalizerV1.Create("risk.deterministic-gate","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(RiskGateNames[..^1])));
     }
 
+    [Fact]
+    public void ExecutionEvidenceIsBoundToExecutionAndExactMutationRouteSet()
+    {
+        var artifact=LocalTestAcceptanceCanonicalizerV1.Create("execution.mutation-route","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(ExecutionMutationNames));var candidate=Hash(Bytes("candidate"));
+        Assert.True(LocalTestAcceptanceCanonicalizerV1.IsCanonical(artifact,Now,candidate));var evidence=LocalTestAcceptanceCanonicalizerV1.ToAcceptanceEvidence(artifact,Now,candidate);
+        Assert.Equal(ModelOffAggregateAgentV1.Execution,evidence.Agent);Assert.Equal("execution.mutation-route",evidence.RequirementId);
+        Assert.Throws<InvalidOperationException>(()=>LocalTestAcceptanceCanonicalizerV1.Create("execution.mutation-route","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(ExecutionMutationNames[..^1])));
+    }
+
     private static LocalTestAcceptanceArtifactV1 Create(string[] names)=>LocalTestAcceptanceCanonicalizerV1.Create("market.canonical-contract","3.6.0",Bytes("candidate"),Bytes("tests"),Trx(names));
     private static byte[] Trx(string[] names,string outcome="Passed")
     {
@@ -72,6 +81,10 @@ public sealed class LocalTestAcceptanceTests
     private static readonly string[] RiskGateNames=
     [
         "WPE.Tests.ModelOffStrategyRiskContractTests.AvailableInputsProduceStableIntentAndRuleLedgerHashes","WPE.Tests.ModelOffStrategyRiskContractTests.EmptyMalformedFutureAndExpiredInputsBlockRiskIncrease","WPE.Tests.ModelOffStrategyRiskContractTests.MainnetUnknownActionAndInvalidTimesAlwaysBlock","WPE.Tests.ModelOffStrategyRiskContractTests.RiskReductionDoesNotBecomeRiskIncreaseAndStillRecordsFailedInputs","WPE.Tests.RiskGateTests.Approve_RejectsQuantityAboveConfiguredCap","WPE.Tests.RiskGateTests.Approve_RejectsWhenRiskSnapshotIsStale","WPE.Tests.RiskGateTests.Planner_RejectsRiskIncreaseWhenEvidenceIsIncomplete"
+    ];
+    private static readonly string[] ExecutionMutationNames=
+    [
+        "WPE.Tests.TradingExecutionGatewayTests.Auto_ValidTestnetRiskReceiptUsesReliableExecutor","WPE.Tests.TradingExecutionGatewayTests.AutomaticOrderObserverConfirmsMatchingExchangeOrderWithoutMutation","WPE.Tests.TradingExecutionGatewayTests.ProductionCompositionRoot_WiresTradingExecutionGatewayToReliableOrderExecutor","WPE.Tests.TradingExecutionGatewayTests.ReliableOrderExecutor_ImplementsSingleMutationBoundary","WPE.Tests.TradingExecutionGatewayTests.TestnetSmoke_ExplicitAuthorizationBindsOpeningAndCleanupToOneCorrelation"
     ];
     private static byte[] Bytes(string value)=>Encoding.UTF8.GetBytes(value);
     private static string Hash(byte[] value)=>Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
