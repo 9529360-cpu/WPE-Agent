@@ -12,7 +12,7 @@
 > - 审计只记录已发生的事实、输入、决定、理由、状态变化和结果，不承担授权或审批职能。
 > - Mainnet 继续禁用。当前桌面 Binance API 被视为 Testnet 假钱环境，且已明确授权系统执行自动 smoke；本文不代表 smoke 已执行或已通过。
 > - `model_off` 成熟度的当前机器权威是 [`model-off-capability-maturity.json`](model-off-capability-maturity.json)。它保留 13 个产品能力条目并映射到 7 个运行时聚合；聚合不得删除条目或提升条目成熟度。任何核心条目的 `no` / `partial` 都明确表示未实现且未验收。
-> - Teacher V1 的确定性每日简报保持已验收边界；Teacher V2 Phase A 已实现本地契约、北京时间三时段计划、七 Agent 规范证据读取、中文确定性课程、只追加存储、研究推荐生命周期、数字溯源防篡改及生产周期归档，设计见 [`teacher-agent-v2-design.md`](teacher-agent-v2-design.md)。公共只读网络、事件课程、独立通知许可和完整正式验收仍待后续阶段。Teacher 永远不获得交易权。Mainnet 保持 `disabled`，不得由任何成熟度或聚合结论隐式启用。
+> - Teacher V1 保持兼容；Teacher V2 的本地优先加密范围已于 2026-07-27 正式验收，覆盖三时段/事件课程、七 Agent 证据、公开只读加密证据、更正链、条件研究候选、点时结果台账和独立通知许可，证据见 [`../validation/teacher-v2-acceptance-2026-07-27.md`](../validation/teacher-v2-acceptance-2026-07-27.md)。股票、跨资产、官方新闻/宏观事件和商业数据权利仍是后续独立范围。Teacher 永远不获得交易权。Mainnet 保持 `disabled`。
 >
 > 详细验收合同见 [`private-autonomous-deployment.md`](private-autonomous-deployment.md)。
 

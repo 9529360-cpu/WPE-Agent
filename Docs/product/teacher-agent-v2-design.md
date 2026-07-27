@@ -1,6 +1,6 @@
 # Teacher Agent V2 Product And System Design
 
-Status: approved product design; implementation and formal acceptance are pending.
+Status: the bounded local-first crypto Teacher scope was formally accepted on 2026-07-27; cross-asset/news expansion remains pending. Evidence: [`../validation/teacher-v2-acceptance-2026-07-27.md`](../validation/teacher-v2-acceptance-2026-07-27.md).
 
 This document defines the full Teacher Agent that extends the accepted bounded `MarketTeacherBriefV1`. V1 remains compatible and continues to publish one deterministic opt-in market brief. V2 adds scheduled lessons, evidence-based recommendations, historical teaching, read-only network research, and seven-Agent explanations without entering the trading authority chain.
 
