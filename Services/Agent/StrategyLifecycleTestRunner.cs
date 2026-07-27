@@ -14,7 +14,7 @@ public static class StrategyLifecycleTestRunner
         void Check(string name, bool condition, string detail) { if (!condition) passed = false; cases.Add($"{(condition ? "PASS" : "FAIL")} {name}: {detail}"); }
         var governor = new StrategyGovernor();
         var profile = new StrategyProfile { Id = "TEST", Symbol = "BTCUSDT", Family = StrategyFamily.TrendBreakout, Parameters = LocalStrategyParameters.For(StrategyFamily.TrendBreakout, 0), Lifecycle = StrategyLifecycle.Draft };
-        var good = new StrategyValidation("TEST", 1000, 80, .58, 1.5, .002, .12, 1.2, .08, .7, .2, .78, true, "good");
+        var good = new StrategyValidation("TEST", 1000, 80, .58, 1.5, .002, .12, 1.2, .08, .7, .2, .78, true, "good",-.02,.0005,4,4);
         Check("严格验证晋级到影子", governor.NextLifecycle(profile, good) == StrategyLifecycle.Shadow, "backtest passed -> shadow");
         profile.Lifecycle = StrategyLifecycle.Shadow; profile.QualityScore = .78; profile.Expectancy = .002; profile.MaxDrawdown = .12; profile.ShadowObservations = StrategyGovernor.MinimumShadowObservations; profile.FailureStreak = 0;
         Check("影子运行达到门槛才上架", governor.NextLifecycle(profile) == StrategyLifecycle.Active, "shadow gate -> active");

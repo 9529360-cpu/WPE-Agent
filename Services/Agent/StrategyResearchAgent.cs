@@ -145,13 +145,31 @@ public sealed class StrategyResearchAgent
 
 internal sealed class HistoricalResearchEngine
 {
+    internal sealed record StrategyRobustness(double WorstRegimeReturn,double TrainTestExpectancyGap,int PassingRegimes,int EvaluatedRegimes,bool Passed,double Score);
+
     public StrategyValidation Validate(StrategyProfile profile, IReadOnlyList<CandleEvidence> candles, IReadOnlyList<NewsFeature> news, RiskLimits limits)
     {
         if (candles.Count < 500) return new(profile.Id, candles.Count, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, false, "insufficient hourly history");
         var returns = Simulate(profile, candles, news); var split = Math.Clamp((int)(returns.Count * .65), 1, returns.Count); var train = returns.Take(split).ToArray(); var test = returns.Skip(split).ToArray();
-        var all = Metrics(returns); var oos = Metrics(test); var walk = WalkForward(profile, candles, news); var mc = MonteCarlo(returns); var score = Math.Clamp(.20 * Math.Min(1, all.ProfitFactor / 1.5) + .20 * Math.Max(0, (oos.TotalReturn + .10) / .30) + .20 * (1 - Math.Min(1, all.MaxDrawdown / .25)) + .20 * walk + .20 * (1 - mc), 0, 1);
-        var passed = returns.Count(x => x.Trade) >= Math.Max(StrategyGovernor.MinimumValidationTrades, limits.MinimumBacktestTrades) && oos.Expectancy > 0 && all.ProfitFactor >= 1.1 && all.MaxDrawdown <= .25 && walk >= .5 && mc <= .45;
-        return new(profile.Id, candles.Count, returns.Count(x => x.Trade), all.WinRate, all.ProfitFactor, all.Expectancy, all.MaxDrawdown, all.Sharpe, oos.TotalReturn, walk, mc, score, passed, $"{profile.Id} trades={returns.Count(x => x.Trade)} OOS={oos.TotalReturn:P1} PF={all.ProfitFactor:F2} DD={all.MaxDrawdown:P1} WF={walk:F2} MC={mc:P0} passed={passed}");
+        var all = Metrics(returns); var trainMetrics=Metrics(train);var oos = Metrics(test); var walk = WalkForward(profile, candles, news); var mc = MonteCarlo(returns);var robustness=EvaluateRobustness(returns,trainMetrics.Expectancy,oos.Expectancy);
+        var score = Math.Clamp(.16 * Math.Min(1, all.ProfitFactor / 1.5) + .16 * Math.Max(0, (oos.TotalReturn + .10) / .30) + .16 * (1 - Math.Min(1, all.MaxDrawdown / .25)) + .16 * walk + .16 * (1 - mc)+.20*robustness.Score, 0, 1);
+        var passed = returns.Count(x => x.Trade) >= Math.Max(StrategyGovernor.MinimumValidationTrades, limits.MinimumBacktestTrades) && oos.Expectancy > 0 && all.ProfitFactor >= 1.1 && all.MaxDrawdown <= .25 && walk >= .5 && mc <= .45&&robustness.Passed;
+        return new(profile.Id, candles.Count, returns.Count(x => x.Trade), all.WinRate, all.ProfitFactor, all.Expectancy, all.MaxDrawdown, all.Sharpe, oos.TotalReturn, walk, mc, score, passed, $"{profile.Id} trades={returns.Count(x => x.Trade)} OOS={oos.TotalReturn:P1} PF={all.ProfitFactor:F2} DD={all.MaxDrawdown:P1} WF={walk:F2} MC={mc:P0} regimes={robustness.PassingRegimes}/{robustness.EvaluatedRegimes} worst={robustness.WorstRegimeReturn:P1} gap={robustness.TrainTestExpectancyGap:P3} passed={passed}",robustness.WorstRegimeReturn,robustness.TrainTestExpectancyGap,robustness.PassingRegimes,robustness.EvaluatedRegimes);
+    }
+
+    internal static StrategyRobustness EvaluateRobustness(IReadOnlyList<(double Return,bool Trade)> values,double? trainExpectancy=null,double? testExpectancy=null)
+    {
+        const int folds=StrategyGovernor.RequiredEvaluatedRegimes;if(values.Count<folds)return new(-1,1,0,0,false,0);
+        var metrics=new List<(double Return,double Drawdown,double Expectancy,int Trades)>();
+        for(var fold=0;fold<folds;fold++)
+        {
+            var start=fold*values.Count/folds;var end=(fold+1)*values.Count/folds;var slice=values.Skip(start).Take(end-start).ToArray();var result=Metrics(slice);
+            metrics.Add((result.TotalReturn,result.MaxDrawdown,result.Expectancy,slice.Count(x=>x.Trade)));
+        }
+        var split=Math.Clamp((int)(values.Count*.65),1,values.Count);var train=trainExpectancy??Metrics(values.Take(split).ToArray()).Expectancy;var test=testExpectancy??Metrics(values.Skip(split).ToArray()).Expectancy;
+        var gap=Math.Abs(train-test);var passing=metrics.Count(x=>x.Trades>0&&x.Return>=-.08&&x.Drawdown<=.25&&x.Expectancy>=-.0005);var worst=metrics.Min(x=>x.Return);
+        var passed=passing>=StrategyGovernor.MinimumPassingRegimes&&worst>=StrategyGovernor.MinimumWorstRegimeReturn&&gap<=StrategyGovernor.MaximumTrainTestExpectancyGap;var downside=Math.Max(0,-worst);var score=Math.Clamp((passing/(double)folds)*.5+Math.Max(0,1-downside/Math.Abs(StrategyGovernor.MinimumWorstRegimeReturn))*.25+Math.Max(0,1-gap/StrategyGovernor.MaximumTrainTestExpectancyGap)*.25,0,1);
+        return new(worst,gap,passing,folds,passed,score);
     }
 
     public StrategySignal Signal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)

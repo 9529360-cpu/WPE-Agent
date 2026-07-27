@@ -9,12 +9,20 @@ public sealed class StrategyGovernor
     public const double MinimumQualityScore = .62;
     public const double MaximumPromotedDrawdown = .20;
     public const double MaximumDemotionDrawdown = .30;
+    public const int RequiredEvaluatedRegimes = 4;
+    public const int MinimumPassingRegimes = 3;
+    public const double MinimumWorstRegimeReturn = -.12;
+    public const double MaximumTrainTestExpectancyGap = .003;
 
     public bool CanPromote(StrategyProfile profile, StrategyValidation validation)
         => validation.Passed
            && validation.Trades >= MinimumValidationTrades
            && validation.QualityScore >= MinimumQualityScore
-           && validation.MaxDrawdown <= MaximumPromotedDrawdown;
+           && validation.MaxDrawdown <= MaximumPromotedDrawdown
+           && validation.EvaluatedRegimes == RequiredEvaluatedRegimes
+           && validation.PassingRegimes >= MinimumPassingRegimes
+           && validation.WorstRegimeReturn >= MinimumWorstRegimeReturn
+           && validation.TrainTestExpectancyGap <= MaximumTrainTestExpectancyGap;
 
     public bool CanActivateFromShadow(StrategyProfile profile)
         => profile.Lifecycle == StrategyLifecycle.Shadow

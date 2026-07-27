@@ -92,7 +92,11 @@ public sealed record StrategyValidation(
     double MonteCarloLossProbability,
     double QualityScore,
     bool Passed,
-    string Summary);
+    string Summary,
+    double WorstRegimeReturn = 0,
+    double TrainTestExpectancyGap = 0,
+    int PassingRegimes = 0,
+    int EvaluatedRegimes = 0);
 
 public sealed record StrategyResearchSnapshot(
     string Status,
