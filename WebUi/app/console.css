@@ -1,26 +1,26 @@
 :root {
-  --wpe-bg: #f2f5f7;
-  --wpe-surface: #ffffff;
-  --wpe-surface-subtle: #f7f9fa;
-  --wpe-surface-strong: #e9eef1;
-  --wpe-border: #d7dfe3;
-  --wpe-border-strong: #becbd1;
-  --wpe-text: #142027;
-  --wpe-text-secondary: #53636b;
-  --wpe-text-muted: #7a8a92;
-  --wpe-blue: #155b72;
-  --wpe-blue-soft: #e6f2f4;
-  --wpe-green: #08765b;
-  --wpe-green-soft: #e2f3ed;
-  --wpe-amber: #8a5a12;
-  --wpe-amber-soft: #fbf2df;
-  --wpe-red: #9b2c2c;
-  --wpe-red-soft: #fbeaea;
-  --wpe-shadow: 0 16px 36px rgba(16, 32, 39, 0.12);
+  --wpe-bg: #111719;
+  --wpe-surface: #1a2326;
+  --wpe-surface-subtle: #202b2e;
+  --wpe-surface-strong: #273438;
+  --wpe-border: #334247;
+  --wpe-border-strong: #465a60;
+  --wpe-text: #e8efed;
+  --wpe-text-secondary: #aabbb7;
+  --wpe-text-muted: #7f918e;
+  --wpe-blue: #55b8d0;
+  --wpe-blue-soft: #19343b;
+  --wpe-green: #47c6a0;
+  --wpe-green-soft: #18372f;
+  --wpe-amber: #e2ac55;
+  --wpe-amber-soft: #3a2e1d;
+  --wpe-red: #ef7e82;
+  --wpe-red-soft: #3d2428;
+  --wpe-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
   --wpe-sidebar: 236px;
   --wpe-radius: 7px;
   --wpe-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 * {
@@ -70,8 +70,8 @@ summary:focus-visible {
   flex-direction: column;
   width: var(--wpe-sidebar);
   height: 100dvh;
-  border-right: 1px solid #26343a;
-  background: #152329;
+  border-right: 1px solid #304044;
+  background: #0c1214;
   color: #e6edf3;
 }
 
@@ -207,7 +207,7 @@ summary:focus-visible {
   gap: 18px;
   padding: 8px 18px;
   border-bottom: 1px solid var(--wpe-border);
-  background: rgba(255, 255, 255, 0.96);
+  background: rgba(20, 28, 30, 0.96);
   backdrop-filter: blur(8px);
 }
 
@@ -329,7 +329,7 @@ summary:focus-visible {
   border: 1px solid var(--wpe-border);
   border-radius: var(--wpe-radius);
   background: var(--wpe-surface);
-  box-shadow: 0 1px 2px rgba(20, 32, 39, 0.035);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
 }
 
 .wpe-panel--nested {
@@ -479,7 +479,7 @@ summary:focus-visible {
   border: 1px solid var(--wpe-border);
   border-radius: 4px;
   background: var(--wpe-surface-subtle);
-  color: #384655;
+  color: #b8cbc7;
   font-size: 10px;
   text-overflow: ellipsis;
   vertical-align: middle;
@@ -566,12 +566,12 @@ summary:focus-visible {
 }
 
 .wpe-button--primary {
-  border-color: #1f527e;
-  background: var(--wpe-blue);
-  color: #ffffff;
+  border-color: #3fa88b;
+  background: #1f806b;
+  color: #f4fffb;
 }
 
-.wpe-button--primary:hover:not(:disabled) { background: #1f4e76; }
+.wpe-button--primary:hover:not(:disabled) { background: #29977f; }
 
 .wpe-button--secondary {
   border-color: var(--wpe-border-strong);
@@ -585,8 +585,8 @@ summary:focus-visible {
 }
 
 .wpe-button--danger-outline {
-  border-color: #d9a6a6;
-  background: #ffffff;
+  border-color: #8f4e54;
+  background: #2d1e21;
   color: var(--wpe-red);
 }
 
@@ -627,8 +627,8 @@ summary:focus-visible {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: #f1f4f7;
-  color: #465462;
+  background: #222e31;
+  color: #b6c6c3;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -640,7 +640,7 @@ summary:focus-visible {
 }
 
 .wpe-table tbody tr:hover {
-  background: #fafbfd;
+  background: #202c2f;
 }
 
 .wpe-table .is-right {
@@ -718,8 +718,8 @@ summary:focus-visible {
   max-width: 760px;
   margin: 80px auto;
   padding: 24px;
-  border-color: #e7d2a7;
-  background: #fffaf0;
+  border-color: #765d34;
+  background: var(--wpe-amber-soft);
 }
 
 .wpe-startup {
@@ -734,9 +734,9 @@ summary:focus-visible {
   overflow: hidden;
   min-height: 280px;
   padding: 48px;
-  border: 1px solid #b8c8cd;
+  border: 1px solid #3f555a;
   border-radius: 8px;
-  background: #ffffff;
+  background: #192326;
   box-shadow: 0 18px 48px rgba(22, 43, 50, 0.08);
 }
 
@@ -840,8 +840,8 @@ summary:focus-visible {
 }
 
 .wpe-environment button.is-active {
-  border-color: #a9c7cf;
-  background: #ffffff;
+  border-color: #4f7880;
+  background: #263438;
   color: var(--wpe-blue);
   box-shadow: 0 1px 2px rgba(20, 32, 39, 0.08);
 }
@@ -1021,8 +1021,8 @@ summary:focus-visible {
 }
 
 .wpe-agent-node:hover {
-  border-color: #a9bfd3;
-  background: #f2f7fb;
+  border-color: #4f747b;
+  background: #233135;
 }
 
 .wpe-agent-node__index {
@@ -1236,7 +1236,7 @@ summary:focus-visible {
 
 .wpe-authority-banner p {
   margin-top: 4px;
-  color: #3e5a70;
+  color: #a9c6cd;
   line-height: 1.55;
 }
 
@@ -1282,7 +1282,7 @@ summary:focus-visible {
 .wpe-prose {
   margin-top: 10px;
   overflow-wrap: anywhere;
-  color: #2f3c48;
+  color: #c4d0cd;
   line-height: 1.75;
   white-space: pre-wrap;
 }
@@ -1435,9 +1435,9 @@ summary {
 
 .wpe-readonly-banner,
 .wpe-authority-notice {
-  border-color: #b9cfe2;
+  border-color: #3e6871;
   background: var(--wpe-blue-soft);
-  color: #304f67;
+  color: #b8d7de;
 }
 
 .wpe-inline-note {
@@ -1473,7 +1473,7 @@ summary {
   gap: 16px;
   margin-top: 14px;
   padding: 14px;
-  border: 1px solid #b9cfe2;
+  border: 1px solid #3e6871;
   border-radius: 5px;
   background: var(--wpe-blue-soft);
 }
@@ -1485,7 +1485,7 @@ summary {
 
 .wpe-settings-action p {
   margin-top: 4px;
-  color: #3e5a70;
+  color: #a9c6cd;
   font-size: 11px;
 }
 
@@ -1736,7 +1736,7 @@ summary {
     grid-template-columns: repeat(5, 1fr);
     min-height: 60px;
     border-top: 1px solid var(--wpe-border-strong);
-    background: rgba(255, 255, 255, 0.98);
+    background: rgba(18, 26, 28, 0.98);
   }
 
   .wpe-mobile-nav button {
