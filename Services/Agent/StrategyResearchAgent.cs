@@ -5,6 +5,8 @@ namespace 币安量化机器人.Services.Agent;
 
 public sealed class StrategyResearchAgent
 {
+    internal const int MaximumVariantsPerFamily = 6;
+    internal const int TargetConcurrentCandidatesPerFamily = 2;
     public static WpeAgent.ModelOff.ModelOffAgentOutputV1 ProduceTechnicalModelOff(ModelOffResearchInputV1 input)
         => input.Capability == ModelOffResearchCapabilityV1.Technical
             ? DeterministicResearchCapabilityProducerV1.Produce(input)
@@ -34,6 +36,11 @@ public sealed class StrategyResearchAgent
     public async Task<StrategyResearchSnapshot> RunOnceAsync(IReadOnlyList<string> symbols, RiskLimits limits, CancellationToken ct)
     {
         var candidates = await EnsureCandidatesAsync(symbols, ct);
+        foreach(var profile in candidates.Where(x=>x.Lifecycle==StrategyLifecycle.Degraded).ToArray())
+        {
+            var previous=profile.Lifecycle;profile.Lifecycle=StrategyLifecycle.Retired;profile.StateChangedAtUtc=DateTime.UtcNow;profile.LastReason="degraded strategy archived before bounded replacement";
+            await _database.UpsertStrategyAsync(profile,ct);await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
+        }
         var newsBySymbol=new Dictionary<string,IReadOnlyList<NewsFeature>>(StringComparer.Ordinal);
         var validated = 0;
         foreach (var profile in candidates.Where(x => x.Lifecycle == StrategyLifecycle.Draft || (x.BuiltIn && x.ValidationTrades == 0)).ToArray())
@@ -49,12 +56,15 @@ public sealed class StrategyResearchAgent
             var validationCompletedAt = DateTime.UtcNow;
             var coverageDays = candles.Count < 2 ? 0 : Math.Max(0, (int)Math.Floor((candles[^1].OpenTime.ToUniversalTime() - candles[0].OpenTime.ToUniversalTime()).TotalDays));
             await _database.SaveBacktestRunAsync(new PersistedBacktestRun(Guid.NewGuid().ToString("N"),profile.Id,profile.Version,profile.Symbol,validation.Passed?"PASSED":"FAILED",validationCompletedAt,coverageDays,validation.Trades,validation.OutOfSampleReturn,validation.MaxDrawdown,validation.Sharpe),ct);
-            var next = _governor.NextLifecycle(profile, validation);
+            var previous=profile.Lifecycle;
+            var next = profile.BuiltIn&&profile.ValidationTrades==0
+                ? (_governor.CanPromote(profile,validation)?StrategyLifecycle.Shadow:StrategyLifecycle.Retired)
+                : _governor.NextLifecycle(profile, validation);
             profile.QualityScore = validation.QualityScore; profile.Expectancy = validation.Expectancy;
             profile.MaxDrawdown = validation.MaxDrawdown; profile.Sharpe = validation.Sharpe; profile.ValidationTrades = validation.Trades;
             if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = DateTime.UtcNow; profile.LastReason = validation.Summary; }
             await _database.UpsertStrategyAsync(profile, ct);
-            await _database.RecordStrategyLifecycleAsync(profile, validation.Summary, ct);
+            if(next!=previous)await _database.RecordStrategyLifecycleAsync(profile,previous,validation.Summary,ct);
             validated++;
         }
 
@@ -80,11 +90,10 @@ public sealed class StrategyResearchAgent
             var performance = await _database.GetStrategyObservationPerformanceAsync(profile.Id, ct);
             profile.ShadowObservations = performance.Observations; profile.Expectancy = performance.Expectancy;
             profile.MaxDrawdown = performance.MaxDrawdown; profile.FailureStreak = performance.FailureStreak; profile.QualityScore = performance.QualityScore;
-            var next = _governor.NextLifecycle(profile);
+            var previous=profile.Lifecycle;var next = _governor.NextLifecycle(profile);
             if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = DateTime.UtcNow; profile.LastReason = $"local performance: {performance.Summary}"; }
             await _database.UpsertStrategyAsync(profile, ct);
-            if (next != StrategyLifecycle.Active && profile.Lifecycle == StrategyLifecycle.Degraded)
-                await _database.RecordStrategyLifecycleAsync(profile, profile.LastReason, ct);
+            if(next!=previous)await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
         }
         // Deterministic failover: a degraded strategy never remains the selected
         // strategy when a validated Shadow challenger has passed the same gates.
@@ -102,7 +111,7 @@ public sealed class StrategyResearchAgent
             challenger.StateChangedAtUtc = DateTime.UtcNow;
             challenger.LastReason = "deterministic failover from degraded strategy";
             await _database.UpsertStrategyAsync(challenger, ct);
-            await _database.RecordStrategyLifecycleAsync(challenger, challenger.LastReason, ct);
+            await _database.RecordStrategyLifecycleAsync(challenger,StrategyLifecycle.Shadow,challenger.LastReason,ct);
         }
         return await _database.GetStrategySnapshotAsync(ct);
     }
@@ -114,14 +123,17 @@ public sealed class StrategyResearchAgent
     {
         var existing = await _database.GetStrategiesAsync(ct);
         var result = new List<StrategyProfile>(existing);
-        foreach (var symbol in symbols.Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var symbolValue in symbols.Distinct(StringComparer.OrdinalIgnoreCase))
         foreach (var family in Enum.GetValues<StrategyFamily>())
-        for (var variant = 0; variant < 2; variant++)
         {
-            var id = $"{symbol.ToUpperInvariant()}-{family}-{variant}";
-            if (result.Any(x => x.Id.Equals(id, StringComparison.OrdinalIgnoreCase))) continue;
-            var profile = new StrategyProfile { Id = id, Version = $"{family.ToString().ToLowerInvariant()}-{variant + 1}", Symbol = symbol.ToUpperInvariant(), Family = family, Parameters = LocalStrategyParameters.For(family, variant), Lifecycle = family == StrategyFamily.TrendBreakout && variant == 0 ? StrategyLifecycle.Active : StrategyLifecycle.Draft, BuiltIn = family == StrategyFamily.TrendBreakout && variant == 0, LastReason = "deterministic local seed" };
-            result.Add(profile); await _database.UpsertStrategyAsync(profile, ct);
+            var symbol=symbolValue.ToUpperInvariant();
+            var live=result.Count(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family&&x.Lifecycle is StrategyLifecycle.Draft or StrategyLifecycle.Shadow or StrategyLifecycle.Active);
+            for(var variant=0;live<TargetConcurrentCandidatesPerFamily&&variant<MaximumVariantsPerFamily;variant++)
+            {
+                var id=$"{symbol}-{family}-{variant}";if(result.Any(x=>x.Id.Equals(id,StringComparison.OrdinalIgnoreCase)))continue;
+                var profile=new StrategyProfile{Id=id,Version=$"{family.ToString().ToLowerInvariant()}-{variant+1}",Symbol=symbol,Family=family,Parameters=LocalStrategyParameters.For(family,variant),Lifecycle=StrategyLifecycle.Draft,BuiltIn=family==StrategyFamily.TrendBreakout&&variant==0,LastReason=variant<2?"deterministic local seed":"bounded deterministic replacement"};
+                result.Add(profile);await _database.UpsertStrategyAsync(profile,ct);live++;
+            }
         }
         return result;
     }

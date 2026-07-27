@@ -40,6 +40,5 @@ public sealed class StrategyGovernor
     public StrategyProfile SelectActive(IEnumerable<StrategyProfile> profiles, string symbol)
         => profiles.Where(x => x.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase) && x.Lifecycle == StrategyLifecycle.Active)
             .OrderByDescending(x => x.QualityScore).ThenByDescending(x => x.Expectancy).FirstOrDefault()
-           ?? profiles.FirstOrDefault(x => x.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase) && x.BuiltIn)
            ?? throw new InvalidOperationException($"No approved local strategy is available for {symbol}.");
 }
