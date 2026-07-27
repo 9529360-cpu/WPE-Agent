@@ -45,6 +45,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     private readonly IExchangeAdapter _ex;private readonly AgentSqliteStore _db;private readonly RiskLimits _limits;private readonly IOrderPollScheduler _poll;
     private readonly IProviderCapabilityPrecondition? _capabilityPrecondition;
     private readonly Func<ExecutionIntent,(Instrument Instrument,ExchangeCapability? Capability)>? _capabilityResolver;
+    private readonly Func<string,CancellationToken,Task<ExchangeCapability?>>? _capabilityRefresh;
     private readonly bool _testnet;
     private IConfirmedNotificationObserver _notifications=NullConfirmedNotificationObserver.Instance;
     public ReliableOrderExecutor(IExchangeAdapter ex,AgentSqliteStore db,RiskLimits? limits=null,IOrderPollScheduler? poll=null):this(ex,db,limits,poll,false){}
@@ -57,7 +58,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     public ReliableOrderExecutor(IExchangeAdapter ex,AgentSqliteStore db,RiskLimits limits,IOrderPollScheduler poll,IProviderCapabilityPrecondition capabilityPrecondition,Func<ExecutionIntent,(Instrument Instrument,ExchangeCapability? Capability)> capabilityResolver,bool testnet=true,IConfirmedNotificationObserver? notifications=null)
         :this(ex,db,limits,poll,true){_capabilityPrecondition=capabilityPrecondition??throw new ArgumentNullException(nameof(capabilityPrecondition));_capabilityResolver=capabilityResolver??throw new ArgumentNullException(nameof(capabilityResolver));_testnet=testnet;_notifications=notifications??NotificationRuntimeFactory.CurrentObserver;}
     public ReliableOrderExecutor(IExchangeAdapter ex,AgentSqliteStore db,IOrderPollScheduler poll):this(ex,db,null,poll){}
-    public ReliableOrderExecutor(IExchangeAdapter ex,AgentSqliteStore db,RiskLimits limits,IOrderPollScheduler poll,IReadOnlyDictionary<string,ExchangeCapability> capabilities,bool testnet=true,IConfirmedNotificationObserver? notifications=null)
+    public ReliableOrderExecutor(IExchangeAdapter ex,AgentSqliteStore db,RiskLimits limits,IOrderPollScheduler poll,IReadOnlyDictionary<string,ExchangeCapability> capabilities,bool testnet=true,IConfirmedNotificationObserver? notifications=null,Func<string,CancellationToken,Task<ExchangeCapability?>>? capabilityRefresh=null)
         :this(ex,db,limits,poll,new ProviderCapabilityPrecondition(),intent =>
         {
             var symbol = intent.Symbol;
@@ -66,7 +67,12 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
                 ? new Instrument(symbol, symbol, string.Empty, string.Empty)
                 : new Instrument(capability.CanonicalSymbol, capability.NativeSymbol, capability.ExchangeId, capability.ProviderId, capability.MarketType);
             return (instrument, capability);
-        },testnet,notifications){}
+        },testnet,notifications)
+    {
+        _capabilityRefresh=capabilityRefresh??(ex is IExchangeProvider provider
+            ?async(symbol,ct)=>{var refreshed=await new ProviderCapabilityProbe().ProbeAsync(provider,[symbol],testnet,ct);return refreshed.GetValueOrDefault(symbol);}
+            :null);
+    }
     public bool IsTestnet=>_ex.Environment==ExchangeEnvironment.Testnet;
     public string ProviderId=>_ex is IExchangeProvider provider?provider.ProviderId:"local";
     public string AccountId=>_ex is IExchangeProvider provider?provider.ConnectionId:"local";
@@ -230,6 +236,11 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     {
         EnsureCapability(new ExecutionIntent(symbol,PositionSide.Long,0,true,0,0,"CAPABILITY-CHECK","Provider mutation capability check"));
     }
+    private async Task EnsureFreshCapabilityAsync(ExecutionIntent intent,CancellationToken ct)
+    {
+        if(_capabilityRefresh is null){EnsureCapability(intent);return;}
+        var capability=await _capabilityRefresh(intent.Symbol,ct);var instrument=capability is null?new Instrument(intent.Symbol,intent.Symbol,string.Empty,string.Empty):new Instrument(capability.CanonicalSymbol,capability.NativeSymbol,capability.ExchangeId,capability.ProviderId,capability.MarketType);var result=(_capabilityPrecondition??new ProviderCapabilityPrecondition()).Check(instrument,capability,_testnet);if(!result.Allowed)throw new InvalidOperationException($"Execution.CapabilityBlocked: {result.Reason}");
+    }
 
     public async Task<string> ReplaceProtectionAsync(string cycle,ProtectionAdjustment adjustment,CancellationToken ct)
     {
@@ -332,7 +343,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     private async Task<ExchangeOrder> WaitAndCancelOnTimeoutAsync(string symbol,string clientOrderId,ExchangeOrder order,CancellationToken ct)
     {
         var deadline=_poll.UtcNow+_poll.OrderTimeout;while(!IsTerminal(order.Status)&&_poll.UtcNow<deadline){await _poll.DelayAsync(ct);order=await _ex.FindOrderAsync(symbol,clientOrderId,ct)??order;}if(IsTerminal(order.Status))return order;
-        EnsureCapability(symbol);var cancelFailed=false;try{await _ex.CancelOrderAsync(symbol,order.OrderId,ct);}catch{cancelFailed=true;}
+        await EnsureFreshCapabilityAsync(new ExecutionIntent(symbol,order.PositionSide??PositionSide.Long,0,true,0,0,clientOrderId,"timeout cancellation capability refresh"),ct);var cancelFailed=false;try{await _ex.CancelOrderAsync(symbol,order.OrderId,ct);}catch{cancelFailed=true;}
         var observed=await _ex.FindOrderAsync(symbol,clientOrderId,ct)??order with{Status="UNKNOWN"};var postCancelDeadline=_poll.UtcNow+_poll.PostCancelWindow;while(_poll.UtcNow<postCancelDeadline){await _poll.DelayAsync(ct);var latest=await _ex.FindOrderAsync(symbol,clientOrderId,ct);if(latest is not null)observed=latest;}
         if(!IsTerminal(observed.Status)&&observed.Status!="FILLED")observed=observed with{Status=cancelFailed?"UNKNOWN":observed.Status};return observed;
     }

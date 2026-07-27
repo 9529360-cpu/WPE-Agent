@@ -187,6 +187,22 @@ public partial class App : global::System.Windows.Application
             Shutdown(result.Success?0:32);
             return;
         }
+        if (e.Args.Any(x => string.Equals(x, "--recovery-aggregate-acceptance", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await WpeAgent.ModelOff.RecoveryAggregateAcceptanceRunnerV1.RunAsync();
+            Log.Information("Recovery aggregate acceptance collection completed. Success={Success}; Directory={Directory}; Errors={Errors}",result.Success,result.ArtifactDirectory,string.Join(',',result.Errors));
+            Shutdown(result.Success?0:33);
+            return;
+        }
+        if (e.Args.Any(x => string.Equals(x, "--recovery-acceptance-assess", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await WpeAgent.ModelOff.RecoveryAcceptanceAssessmentRunnerV1.RunAsync(e.Args);
+            Log.Information("Recovery aggregate assessment completed. Accepted={Accepted}; Report={Report}; Errors={Errors}",result.Accepted,result.ReportPath,string.Join(',',result.Errors));
+            Shutdown(result.Accepted?0:34);
+            return;
+        }
 
         if (e.Args.Any(x => string.Equals(x, "--research-aggregate-acceptance", StringComparison.OrdinalIgnoreCase)))
         {

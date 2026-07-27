@@ -180,7 +180,10 @@ public sealed class TradingExecutionGatewayTests:IDisposable
         var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
         var source=File.ReadAllText(Path.Combine(root,"Services","AutoTradingAgent.cs"));
 
-        Assert.Contains("var executor=new ReliableOrderExecutor(exchange,Db,settings.Risk,SystemOrderPollScheduler.Instance,capabilitySnapshot,true);",source,StringComparison.Ordinal);
+        Assert.Contains("var executor=new ReliableOrderExecutor(",source,StringComparison.Ordinal);
+        Assert.Contains("capabilitySnapshot,",source,StringComparison.Ordinal);
+        Assert.Contains("capabilityRefresh",source,StringComparison.Ordinal);
+        Assert.Contains("ProviderCapabilityProbe",source,StringComparison.Ordinal);
         Assert.Contains("var recoveryServices=await ProductionRecoveryComposition.CreateAsync(exchange,executor,Db",source,StringComparison.Ordinal);
         Assert.Contains("var executionGateway=recoveryServices.Gateway;",source,StringComparison.Ordinal);
         Assert.Contains("ExecutePositionManagementRecoveryAsync(recoveryServices.Recovery",source,StringComparison.Ordinal);
