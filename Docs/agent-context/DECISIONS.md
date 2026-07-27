@@ -5,6 +5,8 @@
 - UI environment and freshness must come from runtime truth, never hardcoded labels.
 - Build order is `pnpm build`, then `dotnet build`, tests, publish, and launch verification.
 - Preserve Shadow, Active, Degraded, and Retired strategy lifecycle semantics.
+- Strategy exploration is continuous but budgeted: after the deterministic six-candidate base ladder, each symbol/family may add at most one deduplicated deterministic candidate per six hours. A candidate remains Draft until backtest qualification, then Shadow until live-observation qualification; exploration has no Risk Gate or execution bypass.
+- Mean Reversion may act only in a deterministic Range regime and requires rolling Z-score, RSI, ATR-distance, and volume confirmation. Trend, volatile, unknown, stop-distance, and insufficient-volume states produce hold. Genetic/Bayesian optimization and unbounded brute force are not accepted because they add overfit and local-resource risk without stronger evidence.
 - WebView host commands use an explicit allowlist. Currently only `open-settings` is accepted.
 - `Modules/Trade/TradeView` and `Services/Execution/ExecutionService` are legacy Binance-direct code and are not mounted by the current Reference UI; do not reuse them for new trading flows.
 - Remote Brain token/cost attribution flows from `LlmRequestGovernor` into `runtime_skill_calls`; cache hits and blocked remote attempts record zero billable token/cost in skill audit views.

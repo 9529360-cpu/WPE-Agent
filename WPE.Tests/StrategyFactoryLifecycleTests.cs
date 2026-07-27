@@ -110,6 +110,48 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
         await Assert.ThrowsAsync<InvalidOperationException>(()=>store.UpsertStrategyAsync(profile,CancellationToken.None));
     }
 
+    [Fact]
+    public async Task ExhaustedBaseLadderCreatesOneBudgetedExplorationCandidatePerFamily()
+    {
+        var now=DateTime.UtcNow;var old=now-StrategyResearchAgent.ExplorationCooldown-TimeSpan.FromMinutes(1);var store=new AgentSqliteStore(DatabasePath);
+        foreach(var family in Enum.GetValues<StrategyFamily>())
+        for(var variant=0;variant<StrategyResearchAgent.MaximumVariantsPerFamily;variant++)
+            await store.UpsertStrategyAsync(new StrategyProfile{Id=$"BTCUSDT-{family}-{variant}",Version=$"retired-{variant}",Symbol="BTCUSDT",Family=family,Parameters=LocalStrategyParameters.For(family,variant),Lifecycle=StrategyLifecycle.Retired,CreatedAtUtc=old,StateChangedAtUtc=old},CancellationToken.None);
+
+        await new StrategyResearchAgent(store,utcNow:()=>now).RunOnceAsync(["BTCUSDT"],new RiskLimits(),CancellationToken.None);
+        var rows=await store.GetStrategiesAsync(CancellationToken.None);var explored=rows.Where(x=>x.Id.Contains("-explore-",StringComparison.Ordinal)).ToArray();
+
+        Assert.Equal(Enum.GetValues<StrategyFamily>().Length,explored.Length);
+        Assert.All(Enum.GetValues<StrategyFamily>(),family=>Assert.Single(explored,x=>x.Family==family));
+        Assert.All(Enum.GetValues<StrategyFamily>(),family=>
+        {
+            var familyRows=rows.Where(x=>x.Family==family).ToArray();
+            Assert.Equal(familyRows.Length,familyRows.Select(x=>x.ParametersHash).Distinct(StringComparer.Ordinal).Count());
+        });
+    }
+
+    [Fact]
+    public async Task LegacyFiveFieldParametersRemainReadableAfterUpgrade()
+    {
+        var store=new AgentSqliteStore(DatabasePath);var family=StrategyFamily.MeanReversion;var parameters=LocalStrategyParameters.For(family,0);
+        var profile=new StrategyProfile{Id="legacy-five-field",Version="v1",Symbol="BTCUSDT",Family=family,Parameters=parameters,Lifecycle=StrategyLifecycle.Retired};
+        await store.UpsertStrategyAsync(profile,CancellationToken.None);
+        var legacyJson=System.Text.Json.JsonSerializer.Serialize(new{parameters.FastPeriod,parameters.SlowPeriod,parameters.BreakoutBuffer,parameters.MeanReversionZ,parameters.NewsSentimentThreshold});
+        var legacyHash=LocalStrategyParameters.LegacyHash(parameters);var legacyLineage=StrategyLineage.Hash(profile.Symbol,family,null,null,0,legacyHash);
+        await using(var connection=new SqliteConnection($"Data Source={DatabasePath}"))
+        {
+            await connection.OpenAsync();await using var command=connection.CreateCommand();
+            command.CommandText="UPDATE strategy_registry SET parameters_json=$json, parameters_hash=$hash, lineage_hash=$lineage WHERE id=$id";
+            command.Parameters.AddWithValue("$json",legacyJson);command.Parameters.AddWithValue("$hash",legacyHash);command.Parameters.AddWithValue("$lineage",legacyLineage);command.Parameters.AddWithValue("$id",profile.Id);
+            Assert.Equal(1,await command.ExecuteNonQueryAsync());
+        }
+
+        var restored=Assert.Single(await store.GetStrategiesAsync(CancellationToken.None),x=>x.Id==profile.Id);
+        Assert.Equal(LocalStrategyParameters.Hash(restored.Parameters),restored.ParametersHash);
+        Assert.Equal(StrategyLineage.Hash(restored.Symbol,restored.Family,null,null,0,restored.ParametersHash),restored.LineageHash);
+        Assert.True(LocalStrategyParameters.IsValid(family,restored.Parameters));
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();

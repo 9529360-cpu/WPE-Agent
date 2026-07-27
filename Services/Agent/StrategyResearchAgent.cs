@@ -7,6 +7,7 @@ public sealed class StrategyResearchAgent
 {
     internal const int MaximumVariantsPerFamily = 6;
     internal const int TargetConcurrentCandidatesPerFamily = 2;
+    internal static readonly TimeSpan ExplorationCooldown=TimeSpan.FromHours(6);
     public static WpeAgent.ModelOff.ModelOffAgentOutputV1 ProduceTechnicalModelOff(ModelOffResearchInputV1 input)
         => input.Capability == ModelOffResearchCapabilityV1.Technical
             ? DeterministicResearchCapabilityProducerV1.Produce(input)
@@ -22,12 +23,14 @@ public sealed class StrategyResearchAgent
     private readonly HistoricalResearchEngine _engine = new();
     private readonly WpeAgent.RuntimeServices.RuntimeBacktestStateStore? _runtimeBacktests;
     private volatile bool _schedulerHealthy;
+    private readonly Func<DateTime> _utcNow;
 
-    public StrategyResearchAgent(AgentSqliteStore database, StrategyGovernor? governor = null, WpeAgent.RuntimeServices.RuntimeBacktestStateStore? runtimeBacktests = null)
+    public StrategyResearchAgent(AgentSqliteStore database, StrategyGovernor? governor = null, WpeAgent.RuntimeServices.RuntimeBacktestStateStore? runtimeBacktests = null,Func<DateTime>? utcNow=null)
     {
         _database = database;
         _governor = governor ?? new StrategyGovernor();
         _runtimeBacktests = runtimeBacktests;
+        _utcNow=utcNow??(()=>DateTime.UtcNow);
     }
 
     public bool SchedulerHealthy => _schedulerHealthy;
@@ -91,7 +94,8 @@ public sealed class StrategyResearchAgent
             profile.ShadowObservations = performance.Observations; profile.Expectancy = performance.Expectancy;
             profile.MaxDrawdown = performance.MaxDrawdown; profile.FailureStreak = performance.FailureStreak; profile.QualityScore = performance.QualityScore;
             var previous=profile.Lifecycle;var next = _governor.NextLifecycle(profile);
-            if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = DateTime.UtcNow; profile.LastReason = $"local performance: {performance.Summary}"; }
+            if(next==profile.Lifecycle&&_governor.ShouldRetireShadow(profile,_utcNow()))next=StrategyLifecycle.Retired;
+            if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = _utcNow(); profile.LastReason = next==StrategyLifecycle.Retired?$"shadow evaluation exhausted without qualification: {performance.Summary}":$"local performance: {performance.Summary}"; }
             await _database.UpsertStrategyAsync(profile, ct);
             if(next!=previous)await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
         }
@@ -108,7 +112,7 @@ public sealed class StrategyResearchAgent
                 .FirstOrDefault();
             if (challenger is null) continue;
             challenger.Lifecycle = StrategyLifecycle.Active;
-            challenger.StateChangedAtUtc = DateTime.UtcNow;
+            challenger.StateChangedAtUtc = _utcNow();
             challenger.LastReason = "deterministic failover from degraded strategy";
             await _database.UpsertStrategyAsync(challenger, ct);
             await _database.RecordStrategyLifecycleAsync(challenger,StrategyLifecycle.Shadow,challenger.LastReason,ct);
@@ -138,8 +142,38 @@ public sealed class StrategyResearchAgent
                 var profile=new StrategyProfile{Id=id,Version=$"{family.ToString().ToLowerInvariant()}-{variant+1}",Symbol=symbol,Family=family,Parameters=parameters,ParametersHash=LocalStrategyParameters.Hash(parameters),ParentStrategyId=derived?parent!.Id:null,ParentStrategyVersion=derived?parent!.Version:null,Generation=generation,Lifecycle=StrategyLifecycle.Draft,BuiltIn=family==StrategyFamily.TrendBreakout&&variant==0,LastReason=derived?"bounded deterministic child of qualified active strategy":variant<2?"deterministic local seed":"bounded deterministic replacement"};
                 result.Add(profile);await _database.UpsertStrategyAsync(profile,ct);live++;
             }
+            if(live>=TargetConcurrentCandidatesPerFamily)continue;
+            var familyRows=result.Where(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family).ToArray();
+            if(familyRows.Length<MaximumVariantsPerFamily||familyRows.Max(x=>x.CreatedAtUtc)>_utcNow()-ExplorationCooldown)continue;
+            var index=Math.Max(MaximumVariantsPerFamily,familyRows.Max(x=>ExplorationIndex(x.Id))+1);StrategyProfile? exploration=null;
+            for(var attempt=0;attempt<512&&exploration is null;attempt++,index++)
+            {
+                var parameters=Explore(family,index);var hash=LocalStrategyParameters.Hash(parameters);if(familyRows.Any(x=>string.Equals(x.ParametersHash,hash,StringComparison.Ordinal)))continue;
+                exploration=new StrategyProfile{Id=$"{symbol}-{family}-explore-{index}",Version=$"{family.ToString().ToLowerInvariant()}-explore-{index}",Symbol=symbol,Family=family,Parameters=parameters,ParametersHash=hash,Generation=0,Lifecycle=StrategyLifecycle.Draft,CreatedAtUtc=_utcNow(),LastReason="budgeted deterministic exploration candidate"};
+            }
+            if(exploration is not null){result.Add(exploration);await _database.UpsertStrategyAsync(exploration,ct);}
         }
         return result;
+    }
+
+    private static int ExplorationIndex(string id)
+    {
+        var marker="-explore-";var at=id.LastIndexOf(marker,StringComparison.OrdinalIgnoreCase);return at>=0&&int.TryParse(id[(at+marker.Length)..],out var value)?value:-1;
+    }
+
+    internal static LocalStrategyParameters Explore(StrategyFamily family,int index)
+    {
+        if(index<0)throw new ArgumentOutOfRangeException(nameof(index));
+        if(family==StrategyFamily.TrendBreakout)
+        {
+            var trendFast=8+2*(index%21);var trendSlow=48+8*((index/21)%15);if(trendSlow<=trendFast)trendSlow=Math.Min(160,trendFast+8);
+            return new(trendFast,trendSlow,.0002+.0001*((index/315)%20),0,0);
+        }
+        if(family==StrategyFamily.NewsMomentum)return new(12,48,.0005,0,.05+.025*(index%19));
+        var fast=8+2*(index%17);var slow=48+8*((index/17)%20);
+        var entry=.8+.2*((index/340)%14);var exit=.2+.1*((index/4760)%8);if(exit>=entry)exit=Math.Max(.2,entry-.2);
+        var stop=Math.Max(entry+.4,2.4+.2*((index/38080)%12));
+        return new(fast,slow,0,entry,0,exit,Math.Min(5,stop),16+2*((index/456960)%9),1.5+.25*((index/4112640)%15),.6+.1*((index/61689600)%13),8+4*((index/801964800)%23));
     }
 }
 
@@ -177,14 +211,24 @@ internal sealed class HistoricalResearchEngine
         var candles = market.Candles; if (candles.Count < profile.Parameters.SlowPeriod + 2) return new(profile.Id, market.Symbol, 0, 0, "insufficient candles");
         var p = profile.Parameters; var fast = candles.TakeLast(p.FastPeriod).Average(x => x.Close); var slow = candles.TakeLast(p.SlowPeriod).Average(x => x.Close); var direction = 0; var confidence = Math.Min(1, Math.Abs((double)(fast / slow - 1)) * 40);
         if (profile.Family == StrategyFamily.TrendBreakout) direction = fast > slow && market.Price > candles.TakeLast(48).Max(x => x.High) * (decimal)(1 - p.BreakoutBuffer) ? 1 : fast < slow && market.Price < candles.TakeLast(48).Min(x => x.Low) * (decimal)(1 + p.BreakoutBuffer) ? -1 : 0;
-        if (profile.Family == StrategyFamily.MeanReversion) { var mean = candles.TakeLast(p.SlowPeriod).Average(x => x.Close); var deviation = candles.TakeLast(p.SlowPeriod).Select(x => (double)(x.Close / mean - 1)).ToArray(); var z = deviation.Length == 0 ? 0 : deviation[^1] / Math.Max(.0001, Math.Sqrt(deviation.Select(x => x * x).Average())); direction = z < -p.MeanReversionZ ? 1 : z > p.MeanReversionZ ? -1 : 0; confidence = Math.Min(1, Math.Abs(z) / 3); }
+        if (profile.Family == StrategyFamily.MeanReversion)
+        {
+            var state=MeanReversionRegimeAnalyzer.Analyze(candles,p);
+            if(state.Regime!=MeanReversionRegime.Range)return new(profile.Id,market.Symbol,0,0,$"mean-reversion gated: regime={state.Regime}; adx={state.Adx:F1}; atr={state.AtrRatio:P2}");
+            if(state.VolumeRatio<p.VolumeMultiplier)return new(profile.Id,market.Symbol,0,0,$"mean-reversion gated: volume={state.VolumeRatio:F2}");
+            if(Math.Abs(state.ZScore)>=p.MeanReversionStopZ||state.DistanceAtr>=p.AtrStopMultiple)return new(profile.Id,market.Symbol,0,0,$"mean-reversion invalidated: z={state.ZScore:F2}; distanceAtr={state.DistanceAtr:F2}");
+            direction=state.ZScore<=-p.MeanReversionZ&&state.Rsi<=40?1:state.ZScore>=p.MeanReversionZ&&state.Rsi>=60?-1:0;
+            confidence=direction==0?0:Math.Clamp((Math.Abs(state.ZScore)-p.MeanReversionZ)/Math.Max(.1,p.MeanReversionStopZ-p.MeanReversionZ)*.65+(1-state.Adx/p.AdxCeiling)*.35,0,1);
+            return new(profile.Id,market.Symbol,direction,confidence,$"family=MeanReversion; regime={state.Regime}; z={state.ZScore:F2}; rsi={state.Rsi:F1}; adx={state.Adx:F1}; atr={state.AtrRatio:P2}; distanceAtr={state.DistanceAtr:F2}; volume={state.VolumeRatio:F2}");
+        }
         if (profile.Family == StrategyFamily.NewsMomentum) { var sentiment = news.Where(x => x.AffectedAssets.Any(a => a.Equals(market.Symbol, StringComparison.OrdinalIgnoreCase) || market.Symbol.StartsWith(a, StringComparison.OrdinalIgnoreCase))).OrderByDescending(x => x.PublishedAt).Take(5).Select(x => x.Sentiment * x.Confidence).DefaultIfEmpty().Average(); direction = sentiment >= p.NewsSentimentThreshold ? 1 : sentiment <= -p.NewsSentimentThreshold ? -1 : 0; confidence = Math.Min(1, Math.Abs(sentiment)); }
         return new(profile.Id, market.Symbol, direction, confidence, $"family={profile.Family}; local deterministic signal");
     }
 
     private static List<(double Return, bool Trade)> Simulate(StrategyProfile profile, IReadOnlyList<CandleEvidence> candles, IReadOnlyList<NewsFeature> news)
     {
-        var result=new List<(double,bool)>();var engine=new HistoricalResearchEngine();
+        if(profile.Family==StrategyFamily.MeanReversion)return SimulateMeanReversion(profile,candles);
+        var result=new List<(double Return,bool Trade)>();var engine=new HistoricalResearchEngine();
         for(var i=profile.Parameters.SlowPeriod+1;i<candles.Count;i++)
         {
             var prefix=candles.Take(i).ToArray();var asOf=prefix[^1].OpenTime.ToUniversalTime();
@@ -201,6 +245,26 @@ internal sealed class HistoricalResearchEngine
             var value=direction*(double)(candles[i].Close/candles[i-1].Close-1)-(direction!=0?.0014:0);result.Add((value,direction!=0));
         }
         return result;
+    }
+    private static List<(double Return,bool Trade)> SimulateMeanReversion(StrategyProfile profile,IReadOnlyList<CandleEvidence> candles)
+    {
+        const double sideCost=.0007;var result=new List<(double Return,bool Trade)>();var p=profile.Parameters;var position=0;var held=0;
+        for(var i=Math.Max(p.SlowPeriod,42);i<candles.Count;i++)
+        {
+            var prefix=candles.Take(i).ToArray();var state=MeanReversionRegimeAnalyzer.Analyze(prefix,p);var close=(double)candles[i].Close;var previous=(double)candles[i-1].Close;var value=position*(close/previous-1);var closed=false;
+            if(position!=0)
+            {
+                held++;var exit=state.Regime!=MeanReversionRegime.Range||Math.Abs(state.ZScore)<=p.MeanReversionExitZ||Math.Abs(state.ZScore)>=p.MeanReversionStopZ||held>=p.MaximumHoldingBars;
+                if(exit){value-=sideCost;position=0;held=0;closed=true;}
+            }
+            if(position==0&&!closed&&state.Regime==MeanReversionRegime.Range&&state.VolumeRatio>=p.VolumeMultiplier&&Math.Abs(state.ZScore)<p.MeanReversionStopZ&&state.DistanceAtr<p.AtrStopMultiple)
+            {
+                var next=state.ZScore<=-p.MeanReversionZ&&state.Rsi<=40?1:state.ZScore>=p.MeanReversionZ&&state.Rsi>=60?-1:0;
+                if(next!=0){position=next;held=0;value-=sideCost;}
+            }
+            result.Add((value,closed));
+        }
+        if(position!=0&&result.Count>0){var last=result[^1];result[^1]=(last.Return-sideCost,true);}return result;
     }
     private static (double WinRate, double ProfitFactor, double Expectancy, double MaxDrawdown, double Sharpe, double TotalReturn) Metrics(IReadOnlyList<(double Return, bool Trade)> values) { var r = values.Select(x => x.Return).ToArray(); if (r.Length == 0) return (0, 0, 0, 1, 0, 0); var wins = r.Where(x => x > 0).Sum(); var losses = -r.Where(x => x < 0).Sum(); var equity = 1d; var high = 1d; var dd = 0d; foreach (var x in r) { equity *= Math.Max(.01, 1 + x); high = Math.Max(high, equity); dd = Math.Max(dd, (high - equity) / high); } var avg = r.Average(); var sd = Math.Sqrt(r.Select(x => (x - avg) * (x - avg)).Average()); return (r.Count(x => x > 0) / (double)r.Length, losses > 0 ? wins / losses : wins > 0 ? 9 : 0, avg, dd, sd > 0 ? avg / sd * Math.Sqrt(24 * 365) : 0, equity - 1); }
     private double WalkForward(StrategyProfile p, IReadOnlyList<CandleEvidence> c, IReadOnlyList<NewsFeature> n) { var scores = new List<double>(); for (var i = 0; i < 4; i++) { var start = i * c.Count / 8; var length = Math.Min(c.Count - start, c.Count / 2); scores.Add(Math.Clamp(.5 + Metrics(Simulate(p, c.Skip(start).Take(length).ToArray(), n)).Expectancy * 100 - Metrics(Simulate(p, c.Skip(start).Take(length).ToArray(), n)).MaxDrawdown, 0, 1)); } return scores.DefaultIfEmpty(0).Average(); }
