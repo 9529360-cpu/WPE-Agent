@@ -65,6 +65,23 @@ public sealed partial class AgentSqliteStore
 
     public async Task<TeacherLessonV2?> GetTeacherLessonAsync(string lessonId,CancellationToken ct){await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT canonical_json FROM teacher_lessons WHERE lesson_id=$id";q.Parameters.AddWithValue("$id",lessonId);return await q.ExecuteScalarAsync(ct) is string json?JsonSerializer.Deserialize<TeacherLessonV2>(json):null;}
 
+    public async Task<TeacherRuntimeContentV2> GetTeacherRuntimeContentAsync(int limit,CancellationToken ct)
+    {
+        if(limit is <1 or >100)throw new ArgumentOutOfRangeException(nameof(limit));
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);
+        async Task<IReadOnlyList<T>> ReadAsync<T>(string sql)
+        {
+            await using var q=c.CreateCommand();q.CommandText=sql;q.Parameters.AddWithValue("$limit",limit);await using var r=await q.ExecuteReaderAsync(ct);var rows=new List<T>();
+            while(await r.ReadAsync(ct)){var value=JsonSerializer.Deserialize<T>(r.GetString(0));if(value is not null)rows.Add(value);}
+            return rows;
+        }
+        var lessons=await ReadAsync<TeacherLessonV2>("SELECT canonical_json FROM teacher_lessons WHERE execution_authority=0 ORDER BY generated_at_utc DESC LIMIT $limit");
+        var recommendations=await ReadAsync<TeacherRecommendationV2>("SELECT r.canonical_json FROM teacher_recommendations r WHERE r.execution_authority=0 AND r.version=(SELECT MAX(x.version) FROM teacher_recommendations x WHERE x.recommendation_id=r.recommendation_id) ORDER BY r.issued_at_utc DESC LIMIT $limit");
+        var corrections=await ReadAsync<TeacherCorrectionV2>("SELECT canonical_json FROM teacher_corrections ORDER BY issued_at_utc DESC LIMIT $limit");
+        var outcomes=await ReadAsync<TeacherRecommendationOutcomeV2>("SELECT canonical_json FROM teacher_recommendation_outcomes ORDER BY evaluated_at_utc DESC LIMIT $limit");
+        return new(lessons.Where(x=>!x.ExecutionAuthority).ToArray(),recommendations.Where(x=>!x.ExecutionAuthority).ToArray(),corrections,outcomes);
+    }
+
     public async Task<TeacherPersistenceResult> SaveTeacherRecommendationAsync(TeacherRecommendationV2 value,CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(value);if(value.ExecutionAuthority||value.Schema!="wpe.teacher-recommendation/2.0"||value.Version<1||value.ExpiresAtUtc<value.IssuedAtUtc)return new(false,false,"teacher.recommendation-invalid");var json=JsonSerializer.Serialize(value);
@@ -125,3 +142,5 @@ public sealed partial class AgentSqliteStore
         await using(var insert=c.CreateCommand()){insert.Transaction=tx;insert.CommandText="INSERT OR IGNORE INTO teacher_public_evidence VALUES($hash,$schema,$source,$identity,$observed,$retrieved,$status,$json)";AddParameters(insert,("$hash",replacement.CanonicalSha256),("$schema",replacement.Schema),("$source",replacement.SourceId),("$identity",replacement.Symbol),("$observed",DbInstant(replacement.ObservedAtUtc)),("$retrieved",DbInstant(replacement.RetrievedAtUtc)),("$status",replacement.Status),("$json",JsonSerializer.Serialize(replacement)));await insert.ExecuteNonQueryAsync(ct);}await using(var insert=c.CreateCommand()){insert.Transaction=tx;insert.CommandText="INSERT OR IGNORE INTO teacher_public_evidence_corrections VALUES($id,$source,$identity,$old,$new,$issued,$reason,$hash); SELECT changes();";AddParameters(insert,("$id",correction.CorrectionId),("$source",correction.SourceId),("$identity",correction.Identity),("$old",correction.SupersededHash),("$new",correction.ReplacementHash),("$issued",DbInstant(correction.IssuedAtUtc)),("$reason",correction.ReasonCode),("$hash",correction.CanonicalSha256));var changed=Convert.ToInt32(await insert.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture);await tx.CommitAsync(ct);return changed==1?new(true,false,"teacher.correction-persisted"):new(true,true,"teacher.correction-idempotent");}
     }
 }
+
+public sealed record TeacherRuntimeContentV2(IReadOnlyList<TeacherLessonV2> Lessons,IReadOnlyList<TeacherRecommendationV2> Recommendations,IReadOnlyList<TeacherCorrectionV2> Corrections,IReadOnlyList<TeacherRecommendationOutcomeV2> Outcomes);

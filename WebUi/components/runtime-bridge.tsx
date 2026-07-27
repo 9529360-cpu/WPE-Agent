@@ -5,7 +5,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 export type WpeRuntimeState = {
   contractVersion?: string
   freshness?: { fresh: boolean; ageSeconds: number; staleAfterSeconds: number }
-  collectionStates?: { account?: RuntimeCollectionState; positions?: RuntimeCollectionState; orders?: RuntimeCollectionState; risk?: RuntimeCollectionState; strategies?: RuntimeCollectionState; backtests?: RuntimeCollectionState; crossAssetResearch?:RuntimeCollectionState; distribution?:RuntimeCollectionState; telemetry?: RuntimeCollectionState; markets?: RuntimeCollectionState; publicMarkets?: RuntimeCollectionState; publicKlines?: RuntimeCollectionState; capabilities?: RuntimeCollectionState; llmGovernance?: RuntimeCollectionState; plugins?: RuntimeCollectionState; auditEvents?: RuntimeCollectionState; equityHistory?: RuntimeCollectionState; equityMarkets?: RuntimeCollectionState; equityBroker?: RuntimeCollectionState; historicalOrders?:RuntimeCollectionState; historicalEquity?:RuntimeCollectionState; historicalBacktests?:RuntimeCollectionState; historicalSkillCalls?:RuntimeCollectionState; historicalAuditEvents?:RuntimeCollectionState; connectionStatus?: RuntimeCollectionState; strategyRegistry?: RuntimeCollectionState; strategyLifecycleEvents?: RuntimeCollectionState; skillCalls?: RuntimeCollectionState; memoryStatus?:RuntimeCollectionState; recentMemoryRetrievals?:RuntimeCollectionState; agentOperations?:RuntimeCollectionState; agentHandoffs?:RuntimeCollectionState; notificationStatus?:RuntimeCollectionState; notificationOutbox?:RuntimeCollectionState; authorizationMode?: RuntimeCollectionState; pendingApprovals?: RuntimeCollectionState; securityStorage?:RuntimeCollectionState }
+  collectionStates?: { account?: RuntimeCollectionState; positions?: RuntimeCollectionState; orders?: RuntimeCollectionState; risk?: RuntimeCollectionState; strategies?: RuntimeCollectionState; backtests?: RuntimeCollectionState; crossAssetResearch?:RuntimeCollectionState; distribution?:RuntimeCollectionState; telemetry?: RuntimeCollectionState; markets?: RuntimeCollectionState; publicMarkets?: RuntimeCollectionState; publicKlines?: RuntimeCollectionState; capabilities?: RuntimeCollectionState; llmGovernance?: RuntimeCollectionState; plugins?: RuntimeCollectionState; auditEvents?: RuntimeCollectionState; equityHistory?: RuntimeCollectionState; equityMarkets?: RuntimeCollectionState; equityBroker?: RuntimeCollectionState; historicalOrders?:RuntimeCollectionState; historicalEquity?:RuntimeCollectionState; historicalBacktests?:RuntimeCollectionState; historicalSkillCalls?:RuntimeCollectionState; historicalAuditEvents?:RuntimeCollectionState; connectionStatus?: RuntimeCollectionState; strategyRegistry?: RuntimeCollectionState; strategyLifecycleEvents?: RuntimeCollectionState; skillCalls?: RuntimeCollectionState; memoryStatus?:RuntimeCollectionState; recentMemoryRetrievals?:RuntimeCollectionState; agentOperations?:RuntimeCollectionState; agentHandoffs?:RuntimeCollectionState; teacherLessons?:RuntimeCollectionState; teacherRecommendations?:RuntimeCollectionState; teacherCorrections?:RuntimeCollectionState; teacherOutcomes?:RuntimeCollectionState; notificationStatus?:RuntimeCollectionState; notificationOutbox?:RuntimeCollectionState; authorizationMode?: RuntimeCollectionState; pendingApprovals?: RuntimeCollectionState; securityStorage?:RuntimeCollectionState }
   collectionMessages?: { positions?: string; orders?: string; backtests?: string; equityHistory?: string; equityMarkets?: string; equityBroker?: string; connectionStatus?: string; strategyRegistry?: string; strategyLifecycleEvents?: string }
   positions?: RuntimePosition[]
   orders?: RuntimeOrder[]
@@ -108,6 +108,10 @@ export type WpeRuntimeState = {
   recentMemoryRetrievals?:RuntimeMemoryRetrieval[]
   agentOperations?:RuntimeAgentOperation[]
   agentHandoffs?:RuntimeAgentHandoff[]
+  teacherLessons?:RuntimeTeacherLesson[]
+  teacherRecommendations?:RuntimeTeacherRecommendation[]
+  teacherCorrections?:RuntimeTeacherCorrection[]
+  teacherOutcomes?:RuntimeTeacherOutcome[]
   notificationStatus?:RuntimeNotificationStatusCollection
   notificationOutbox?:RuntimeNotificationOutboxRow[]
   authorizationMode?: RuntimeAuthorizationModeCollection
@@ -188,6 +192,11 @@ export type RuntimeMemoryStatusCollection={state:RuntimeCollectionState;message?
 export type RuntimeMemoryRetrieval={id:number;tier:string;symbol:string|null;providerId:string|null;strategyId:string|null;occurredAtUtc:string;result:string;source:string;resultCount:number}
 export type RuntimeAgentOperation={roleId:string;status:'idle'|'running'|'degraded'|'blocked';lastActivityAtUtc:string|null;activity:string|null;mode:'Local Only'|'Hybrid'|'AI Research'}
 export type RuntimeAgentHandoff={id:string;occurredAtUtc:string;sourceRoleId:string;targetRoleId:string;result:string}
+export type RuntimeTeacherBlock={blockId:string;kind:string;heading:string;content:string;evidenceHashes:string[];sha256:string}
+export type RuntimeTeacherLesson={lessonId:string;kind:string;timeZoneId:string;scheduledForUtc:string;generatedAtUtc:string;language:string;teachingLevel:string;personaVersion:string;blocks:RuntimeTeacherBlock[];contentSha256:string;executionAuthority:false}
+export type RuntimeTeacherRecommendation={recommendationId:string;version:number;instrument:string;assetClass:string;state:string;horizon:string;issuedAtUtc:string;expiresAtUtc:string;thesis:string;evidenceHashes:string[];confirmationConditions:string[];invalidationConditions:string[];materialRisks:string[];supersedesId:string|null;executionAuthority:false}
+export type RuntimeTeacherCorrection={correctionId:string;supersededLessonId:string;reasonCode:string;issuedAtUtc:string;replacementBlocks:RuntimeTeacherBlock[];sha256:string}
+export type RuntimeTeacherOutcome={outcomeId:string;recommendationId:string;recommendationVersion:number;instrument:string;benchmark:string;horizon:string;issuedAtUtc:string;evaluatedAtUtc:string;instrumentReturnPct:number;benchmarkReturnPct:number;relativeReturnPct:number;maximumFavorableExcursionPct:number;maximumAdverseExcursionPct:number;invalidatedBeforeHorizon:boolean;processState:string;canonicalSha256:string}
 export type RuntimeNotificationStatus={enabled:boolean;telegramStored:boolean;telegramReady:boolean;whatsAppStored:boolean;whatsAppReady:boolean;legacyMigrationPending:boolean;legacyMigrationDiagnosticCode:string|null;eventKinds:string[];quietHoursEnabled:boolean;quietHoursStart:string;quietHoursEnd:string;quietHoursTimeZone:string;pendingCount:number;retryingCount:number;sentCount:number;deadLetterCount:number}
 export type RuntimeNotificationStatusCollection={state:RuntimeCollectionState;message?:string;value?:RuntimeNotificationStatus}
 export type RuntimeNotificationOutboxRow={id:number;channel:'Telegram'|'WhatsApp';kind:string;uiState:'Pending'|'Retrying'|'Sent'|'DeadLetter';inFlight:boolean;attempts:number;maxAttempts:number;occurredAtUtc:string;nextAttemptAtUtc:string;updatedAtUtc:string;diagnosticCode:string|null}
@@ -619,6 +628,15 @@ function normalizeAuditEvents(input: unknown, snapshotFresh: boolean | undefined
   return { state: 'available', items: items as RuntimeAuditEventV1[], message }
 }
 
+const validHash=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{64}$/i.test(value)
+const validTime=(value:unknown):value is string=>typeof value==='string'&&!Number.isNaN(Date.parse(value))
+const strings=(value:unknown):string[]|null=>Array.isArray(value)&&value.every(item=>typeof item==='string')?value:null
+function normalizeTeacherBlock(input:unknown):RuntimeTeacherBlock|null{if(!input||typeof input!=='object')return null;const v=input as Record<string,unknown>,e=strings(v.evidenceHashes);return nonEmptyString(v.blockId)&&nonEmptyString(v.kind)&&nonEmptyString(v.heading)&&typeof v.content==='string'&&e&&validHash(v.sha256)?{blockId:v.blockId as string,kind:v.kind as string,heading:v.heading as string,content:v.content as string,evidenceHashes:e,sha256:v.sha256}:null}
+function normalizeTeacherLesson(input:unknown):RuntimeTeacherLesson|null{if(!input||typeof input!=='object')return null;const v=input as Record<string,unknown>,blocks=Array.isArray(v.blocks)?v.blocks.map(normalizeTeacherBlock):[];if(!nonEmptyString(v.lessonId)||!nonEmptyString(v.kind)||!nonEmptyString(v.timeZoneId)||!validTime(v.scheduledForUtc)||!validTime(v.generatedAtUtc)||!nonEmptyString(v.language)||!nonEmptyString(v.teachingLevel)||!nonEmptyString(v.personaVersion)||!Array.isArray(v.blocks)||blocks.some(x=>x===null)||!validHash(v.contentSha256)||v.executionAuthority!==false)return null;return{lessonId:v.lessonId as string,kind:v.kind as string,timeZoneId:v.timeZoneId as string,scheduledForUtc:v.scheduledForUtc,generatedAtUtc:v.generatedAtUtc,language:v.language as string,teachingLevel:v.teachingLevel as string,personaVersion:v.personaVersion as string,blocks:blocks as RuntimeTeacherBlock[],contentSha256:v.contentSha256,executionAuthority:false}}
+function normalizeTeacherRecommendation(input:unknown):RuntimeTeacherRecommendation|null{if(!input||typeof input!=='object')return null;const v=input as Record<string,unknown>,e=strings(v.evidenceHashes),c=strings(v.confirmationConditions),i=strings(v.invalidationConditions),r=strings(v.materialRisks),version=finiteNumber(v.version);if(!nonEmptyString(v.recommendationId)||version===null||!Number.isInteger(version)||version<1||!nonEmptyString(v.instrument)||!nonEmptyString(v.assetClass)||!nonEmptyString(v.state)||!nonEmptyString(v.horizon)||!validTime(v.issuedAtUtc)||!validTime(v.expiresAtUtc)||typeof v.thesis!=='string'||!e||!e.every(validHash)||!c||!i||!r||v.executionAuthority!==false)return null;return{recommendationId:v.recommendationId as string,version,instrument:v.instrument as string,assetClass:v.assetClass as string,state:v.state as string,horizon:v.horizon as string,issuedAtUtc:v.issuedAtUtc,expiresAtUtc:v.expiresAtUtc,thesis:v.thesis,evidenceHashes:e,confirmationConditions:c,invalidationConditions:i,materialRisks:r,supersedesId:typeof v.supersedesId==='string'?v.supersedesId:null,executionAuthority:false}}
+function normalizeTeacherCorrection(input:unknown):RuntimeTeacherCorrection|null{if(!input||typeof input!=='object')return null;const v=input as Record<string,unknown>,blocks=Array.isArray(v.replacementBlocks)?v.replacementBlocks.map(normalizeTeacherBlock):[];return nonEmptyString(v.correctionId)&&nonEmptyString(v.supersededLessonId)&&nonEmptyString(v.reasonCode)&&validTime(v.issuedAtUtc)&&Array.isArray(v.replacementBlocks)&&blocks.every(x=>x!==null)&&validHash(v.sha256)?{correctionId:v.correctionId as string,supersededLessonId:v.supersededLessonId as string,reasonCode:v.reasonCode as string,issuedAtUtc:v.issuedAtUtc,replacementBlocks:blocks as RuntimeTeacherBlock[],sha256:v.sha256}:null}
+function normalizeTeacherOutcome(input:unknown):RuntimeTeacherOutcome|null{if(!input||typeof input!=='object')return null;const v=input as Record<string,unknown>,version=finiteNumber(v.recommendationVersion),numbers=['instrumentReturnPct','benchmarkReturnPct','relativeReturnPct','maximumFavorableExcursionPct','maximumAdverseExcursionPct'].map(k=>finiteNumber(v[k]));if(!nonEmptyString(v.outcomeId)||!nonEmptyString(v.recommendationId)||version===null||!Number.isInteger(version)||!nonEmptyString(v.instrument)||!nonEmptyString(v.benchmark)||!nonEmptyString(v.horizon)||!validTime(v.issuedAtUtc)||!validTime(v.evaluatedAtUtc)||numbers.some(x=>x===null)||typeof v.invalidatedBeforeHorizon!=='boolean'||!nonEmptyString(v.processState)||!validHash(v.canonicalSha256))return null;return{outcomeId:v.outcomeId as string,recommendationId:v.recommendationId as string,recommendationVersion:version,instrument:v.instrument as string,benchmark:v.benchmark as string,horizon:v.horizon as string,issuedAtUtc:v.issuedAtUtc,evaluatedAtUtc:v.evaluatedAtUtc,instrumentReturnPct:numbers[0]!,benchmarkReturnPct:numbers[1]!,relativeReturnPct:numbers[2]!,maximumFavorableExcursionPct:numbers[3]!,maximumAdverseExcursionPct:numbers[4]!,invalidatedBeforeHorizon:v.invalidatedBeforeHorizon,processState:v.processState as string,canonicalSha256:v.canonicalSha256}}
+
 /** Normalize a host snapshot without allowing unknown contracts or partial merges. */
 export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
   if (!input || typeof input !== 'object') return null
@@ -627,7 +645,7 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
   const freshness = value.freshness && typeof value.freshness === 'object' ? value.freshness as { fresh: boolean; ageSeconds: number; staleAfterSeconds: number } : undefined
   const generatedAtUtc=nonEmptyString(value.generatedAtUtc),sourceUpdatedAtUtc=nonEmptyString(value.sourceUpdatedAtUtc),environment=nonEmptyString(value.environment)
   if(!freshness||typeof freshness.fresh!=='boolean'||finiteNumber(freshness.ageSeconds)===null||freshness.ageSeconds<0||finiteNumber(freshness.staleAfterSeconds)===null||freshness.staleAfterSeconds<=0||!generatedAtUtc||!sourceUpdatedAtUtc||Number.isNaN(Date.parse(generatedAtUtc))||Number.isNaN(Date.parse(sourceUpdatedAtUtc))||environment!=='Testnet')return null
-  const collections = ['account', 'positions', 'orders', 'risk', 'strategies', 'backtests', 'crossAssetResearch', 'distribution', 'telemetry', 'markets', 'publicMarkets', 'publicKlines', 'capabilities', 'llmGovernance', 'plugins', 'auditEvents', 'equityHistory', 'equityMarkets', 'equityBroker','historicalOrders','historicalEquity','historicalBacktests','historicalSkillCalls','historicalAuditEvents', 'connectionStatus', 'strategyRegistry', 'strategyLifecycleEvents','skillCalls','memoryStatus','recentMemoryRetrievals','agentOperations','agentHandoffs','notificationStatus','notificationOutbox','authorizationMode','pendingApprovals','securityStorage']
+  const collections = ['account', 'positions', 'orders', 'risk', 'strategies', 'backtests', 'crossAssetResearch', 'distribution', 'telemetry', 'markets', 'publicMarkets', 'publicKlines', 'capabilities', 'llmGovernance', 'plugins', 'auditEvents', 'equityHistory', 'equityMarkets', 'equityBroker','historicalOrders','historicalEquity','historicalBacktests','historicalSkillCalls','historicalAuditEvents', 'connectionStatus', 'strategyRegistry', 'strategyLifecycleEvents','skillCalls','memoryStatus','recentMemoryRetrievals','agentOperations','agentHandoffs','teacherLessons','teacherRecommendations','teacherCorrections','teacherOutcomes','notificationStatus','notificationOutbox','authorizationMode','pendingApprovals','securityStorage']
   const collectionStates = Object.fromEntries(collections.map((key) => [key, normalizeCollectionState((value[key] as { state?: unknown } | undefined)?.state)])) as NonNullable<WpeRuntimeState['collectionStates']>
   const positions = normalizeItems(value.positions, normalizePosition)
   const orders = normalizeItems(value.orders, normalizeOrder)
@@ -656,6 +674,10 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
   const skillCalls=normalizeItems(value.skillCalls,normalizeSkillCall)
   const agentOperations=normalizeItems(value.agentOperations,normalizeAgentOperation)
   const agentHandoffs=normalizeItems(value.agentHandoffs,normalizeAgentHandoff)
+  const teacherLessons=normalizeItems(value.teacherLessons,normalizeTeacherLesson)
+  const teacherRecommendations=normalizeItems(value.teacherRecommendations,normalizeTeacherRecommendation)
+  const teacherCorrections=normalizeItems(value.teacherCorrections,normalizeTeacherCorrection)
+  const teacherOutcomes=normalizeItems(value.teacherOutcomes,normalizeTeacherOutcome)
   const notificationStatus=normalizeNotificationStatus(value.notificationStatus)
   const notificationOutbox=normalizeItems(value.notificationOutbox,normalizeNotificationRow)
   const authorizationMode=normalizeAuthorizationMode(value.authorizationMode)
@@ -683,6 +705,7 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
   collectionStates.recentMemoryRetrievals=recentMemoryRetrievals.state
   collectionStates.agentOperations=agentOperations.state
   collectionStates.agentHandoffs=agentHandoffs.state
+  collectionStates.teacherLessons=teacherLessons.state;collectionStates.teacherRecommendations=teacherRecommendations.state;collectionStates.teacherCorrections=teacherCorrections.state;collectionStates.teacherOutcomes=teacherOutcomes.state
   collectionStates.notificationStatus=notificationStatus.state
   collectionStates.notificationOutbox=notificationOutbox.state
   collectionStates.authorizationMode=authorizationMode.state
@@ -716,6 +739,10 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
     recentMemoryRetrievals:recentMemoryRetrievals.items,
     agentOperations:agentOperations.items,
     agentHandoffs:agentHandoffs.items,
+    teacherLessons:teacherLessons.items,
+    teacherRecommendations:teacherRecommendations.items,
+    teacherCorrections:teacherCorrections.items,
+    teacherOutcomes:teacherOutcomes.items,
     notificationStatus,
     notificationOutbox:notificationOutbox.items,
     authorizationMode,

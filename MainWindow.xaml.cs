@@ -133,6 +133,7 @@ public partial class MainWindow : Window
         ServiceLocator.RuntimeSkillCalls.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
         ServiceLocator.RuntimeMemory.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
         ServiceLocator.RuntimeAgentOperations.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+        ServiceLocator.RuntimeTeacher.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
         ServiceLocator.RuntimeNotifications.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
         ServiceLocator.RuntimeAuthorization.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
         ServiceLocator.RuntimeHistoricalCollections.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -147,6 +148,7 @@ public partial class MainWindow : Window
             ServiceLocator.RuntimeSkillCalls.Read(),
             ServiceLocator.RuntimeMemory.Read(),
             ServiceLocator.RuntimeAgentOperations.Read(),
+            ServiceLocator.RuntimeTeacher.Read(),
             ServiceLocator.RuntimeBacktests.Read(),
             ServiceLocator.RuntimeAudit.Read(),
             LlmRequestGovernor.Shared.GetTodaySnapshot(),

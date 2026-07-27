@@ -68,6 +68,14 @@ public sealed class MainWindowRuntimeBridgeTests
         var method=BuildRuntimeJsonMethod();Assert.Equal(1,Count(method,"ServiceLocator.SecurityStorage.Read()"));Assert.DoesNotContain("MigrateBatchAsync",method,StringComparison.Ordinal);Assert.DoesNotContain("CommitRotationAndRetireOldKeyAsync",method,StringComparison.Ordinal);Assert.DoesNotContain("RestoreAsync",method,StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void BuildRuntimeJson_RefreshesAndProjectsTeacherReadOnlyState()
+    {
+        var method=BuildRuntimeJsonMethod();
+        Assert.Contains("ServiceLocator.RuntimeTeacher.RefreshAsync",method,StringComparison.Ordinal);
+        Assert.Contains("ServiceLocator.RuntimeTeacher.Read()",method,StringComparison.Ordinal);
+    }
+
     private static int Count(string value, string token) =>
         (value.Length - value.Replace(token, string.Empty, StringComparison.Ordinal).Length) / token.Length;
 
