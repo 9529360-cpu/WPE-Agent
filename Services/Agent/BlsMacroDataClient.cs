@@ -101,7 +101,14 @@ public sealed class BlsMacroDataClient(IBlsMacroDataTransport transport)
             if (matching.Length != 1 || !matching[0].TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
                 return Fail(BlsMacroFetchStatus.Error, "macro.bls.response-series-invalid");
 
-            var observations = data.EnumerateArray().Select(ParseObservation).Where(item => item is not null).Select(item => item!.Value).OrderByDescending(item => item.Year).ThenByDescending(item => item.Month).ToArray();
+            var monthlyRows=data.EnumerateArray().Where(IsMonthlyRow).ToArray();
+            var parsed=monthlyRows.Select(ParseObservation).ToArray();
+            if(parsed.Any(item=>item is null))return Fail(BlsMacroFetchStatus.Error,"macro.bls.response-invalid");
+            var observations=parsed.Select(item=>item!.Value).ToArray();
+            if(observations.Any(item=>item.Year<startYear||item.Year>endYear||new DateTimeOffset(item.Year,item.Month,1,0,0,0,TimeSpan.Zero)>fetchedAtUtc)||
+               observations.GroupBy(item=>(item.Year,item.Month)).Any(group=>group.Count()>1))
+                return Fail(BlsMacroFetchStatus.Error,"macro.bls.response-observation-invalid");
+            observations=observations.OrderByDescending(item=>item.Year).ThenByDescending(item=>item.Month).ToArray();
             if (observations.Length == 0)
                 return Fail(BlsMacroFetchStatus.Unsupported, "macro.bls.observation-unavailable");
             var latest = observations[0];
@@ -138,6 +145,8 @@ public sealed class BlsMacroDataClient(IBlsMacroDataTransport transport)
         if (!item.TryGetProperty("value", out var valueElement) || !decimal.TryParse(valueElement.GetString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var value)) return null;
         return new(year, month, value);
     }
+
+    private static bool IsMonthlyRow(JsonElement item)=>item.TryGetProperty("period",out var periodValue)&&periodValue.GetString() is {Length:3} period&&period[0]=='M'&&period[1..] is not "13";
 
     private static BlsMacroFetchResult Fail(BlsMacroFetchStatus status, string reasonCode) => new(status, null, reasonCode);
     private readonly record struct SeriesDefinition(string Geography, string Frequency, string Unit);

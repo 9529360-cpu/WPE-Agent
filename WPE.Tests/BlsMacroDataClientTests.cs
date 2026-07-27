@@ -56,6 +56,9 @@ public sealed class BlsMacroDataClientTests
     [InlineData("wrong-series")]
     [InlineData("malformed")]
     [InlineData("unavailable")]
+    [InlineData("future-observation")]
+    [InlineData("outside-request")]
+    [InlineData("duplicate-observation")]
     public async Task InvalidOrUnavailableResponsesNeverProduceInput(string fixture)
     {
         var response = fixture switch
@@ -64,6 +67,9 @@ public sealed class BlsMacroDataClientTests
             "wrong-series" => Response(("2026", "M06", "333.952")).Replace("CUUR0000SA0", "LNS14000000", StringComparison.Ordinal),
             "malformed" => "{",
             "unavailable" => Response(("2026", "M06", "-")),
+            "future-observation" => Response(("2026", "M12", "340.1")),
+            "outside-request" => Response(("2024", "M12", "320.1")),
+            "duplicate-observation" => Response(("2026", "M06", "333.952"),("2026", "M06", "334.100")),
             _ => throw new ArgumentOutOfRangeException(nameof(fixture))
         };
         var result = await new BlsMacroDataClient(new FakeTransport(response)).FetchLatestAsync("CUUR0000SA0", 2025, 2026, Now);

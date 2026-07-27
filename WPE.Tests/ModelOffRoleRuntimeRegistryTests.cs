@@ -28,6 +28,9 @@ public sealed class ModelOffRoleRuntimeRegistryTests
         var strategy=registry.Capabilities.Single(x=>x.Id=="strategy");
         Assert.Equal("yes",strategy.Maturity);Assert.True(strategy.Implemented);Assert.True(strategy.Accepted);
         Assert.Contains("directional price geometry",strategy.AcceptanceScope,StringComparison.Ordinal);
+        var macro=registry.Capabilities.Single(x=>x.Id=="macro");
+        Assert.Equal("yes",macro.Maturity);Assert.True(macro.Implemented);Assert.True(macro.Accepted);
+        Assert.Contains("append-only revisions",macro.AcceptanceScope,StringComparison.Ordinal);
     }
 
     [Fact]
