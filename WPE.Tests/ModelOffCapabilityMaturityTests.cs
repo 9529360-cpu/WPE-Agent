@@ -50,19 +50,19 @@ public sealed class ModelOffCapabilityMaturityTests
     }
 
     [Fact]
-    public void PositionAcceptanceIsBoundedAndDoesNotUpgradeExecutionOrRecoveryAggregates()
+    public void PositionAcceptanceIsBoundedAndDoesNotUpgradeRecoveryAggregate()
     {
         var root=LoadCanonical();var position=root["capabilities"]!.AsArray().Single(Capability("position"));var aggregates=root["aggregates"]!.AsArray();
         Assert.Equal("yes",String(position,"maturity"));Assert.True(Bool(position,"implemented"));Assert.True(Bool(position,"accepted"));Assert.Contains("same-cycle mutation invalidation",String(position,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no live Testnet provider certification",String(position,"acceptance_scope"),StringComparison.Ordinal);
-        foreach(var id in new[]{"execution","recovery"}){var aggregate=aggregates.Single(node=>String(node,"id")==id);Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));}
+        var recovery=aggregates.Single(node=>String(node,"id")=="recovery");Assert.Equal("partial",String(recovery,"maturity"));Assert.False(Bool(recovery,"accepted"));
     }
 
     [Fact]
-    public void OrchestratorAcceptanceDoesNotUpgradeTheThreeUnacceptedAggregates()
+    public void OrchestratorAcceptanceDoesNotUpgradeTheTwoUnacceptedAggregates()
     {
         var root=LoadCanonical();var orchestrator=root["capabilities"]!.AsArray().Single(Capability("orchestrator"));var aggregates=root["aggregates"]!.AsArray();
         Assert.Equal("yes",String(orchestrator,"maturity"));Assert.True(Bool(orchestrator,"implemented"));Assert.True(Bool(orchestrator,"accepted"));Assert.Contains("atomic append-only output/handoff persistence",String(orchestrator,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("no live Testnet mutation certification",String(orchestrator,"acceptance_scope"),StringComparison.Ordinal);
-        foreach(var aggregate in aggregates.Where(node=>String(node,"id") is not ("market" or "research" or "strategy" or "risk"))){Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));}
+        foreach(var aggregate in aggregates.Where(node=>String(node,"id") is not ("market" or "research" or "strategy" or "risk" or "execution"))){Assert.Equal("partial",String(aggregate,"maturity"));Assert.False(Bool(aggregate,"accepted"));}
     }
 
     [Fact]
@@ -75,6 +75,12 @@ public sealed class ModelOffCapabilityMaturityTests
     public void RiskAggregateAcceptanceIsAuthoritativeCandidateBoundAndNonMutating()
     {
         var aggregate=LoadCanonical()["aggregates"]!.AsArray().Single(node=>String(node,"id")=="risk");Assert.Equal("yes",String(aggregate,"maturity"));Assert.True(Bool(aggregate,"accepted"));Assert.Contains("authoritative Binance Futures Testnet permission, account, position, market and trading-rule",String(aggregate,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("excludes Mainnet, mutation, credential disclosure, synthetic account substitution",String(aggregate,"acceptance_scope"),StringComparison.Ordinal);Assert.True(IsSha(String(aggregate,"evidence_set_sha256")));
+    }
+
+    [Fact]
+    public void ExecutionAggregateAcceptanceIsCandidateBoundAndLeavesNoTestnetResidue()
+    {
+        var aggregate=LoadCanonical()["aggregates"]!.AsArray().Single(node=>String(node,"id")=="execution");Assert.Equal("yes",String(aggregate,"maturity"));Assert.True(Bool(aggregate,"accepted"));Assert.Contains("shared-gateway mutation routing and idempotency",String(aggregate,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("zero position/protection residue",String(aggregate,"acceptance_scope"),StringComparison.Ordinal);Assert.Contains("excludes Mainnet",String(aggregate,"acceptance_scope"),StringComparison.Ordinal);Assert.True(IsSha(String(aggregate,"evidence_set_sha256")));
     }
 
     [Fact]
@@ -275,7 +281,9 @@ public sealed class ModelOffCapabilityMaturityTests
         Require(String(strategyAggregate,"maturity")=="yes"&&Bool(strategyAggregate,"accepted")==true&&!string.IsNullOrWhiteSpace(String(strategyAggregate,"acceptance_scope"))&&String(strategyAggregate,"acceptance_scope")!.Contains("24 consecutive closed one-minute shadow observations",StringComparison.Ordinal)&&String(strategyAggregate,"acceptance_scope")!.Contains("excludes Mainnet, mutation, credentials",StringComparison.Ordinal)&&IsSha(String(strategyAggregate,"evidence_set_sha256")),"Strategy aggregate acceptance is unbounded or unproven",errors);
         var riskAggregate=aggregates.SingleOrDefault(node=>String(node,"id")=="risk");
         Require(String(riskAggregate,"maturity")=="yes"&&Bool(riskAggregate,"accepted")==true&&!string.IsNullOrWhiteSpace(String(riskAggregate,"acceptance_scope"))&&String(riskAggregate,"acceptance_scope")!.Contains("authoritative Binance Futures Testnet permission, account, position, market and trading-rule",StringComparison.Ordinal)&&String(riskAggregate,"acceptance_scope")!.Contains("excludes Mainnet, mutation, credential disclosure, synthetic account substitution",StringComparison.Ordinal)&&IsSha(String(riskAggregate,"evidence_set_sha256")),"Risk aggregate acceptance is unbounded or unproven",errors);
-        Require(aggregates.Where(node=>String(node,"id") is not ("market" or "research" or "strategy" or "risk")).All(node => String(node, "maturity") == "partial" && Bool(node, "accepted") == false), "unaccepted aggregate upgraded", errors);
+        var executionAggregate=aggregates.SingleOrDefault(node=>String(node,"id")=="execution");
+        Require(String(executionAggregate,"maturity")=="yes"&&Bool(executionAggregate,"accepted")==true&&!string.IsNullOrWhiteSpace(String(executionAggregate,"acceptance_scope"))&&String(executionAggregate,"acceptance_scope")!.Contains("shared-gateway mutation routing and idempotency",StringComparison.Ordinal)&&String(executionAggregate,"acceptance_scope")!.Contains("zero position/protection residue",StringComparison.Ordinal)&&String(executionAggregate,"acceptance_scope")!.Contains("excludes Mainnet",StringComparison.Ordinal)&&IsSha(String(executionAggregate,"evidence_set_sha256")),"Execution aggregate acceptance is unbounded or unproven",errors);
+        Require(aggregates.Where(node=>String(node,"id") is not ("market" or "research" or "strategy" or "risk" or "execution")).All(node => String(node, "maturity") == "partial" && Bool(node, "accepted") == false), "unaccepted aggregate upgraded", errors);
 
         var capabilityIds = capabilities.Select(node => String(node, "id")).ToArray();
         Require(capabilityIds.Length == 13 && capabilityIds.Distinct(StringComparer.Ordinal).Count() == 13, "missing or duplicate capability", errors);
