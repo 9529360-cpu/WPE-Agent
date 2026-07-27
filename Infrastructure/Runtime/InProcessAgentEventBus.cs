@@ -12,6 +12,7 @@ public sealed class InProcessAgentEventBus : IAgentEventBus
     private readonly Task _pump;
     private long _subscriberId;
     private long _sequence;
+    private int _disposeState;
 
     public InProcessAgentEventBus(int capacity = 2048)
     {
@@ -54,6 +55,7 @@ public sealed class InProcessAgentEventBus : IAgentEventBus
 
     public async ValueTask DisposeAsync()
     {
+        if(Interlocked.Exchange(ref _disposeState,1)!=0)return;
         _channel.Writer.TryComplete();
         try { await _pump.WaitAsync(TimeSpan.FromSeconds(5)); }
         catch (TimeoutException) { _shutdown.Cancel(); }
