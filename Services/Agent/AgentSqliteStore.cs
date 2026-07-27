@@ -23,6 +23,9 @@ public sealed record PersistedModelOffAudit(
     string OutputId,string CycleId,string Schema,string TemplateVersion,string CanonicalSha256,
     string Status,string OutputKind,string SourcesJson,DateTimeOffset AsOfUtc,DateTimeOffset RecordedAtUtc,
     byte[] CanonicalBytes);
+public sealed record PersistedModelOffHandoff(
+    string HandoffId,string CycleId,string FromAgent,string ToAgent,string CanonicalOutputId,
+    string CanonicalSha256,string Status,DateTimeOffset RecordedAtUtc,string HandoffSha256,byte[] CanonicalBytes);
 
 public sealed class AgentSqliteStore
 {
@@ -233,6 +236,11 @@ public sealed class AgentSqliteStore
     {
         if(string.IsNullOrWhiteSpace(cycleId))throw new ArgumentException("Cycle id is required.",nameof(cycleId));
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT output_id,cycle_id,schema,template_version,canonical_sha256,status,output_kind,sources_json,as_of_utc,recorded_at_utc,canonical_bytes FROM model_off_canonical_audits WHERE cycle_id=$c ORDER BY as_of_utc,output_id";q.Parameters.AddWithValue("$c",cycleId);await using var r=await q.ExecuteReaderAsync(ct);var rows=new List<PersistedModelOffAudit>();while(await r.ReadAsync(ct))rows.Add(new(r.GetString(0),r.GetString(1),r.GetString(2),r.GetString(3),r.GetString(4),r.GetString(5),r.GetString(6),r.GetString(7),DateTimeOffset.Parse(r.GetString(8),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),DateTimeOffset.Parse(r.GetString(9),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),(byte[])r[10]));return rows;
+    }
+    public async Task<IReadOnlyList<PersistedModelOffHandoff>> GetModelOffCanonicalHandoffsAsync(string cycleId,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(cycleId))throw new ArgumentException("Cycle id is required.",nameof(cycleId));
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT handoff_id,cycle_id,from_agent,to_agent,canonical_output_id,canonical_sha256,status,recorded_at_utc,handoff_sha256,canonical_bytes FROM model_off_canonical_handoffs WHERE cycle_id=$c ORDER BY handoff_id";q.Parameters.AddWithValue("$c",cycleId);await using var r=await q.ExecuteReaderAsync(ct);var rows=new List<PersistedModelOffHandoff>();while(await r.ReadAsync(ct))rows.Add(new(r.GetString(0),r.GetString(1),r.GetString(2),r.GetString(3),r.GetString(4),r.GetString(5),r.GetString(6),DateTimeOffset.Parse(r.GetString(7),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),r.GetString(8),(byte[])r[9]));return rows;
     }
     public async Task<ModelOffAuditPersistenceResult> SaveModelOffProductionCycleAsync(IReadOnlyList<(ModelOffAgentOutputV1 Output,ModelOffCanonicalDocumentV1 Document)> outputs,IReadOnlyList<ModelOffHandoffV1> handoffs,CancellationToken ct)
     {

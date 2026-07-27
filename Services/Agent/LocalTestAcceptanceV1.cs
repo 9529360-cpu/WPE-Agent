@@ -128,6 +128,17 @@ public static class LocalTestAcceptanceCanonicalizerV1
             "WPE.Tests.ModelOffExecutionRecoveryContractTests.ProductionMutationChainAndRecoveryContainNoResubmitPath",
             "WPE.Tests.OrderFaultInjectionTests.CancelFailure_RemainsUnknownAndRecoverable",
             "WPE.Tests.UnknownOrderRecoveryTests.RecoverPending_UnknownExchangeStateDoesNotSubmitReplacementOrder"
+        ],
+        ["audit.append-only"]=
+        [
+            "WPE.Tests.ModelOffProductionCycleOrchestratorTests.PersistedProductionEvidenceIsDatabaseAppendOnly",
+            "WPE.Tests.ModelOffProductionCycleOrchestratorTests.HandoffIdentityConflictRollsBackTheWholeProductionCycle"
+        ],
+        ["audit.seven-role-correlation"]=
+        [
+            "WPE.Tests.ModelOffProductionCycleOrchestratorTests.ValidCanonicalInputsCreateOrderedSevenAgentCycleWithoutMutation",
+            "WPE.Tests.ModelOffLiveCycleInputComposerTests.ProductionShadowPersistsSevenOutputsWithoutChangingExecution",
+            "WPE.Tests.ModelOffLiveCycleInputComposerTests.RiskIncreaseGateRequiresCompletePersistedSevenAgentCycle"
         ]
     };
 
@@ -194,5 +205,5 @@ public static class LocalTestAcceptanceCanonicalizerV1
     }
     private static string Hash(byte[] bytes)=>Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     private static bool Sha(string value)=>value is{Length:64}&&value.All(x=>x is>='0'and<='9'or>='a'and<='f');
-    private static ModelOffAggregateAgentV1 Agent(string requirementId)=>requirementId.StartsWith("market.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Market:requirementId.StartsWith("research.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Research:requirementId.StartsWith("strategy.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Strategy:requirementId.StartsWith("risk.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Risk:requirementId.StartsWith("execution.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Execution:requirementId.StartsWith("recovery.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Recovery:throw new InvalidOperationException("Unsupported local acceptance Agent.");
+    private static ModelOffAggregateAgentV1 Agent(string requirementId)=>requirementId.StartsWith("market.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Market:requirementId.StartsWith("research.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Research:requirementId.StartsWith("strategy.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Strategy:requirementId.StartsWith("risk.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Risk:requirementId.StartsWith("execution.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Execution:requirementId.StartsWith("recovery.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Recovery:requirementId.StartsWith("audit.",StringComparison.Ordinal)?ModelOffAggregateAgentV1.Audit:throw new InvalidOperationException("Unsupported local acceptance Agent.");
 }

@@ -203,6 +203,30 @@ public partial class App : global::System.Windows.Application
             Shutdown(result.Accepted?0:34);
             return;
         }
+        if (e.Args.Any(x => string.Equals(x, "--audit-local-acceptance", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await WpeAgent.ModelOff.AuditLocalAcceptanceRunnerV1.RunAsync(e.Args);
+            Log.Information("Audit local acceptance collection completed. Success={Success}; Directory={Directory}; Errors={Errors}",result.Success,result.ArtifactDirectory,string.Join(',',result.Errors));
+            Shutdown(result.Success?0:35);
+            return;
+        }
+        if (e.Args.Any(x => string.Equals(x, "--audit-aggregate-acceptance", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await WpeAgent.ModelOff.AuditAggregateAcceptanceRunnerV1.RunAsync();
+            Log.Information("Audit aggregate acceptance collection completed. Success={Success}; Directory={Directory}; Errors={Errors}",result.Success,result.ArtifactDirectory,string.Join(',',result.Errors));
+            Shutdown(result.Success?0:36);
+            return;
+        }
+        if (e.Args.Any(x => string.Equals(x, "--audit-acceptance-assess", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            var result=await WpeAgent.ModelOff.AuditAcceptanceAssessmentRunnerV1.RunAsync(e.Args);
+            Log.Information("Audit aggregate assessment completed. Accepted={Accepted}; Report={Report}; Errors={Errors}",result.Accepted,result.ReportPath,string.Join(',',result.Errors));
+            Shutdown(result.Accepted?0:37);
+            return;
+        }
 
         if (e.Args.Any(x => string.Equals(x, "--research-aggregate-acceptance", StringComparison.OrdinalIgnoreCase)))
         {
