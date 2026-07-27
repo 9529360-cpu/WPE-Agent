@@ -22,6 +22,9 @@ public sealed class ModelOffRoleRuntimeRegistryTests
         var teacher=registry.Capabilities.Single(x=>x.Id=="teacher");
         Assert.Equal("current",teacher.Lifecycle);Assert.True(teacher.Implemented);Assert.True(teacher.Accepted);
         Assert.Contains("opt-in notification",teacher.AcceptanceScope,StringComparison.Ordinal);
+        var news=registry.Capabilities.Single(x=>x.Id=="news");
+        Assert.Equal("yes",news.Maturity);Assert.True(news.Implemented);Assert.True(news.Accepted);
+        Assert.Contains("article-text exclusion",news.AcceptanceScope,StringComparison.Ordinal);
     }
 
     [Fact]

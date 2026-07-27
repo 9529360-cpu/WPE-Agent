@@ -43,7 +43,7 @@ public static class ModelOffRoleRuntimeRegistryBuilderV1
     [
         Capability("orchestrator", AllRoles(), "yes", true, true, "current", "deterministic seven-role canonical chain with mandatory fail-closed pre-authorization gate and atomic append-only output/handoff persistence; no live Testnet mutation certification"),
         Capability("market-data", [ModelOffRuntimeRoleV1.Market], "yes", true, true, "current", "deterministic confirmed-candle market facts with source-time freshness, Testnet provider-bound canonical provenance and complete realtime enrichment gates; no raw HTTP response retention or live provider certification"),
-        Capability("news", [ModelOffRuntimeRoleV1.Research], "partial"),
+        Capability("news", [ModelOffRuntimeRoleV1.Research], "yes", true, true, "current", "bounded canonical News evidence with allowlisted publisher/HTTPS-host identity, UTC freshness, duplicate rejection, structured field validation and article-text exclusion from Agent audit; no live source availability certification or narrative truth claim"),
         Capability("macro", [ModelOffRuntimeRoleV1.Research], "partial"),
         Capability("technical", [ModelOffRuntimeRoleV1.Research], "yes", true, true, "current", "versioned technical fact validation and deterministic weighted signal aggregation over canonical Market evidence; no independent recomputation or live certification of provider multi-timeframe indicators"),
         Capability("fundamental", [ModelOffRuntimeRoleV1.Research], "partial"),
