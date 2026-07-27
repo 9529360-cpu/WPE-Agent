@@ -73,6 +73,15 @@ internal static class ModelOffLiveCycleInputComposerV1
         var researchReasons = new List<string>();
         var macro=request.MacroObservations??[];
         var target=request.DecisionReview.Decision.Instrument;
+        var assessmentMatches=request.Assessments.Where(x=>string.Equals(x.Symbol,target,StringComparison.OrdinalIgnoreCase)).ToArray();
+        var targetAssessment=assessmentMatches.Length==1?assessmentMatches[0]:null;
+        var targetAssessmentValid=targetAssessment is not null&&ValidAssessment(targetAssessment,target);
+        request.Evidence.Markets.TryGetValue(target,out var technicalMarket);
+        var technicalEvidenceValid=targetAssessmentValid&&technicalMarket is not null&&MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(technicalMarket);
+        if(assessmentMatches.Length==0)researchReasons.Add("live.research.technical-missing");
+        if(assessmentMatches.Length>1)researchReasons.Add("live.research.technical-conflicting");
+        if(targetAssessment is not null&&!targetAssessmentValid)researchReasons.Add("live.research.technical-invalid");
+        if(targetAssessmentValid&&!technicalEvidenceValid)researchReasons.Add("live.research.technical-source-invalid");
         request.Evidence.Fundamentals.TryGetValue(target,out var targetFundamental);var targetFundamentalValid=targetFundamental is not null&&CryptoInstrumentFundamentalCanonicalizerV1.IsCanonical(targetFundamental,request.EvaluationTimeUtc)&&string.Equals(targetFundamental.Symbol,target,StringComparison.OrdinalIgnoreCase)&&targetFundamental.Environment=="Testnet";
         if(targetFundamental is null)researchReasons.Add("live.research.fundamental-missing");else if(!targetFundamentalValid)researchReasons.Add("live.research.fundamental-invalid");
         var news=request.Evidence.News.OrderBy(x=>x.DuplicateGroup,StringComparer.Ordinal).ToArray();
@@ -91,7 +100,8 @@ internal static class ModelOffLiveCycleInputComposerV1
             if(!targetResearch.Approved)researchReasons.Add("live.research.target-not-approved");
             if(!targetResearch.Promoted)researchReasons.Add("live.research.target-not-promoted");
         }
-        if(macro.GroupBy(x=>x.IndicatorId,StringComparer.Ordinal).Any(x=>x.Count()>1)||macro.Any(x=>!ValidMacro(x,request.EvaluationTimeUtc)))
+        var macroValid=!macro.GroupBy(x=>x.IndicatorId,StringComparer.Ordinal).Any(x=>x.Count()>1)&&macro.All(x=>ValidMacro(x,request.EvaluationTimeUtc));
+        if(!macroValid)
             researchReasons.Add("live.research.macro-invalid");
         if (!ModelOffEligibilityV1.IsEligibleForDownstream(marketOutput)) researchReasons.Add("live.research.market-invalid");
         var researchSources=new List<ModelOffSourceV1>{UpstreamSource(marketOutput,outputs[^1].Document,request.EvaluationTimeUtc)};
@@ -101,6 +111,10 @@ internal static class ModelOffLiveCycleInputComposerV1
             researchSources.Add(new("news-"+item.DuplicateGroup.ToLowerInvariant(),ModelOffSourceKindV1.News,published,new DateTimeOffset(item.CollectedAt),
                 ModelOffSourceStatusV1.Available,Hash(NewsCanonicalFact(item,published))));
         }
+        if(macroValid)foreach(var item in macro.OrderBy(x=>x.IndicatorId,StringComparer.Ordinal))
+            researchSources.Add(new($"macro-{item.IndicatorId.ToLowerInvariant()}-r{item.Revision}",ModelOffSourceKindV1.Macro,item.FirstObservedAtUtc,request.EvaluationTimeUtc,ModelOffSourceStatusV1.Available,"sha256:"+item.SourceArtifactHash.ToLowerInvariant()));
+        if(technicalEvidenceValid)
+            researchSources.Add(new($"technical-assessment-{target.ToLowerInvariant()}",ModelOffSourceKindV1.Market,new DateTimeOffset(technicalMarket!.CollectedAt),request.EvaluationTimeUtc,ModelOffSourceStatusV1.Available,Hash(TechnicalAssessmentFact(targetAssessment!,technicalMarket))));
         if(targetResearch is not null)researchSources.Add(new($"strategy-validation-{(SafeToken(targetResearch.Symbol)?targetResearch.Symbol:"unknown")}",ModelOffSourceKindV1.Strategy,request.EvaluationTimeUtc,request.EvaluationTimeUtc,
             targetResearchValid&&targetResearch.Approved&&targetResearch.Promoted?ModelOffSourceStatusV1.Available:ModelOffSourceStatusV1.Invalid,
             targetResearchValid?Hash(new{targetResearch.Symbol,targetResearch.StrategyVersion,targetResearch.SampleSize,targetResearch.Trades,targetResearch.WinRate,targetResearch.ProfitFactor,targetResearch.Expectancy,targetResearch.MaxDrawdown,targetResearch.Sharpe,targetResearch.OutOfSampleReturn,targetResearch.WalkForwardScore,targetResearch.MonteCarloLossProbability,targetResearch.QualityScore,targetResearch.Approved,targetResearch.Promoted,targetResearch.CoverageDays,targetResearch.OutOfSampleTrades,targetResearch.StrategyReturn,targetResearch.BenchmarkReturn}):Hash(new{target=SafeToken(target)?target:"unknown",state="invalid"})));
@@ -114,8 +128,9 @@ internal static class ModelOffLiveCycleInputComposerV1
                 news_evidence_count=newsValid?news.Length:0,
                 news_target_count=newsValid?news.Count(x=>NewsTargets(x,target)):0,
                 news_evidence_hash=newsValid?Hash(news.Select(x=>NewsCanonicalFact(x,NewsTimestamp(x))).ToArray()):Hash(new{state="invalid"}),
+                technical_state=technicalEvidenceValid?"verified":"unavailable",technical_evidence_hash=technicalEvidenceValid?Hash(TechnicalAssessmentFact(targetAssessment!,technicalMarket!)):string.Empty,
                 fundamental_state=targetFundamentalValid?"verified":"unavailable",fundamental_evidence_hash=targetFundamentalValid?targetFundamental!.CanonicalSha256:string.Empty,
-                macro_observations=macro.OrderBy(x=>x.IndicatorId,StringComparer.Ordinal).Select(x=>new{x.IndicatorId,x.ObservationAtUtc,x.Revision,x.Geography,x.Frequency,x.Unit,x.Value,x.SourceArtifactHash,x.FirstObservedAtUtc,x.ReleasedAtUtc,x.ReleaseTimeBasis,x.ReleaseCalendarArtifactHash,x.ReleaseCalendarEventId}).ToArray() });
+                macro_state=macro.Count==0?"unavailable":macroValid?"verified":"invalid",macro_observations=macro.OrderBy(x=>x.IndicatorId,StringComparer.Ordinal).Select(x=>new{x.IndicatorId,x.ObservationAtUtc,x.Revision,x.Geography,x.Frequency,x.Unit,x.Value,x.SourceArtifactHash,x.FirstObservedAtUtc,x.ReleasedAtUtc,x.ReleaseTimeBasis,x.ReleaseCalendarArtifactHash,x.ReleaseCalendarEventId}).ToArray() });
         outputs.Add(Input(research));
 
         var decision = request.DecisionReview.Decision;
@@ -126,11 +141,9 @@ internal static class ModelOffLiveCycleInputComposerV1
         if (!Finite(decision.Confidence) || decision.Confidence is <0 or >1 || !Finite(decision.RiskRewardRatio) || decision.TargetTier is <0 or >3) strategyReasons.Add("live.strategy.numeric-invalid");
         if (!SafeIdentityToken(decision.StrategyVersion)) strategyReasons.Add("live.strategy.version-invalid");
         if(targetResearchValid&&!string.Equals(decision.StrategyVersion,targetResearch!.StrategyVersion,StringComparison.Ordinal))strategyReasons.Add("live.strategy.version-conflict");
-        var assessmentMatches=request.Assessments.Where(x=>string.Equals(x.Symbol,decision.Instrument,StringComparison.OrdinalIgnoreCase)).ToArray();
-        var targetAssessment=assessmentMatches.Length==1?assessmentMatches[0]:null;
         if(assessmentMatches.Length==0)strategyReasons.Add("live.strategy.assessment-missing");
         if(assessmentMatches.Length>1)strategyReasons.Add("live.strategy.assessment-conflicting");
-        if(targetAssessment is not null&&(!string.Equals(targetAssessment.Symbol,decision.Instrument,StringComparison.Ordinal)||!SafeToken(targetAssessment.Symbol)||!Enum.IsDefined(targetAssessment.Regime)||!Enum.IsDefined(targetAssessment.RecommendedAction)||!targetAssessment.Fresh||!targetAssessment.EntryReady||!Finite(targetAssessment.Confidence)||targetAssessment.Confidence is <0 or >1||!Finite(targetAssessment.NetScore)||targetAssessment.NetScore is <-1 or >1||!Finite(targetAssessment.ConflictRatio)||targetAssessment.ConflictRatio is <0 or >1))strategyReasons.Add("live.strategy.assessment-ineligible");
+        if(targetAssessment is not null&&!targetAssessmentValid)strategyReasons.Add("live.strategy.assessment-ineligible");
         if(targetAssessment is not null&&!RecommendationMatches(decision.Action,targetAssessment.RecommendedAction))strategyReasons.Add("live.strategy.direction-conflict");
         if(DeterministicPlanSkill.IsRiskIncreasing(decision.Action)&&!ValidPlanGeometry(decision))strategyReasons.Add("live.strategy.plan-geometry-invalid");
         if (!ModelOffEligibilityV1.IsEligibleForDownstream(research)) strategyReasons.Add("live.strategy.research-invalid");
@@ -253,6 +266,12 @@ internal static class ModelOffLiveCycleInputComposerV1
         confidence=value.Confidence,corroborating_sources=value.CorroboratingSources,event_type=value.EventType,is_breaking=value.IsBreaking,sentiment=value.Sentiment,
         title_sha256=Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value.Title))).ToLowerInvariant()
     };
+    private static object TechnicalAssessmentFact(MarketDecisionAssessment value,MarketEvidence market)=>new
+    {
+        schema="wpe.live-technical-assessment/1.0",symbol=value.Symbol,market_evidence_sha256=market.Provenance!.CanonicalSha256,
+        regime=value.Regime.ToString().ToLowerInvariant(),value.NetScore,value.Confidence,value.ConflictRatio,value.Fresh,value.EntryReady,
+        recommended_action=value.RecommendedAction.ToString().ToLowerInvariant()
+    };
 
     private static bool TryUtc(DateTime value, out DateTimeOffset result)
     {
@@ -265,6 +284,7 @@ internal static class ModelOffLiveCycleInputComposerV1
             character is >= 'A' and <= 'Z' or >= '0' and <= '9' or '.' or '_' or '-');
 
     private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
+    private static bool ValidAssessment(MarketDecisionAssessment value,string symbol)=>string.Equals(value.Symbol,symbol,StringComparison.Ordinal)&&SafeToken(value.Symbol)&&Enum.IsDefined(value.Regime)&&Enum.IsDefined(value.RecommendedAction)&&value.Fresh&&value.EntryReady&&Finite(value.Confidence)&&value.Confidence is>=0 and<=1&&Finite(value.NetScore)&&value.NetScore is>=-1 and<=1&&Finite(value.ConflictRatio)&&value.ConflictRatio is>=0 and<=1;
     private static bool ValidResearch(ResearchValidationResult value)=>SafeToken(value.Symbol)&&SafeIdentityToken(value.StrategyVersion)&&value.SampleSize>0&&value.Trades>0&&value.CoverageDays>0&&value.OutOfSampleTrades>=0&&
         new[]{value.WinRate,value.ProfitFactor,value.Expectancy,value.MaxDrawdown,value.Sharpe,value.OutOfSampleReturn,value.WalkForwardScore,value.MonteCarloLossProbability,value.QualityScore,value.StrategyReturn,value.BenchmarkReturn}.All(Finite);
     private static bool SafeIdentityToken(string? value)=>!string.IsNullOrWhiteSpace(value)&&value.Length<=64&&value.All(character=>char.IsAsciiLetterOrDigit(character)||character is '.' or '_' or '-');

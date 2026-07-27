@@ -11,6 +11,7 @@
 - [x] Connect the read-only trading-authorization projection to the Reference UI runtime snapshot: `BuildRuntimeJson()` refreshes and supplies `RuntimeAuthorization`; `MainWindowRuntimeBridgeTests` `2/2` passed. This is visibility only, not approval mutation or approved-order processing.
 
 ## P1
+- [x] Bind Macro revisions and the current-instrument Technical assessment as explicit canonical Research sources. Duplicate/invalid Macro facts and missing/conflicting/cross-identity Technical evidence fail closed before Strategy; facts-only evidence is not sufficient.
 - [x] Harden the live Market Agent input with an independently hashed account source, fresh positive account truth, structurally valid non-duplicate positions, and per-market source status so one invalid market cannot relabel unrelated valid evidence.
 - [x] Require the live Research Agent to consume an exact current-instrument validation that is structurally valid, approved, and promoted. Persist a bounded deterministic validation hash, reject missing/conflicting/wrong-instrument evidence, and keep invalid non-finite metrics out of canonical facts.
 - [x] Make the live Strategy Agent independently require one fresh entry-ready assessment for the decision instrument, enforce directional agreement and valid entry/stop/take geometry for risk increase, and carry only the validated research strategy version into canonical facts.

@@ -50,8 +50,38 @@ public sealed class ModelOffLiveCycleInputComposerTests
         var persisted=Assert.Single(research.Output.Facts.GetProperty("macro_observations").EnumerateArray());
         Assert.Equal(2,persisted.GetProperty("Revision").GetInt32());
         Assert.Equal(334.1m,persisted.GetProperty("Value").GetDecimal());
+        var macroSource=Assert.Single(research.Output.Sources,x=>x.Kind==ModelOffSourceKindV1.Macro);
+        Assert.Equal("macro-cuur0000sa0-r2",macroSource.SourceId);Assert.Equal("sha256:"+new string('a',64),macroSource.ArtifactHash);
+        Assert.Equal("verified",research.Output.Facts.GetProperty("macro_state").GetString());
         Assert.DoesNotContain("forecast",research.Document.Json,StringComparison.OrdinalIgnoreCase);
         Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(research.Output));
+    }
+
+    [Fact]
+    public void ResearchBindsTechnicalAssessmentToCanonicalMarketEvidence()
+    {
+        var research=ModelOffLiveCycleInputComposerV1.Compose(Request()).Single(x=>x.Output.Agent==ModelOffAgentV1.Research);
+        var source=Assert.Single(research.Output.Sources,x=>x.SourceId=="technical-assessment-btcusdt");
+        Assert.Equal(ModelOffSourceKindV1.Market,source.Kind);Assert.StartsWith("sha256:",source.ArtifactHash,StringComparison.Ordinal);
+        Assert.Equal("verified",research.Output.Facts.GetProperty("technical_state").GetString());Assert.Equal(source.ArtifactHash,research.Output.Facts.GetProperty("technical_evidence_hash").GetString());
+    }
+
+    [Fact]
+    public void ResearchRejectsCrossIdentityTechnicalAssessmentBeforeStrategy()
+    {
+        var request=Request() with{Assessments=[Assessment(symbol:"btcusdt")]};
+        var research=ModelOffLiveCycleInputComposerV1.Compose(request).Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(research));Assert.Contains("live.research.technical-invalid",research.Decision.ReasonCodes);
+        Assert.DoesNotContain(research.Sources,x=>x.SourceId.StartsWith("technical-assessment-",StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DuplicateMacroIndicatorBlocksWithoutPublishingMacroSource()
+    {
+        var macro=new PersistedMacroObservation("CUUR0000SA0",new(2026,6,1,0,0,0,TimeSpan.Zero),2,"US","monthly","index",334.1m,"bls-public-api-v2",new string('a',64),Now.AddMinutes(-2));
+        var research=ModelOffLiveCycleInputComposerV1.Compose(Request() with{MacroObservations=[macro,macro]}).Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(research));Assert.Contains("live.research.macro-invalid",research.Decision.ReasonCodes);
+        Assert.DoesNotContain(research.Sources,x=>x.Kind==ModelOffSourceKindV1.Macro);
     }
 
     [Fact]
