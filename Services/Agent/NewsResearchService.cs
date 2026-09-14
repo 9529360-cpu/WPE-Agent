@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Xml;
 using System.Xml.Linq;
 
 namespace 币安量化机器人.Services.Agent;
@@ -12,6 +13,11 @@ public sealed record NewsResearchResult(IReadOnlyList<NewsEvidence> Items,IReadO
 
 public sealed partial class NewsResearchService
 {
+    private sealed record NewsFeedSource(string Source,string Url,string Reliability,string TrustedDomain);
+    private const int MaximumRedirects=3;
+    private const int MaximumFeedBytes=2_000_000;
+    private const int MaximumArticleBytes=3_000_000;
+
     public static WpeAgent.FinancialEvidence.AuthorizedFixtureProjectionV1<NewsEvidence> CollectAuthorizedLocalFixtures(
         IReadOnlyList<WpeAgent.FinancialEvidence.FinancialEvidenceRecordV1>? fixtures,
         WpeAgent.FinancialEvidence.FinancialEvidenceRetrievalRequestV1 request)
@@ -39,16 +45,23 @@ public sealed partial class NewsResearchService
         }
     }
 
-    private static readonly (string Source,string Url,string Reliability)[] Feeds=
+    private static readonly NewsFeedSource[] Feeds=
     [
-        ("SEC","https://www.sec.gov/news/pressreleases.rss","official"),("CFTC","https://www.cftc.gov/RSS/RSSENF.xml","official"),("Federal Reserve","https://www.federalreserve.gov/feeds/press_all.xml","official"),("ECB","https://www.ecb.europa.eu/rss/press.html","official"),
-        ("CoinDesk","https://www.coindesk.com/arc/outboundfeeds/rss/","mainstream"),("Cointelegraph","https://cointelegraph.com/rss","mainstream"),("Google News","https://news.google.com/rss/search?q=Bitcoin%20OR%20Ethereum%20OR%20crypto%20regulation&hl=en-US&gl=US&ceid=US:en","aggregator")
+        new("SEC","https://www.sec.gov/news/pressreleases.rss","official","sec.gov"),
+        new("CFTC","https://www.cftc.gov/RSS/RSSENF.xml","official","cftc.gov"),
+        new("Federal Reserve","https://www.federalreserve.gov/feeds/press_all.xml","official","federalreserve.gov"),
+        new("ECB","https://www.ecb.europa.eu/rss/press.html","official","ecb.europa.eu"),
+        new("CoinDesk","https://www.coindesk.com/arc/outboundfeeds/rss/","mainstream","coindesk.com"),
+        new("Cointelegraph","https://cointelegraph.com/rss","mainstream","cointelegraph.com"),
+        new("Google News","https://news.google.com/rss/search?q=Bitcoin%20OR%20Ethereum%20OR%20crypto%20regulation&hl=en-US&gl=US&ceid=US:en","aggregator","news.google.com")
     ];
     private readonly HttpClient _http;
     private readonly Dictionary<string, DateTime> _feedCooldownUntil = new(StringComparer.OrdinalIgnoreCase);
     public NewsResearchService()
     {
-        _http=new HttpClient(new HttpClientHandler{AutomaticDecompression=DecompressionMethods.All,AllowAutoRedirect=true}){Timeout=TimeSpan.FromSeconds(10)};_http.DefaultRequestHeaders.UserAgent.ParseAdd("WPE-Agent/2.0");_http.DefaultRequestHeaders.UserAgent.ParseAdd("(local-research-client)");
+        _http=new HttpClient(new HttpClientHandler{AutomaticDecompression=DecompressionMethods.All,AllowAutoRedirect=false,UseCookies=false}){Timeout=TimeSpan.FromSeconds(10)};
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("WPE-Agent/2.0");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("(local-research-client)");
     }
     public async Task<NewsResearchResult> CollectAsync(IEnumerable<string> symbols,CancellationToken ct)
     {
@@ -61,39 +74,110 @@ public sealed partial class NewsResearchService
                 continue;
             }
             try
-        {
-            await using var stream=await GetStreamWithRetryAsync(feed.Url,ct);var doc=await XDocument.LoadAsync(stream,LoadOptions.None,ct);foreach(var item in doc.Descendants().Where(x=>x.Name.LocalName is "item" or "entry").Take(25))
             {
-                string Value(string name)=>item.Elements().FirstOrDefault(x=>x.Name.LocalName==name)?.Value?.Trim()??string.Empty;var title=WebUtility.HtmlDecode(Value("title"));if(string.IsNullOrWhiteSpace(title))continue;var link=Value("link");if(string.IsNullOrWhiteSpace(link))link=item.Elements().FirstOrDefault(x=>x.Name.LocalName=="link")?.Attribute("href")?.Value??string.Empty;DateTime? published=DateTimeOffset.TryParse(Value("pubDate")+Value("published")+Value("updated"),out var date)?date.UtcDateTime:null;var summary=CleanHtml(Value("description")+" "+Value("summary")+" "+Value("content"),900);raw.Add(new(feed.Source,title,link,published,DateTime.UtcNow,feed.Reliability,Hash(title),Assets(title+" "+summary,symbols),summary));
-            }successful++;_feedCooldownUntil.Remove(feed.Source);
+                await using var stream=await GetStreamWithRetryAsync(feed.Url,feed.TrustedDomain,ct);
+                var readerSettings=new XmlReaderSettings{Async=true,DtdProcessing=DtdProcessing.Prohibit,XmlResolver=null,MaxCharactersInDocument=MaximumFeedBytes};
+                using var reader=XmlReader.Create(stream,readerSettings);
+                var doc=await XDocument.LoadAsync(reader,LoadOptions.None,ct);
+                foreach(var item in doc.Descendants().Where(x=>x.Name.LocalName is "item" or "entry").Take(25))
+                {
+                    string Value(string name)=>item.Elements().FirstOrDefault(x=>x.Name.LocalName==name)?.Value?.Trim()??string.Empty;
+                    var title=WebUtility.HtmlDecode(Value("title"));if(string.IsNullOrWhiteSpace(title))continue;
+                    var link=Value("link");if(string.IsNullOrWhiteSpace(link))link=item.Elements().FirstOrDefault(x=>x.Name.LocalName=="link")?.Attribute("href")?.Value??string.Empty;
+                    if(!string.IsNullOrWhiteSpace(link)&&!IsTrustedContentUri(link,feed.TrustedDomain))link=string.Empty;
+                    DateTime? published=DateTimeOffset.TryParse(Value("pubDate")+Value("published")+Value("updated"),out var date)?date.UtcDateTime:null;
+                    var summary=CleanHtml(Value("description")+" "+Value("summary")+" "+Value("content"),900);
+                    raw.Add(new(feed.Source,title,link,published,DateTime.UtcNow,feed.Reliability,Hash(title),Assets(title+" "+summary,symbols),summary));
+                }
+                successful++;_feedCooldownUntil.Remove(feed.Source);
             }
+            catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
             catch
             {
                 missing.Add(feed.Source);
                 _feedCooldownUntil[feed.Source] = DateTime.UtcNow.AddMinutes(5);
             }
         }
-        var candidates=raw.OrderByDescending(x=>x.PublishedAt).Take(35).ToArray();using var gate=new SemaphoreSlim(4);var enriched=await Task.WhenAll(candidates.Select(async item=>{if(string.IsNullOrWhiteSpace(item.Url)||item.Source=="Google News")return item;await gate.WaitAsync(ct);try{var html=await _http.GetStringAsync(item.Url,ct);var text=ExtractArticle(html);return text.Length>item.BodySummary.Length?item with{BodySummary=text}:item;}catch{return item;}finally{gate.Release();}}));
+        var candidates=raw.OrderByDescending(x=>x.PublishedAt).Take(35).ToArray();using var gate=new SemaphoreSlim(4);
+        var enriched=await Task.WhenAll(candidates.Select(async item=>
+        {
+            if(string.IsNullOrWhiteSpace(item.Url)||item.Source=="Google News")return item;
+            var source=Feeds.FirstOrDefault(x=>string.Equals(x.Source,item.Source,StringComparison.OrdinalIgnoreCase));
+            if(source is null||!IsTrustedContentUri(item.Url,source.TrustedDomain))return item;
+            await gate.WaitAsync(ct);
+            try
+            {
+                var html=await GetTrustedStringAsync(item.Url,source.TrustedDomain,MaximumArticleBytes,ct);
+                var text=ExtractArticle(html);
+                return text.Length>item.BodySummary.Length?item with{BodySummary=text}:item;
+            }
+            catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
+            catch{return item;}
+            finally{gate.Release();}
+        }));
         var clusters=Cluster(enriched);var output=new List<NewsEvidence>();foreach(var cluster in clusters)
         {
             var representative=cluster.OrderByDescending(x=>Reliability(x.Reliability)).ThenByDescending(x=>x.BodySummary.Length).First();var sources=cluster.Select(x=>x.Source).Distinct(StringComparer.OrdinalIgnoreCase).Count();var ageHours=(DateTime.UtcNow-(representative.PublishedAt??representative.CollectedAt)).TotalHours;var confidence=Math.Clamp(.30+Reliability(representative.Reliability)*.35+Math.Min(3,sources-1)*.12+(representative.BodySummary.Length>200?.10:0)-(ageHours>48?.15:0),0,1);var combined=string.Join(" ",cluster.Select(x=>x.Title+" "+x.BodySummary));var type=EventType(combined);var sentiment=Sentiment(combined);var breaking=ageHours<=2&&(sources>=2||representative.Reliability=="official");output.Add(representative with{DuplicateGroup=Hash(string.Join('|',cluster.Select(x=>x.Title).Order())),Confidence=confidence,CorroboratingSources=sources,EventType=type,IsBreaking=breaking,Sentiment=sentiment});
         }
         return new(output.OrderByDescending(x=>x.IsBreaking).ThenByDescending(x=>x.Confidence).ThenByDescending(x=>x.PublishedAt).Take(50).ToArray(),missing,successful,output.Count(x=>x.BodySummary.Length>200));
     }
-    private async Task<Stream> GetStreamWithRetryAsync(string url,CancellationToken ct)
+
+    internal static bool IsTrustedContentUri(string? candidate,string trustedDomain)
+    {
+        if(string.IsNullOrWhiteSpace(candidate)||string.IsNullOrWhiteSpace(trustedDomain)||!Uri.TryCreate(candidate,UriKind.Absolute,out var uri))return false;
+        var host=uri.IdnHost.TrimEnd('.');var domain=trustedDomain.Trim().TrimEnd('.');
+        return uri.Scheme==Uri.UriSchemeHttps&&uri.IsDefaultPort&&string.IsNullOrEmpty(uri.UserInfo)&&
+            (string.Equals(host,domain,StringComparison.OrdinalIgnoreCase)||host.EndsWith("."+domain,StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<Stream> GetStreamWithRetryAsync(string url,string trustedDomain,CancellationToken ct)
     {
         Exception? last = null;
         for (var attempt = 0; attempt < 3; attempt++)
         {
-            try { return await _http.GetStreamAsync(url, ct); }
+            try{return new MemoryStream(await GetTrustedBytesAsync(url,trustedDomain,MaximumFeedBytes,ct),writable:false);}
+            catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
                 last = ex;
                 if (attempt < 2) await Task.Delay(TimeSpan.FromMilliseconds(250 * (attempt + 1)), ct);
             }
         }
-        throw last ?? new HttpRequestException($"Unable to fetch news feed: {url}");
+        throw last ?? new HttpRequestException("Unable to fetch trusted news feed.");
     }
+
+    private async Task<string> GetTrustedStringAsync(string url,string trustedDomain,int maximumBytes,CancellationToken ct)=>
+        Encoding.UTF8.GetString(await GetTrustedBytesAsync(url,trustedDomain,maximumBytes,ct));
+
+    private async Task<byte[]> GetTrustedBytesAsync(string url,string trustedDomain,int maximumBytes,CancellationToken ct)
+    {
+        if(!IsTrustedContentUri(url,trustedDomain))throw new HttpRequestException("News URI denied by source policy.");
+        var current=new Uri(url,UriKind.Absolute);
+        for(var redirects=0;redirects<=MaximumRedirects;redirects++)
+        {
+            using var request=new HttpRequestMessage(HttpMethod.Get,current);
+            using var response=await _http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);
+            if((int)response.StatusCode is >=300 and <400)
+            {
+                if(redirects==MaximumRedirects||response.Headers.Location is null)throw new HttpRequestException("News redirect denied by source policy.");
+                var next=response.Headers.Location.IsAbsoluteUri?response.Headers.Location:new Uri(current,response.Headers.Location);
+                if(!IsTrustedContentUri(next.AbsoluteUri,trustedDomain))throw new HttpRequestException("News redirect left the trusted source domain.");
+                current=next;continue;
+            }
+            response.EnsureSuccessStatusCode();
+            if(response.Content.Headers.ContentLength is long declared&&declared>maximumBytes)throw new HttpRequestException("News response exceeds the source byte limit.");
+            await using var stream=await response.Content.ReadAsStreamAsync(ct);using var memory=new MemoryStream();var buffer=new byte[8192];
+            while(true)
+            {
+                var read=await stream.ReadAsync(buffer,ct);if(read==0)break;
+                if(memory.Length+read>maximumBytes)throw new HttpRequestException("News response exceeds the source byte limit.");
+                memory.Write(buffer,0,read);
+            }
+            return memory.ToArray();
+        }
+        throw new HttpRequestException("News redirect limit exceeded.");
+    }
+
     private static IReadOnlyList<List<NewsEvidence>> Cluster(IEnumerable<NewsEvidence> items)
     {
         var clusters=new List<List<NewsEvidence>>();foreach(var item in items){var target=clusters.FirstOrDefault(c=>Similarity(c[0].Title,item.Title)>=.32);if(target is null)clusters.Add([item]);else target.Add(item);}return clusters;
