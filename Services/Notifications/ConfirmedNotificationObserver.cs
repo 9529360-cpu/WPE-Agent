@@ -92,6 +92,13 @@ public static class ConfirmedNotificationTruth
     }
 
     public static ConfirmedNotificationEvent System(
+        string eventKey,string kindProvider,string environment,
+        DateTime occurredAtUtc,string diagnosticCode,string? symbol=null,string? side=null,string? content=null)
+    {
+        throw new NotSupportedException();
+    }
+
+    public static ConfirmedNotificationEvent System(
         string eventKey,NotificationEventKind kind,string provider,string environment,
         DateTime occurredAtUtc,string diagnosticCode,string? symbol=null,string? side=null,string? content=null)
     {
@@ -129,13 +136,13 @@ public static class NotificationRuntimeFactory
                 [telegramTransport,new WhatsAppCloudNotificationTransport()]);
             var subscriberDispatcher=new TelegramSubscriberDispatcher(subscriberStore,configuration,telegramTransport);
             var subscriberPoller=new TelegramSubscriptionPoller(subscriberStore,new HttpTelegramBotUpdateSource(),configuration);
+            var subscriberRuntime=new TelegramSubscriberRuntime(subscriberPoller,subscriberDispatcher);
             CurrentObserver=observer;
             return new(observer,async ct=>
             {
                 try{await Task.WhenAll(
                     dispatcher.RunAsync(TimeSpan.FromSeconds(5),ct),
-                    subscriberDispatcher.RunAsync(ct),
-                    subscriberPoller.RunAsync(ct));}
+                    subscriberRuntime.RunAsync(ct));}
                 catch(OperationCanceledException)when(ct.IsCancellationRequested){}
             });
         }
