@@ -1,0 +1,60 @@
+name: Web lock audit once
+
+on:
+  push:
+    branches: [ codex/security-dependency-upgrade ]
+    paths: [ .github/workflows/web-lock-audit-once.yml ]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.repository == '9529360-cpu/WPE-Agent' && github.ref == 'refs/heads/codex/security-dependency-upgrade'
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: codex/security-dependency-upgrade
+        fetch-depth: 0
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10.17.1
+        run_install: false
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22.x'
+    - name: Resolve patched lockfile
+      working-directory: WebUi
+      run: pnpm install --lockfile-only
+    - name: Install exact graph
+      working-directory: WebUi
+      run: pnpm install --frozen-lockfile
+    - name: Enforce no high or critical advisories
+      working-directory: WebUi
+      run: pnpm audit --audit-level high
+    - name: Validate Web UI
+      working-directory: WebUi
+      shell: pwsh
+      run: |
+        pnpm lint
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        pnpm typecheck
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        pnpm test:roles
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        pnpm test:i18n
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        pnpm build
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        if (-not (Test-Path -LiteralPath 'out/index.html')) { throw 'Static export missing after dependency hardening.' }
+    - name: Commit validated lockfile
+      shell: pwsh
+      run: |
+        git diff --check
+        git config user.name "WPE dependency patch bot"
+        git config user.email "dependency-patch@users.noreply.github.com"
+        git add -- WebUi/pnpm-lock.yaml
+        if (git diff --cached --quiet) { throw 'Expected lockfile update produced no change.' }
+        git commit -m "chore(web): resolve patched dependency graph"
+        git push origin HEAD:codex/security-dependency-upgrade
