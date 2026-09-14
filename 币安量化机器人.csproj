@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFramework>net8.0-windows</TargetFramework>
@@ -29,7 +29,8 @@
       <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
       <PackageReference Include="ScottPlot.WPF" Version="5.0.56" />
       <PackageReference Include="Binance.Net" Version="8.3.0" />
-      <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.4" />
+      <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.31" />
+      <PackageReference Include="System.Text.Json" Version="8.0.6" />
       <PackageReference Include="Serilog" Version="2.12.0" />
       <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
       <PackageReference Include="Serilog.Extensions.Logging" Version="3.1.0" />
