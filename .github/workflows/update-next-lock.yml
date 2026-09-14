@@ -1,0 +1,44 @@
+name: Refresh Next lockfile
+
+on:
+  push:
+    branches: [ codex/security-dependency-upgrade ]
+    paths: [ .github/workflows/update-next-lock.yml ]
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: github.repository == '9529360-cpu/WPE-Agent' && github.ref == 'refs/heads/codex/security-dependency-upgrade'
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: codex/security-dependency-upgrade
+        fetch-depth: 0
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10.17.1
+        run_install: false
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22.x'
+    - name: Refresh lockfile only
+      working-directory: WebUi
+      run: pnpm install --lockfile-only
+    - name: Verify pinned patched versions
+      shell: pwsh
+      run: |
+        $lock = Get-Content -LiteralPath 'WebUi/pnpm-lock.yaml' -Raw
+        if ($lock -notmatch 'specifier: 16\.3\.3') { throw 'Next.js 16.3.3 specifier not present in lockfile.' }
+        if ($lock -match 'next@16\.2\.6') { throw 'Vulnerable Next.js 16.2.6 remains in lockfile.' }
+    - name: Commit lockfile
+      shell: pwsh
+      run: |
+        git config user.name "WPE dependency patch bot"
+        git config user.email "dependency-patch@users.noreply.github.com"
+        git add -- WebUi/pnpm-lock.yaml
+        if (git diff --cached --quiet) { throw 'Expected lockfile refresh produced no changes.' }
+        git commit -m "chore(web): refresh lockfile for Next.js 16.3.3"
+        git push origin HEAD:codex/security-dependency-upgrade
