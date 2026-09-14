@@ -19,7 +19,8 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
     private readonly string _processLeasePath;
     private IDisposable? _eventPersistence;
     private FileStream? _processLease;
-    private bool _databaseLeaseHeld;
+    private bool _databaseLeaseAcquired;
+    private bool _leaseLost;
     private Task? _heartbeat;
     private IReadOnlyList<WorkflowRecovery> _interrupted = Array.Empty<WorkflowRecovery>();
     private long _eventSequence;
@@ -50,7 +51,8 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
         {
             if (!await _database.TryAcquireRuntimeLeaseAsync(LeaseName, _instanceId, TimeSpan.FromSeconds(30), cancellationToken))
                 throw new InvalidOperationException("Another WPE trading kernel owns the active runtime lease.");
-            _databaseLeaseHeld = true;
+            _databaseLeaseAcquired = true;
+            _leaseLost = false;
 
             _eventPersistence = _events.Subscribe(async (value, ct) =>
             {
@@ -66,10 +68,10 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
         {
             _eventPersistence?.Dispose();
             _eventPersistence = null;
-            if (_databaseLeaseHeld)
+            if (_databaseLeaseAcquired)
             {
                 try { await _database.ReleaseRuntimeLeaseAsync(LeaseName, _instanceId, CancellationToken.None); } catch { }
-                _databaseLeaseHeld = false;
+                _databaseLeaseAcquired = false;
             }
             ReleaseProcessLease();
             throw;
@@ -78,6 +80,7 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
 
     public async Task RecoverInterruptedAsync(Func<CancellationToken, Task<string>> reconcile, CancellationToken cancellationToken)
     {
+        EnsureRuntimeAuthority();
         if (_interrupted.Count == 0) return;
         UpdateHealth("RECONCILING");
         var result = await reconcile(cancellationToken);
@@ -180,7 +183,11 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
             stream.Position = 0;
             return stream;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (IOException)
+        {
+            throw new InvalidOperationException("The WPE trading kernel process lease is unavailable; another instance may already be active.");
+        }
+        catch (UnauthorizedAccessException)
         {
             throw new InvalidOperationException("The WPE trading kernel process lease is unavailable; another instance may already be active.");
         }
@@ -188,13 +195,14 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
 
     private void EnsureRuntimeAuthority()
     {
-        if (_processLease is null || !_databaseLeaseHeld || string.Equals(Health.RecoveryStatus, "LEASE_LOST", StringComparison.Ordinal))
+        if (_processLease is null || !_databaseLeaseAcquired || _leaseLost)
             throw new InvalidOperationException("The WPE trading kernel no longer owns runtime authority.");
     }
 
     private async Task FailClosedLeaseAsync(string reasonCode)
     {
-        _databaseLeaseHeld = false;
+        if (_leaseLost) return;
+        _leaseLost = true;
         UpdateHealth("LEASE_LOST");
         AutoTradingAgent.Pause();
         try
@@ -224,10 +232,10 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
     {
         _shutdown.Cancel();
         if (_heartbeat is not null) try { await _heartbeat; } catch (OperationCanceledException) { }
-        if (_databaseLeaseHeld)
+        if (_databaseLeaseAcquired)
         {
             try { await _database.ReleaseRuntimeLeaseAsync(LeaseName, _instanceId, CancellationToken.None); } catch { }
-            _databaseLeaseHeld = false;
+            _databaseLeaseAcquired = false;
         }
         _eventPersistence?.Dispose();
         ReleaseProcessLease();
