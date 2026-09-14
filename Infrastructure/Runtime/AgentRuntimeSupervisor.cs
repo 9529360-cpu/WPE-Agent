@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.IO;
+using System.Text;
 using System.Text.Json;
 using 币安量化机器人.Core.Runtime;
 using 币安量化机器人.Services.Agent;
@@ -14,15 +16,26 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
     private readonly ConcurrentDictionary<string, WorkflowNode> _nodes = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _shutdown = new();
     private readonly string _instanceId = $"{Environment.ProcessId}-{Guid.NewGuid():N}";
+    private readonly string _processLeasePath;
     private IDisposable? _eventPersistence;
+    private FileStream? _processLease;
+    private bool _databaseLeaseAcquired;
+    private bool _leaseLost;
     private Task? _heartbeat;
     private IReadOnlyList<WorkflowRecovery> _interrupted = Array.Empty<WorkflowRecovery>();
     private long _eventSequence;
 
     public AgentRuntimeSupervisor(AgentSqliteStore database, IAgentEventBus events)
+        : this(database, events, AppDataPaths.RuntimeFile(LeaseName + ".lock"))
     {
-        _database = database;
-        _events = events;
+    }
+
+    internal AgentRuntimeSupervisor(AgentSqliteStore database, IAgentEventBus events, string processLeasePath)
+    {
+        _database = database ?? throw new ArgumentNullException(nameof(database));
+        _events = events ?? throw new ArgumentNullException(nameof(events));
+        if (string.IsNullOrWhiteSpace(processLeasePath)) throw new ArgumentException("Runtime process lease path is required.", nameof(processLeasePath));
+        _processLeasePath = Path.GetFullPath(processLeasePath);
         RunId = Guid.NewGuid().ToString("N");
     }
 
@@ -32,22 +45,42 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        if (!await _database.TryAcquireRuntimeLeaseAsync(LeaseName, _instanceId, TimeSpan.FromSeconds(30), cancellationToken))
-            throw new InvalidOperationException("Another WPE trading kernel owns the active runtime lease.");
-
-        _eventPersistence = _events.Subscribe(async (value, ct) =>
+        if (_processLease is not null) throw new InvalidOperationException("The WPE trading kernel runtime is already started.");
+        _processLease = AcquireProcessLease();
+        try
         {
-            await _database.RecordRuntimeEventAsync(value, ct);
-            Interlocked.Exchange(ref _eventSequence, value.Sequence);
-        });
-        _interrupted = await _database.GetInterruptedWorkflowsAsync(cancellationToken);
-        UpdateHealth(_interrupted.Count == 0 ? "CLEAN_START" : $"RECOVERY_PENDING:{_interrupted.Count}");
-        _heartbeat = Task.Run(() => HeartbeatLoopAsync(_shutdown.Token), CancellationToken.None);
-        await PublishAsync("runtime.started", new { RunId, InstanceId = _instanceId, Interrupted = _interrupted.Count }, cancellationToken);
+            if (!await _database.TryAcquireRuntimeLeaseAsync(LeaseName, _instanceId, TimeSpan.FromSeconds(30), cancellationToken))
+                throw new InvalidOperationException("Another WPE trading kernel owns the active runtime lease.");
+            _databaseLeaseAcquired = true;
+            _leaseLost = false;
+
+            _eventPersistence = _events.Subscribe(async (value, ct) =>
+            {
+                await _database.RecordRuntimeEventAsync(value, ct);
+                Interlocked.Exchange(ref _eventSequence, value.Sequence);
+            });
+            _interrupted = await _database.GetInterruptedWorkflowsAsync(cancellationToken);
+            UpdateHealth(_interrupted.Count == 0 ? "CLEAN_START" : $"RECOVERY_PENDING:{_interrupted.Count}");
+            await PublishAsync("runtime.started", new { RunId, InstanceId = _instanceId, Interrupted = _interrupted.Count }, cancellationToken);
+            _heartbeat = Task.Run(() => HeartbeatLoopAsync(_shutdown.Token), CancellationToken.None);
+        }
+        catch
+        {
+            _eventPersistence?.Dispose();
+            _eventPersistence = null;
+            if (_databaseLeaseAcquired)
+            {
+                try { await _database.ReleaseRuntimeLeaseAsync(LeaseName, _instanceId, CancellationToken.None); } catch { }
+                _databaseLeaseAcquired = false;
+            }
+            ReleaseProcessLease();
+            throw;
+        }
     }
 
     public async Task RecoverInterruptedAsync(Func<CancellationToken, Task<string>> reconcile, CancellationToken cancellationToken)
     {
+        EnsureRuntimeAuthority();
         if (_interrupted.Count == 0) return;
         UpdateHealth("RECONCILING");
         var result = await reconcile(cancellationToken);
@@ -65,6 +98,7 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
 
     public async Task BeginCycleAsync(string cycleId, object state, CancellationToken cancellationToken)
     {
+        EnsureRuntimeAuthority();
         _nodes[cycleId] = WorkflowNode.Observation;
         var json = JsonSerializer.Serialize(state);
         await _database.BeginWorkflowRunAsync(RunId, cycleId, json, cancellationToken);
@@ -74,6 +108,7 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
 
     public async Task TransitionAsync(string cycleId, WorkflowNode next, object state, CancellationToken cancellationToken)
     {
+        EnsureRuntimeAuthority();
         if (!_nodes.TryGetValue(cycleId, out var current)) throw new InvalidOperationException($"Workflow cycle {cycleId} was not started.");
         TradingWorkflowGraph.EnsureTransition(current, next);
         var json = JsonSerializer.Serialize(state);
@@ -118,12 +153,63 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 var renewed = await _database.RenewRuntimeLeaseAsync(LeaseName, _instanceId, TimeSpan.FromSeconds(30), cancellationToken);
-                UpdateHealth(renewed ? Health.RecoveryStatus : "LEASE_LOST");
-                await PublishAsync("runtime.heartbeat", new { RunId, InstanceId = _instanceId, LeaseRenewed = renewed }, cancellationToken);
-                if (!renewed) break;
+                if (!renewed)
+                {
+                    await FailClosedLeaseAsync("runtime.lease-renewal-rejected");
+                    break;
+                }
+                UpdateHealth(Health.RecoveryStatus);
+                await PublishAsync("runtime.heartbeat", new { RunId, InstanceId = _instanceId, LeaseRenewed = true }, cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch
+        {
+            await FailClosedLeaseAsync("runtime.lease-renewal-failed");
+        }
+    }
+
+    private FileStream AcquireProcessLease()
+    {
+        var directory = Path.GetDirectoryName(_processLeasePath);
+        if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+        try
+        {
+            var stream = new FileStream(_processLeasePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 256, FileOptions.WriteThrough);
+            var identity = Encoding.UTF8.GetBytes(_instanceId);
+            stream.SetLength(0);
+            stream.Write(identity);
+            stream.Flush(true);
+            stream.Position = 0;
+            return stream;
+        }
+        catch (IOException)
+        {
+            throw new InvalidOperationException("The WPE trading kernel process lease is unavailable; another instance may already be active.");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException("The WPE trading kernel process lease is unavailable; another instance may already be active.");
+        }
+    }
+
+    private void EnsureRuntimeAuthority()
+    {
+        if (_processLease is null || !_databaseLeaseAcquired || _leaseLost)
+            throw new InvalidOperationException("The WPE trading kernel no longer owns runtime authority.");
+    }
+
+    private async Task FailClosedLeaseAsync(string reasonCode)
+    {
+        if (_leaseLost) return;
+        _leaseLost = true;
+        UpdateHealth("LEASE_LOST");
+        AutoTradingAgent.Pause();
+        try
+        {
+            await PublishAsync("runtime.lease-lost", new { RunId, InstanceId = _instanceId, ReasonCode = reasonCode }, CancellationToken.None);
+        }
+        catch { }
     }
 
     private Task PublishAsync(string type, object payload, CancellationToken ct, string? correlationId = null)
@@ -135,12 +221,24 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
         HealthChanged?.Invoke(Health);
     }
 
+    private void ReleaseProcessLease()
+    {
+        var lease = Interlocked.Exchange(ref _processLease, null);
+        if (lease is null) return;
+        try { lease.Dispose(); } catch { }
+    }
+
     public async ValueTask DisposeAsync()
     {
         _shutdown.Cancel();
         if (_heartbeat is not null) try { await _heartbeat; } catch (OperationCanceledException) { }
-        try { await _database.ReleaseRuntimeLeaseAsync(LeaseName, _instanceId, CancellationToken.None); } catch { }
+        if (_databaseLeaseAcquired)
+        {
+            try { await _database.ReleaseRuntimeLeaseAsync(LeaseName, _instanceId, CancellationToken.None); } catch { }
+            _databaseLeaseAcquired = false;
+        }
         _eventPersistence?.Dispose();
+        ReleaseProcessLease();
         await _events.DisposeAsync();
         _shutdown.Dispose();
     }

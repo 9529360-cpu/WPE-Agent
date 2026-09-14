@@ -9,10 +9,12 @@ namespace WpeAgent
 {
     public partial class ReferenceUiWindow : Window
     {
+        internal const string TrustedWebViewHost = "wpe-reference.local";
         private readonly Func<string> _stateJson;
         private readonly Action _openSetup;
         private readonly Action _openNotificationSetup;
         private readonly Func<System.Threading.Tasks.Task<bool>> _startAgent;
+        private DispatcherTimer? _runtimeTimer;
 
         public ReferenceUiWindow(
             Func<string> stateJson,
@@ -26,6 +28,7 @@ namespace WpeAgent
             _startAgent = startAgent ?? (() => System.Threading.Tasks.Task.FromResult(false));
             InitializeComponent();
             Loaded += async (_, _) => await InitializeAsync();
+            Closed += (_, _) => StopRuntimeTimer();
         }
 
         private async System.Threading.Tasks.Task InitializeAsync()
@@ -47,11 +50,15 @@ namespace WpeAgent
             Directory.CreateDirectory(webViewDataDirectory);
             var webViewEnvironment = await CoreWebView2Environment.CreateAsync(userDataFolder: webViewDataDirectory);
             await ReferenceBrowser.EnsureCoreWebView2Async(webViewEnvironment);
+            ReferenceBrowser.CoreWebView2.NavigationStarting += (_, e) =>
+            {
+                if (!IsTrustedWebViewSource(e.Uri)) e.Cancel = true;
+            };
             ReferenceBrowser.CoreWebView2.WebMessageReceived += async (_, e) =>
             {
                 try
                 {
-                    if (!TryGetHostCommand(e.WebMessageAsJson, out var command)) return;
+                    if (!IsTrustedWebViewSource(e.Source) || !TryGetHostCommand(e.WebMessageAsJson, out var command)) return;
                     if (command == "open-settings") Dispatcher.Invoke(_openSetup);
                     else if (command == "open-notification-settings") Dispatcher.Invoke(_openNotificationSetup);
                     else if (command == "agent-start")
@@ -65,12 +72,21 @@ namespace WpeAgent
                 }
             };
             ReferenceBrowser.CoreWebView2.SetVirtualHostNameToFolderMapping(
-                "wpe-reference.local", root, CoreWebView2HostResourceAccessKind.Allow);
-            ReferenceBrowser.CoreWebView2.Navigate("https://wpe-reference.local/index.html");
+                TrustedWebViewHost, root, CoreWebView2HostResourceAccessKind.Allow);
+            ReferenceBrowser.CoreWebView2.Navigate($"https://{TrustedWebViewHost}/index.html");
             ReferenceBrowser.NavigationCompleted += (_, _) => PushRuntimeState();
-            var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            timer.Tick += (_, _) => PushRuntimeState();
-            timer.Start();
+            _runtimeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            _runtimeTimer.Tick += (_, _) => PushRuntimeState();
+            _runtimeTimer.Start();
+        }
+
+        internal static bool IsTrustedWebViewSource(string? source)
+        {
+            if (!Uri.TryCreate(source, UriKind.Absolute, out var uri)) return false;
+            return uri.Scheme == Uri.UriSchemeHttps &&
+                uri.IsDefaultPort &&
+                string.Equals(uri.Host, TrustedWebViewHost, StringComparison.OrdinalIgnoreCase) &&
+                string.IsNullOrEmpty(uri.UserInfo);
         }
 
         internal static bool TryGetHostCommand(string json, out string command)
@@ -130,6 +146,13 @@ namespace WpeAgent
             var json = _stateJson();
             _ = ReferenceBrowser.CoreWebView2.ExecuteScriptAsync(
                 $"window.dispatchEvent(new CustomEvent('wpe-runtime', {{detail: {json}}}));");
+        }
+
+        private void StopRuntimeTimer()
+        {
+            if (_runtimeTimer is null) return;
+            _runtimeTimer.Stop();
+            _runtimeTimer = null;
         }
 
         private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;

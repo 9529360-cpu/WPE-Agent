@@ -1,6 +1,4 @@
 using System.Reflection;
-using System.Runtime.Loader;
-using System.IO;
 
 namespace 币安量化机器人.Services.Exchange;
 
@@ -9,7 +7,10 @@ public sealed class ExchangeProviderCatalog
     private readonly Dictionary<string,IExchangeProviderPlugin> _plugins;
     public ExchangeProviderCatalog(IEnumerable<Assembly>? assemblies=null)
     {
-        var source=assemblies?.ToArray()??DiscoverAssemblies().ToArray();
+        // Executable exchange adapters are a privileged boundary. The default catalog only
+        // trusts providers compiled into the WPE host; external plugin metadata is handled by
+        // LocalPluginRegistry and must not cause arbitrary DLLs to be loaded into this process.
+        var source=(assemblies?.ToArray()??[typeof(ExchangeProviderCatalog).Assembly]).Distinct().ToArray();
         _plugins=source.SelectMany(SafeTypes).Where(t=>!t.IsAbstract&&typeof(IExchangeProviderPlugin).IsAssignableFrom(t)&&t.GetConstructor(Type.EmptyTypes)is not null)
             .Select(t=>(IExchangeProviderPlugin)Activator.CreateInstance(t)!).GroupBy(x=>x.Descriptor.Id,StringComparer.OrdinalIgnoreCase).ToDictionary(x=>x.Key,x=>x.First(),StringComparer.OrdinalIgnoreCase);
     }
@@ -21,16 +22,6 @@ public sealed class ExchangeProviderCatalog
         return plugin.Create(profile,credentials);
     }
     public bool IsInstalled(string providerId)=>_plugins.ContainsKey(providerId);
-    private static IEnumerable<Assembly> DiscoverAssemblies()
-    {
-        yield return typeof(ExchangeProviderCatalog).Assembly;
-        var directory=Path.Combine(AppContext.BaseDirectory,"ExchangeAdapters");if(!Directory.Exists(directory))yield break;
-        foreach(var file in Directory.EnumerateFiles(directory,"*.dll",SearchOption.TopDirectoryOnly))
-        {
-            Assembly? assembly=null;try{assembly=AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.GetFullPath(file));}catch{/* One broken optional plugin must not stop the Agent. */}
-            if(assembly is not null)yield return assembly;
-        }
-    }
     private static IEnumerable<Type> SafeTypes(Assembly assembly){try{return assembly.GetTypes();}catch(ReflectionTypeLoadException ex){return ex.Types.OfType<Type>();}}
 }
 
