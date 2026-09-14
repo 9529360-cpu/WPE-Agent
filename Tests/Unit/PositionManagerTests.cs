@@ -1,16 +1,16 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Tests.Unit;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Tests.Unit;
 
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Xunit;
 using FluentAssertions;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Risk;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Application.Services;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Risk;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Application.Services;
 
 /// <summary>
-/// ²ÖÎ»¹ÜÀíÆ÷ (PositionManager) µ¥Ôª²âÊÔ
-/// ²âÊÔ¿ªÆ½²Ö¡¢·çÏÕ¼ì²é¡¢Ö¹ËğÖ¹Ó¯µÈ¹¦ÄÜ
+/// ä»“ä½ç®¡ç†å™¨ (PositionManager) å•å…ƒæµ‹è¯•
+/// æµ‹è¯•å¼€å¹³ä»“ã€é£é™©æ£€æŸ¥ã€æ­¢æŸæ­¢ç›ˆç­‰åŠŸèƒ½
 /// </summary>
 public class PositionManagerTests
 {
@@ -23,7 +23,7 @@ public class PositionManagerTests
 
     #region OpenPositionAsync Tests
 
-    [Fact(DisplayName = "¿ª²Ö_ÓĞĞ§²ÖÎ»_Ó¦¸Ã³É¹¦")]
+    [Fact(DisplayName = "å¼€ä»“_æœ‰æ•ˆä»“ä½_åº”è¯¥æˆåŠŸ")]
     public async Task OpenPositionAsync_WithValidPosition_ShouldSuccess()
     {
         // Arrange
@@ -53,7 +53,7 @@ public class PositionManagerTests
 
     #region ClosePositionAsync Tests
 
-    [Fact(DisplayName = "Æ½²Ö_¿ª·Å²ÖÎ»_Ó¦¸Ã³É¹¦")]
+    [Fact(DisplayName = "å¹³ä»“_å¼€æ”¾ä»“ä½_åº”è¯¥æˆåŠŸ")]
     public async Task ClosePositionAsync_WithOpenPosition_ShouldSuccess()
     {
         // Arrange
@@ -82,7 +82,7 @@ public class PositionManagerTests
 
     #region CalculateUnrealizedProfitAsync Tests
 
-    [Fact(DisplayName = "¼ÆËãÎ´ÊµÏÖÓ¯Àû_¶àÍ·²ÖÎ»_Ó¦¸ÃÕıÈ·¼ÆËã")]
+    [Fact(DisplayName = "è®¡ç®—æœªå®ç°ç›ˆåˆ©_å¤šå¤´ä»“ä½_åº”è¯¥æ­£ç¡®è®¡ç®—")]
     public async Task CalculateUnrealizedProfitAsync_LongPosition_ShouldCalcCorrectly()
     {
         // Arrange
@@ -110,7 +110,7 @@ public class PositionManagerTests
 
     #region GetTotalPositionValueAsync Tests
 
-    [Fact(DisplayName = "»ñÈ¡×Ü²ÖÎ»¼ÛÖµ_¶à¸ö²ÖÎ»_Ó¦¸ÃÕıÈ·¼ÆËã")]
+    [Fact(DisplayName = "è·å–æ€»ä»“ä½ä»·å€¼_å¤šä¸ªä»“ä½_åº”è¯¥æ­£ç¡®è®¡ç®—")]
     public async Task GetTotalPositionValueAsync_MultiplePositions_ShouldCalcTotal()
     {
         // Arrange
@@ -151,7 +151,7 @@ public class PositionManagerTests
 
     #region CloseAllPositionsAsync Tests
 
-    [Fact(DisplayName = "¹Ø±ÕËùÓĞ²ÖÎ»_Ó¦¸ÃÇå¿ÕËùÓĞ")]
+    [Fact(DisplayName = "å…³é—­æ‰€æœ‰ä»“ä½_åº”è¯¥æ¸…ç©ºæ‰€æœ‰")]
     public async Task CloseAllPositionsAsync_ShouldClearAll()
     {
         // Arrange

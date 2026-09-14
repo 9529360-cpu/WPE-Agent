@@ -1,71 +1,71 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Strategy;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Strategy;
 
 /// <summary>
-/// ²ßÂÔÆÀ¹À·şÎñ½Ó¿Ú
-/// ¸ºÔğ¶Ô²ßÂÔµÄĞÔÄÜÖ¸±ê½øĞĞÆÀ¹À
+/// ç­–ç•¥è¯„ä¼°æœåŠ¡æ¥å£
+/// è´Ÿè´£å¯¹ç­–ç•¥çš„æ€§èƒ½æŒ‡æ ‡è¿›è¡Œè¯„ä¼°
 /// </summary>
 public interface IStrategyEvaluationService
 {
     /// <summary>
-    /// ÆÀ¹À²ßÂÔÔÚÀúÊ·Êı¾İÉÏµÄĞÔÄÜ
+    /// è¯„ä¼°ç­–ç•¥åœ¨å†å²æ•°æ®ä¸Šçš„æ€§èƒ½
     /// </summary>
-    /// <param name="trades">ÀúÊ·½»Ò×¼ÇÂ¼</param>
-    /// <param name="initialBalance">³õÊ¼Óà¶î</param>
-    /// <returns>ĞÔÄÜÆÀ¹À½á¹û</returns>
+    /// <param name="trades">å†å²äº¤æ˜“è®°å½•</param>
+    /// <param name="initialBalance">åˆå§‹ä½™é¢</param>
+    /// <returns>æ€§èƒ½è¯„ä¼°ç»“æœ</returns>
     Task<StrategyPerformanceMetrics> EvaluatePerformanceAsync(
         List<TradeRecord> trades,
         decimal initialBalance);
 
     /// <summary>
-    /// ¼ÆËãÏÄÆÕ±ÈÂÊ (Sharpe Ratio)
+    /// è®¡ç®—å¤æ™®æ¯”ç‡ (Sharpe Ratio)
     /// </summary>
-    /// <param name="returns">ÊÕÒæÂÊĞòÁĞ</param>
-    /// <param name="riskFreeRate">ÎŞ·çÏÕÀûÂÊ£¬Ä¬ÈÏ 2% Äê»¯</param>
+    /// <param name="returns">æ”¶ç›Šç‡åºåˆ—</param>
+    /// <param name="riskFreeRate">æ— é£é™©åˆ©ç‡ï¼Œé»˜è®¤ 2% å¹´åŒ–</param>
     Task<decimal> CalculateSharpeRatioAsync(List<decimal> returns, decimal riskFreeRate = 0.02m);
 
     /// <summary>
-    /// ¼ÆËã×î´ó»Ø³· (Maximum Drawdown)
+    /// è®¡ç®—æœ€å¤§å›æ’¤ (Maximum Drawdown)
     /// </summary>
-    /// <param name="equityCurve">È¨ÒæÇúÏß</param>
+    /// <param name="equityCurve">æƒç›Šæ›²çº¿</param>
     Task<decimal> CalculateMaxDrawdownAsync(List<decimal> equityCurve);
 
     /// <summary>
-    /// ¼ÆËãÊ¤ÂÊ (Win Rate)
+    /// è®¡ç®—èƒœç‡ (Win Rate)
     /// </summary>
-    /// <param name="trades">½»Ò×¼ÇÂ¼</param>
+    /// <param name="trades">äº¤æ˜“è®°å½•</param>
     Task<decimal> CalculateWinRateAsync(List<TradeRecord> trades);
 
     /// <summary>
-    /// ¼ÆËãÀûÈóÒò×Ó (Profit Factor)
-    /// ×ÜÀûÈó / ×Ü¿÷ËğµÄ¾ø¶ÔÖµ
+    /// è®¡ç®—åˆ©æ¶¦å› å­ (Profit Factor)
+    /// æ€»åˆ©æ¶¦ / æ€»äºæŸçš„ç»å¯¹å€¼
     /// </summary>
-    /// <param name="trades">½»Ò×¼ÇÂ¼</param>
+    /// <param name="trades">äº¤æ˜“è®°å½•</param>
     Task<decimal> CalculateProfitFactorAsync(List<TradeRecord> trades);
 
     /// <summary>
-    /// ¼ÆËã»Ø±¨ÂÊ (Return on Investment)
+    /// è®¡ç®—å›æŠ¥ç‡ (Return on Investment)
     /// </summary>
-    /// <param name="totalProfit">×ÜÀûÈó</param>
-    /// <param name="initialBalance">³õÊ¼Óà¶î</param>
+    /// <param name="totalProfit">æ€»åˆ©æ¶¦</param>
+    /// <param name="initialBalance">åˆå§‹ä½™é¢</param>
     Task<decimal> CalculateROIAsync(decimal totalProfit, decimal initialBalance);
 
     /// <summary>
-    /// ¼ÆËãĞÅÏ¢±ÈÂÊ (Information Ratio)
+    /// è®¡ç®—ä¿¡æ¯æ¯”ç‡ (Information Ratio)
     /// </summary>
-    /// <param name="strategyReturns">²ßÂÔÊÕÒæÂÊ</param>
-    /// <param name="benchmarkReturns">»ù×¼ÊÕÒæÂÊ</param>
+    /// <param name="strategyReturns">ç­–ç•¥æ”¶ç›Šç‡</param>
+    /// <param name="benchmarkReturns">åŸºå‡†æ”¶ç›Šç‡</param>
     Task<decimal> CalculateInformationRatioAsync(List<decimal> strategyReturns, List<decimal> benchmarkReturns);
 
     /// <summary>
-    /// »ñÈ¡²ßÂÔÆÀ¹À±¨¸æ
+    /// è·å–ç­–ç•¥è¯„ä¼°æŠ¥å‘Š
     /// </summary>
-    /// <param name="strategyId">²ßÂÔ ID</param>
-    /// <param name="evaluationPeriod">ÆÀ¹ÀÊ±¼ä¶Î</param>
+    /// <param name="strategyId">ç­–ç•¥ ID</param>
+    /// <param name="evaluationPeriod">è¯„ä¼°æ—¶é—´æ®µ</param>
     Task<StrategyEvaluationReport> GetEvaluationReportAsync(string strategyId, DateRange evaluationPeriod);
 }
 
 /// <summary>
-/// ½»Ò×¼ÇÂ¼
+/// äº¤æ˜“è®°å½•
 /// </summary>
 public record TradeRecord
 {
@@ -92,7 +92,7 @@ public record TradeRecord
 }
 
 /// <summary>
-/// ½»Ò×·½Ïò
+/// äº¤æ˜“æ–¹å‘
 /// </summary>
 public enum TradeDirection
 {
@@ -101,7 +101,7 @@ public enum TradeDirection
 }
 
 /// <summary>
-/// ²ßÂÔĞÔÄÜÖ¸±ê
+/// ç­–ç•¥æ€§èƒ½æŒ‡æ ‡
 /// </summary>
 public record StrategyPerformanceMetrics
 {
@@ -123,7 +123,7 @@ public record StrategyPerformanceMetrics
 }
 
 /// <summary>
-/// ²ßÂÔÆÀ¹À±¨¸æ
+/// ç­–ç•¥è¯„ä¼°æŠ¥å‘Š
 /// </summary>
 public record StrategyEvaluationReport
 {
@@ -137,7 +137,7 @@ public record StrategyEvaluationReport
 }
 
 /// <summary>
-/// ÈÕÆÚ·¶Î§
+/// æ—¥æœŸèŒƒå›´
 /// </summary>
 public record DateRange
 {

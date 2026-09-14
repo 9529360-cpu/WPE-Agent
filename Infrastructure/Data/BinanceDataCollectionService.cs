@@ -1,9 +1,9 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Infrastructure.Data;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Infrastructure.Data;
 
 using Serilog;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Data;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Services;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Models;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Data;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Services;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -11,8 +11,8 @@ using System.Threading;
 using System.Threading.Tasks;
 
 /// <summary>
-/// Binance Êı¾İ²É¼¯·şÎñÊµÏÖ
-/// ¸ºÔğ´Ó Binance API ²É¼¯ÊĞ³¡Êı¾İ
+/// Binance æ•°æ®é‡‡é›†æœåŠ¡å®ç°
+/// è´Ÿè´£ä» Binance API é‡‡é›†å¸‚åœºæ•°æ®
 /// </summary>
 public class BinanceDataCollectionService : IDataCollectionService
 {
@@ -32,19 +32,19 @@ public class BinanceDataCollectionService : IDataCollectionService
     {
         if (_isRunning)
         {
-            _logger.Warning("Êı¾İ²É¼¯·şÎñÒÑÔÚÔËĞĞÖĞ");
+            _logger.Warning("æ•°æ®é‡‡é›†æœåŠ¡å·²åœ¨è¿è¡Œä¸­");
             return;
         }
 
         try
         {
             _isRunning = true;
-            _logger.Information("? Êı¾İ²É¼¯·şÎñÒÑÆô¶¯");
+            _logger.Information("? æ•°æ®é‡‡é›†æœåŠ¡å·²å¯åŠ¨");
             await Task.CompletedTask;
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "? Æô¶¯Êı¾İ²É¼¯·şÎñÊ§°Ü");
+            _logger.Error(ex, "? å¯åŠ¨æ•°æ®é‡‡é›†æœåŠ¡å¤±è´¥");
             _isRunning = false;
             throw;
         }
@@ -54,7 +54,7 @@ public class BinanceDataCollectionService : IDataCollectionService
     {
         if (!_isRunning)
         {
-            _logger.Warning("Êı¾İ²É¼¯·şÎñÎ´ÔËĞĞ");
+            _logger.Warning("æ•°æ®é‡‡é›†æœåŠ¡æœªè¿è¡Œ");
             return;
         }
 
@@ -62,12 +62,12 @@ public class BinanceDataCollectionService : IDataCollectionService
         {
             _subscriptions.Clear();
             _isRunning = false;
-            _logger.Information("? Êı¾İ²É¼¯·şÎñÒÑÍ£Ö¹");
+            _logger.Information("? æ•°æ®é‡‡é›†æœåŠ¡å·²åœæ­¢");
             await Task.CompletedTask;
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "? Í£Ö¹Êı¾İ²É¼¯·şÎñÊ§°Ü");
+            _logger.Error(ex, "? åœæ­¢æ•°æ®é‡‡é›†æœåŠ¡å¤±è´¥");
             throw;
         }
     }
@@ -76,7 +76,7 @@ public class BinanceDataCollectionService : IDataCollectionService
     {
         if (!_isRunning)
         {
-            _logger.Warning("Êı¾İ²É¼¯·şÎñÎ´ÔËĞĞ£¬ÎŞ·¨»ñÈ¡ÊĞ³¡Êı¾İ");
+            _logger.Warning("æ•°æ®é‡‡é›†æœåŠ¡æœªè¿è¡Œï¼Œæ— æ³•è·å–å¸‚åœºæ•°æ®");
             return null;
         }
 
@@ -87,7 +87,7 @@ public class BinanceDataCollectionService : IDataCollectionService
 
             if (ticker == null)
             {
-                _logger.Warning("ÎŞ·¨»ñÈ¡ {Symbol} µÄĞĞÇéÊı¾İ", symbol);
+                _logger.Warning("æ— æ³•è·å– {Symbol} çš„è¡Œæƒ…æ•°æ®", symbol);
                 return null;
             }
 
@@ -107,7 +107,7 @@ public class BinanceDataCollectionService : IDataCollectionService
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "»ñÈ¡ÊĞ³¡Êı¾İÊ§°Ü: {Symbol}", symbol);
+            _logger.Error(ex, "è·å–å¸‚åœºæ•°æ®å¤±è´¥: {Symbol}", symbol);
             return null;
         }
     }
@@ -120,7 +120,7 @@ public class BinanceDataCollectionService : IDataCollectionService
     {
         if (!_isRunning)
         {
-            _logger.Warning("Êı¾İ²É¼¯·şÎñÎ´ÔËĞĞ");
+            _logger.Warning("æ•°æ®é‡‡é›†æœåŠ¡æœªè¿è¡Œ");
             return new List<KlineData>();
         }
 
@@ -130,7 +130,7 @@ public class BinanceDataCollectionService : IDataCollectionService
 
             if (closes == null || closes.Count == 0)
             {
-                _logger.Warning("ÎŞ·¨»ñÈ¡ K ÏßÊı¾İ: {Symbol}", symbol);
+                _logger.Warning("æ— æ³•è·å– K çº¿æ•°æ®: {Symbol}", symbol);
                 return new List<KlineData>();
             }
 
@@ -149,12 +149,12 @@ public class BinanceDataCollectionService : IDataCollectionService
                 TakerBuyQuoteAssetVolume = 0
             }).ToList();
 
-            _logger.Information("? »ñÈ¡ÁË {Count} Ìõ K ÏßÊı¾İ: {Symbol}", result.Count, symbol);
+            _logger.Information("? è·å–äº† {Count} æ¡ K çº¿æ•°æ®: {Symbol}", result.Count, symbol);
             return result;
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "»ñÈ¡ K ÏßÊı¾İÒì³£: {Symbol}", symbol);
+            _logger.Error(ex, "è·å– K çº¿æ•°æ®å¼‚å¸¸: {Symbol}", symbol);
             return new List<KlineData>();
         }
     }
@@ -163,13 +163,13 @@ public class BinanceDataCollectionService : IDataCollectionService
     {
         if (!_isRunning)
         {
-            throw new InvalidOperationException("Êı¾İ²É¼¯·şÎñÎ´ÔËĞĞ");
+            throw new InvalidOperationException("æ•°æ®é‡‡é›†æœåŠ¡æœªè¿è¡Œ");
         }
 
         var subscriptionId = Guid.NewGuid().ToString();
         _subscriptions[subscriptionId] = onDataReceived;
 
-        _logger.Information("? ¶©ÔÄ {Symbol} µÄÊµÊ±Êı¾İ£¬ID: {SubscriptionId}", symbol, subscriptionId);
+        _logger.Information("? è®¢é˜… {Symbol} çš„å®æ—¶æ•°æ®ï¼ŒID: {SubscriptionId}", symbol, subscriptionId);
         return subscriptionId;
     }
 
@@ -177,7 +177,7 @@ public class BinanceDataCollectionService : IDataCollectionService
     {
         if (_subscriptions.Remove(subscriptionId))
         {
-            _logger.Information("? ÒÑÈ¡Ïû¶©ÔÄ: {SubscriptionId}", subscriptionId);
+            _logger.Information("? å·²å–æ¶ˆè®¢é˜…: {SubscriptionId}", subscriptionId);
         }
     }
 
@@ -186,7 +186,7 @@ public class BinanceDataCollectionService : IDataCollectionService
         await Task.CompletedTask;
         if (!_isRunning)
         {
-            throw new InvalidOperationException("Êı¾İ²É¼¯·şÎñÎ´ÔËĞĞ");
+            throw new InvalidOperationException("æ•°æ®é‡‡é›†æœåŠ¡æœªè¿è¡Œ");
         }
 
         try
@@ -199,12 +199,12 @@ public class BinanceDataCollectionService : IDataCollectionService
                 Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             };
 
-            _logger.Information("¶©µ¥²¾²éÑ¯£¨µ±Ç°ÊµÏÖ²»Ö§³Ö£©: {Symbol}", symbol);
+            _logger.Information("è®¢å•ç°¿æŸ¥è¯¢ï¼ˆå½“å‰å®ç°ä¸æ”¯æŒï¼‰: {Symbol}", symbol);
             return orderBook;
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "»ñÈ¡¶©µ¥²¾Ê§°Ü: {Symbol}", symbol);
+            _logger.Error(ex, "è·å–è®¢å•ç°¿å¤±è´¥: {Symbol}", symbol);
             return new OrderBook();
         }
     }
@@ -213,7 +213,7 @@ public class BinanceDataCollectionService : IDataCollectionService
     {
         if (!_isRunning)
         {
-            throw new InvalidOperationException("Êı¾İ²É¼¯·şÎñÎ´ÔËĞĞ");
+            throw new InvalidOperationException("æ•°æ®é‡‡é›†æœåŠ¡æœªè¿è¡Œ");
         }
 
         try
@@ -222,7 +222,7 @@ public class BinanceDataCollectionService : IDataCollectionService
 
             if (trades == null || trades.Count == 0)
             {
-                _logger.Warning("ÎŞ·¨»ñÈ¡×î½ü½»Ò×: {Symbol}", symbol);
+                _logger.Warning("æ— æ³•è·å–æœ€è¿‘äº¤æ˜“: {Symbol}", symbol);
                 return new List<RecentTrade>();
             }
 
@@ -239,7 +239,7 @@ public class BinanceDataCollectionService : IDataCollectionService
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "»ñÈ¡×î½ü½»Ò×Ê§°Ü: {Symbol}", symbol);
+            _logger.Error(ex, "è·å–æœ€è¿‘äº¤æ˜“å¤±è´¥: {Symbol}", symbol);
             return new List<RecentTrade>();
         }
     }

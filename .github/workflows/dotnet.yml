@@ -1,4 +1,4 @@
-name: .NET CI
+name: Product CI
 
 on:
   push:
@@ -13,19 +13,66 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 10.17.1
+        run_install: false
+
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22.x'
+        cache: pnpm
+        cache-dependency-path: WebUi/pnpm-lock.yaml
+
+    - name: Install Web UI dependencies
+      working-directory: WebUi
+      run: pnpm install --frozen-lockfile
+
+    - name: Web lint
+      working-directory: WebUi
+      run: pnpm lint
+
+    - name: Web typecheck
+      working-directory: WebUi
+      run: pnpm typecheck
+
+    - name: Web contract tests
+      working-directory: WebUi
+      run: |
+        pnpm test:roles
+        pnpm test:i18n
+
+    - name: Build Web UI
+      working-directory: WebUi
+      run: pnpm build
+
+    - name: Verify Web UI export
+      shell: pwsh
+      run: |
+        if (-not (Test-Path -LiteralPath "WebUi/out/index.html" -PathType Leaf)) {
+          throw "WebUi static export is missing."
+        }
+
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
 
-    - name: Restore
+    - name: Verify UTF-8 source
+      shell: pwsh
+      run: ./eng/verify-utf8.ps1
+
+    - name: Restore .NET
       run: dotnet restore "币安量化机器人.sln"
 
-    - name: Build
+    - name: Build .NET
       run: dotnet build "币安量化机器人.sln" --configuration Release --no-restore
 
-    - name: Test
-      run: dotnet test "WPE.Tests/WPE.Tests.csproj" --configuration Release --no-build -- xUnit.ParallelizeTestCollections=false
+    - name: Test .NET
+      shell: pwsh
+      run: ./eng/test.ps1 -Configuration Release
 
     - name: Publish candidate
       run: dotnet publish "币安量化机器人.csproj" --configuration Release --no-restore --output artifacts/publish
@@ -34,6 +81,9 @@ jobs:
       shell: pwsh
       run: |
         if (-not (Get-ChildItem artifacts/publish -Filter *.exe)) { throw "Published executable is missing." }
+        if (-not (Test-Path -LiteralPath "artifacts/publish/WebUi/out/index.html" -PathType Leaf)) {
+          throw "Published Reference UI export is missing."
+        }
         $forbidden = Get-ChildItem artifacts/publish -Recurse -File | Where-Object {
           $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
           $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)$' -or
