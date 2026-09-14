@@ -52,6 +52,19 @@ public sealed class SecurityBoundaryRegressionTests
     }
 
     [Fact]
+    public void BinanceSignedTransportAndModeChanges_FailClosedExceptDocumentedNoOpCodes()
+    {
+        var root = RepositoryRoot();
+        var api = File.ReadAllText(Path.Combine(root, "Services", "BinanceApiClient.cs"));
+        var adapter = File.ReadAllText(Path.Combine(root, "Services", "Agent", "BinanceFuturesAdapter.cs"));
+
+        Assert.Contains("HttpClientHandler{AllowAutoRedirect=false,UseCookies=false}", api, StringComparison.Ordinal);
+        Assert.DoesNotContain("catch(HttpRequestException ex) when(ex.Message.Contains(\"400\"))", adapter, StringComparison.Ordinal);
+        Assert.Equal(1, Count(adapter, "ExchangeCode==-4046"));
+        Assert.Equal(1, Count(adapter, "ExchangeCode==-4059"));
+    }
+
+    [Fact]
     public async Task TradingKernel_ProcessLeaseBlocksSecondRuntimeEvenWithDifferentDatabases()
     {
         var directory = Path.Combine(Path.GetTempPath(), "wpe-kernel-lease-" + Guid.NewGuid().ToString("N"));
@@ -101,6 +114,18 @@ public sealed class SecurityBoundaryRegressionTests
         Assert.Contains("runtime.lease-renewal-failed", source, StringComparison.Ordinal);
         Assert.Contains("AutoTradingAgent.Pause();", source, StringComparison.Ordinal);
         Assert.Contains("EnsureRuntimeAuthority();", source, StringComparison.Ordinal);
+    }
+
+    private static int Count(string source, string value)
+    {
+        var count = 0;
+        var offset = 0;
+        while ((offset = source.IndexOf(value, offset, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            offset += value.Length;
+        }
+        return count;
     }
 
     private static string RepositoryRoot() =>
