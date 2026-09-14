@@ -1,4 +1,7 @@
+using Microsoft.Data.Sqlite;
 using WpeAgent;
+using 币安量化机器人.Infrastructure.Runtime;
+using 币安量化机器人.Services.Agent;
 using 币安量化机器人.Services.Exchange;
 
 namespace WPE.Tests;
@@ -46,6 +49,58 @@ public sealed class SecurityBoundaryRegressionTests
         var catalog = new ExchangeProviderCatalog();
         Assert.NotEmpty(catalog.Installed);
         Assert.All(catalog.Installed, descriptor => Assert.False(descriptor.SupportsMainnet));
+    }
+
+    [Fact]
+    public async Task TradingKernel_ProcessLeaseBlocksSecondRuntimeEvenWithDifferentDatabases()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "wpe-kernel-lease-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var processLease = Path.Combine(directory, "autonomous-trading-kernel.lock");
+        var first = new AgentRuntimeSupervisor(
+            new AgentSqliteStore(Path.Combine(directory, "first.db")),
+            new InProcessAgentEventBus(),
+            processLease);
+        var second = new AgentRuntimeSupervisor(
+            new AgentSqliteStore(Path.Combine(directory, "second.db")),
+            new InProcessAgentEventBus(),
+            processLease);
+        var firstDisposed = false;
+
+        try
+        {
+            await first.StartAsync(CancellationToken.None);
+
+            var blocked = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => second.StartAsync(CancellationToken.None));
+            Assert.Contains("process lease", blocked.Message, StringComparison.OrdinalIgnoreCase);
+
+            await first.DisposeAsync();
+            firstDisposed = true;
+
+            await second.StartAsync(CancellationToken.None);
+            Assert.NotEqual("NOT_STARTED", second.Health.RecoveryStatus);
+        }
+        finally
+        {
+            if (!firstDisposed) await first.DisposeAsync();
+            await second.DisposeAsync();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    public void TradingKernel_LeaseLossIsFailClosedAndNotOnlyTelemetry()
+    {
+        var root = RepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "Infrastructure", "Runtime", "AgentRuntimeSupervisor.cs"));
+
+        Assert.Contains("FileShare.None", source, StringComparison.Ordinal);
+        Assert.Contains("runtime.lease-renewal-rejected", source, StringComparison.Ordinal);
+        Assert.Contains("runtime.lease-renewal-failed", source, StringComparison.Ordinal);
+        Assert.Contains("AutoTradingAgent.Pause();", source, StringComparison.Ordinal);
+        Assert.Contains("EnsureRuntimeAuthority();", source, StringComparison.Ordinal);
     }
 
     private static string RepositoryRoot() =>
