@@ -6,17 +6,36 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+permissions:
+  contents: write
+
 jobs:
   build-and-test:
     runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
+
+    - name: Normalize legacy source encoding
+      if: github.event_name == 'pull_request' && github.head_ref == 'codex/normalize-source-utf8' && github.actor == '9529360-cpu'
+      shell: pwsh
+      run: |
+        ./eng/normalize-legacy-csharp-encoding.ps1
+        $changes = git status --porcelain -- '*.cs'
+        if ($changes) {
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- '*.cs'
+          git commit -m "chore: normalize legacy C# source encoding"
+          git push origin "HEAD:${{ github.head_ref }}"
+        }
 
     - name: Verify UTF-8 source
       shell: pwsh
