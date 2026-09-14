@@ -68,7 +68,20 @@ public sealed class TelegramSubscriberRuntime
         _delay = delay ?? Task.Delay;
     }
 
-    public Task RunAsync(CancellationToken ct) => Task.WhenAll(RunPollerAsync(ct), RunDispatcherAsync(ct));
+    public async Task RunAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.WhenAll(RunPollerAsync(ct), RunDispatcherAsync(ct));
+        }
+        finally
+        {
+            var now = DateTimeOffset.UtcNow;
+            var current = _health.Read();
+            _health.PublishPoller(ToStopped(current.Poller, now));
+            _health.PublishDispatcher(ToStopped(current.Dispatcher, now));
+        }
+    }
 
     public static TimeSpan RetryDelay(int consecutiveFailures)
     {
@@ -168,6 +181,9 @@ public sealed class TelegramSubscriberRuntime
             }
         }
     }
+
+    private static TelegramWorkerHealthSnapshot ToStopped(TelegramWorkerHealthSnapshot current, DateTimeOffset now) =>
+        new("Stopped", 0, current.LastSuccessAtUtc, current.LastFailureAtUtc, null, null, false, now);
 
     private static TelegramWorkerHealthSnapshot Failed(
         string state,
