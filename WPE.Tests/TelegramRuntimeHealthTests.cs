@@ -68,13 +68,32 @@ public sealed class TelegramRuntimeHealthTests
     [Fact]
     public void PollingLease_IsLocalSingleOwnerAndCredentialFree()
     {
-        var root=Root();
-        var source=File.ReadAllText(Path.Combine(root,"Services","Notifications","TelegramRuntimeHealth.cs"));
+        var source=RuntimeSource();
         Assert.Contains("telegram-getupdates.lock",source,StringComparison.Ordinal);
         Assert.Contains("FileShare.None",source,StringComparison.Ordinal);
         Assert.DoesNotContain("AccessToken",source,StringComparison.Ordinal);
         Assert.DoesNotContain("botToken",source,StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Supervisor_ShutdownPublishesStoppedStateAndReleasesLeaseTruth()
+    {
+        var source=RuntimeSource();
+        Assert.Contains("finally",source,StringComparison.Ordinal);
+        Assert.Contains("PublishPoller(ToStopped(current.Poller, now))",source,StringComparison.Ordinal);
+        Assert.Contains("PublishDispatcher(ToStopped(current.Dispatcher, now))",source,StringComparison.Ordinal);
+        Assert.Contains("new(\"Stopped\", 0, current.LastSuccessAtUtc, current.LastFailureAtUtc, null, null, false, now)",source,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WorkerDiagnosticCode_DoesNotHashExceptionMessages()
+    {
+        var source=RuntimeSource();
+        Assert.Contains("exception.GetType()",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("exception.Message",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("exception.ToString()",source,StringComparison.Ordinal);
+    }
+
+    private static string RuntimeSource()=>File.ReadAllText(Path.Combine(Root(),"Services","Notifications","TelegramRuntimeHealth.cs"));
     private static string Root()=>Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
 }
