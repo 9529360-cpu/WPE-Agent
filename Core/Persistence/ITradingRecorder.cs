@@ -1,89 +1,89 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Persistence;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Persistence;
 
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Execution;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Execution;
 
 /// <summary>
-/// ½»Ò×¼ÇÂ¼Æ÷½Ó¿Ú
-/// ¸ºÔğ³Ö¾Ã»¯½»Ò×Êı¾İµ½Êı¾İ¿â
+/// äº¤æ˜“è®°å½•å™¨æ¥å£
+/// è´Ÿè´£æŒä¹…åŒ–äº¤æ˜“æ•°æ®åˆ°æ•°æ®åº“
 /// </summary>
 public interface ITradingRecorder
 {
     /// <summary>
-    /// ¼ÇÂ¼ÒÑÍê³ÉµÄ½»Ò×
+    /// è®°å½•å·²å®Œæˆçš„äº¤æ˜“
     /// </summary>
-    /// <param name="trade">½»Ò×¼ÇÂ¼</param>
+    /// <param name="trade">äº¤æ˜“è®°å½•</param>
     Task<bool> RecordTradeAsync(TradingLog trade);
 
     /// <summary>
-    /// ¼ÇÂ¼¶©µ¥Ö´ĞĞÊÂ¼ş
+    /// è®°å½•è®¢å•æ‰§è¡Œäº‹ä»¶
     /// </summary>
-    /// <param name="orderEvent">¶©µ¥ÊÂ¼ş</param>
+    /// <param name="orderEvent">è®¢å•äº‹ä»¶</param>
     Task<bool> RecordOrderEventAsync(OrderEvent orderEvent);
 
     /// <summary>
-    /// ¼ÇÂ¼ÕË»§×´Ì¬¿ìÕÕ
+    /// è®°å½•è´¦æˆ·çŠ¶æ€å¿«ç…§
     /// </summary>
-    /// <param name="snapshot">ÕË»§¿ìÕÕ</param>
+    /// <param name="snapshot">è´¦æˆ·å¿«ç…§</param>
     Task<bool> RecordAccountSnapshotAsync(AccountSnapshot snapshot);
 
     /// <summary>
-    /// ²éÑ¯½»Ò×ÀúÊ·
+    /// æŸ¥è¯¢äº¤æ˜“å†å²
     /// </summary>
-    /// <param name="filter">²éÑ¯¹ıÂËÆ÷</param>
+    /// <param name="filter">æŸ¥è¯¢è¿‡æ»¤å™¨</param>
     Task<List<TradingLog>> QueryTradesAsync(TradeQueryFilter filter);
 
     /// <summary>
-    /// »ñÈ¡ÈÕÆÚ·¶Î§ÄÚµÄ½»Ò××ÜºÍ
+    /// è·å–æ—¥æœŸèŒƒå›´å†…çš„äº¤æ˜“æ€»å’Œ
     /// </summary>
-    /// <param name="startDate">¿ªÊ¼ÈÕÆÚ</param>
-    /// <param name="endDate">½áÊøÈÕÆÚ</param>
+    /// <param name="startDate">å¼€å§‹æ—¥æœŸ</param>
+    /// <param name="endDate">ç»“æŸæ—¥æœŸ</param>
     Task<TradingSummary> GetTradingSummaryAsync(DateTime startDate, DateTime endDate);
 
     /// <summary>
-    /// »ñÈ¡ÌØ¶¨½»Ò×¶ÔµÄÍ³¼Æ
+    /// è·å–ç‰¹å®šäº¤æ˜“å¯¹çš„ç»Ÿè®¡
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="startDate">¿ªÊ¼ÈÕÆÚ</param>
-    /// <param name="endDate">½áÊøÈÕÆÚ</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="startDate">å¼€å§‹æ—¥æœŸ</param>
+    /// <param name="endDate">ç»“æŸæ—¥æœŸ</param>
     Task<SymbolTradingStats> GetSymbolStatsAsync(string symbol, DateTime startDate, DateTime endDate);
 
     /// <summary>
-    /// »ñÈ¡ÊÕÒæÇúÏßÊı¾İ
+    /// è·å–æ”¶ç›Šæ›²çº¿æ•°æ®
     /// </summary>
-    /// <param name="startDate">¿ªÊ¼ÈÕÆÚ</param>
-    /// <param name="endDate">½áÊøÈÕÆÚ</param>
-    /// <param name="intervalMinutes">¼ä¸ô·ÖÖÓÊı</param>
+    /// <param name="startDate">å¼€å§‹æ—¥æœŸ</param>
+    /// <param name="endDate">ç»“æŸæ—¥æœŸ</param>
+    /// <param name="intervalMinutes">é—´éš”åˆ†é’Ÿæ•°</param>
     Task<List<EquityCurvePoint>> GetEquityCurveAsync(
         DateTime startDate,
         DateTime endDate,
         int intervalMinutes = 60);
 
     /// <summary>
-    /// µ¼³ö½»Ò×Êı¾İÎª CSV
+    /// å¯¼å‡ºäº¤æ˜“æ•°æ®ä¸º CSV
     /// </summary>
-    /// <param name="filter">²éÑ¯¹ıÂËÆ÷</param>
-    /// <param name="filePath">Êä³öÎÄ¼şÂ·¾¶</param>
+    /// <param name="filter">æŸ¥è¯¢è¿‡æ»¤å™¨</param>
+    /// <param name="filePath">è¾“å‡ºæ–‡ä»¶è·¯å¾„</param>
     Task<bool> ExportTradesToCsvAsync(TradeQueryFilter filter, string filePath);
 
     /// <summary>
-    /// É¾³ı¾É½»Ò×¼ÇÂ¼
+    /// åˆ é™¤æ—§äº¤æ˜“è®°å½•
     /// </summary>
-    /// <param name="olderThan">É¾³ıÔçÓÚ´ËÈÕÆÚµÄ¼ÇÂ¼</param>
+    /// <param name="olderThan">åˆ é™¤æ—©äºæ­¤æ—¥æœŸçš„è®°å½•</param>
     Task<int> DeleteOldTradesAsync(DateTime olderThan);
 
     /// <summary>
-    /// »ñÈ¡×îºóÒ»Ìõ½»Ò×¼ÇÂ¼
+    /// è·å–æœ€åä¸€æ¡äº¤æ˜“è®°å½•
     /// </summary>
     Task<TradingLog?> GetLastTradeAsync();
 
     /// <summary>
-    /// Çå¿ÕËùÓĞ½»Ò×¼ÇÂ¼
+    /// æ¸…ç©ºæ‰€æœ‰äº¤æ˜“è®°å½•
     /// </summary>
     Task<bool> ClearAllTradesAsync();
 }
 
 /// <summary>
-/// ½»Ò×ÈÕÖ¾¼ÇÂ¼
+/// äº¤æ˜“æ—¥å¿—è®°å½•
 /// </summary>
 public record TradingLog
 {
@@ -102,7 +102,7 @@ public record TradingLog
 }
 
 /// <summary>
-/// ½»Ò×ÀàĞÍ
+/// äº¤æ˜“ç±»å‹
 /// </summary>
 public enum TradeType
 {
@@ -111,7 +111,7 @@ public enum TradeType
 }
 
 /// <summary>
-/// ¶©µ¥ÊÂ¼ş
+/// è®¢å•äº‹ä»¶
 /// </summary>
 public record OrderEvent
 {
@@ -128,7 +128,7 @@ public record OrderEvent
 }
 
 /// <summary>
-/// ¶©µ¥ÊÂ¼şÀàĞÍ
+/// è®¢å•äº‹ä»¶ç±»å‹
 /// </summary>
 public enum OrderEventType
 {
@@ -141,7 +141,7 @@ public enum OrderEventType
 }
 
 /// <summary>
-/// ÕË»§¿ìÕÕ
+/// è´¦æˆ·å¿«ç…§
 /// </summary>
 public record AccountSnapshot
 {
@@ -156,7 +156,7 @@ public record AccountSnapshot
 }
 
 /// <summary>
-/// ×Ê²úÓà¶î
+/// èµ„äº§ä½™é¢
 /// </summary>
 public record AssetBalance
 {
@@ -167,7 +167,7 @@ public record AssetBalance
 }
 
 /// <summary>
-/// ½»Ò×²éÑ¯¹ıÂËÆ÷
+/// äº¤æ˜“æŸ¥è¯¢è¿‡æ»¤å™¨
 /// </summary>
 public record TradeQueryFilter
 {
@@ -181,7 +181,7 @@ public record TradeQueryFilter
 }
 
 /// <summary>
-/// ½»Ò××Ü½á
+/// äº¤æ˜“æ€»ç»“
 /// </summary>
 public record TradingSummary
 {
@@ -198,7 +198,7 @@ public record TradingSummary
 }
 
 /// <summary>
-/// ·ûºÅ½»Ò×Í³¼Æ
+/// ç¬¦å·äº¤æ˜“ç»Ÿè®¡
 /// </summary>
 public record SymbolTradingStats
 {
@@ -212,7 +212,7 @@ public record SymbolTradingStats
 }
 
 /// <summary>
-/// È¨ÒæÇúÏßµã
+/// æƒç›Šæ›²çº¿ç‚¹
 /// </summary>
 public record EquityCurvePoint
 {

@@ -1,4 +1,4 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Services;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Services;
 
 public interface IRawStreamRecorder
 {

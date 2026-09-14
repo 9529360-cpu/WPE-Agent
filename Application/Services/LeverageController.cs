@@ -1,4 +1,4 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Application.Services;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Application.Services;
 
 using System;
 using System.Collections.Concurrent;
@@ -6,11 +6,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Serilog;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Risk;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Risk;
 
 /// <summary>
-/// ¸Ü¸Ë¿ØÖÆÆ÷ÊµÏÖ
-/// ¸ºÔğ¹ÜÀí±£Ö¤½ğºÍ¸Ü¸Ë±¶Êı
+/// æ æ†æ§åˆ¶å™¨å®ç°
+/// è´Ÿè´£ç®¡ç†ä¿è¯é‡‘å’Œæ æ†å€æ•°
 /// </summary>
 public class LeverageController : ILeverageController
 {
@@ -27,7 +27,7 @@ public class LeverageController : ILeverageController
     {
         var maxLeverage = GetMaxLeverageAsync(symbol).GetAwaiter().GetResult();
         _symbolLeverage[symbol] = Math.Clamp(leverage, 1, maxLeverage);
-        _logger.Information("¸Ü¸ËÒÑÉèÖÃ: {Symbol} => {Leverage}", symbol, _symbolLeverage[symbol]);
+        _logger.Information("æ æ†å·²è®¾ç½®: {Symbol} => {Leverage}", symbol, _symbolLeverage[symbol]);
         return Task.FromResult(true);
     }
 
@@ -84,13 +84,13 @@ public class LeverageController : ILeverageController
 
     public Task<bool> AddMarginAsync(decimal amount)
     {
-        _logger.Information("Ôö¼Ó±£Ö¤½ğÇëÇó: {Amount}", amount);
+        _logger.Information("å¢åŠ ä¿è¯é‡‘è¯·æ±‚: {Amount}", amount);
         return Task.FromResult(true);
     }
 
     public Task<bool> RemoveMarginAsync(decimal amount)
     {
-        _logger.Information("¼õÉÙ±£Ö¤½ğÇëÇó: {Amount}", amount);
+        _logger.Information("å‡å°‘ä¿è¯é‡‘è¯·æ±‚: {Amount}", amount);
         return Task.FromResult(true);
     }
 

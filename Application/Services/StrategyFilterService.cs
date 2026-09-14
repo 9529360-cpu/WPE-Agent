@@ -1,15 +1,15 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Application.Services;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Application.Services;
 
 using Serilog;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Strategy;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Strategy;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 
 /// <summary>
-/// ²ßÂÔÉ¸Ñ¡·şÎñÊµÏÖ
-/// ¸ù¾İĞÔÄÜÖ¸±êºÍ·çÏÕ²ÎÊıÉ¸Ñ¡ºÍÍÆ¼ö²ßÂÔ
+/// ç­–ç•¥ç­›é€‰æœåŠ¡å®ç°
+/// æ ¹æ®æ€§èƒ½æŒ‡æ ‡å’Œé£é™©å‚æ•°ç­›é€‰å’Œæ¨èç­–ç•¥
 /// </summary>
 public class StrategyFilterService : IStrategyFilterService
 {
@@ -26,7 +26,7 @@ public class StrategyFilterService : IStrategyFilterService
     {
         if (strategies == null || strategies.Count == 0)
         {
-            _logger.Warning("Ã»ÓĞ²ßÂÔ¿ÉÉ¸Ñ¡");
+            _logger.Warning("æ²¡æœ‰ç­–ç•¥å¯ç­›é€‰");
             return new List<StrategyInfo>();
         }
 
@@ -37,7 +37,7 @@ public class StrategyFilterService : IStrategyFilterService
                 .ToList();
 
             _logger.Information(
-                "? ²ßÂÔÉ¸Ñ¡Íê³É: ÊäÈë={Total}, Êä³ö={Filtered}",
+                "? ç­–ç•¥ç­›é€‰å®Œæˆ: è¾“å…¥={Total}, è¾“å‡º={Filtered}",
                 strategies.Count,
                 filtered.Count);
 
@@ -86,7 +86,7 @@ public class StrategyFilterService : IStrategyFilterService
                 _ => strategies
             };
 
-            _logger.Information("?? ²ßÂÔÅÅĞòÍê³É: {SortField}, ½µĞò={Desc}", sortBy, descending);
+            _logger.Information("?? ç­–ç•¥æ’åºå®Œæˆ: {SortField}, é™åº={Desc}", sortBy, descending);
             return sorted;
         });
     }
@@ -104,16 +104,16 @@ public class StrategyFilterService : IStrategyFilterService
         {
             int score = 0;
 
-            // »ùÓÚ²ßÂÔÀàĞÍÆÀ·Ö
+            // åŸºäºç­–ç•¥ç±»å‹è¯„åˆ†
             score += EvaluateTypeCompatibility(strategy.Type, marketConditions.CurrentTrend);
 
-            // »ùÓÚĞÔÄÜÖ¸±êÆÀ·Ö
+            // åŸºäºæ€§èƒ½æŒ‡æ ‡è¯„åˆ†
             score += EvaluatePerformanceScore(strategy.Performance);
 
-            // »ùÓÚ²¨¶¯ÂÊÆÀ·Ö
+            // åŸºäºæ³¢åŠ¨ç‡è¯„åˆ†
             score += EvaluateVolatilityFitness(strategy.Performance, marketConditions.CurrentVolatility);
 
-            // »ùÓÚÇ÷ÊÆÇ¿¶ÈÆÀ·Ö
+            // åŸºäºè¶‹åŠ¿å¼ºåº¦è¯„åˆ†
             score += EvaluateTrendStrengthFitness(strategy.Type, marketConditions.TrendStrength);
 
             return Math.Min(100, Math.Max(0, score));
@@ -138,7 +138,7 @@ public class StrategyFilterService : IStrategyFilterService
                 .ToList();
 
             _logger.Information(
-                "??? ·çÏÕÉ¸Ñ¡Íê³É: ×î´ó»Ø³·={MaxDD}%, ×îĞ¡ÏÄÆÕ={MinSharpe}, ½á¹û={Count}",
+                "??? é£é™©ç­›é€‰å®Œæˆ: æœ€å¤§å›æ’¤={MaxDD}%, æœ€å°å¤æ™®={MinSharpe}, ç»“æœ={Count}",
                 maxDrawdown,
                 minSharpeRatio,
                 filtered.Count);
@@ -163,7 +163,7 @@ public class StrategyFilterService : IStrategyFilterService
                 .ToList();
 
             _logger.Information(
-                "?? ÊÕÒæÉ¸Ñ¡Íê³É: ×îĞ¡Äê»¯={MinReturn}%, ½á¹û={Count}",
+                "?? æ”¶ç›Šç­›é€‰å®Œæˆ: æœ€å°å¹´åŒ–={MinReturn}%, ç»“æœ={Count}",
                 minAnnualizedReturn * 100,
                 filtered.Count);
 
@@ -182,19 +182,19 @@ public class StrategyFilterService : IStrategyFilterService
 
         return await Task.Run(() =>
         {
-            // Ê¹ÓÃÏÖ´úÍ¶×Ê×éºÏÀíÂÛ (MPT) Ë¼Ïë
-            // Ñ¡ÔñÏÄÆÕ±ÈÂÊ×î¸ßÇÒÏà¹ØĞÔµÍµÄ²ßÂÔ
+            // ä½¿ç”¨ç°ä»£æŠ•èµ„ç»„åˆç†è®º (MPT) æ€æƒ³
+            // é€‰æ‹©å¤æ™®æ¯”ç‡æœ€é«˜ä¸”ç›¸å…³æ€§ä½çš„ç­–ç•¥
             var portfolio = strategies
                 .OrderByDescending(s => s.Performance.SharpeRatio)
                 .Take(portfolioSize)
                 .ToList();
 
             _logger.Information(
-                "?? ÍÆ¼ö²ßÂÔ×éºÏ: ²ßÂÔÊı={Count}",
+                "?? æ¨èç­–ç•¥ç»„åˆ: ç­–ç•¥æ•°={Count}",
                 portfolio.Count);
 
             portfolio.ForEach(s =>
-                _logger.Information("   - {Name}: ÏÄÆÕ={Sharpe}, ÊÕÒæ={Return}%",
+                _logger.Information("   - {Name}: å¤æ™®={Sharpe}, æ”¶ç›Š={Return}%",
                     s.Name,
                     s.Performance.SharpeRatio,
                     s.Performance.AnnualizedReturn * 100));
@@ -214,24 +214,24 @@ public class StrategyFilterService : IStrategyFilterService
 
         return await Task.Run(() =>
         {
-            var score = 50; // »ù´¡·ÖÊı
+            var score = 50; // åŸºç¡€åˆ†æ•°
             var warnings = new List<string>();
             var recommendations = new List<string>();
 
-            // ¼ì²é²¨¶¯ÂÊ¼æÈİĞÔ
+            // æ£€æŸ¥æ³¢åŠ¨ç‡å…¼å®¹æ€§
             if (marketConditions.CurrentVolatility > 0.3m)
             {
-                warnings.Add("ÊĞ³¡²¨¶¯ÂÊ½Ï¸ß£¬·çÏÕÔö¼Ó");
+                warnings.Add("å¸‚åœºæ³¢åŠ¨ç‡è¾ƒé«˜ï¼Œé£é™©å¢åŠ ");
                 score -= 10;
             }
 
-            // ¼ì²éÇ÷ÊÆ¼æÈİĞÔ
+            // æ£€æŸ¥è¶‹åŠ¿å…¼å®¹æ€§
             switch (strategy.Type)
             {
                 case StrategyType.Momentum:
                     if (marketConditions.CurrentTrend == MarketTrend.SideWays)
                     {
-                        warnings.Add("¶¯Á¿²ßÂÔ²»ÊÊºÏºáÅÌÊĞ³¡");
+                        warnings.Add("åŠ¨é‡ç­–ç•¥ä¸é€‚åˆæ¨ªç›˜å¸‚åœº");
                         score -= 20;
                     }
                     break;
@@ -239,22 +239,22 @@ public class StrategyFilterService : IStrategyFilterService
                 case StrategyType.MeanReversion:
                     if (marketConditions.CurrentTrend != MarketTrend.SideWays)
                     {
-                        warnings.Add("¾ùÖµ»Ø¹é²ßÂÔÔÚÇ÷ÊÆÊĞÖĞĞ§¹û½Ï²î");
+                        warnings.Add("å‡å€¼å›å½’ç­–ç•¥åœ¨è¶‹åŠ¿å¸‚ä¸­æ•ˆæœè¾ƒå·®");
                         score -= 15;
                     }
                     break;
             }
 
-            // ¼ì²éĞÔÄÜÖ¸±ê
+            // æ£€æŸ¥æ€§èƒ½æŒ‡æ ‡
             if (strategy.Performance.SharpeRatio > 1.0m)
             {
                 score += 20;
-                recommendations.Add("ÏÄÆÕ±ÈÂÊÓÅĞã£¬ÖµµÃ¿¼ÂÇ");
+                recommendations.Add("å¤æ™®æ¯”ç‡ä¼˜ç§€ï¼Œå€¼å¾—è€ƒè™‘");
             }
 
             if (strategy.Performance.MaxDrawdown > 0.30m)
             {
-                warnings.Add("×î´ó»Ø³·½Ï´ó£¬·çÏÕ½Ï¸ß");
+                warnings.Add("æœ€å¤§å›æ’¤è¾ƒå¤§ï¼Œé£é™©è¾ƒé«˜");
                 score -= 15;
             }
 
@@ -271,7 +271,7 @@ public class StrategyFilterService : IStrategyFilterService
             };
 
             _logger.Information(
-                "?? ¼æÈİĞÔ¼ì²é: {Strategy}, ·ÖÊı={Score}, ¼æÈİ={Compatible}",
+                "?? å…¼å®¹æ€§æ£€æŸ¥: {Strategy}, åˆ†æ•°={Score}, å…¼å®¹={Compatible}",
                 strategy.Name,
                 report.CompatibilityScore,
                 isCompatible);
@@ -344,7 +344,7 @@ public class StrategyFilterService : IStrategyFilterService
 
     private int EvaluateVolatilityFitness(StrategyPerformanceMetrics metrics, decimal volatility)
     {
-        // ¸ß²¨¶¯ÂÊÊĞ³¡ÏÂ£¬»Ø³·Ğ¡µÄ²ßÂÔµÃ·Ö¸ß
+        // é«˜æ³¢åŠ¨ç‡å¸‚åœºä¸‹ï¼Œå›æ’¤å°çš„ç­–ç•¥å¾—åˆ†é«˜
         if (volatility > 0.25m)
         {
             return metrics.MaxDrawdown < 0.15m ? 15 : 5;

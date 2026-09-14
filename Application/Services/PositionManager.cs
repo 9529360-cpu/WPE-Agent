@@ -1,4 +1,4 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Application.Services;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Application.Services;
 
 using System;
 using System.Collections.Concurrent;
@@ -6,11 +6,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Serilog;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Risk;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Risk;
 
 /// <summary>
-/// ²ÖÎ»¹ÜÀíÆ÷ÊµÏÖ
-/// ¸ºÔğ¸ú×ÙºÍ¹ÜÀí³Ö²ÖµÄ´óĞ¡ºÍ¸Ü¸Ë±ÈÀı
+/// ä»“ä½ç®¡ç†å™¨å®ç°
+/// è´Ÿè´£è·Ÿè¸ªå’Œç®¡ç†æŒä»“çš„å¤§å°å’Œæ æ†æ¯”ä¾‹
 /// </summary>
 public class PositionManager : IPositionManager
 {
@@ -30,7 +30,7 @@ public class PositionManager : IPositionManager
 
         _positions.AddOrUpdate(position.Symbol, position, (k, v) => position);
         _logger.Information(
-            "²ÖÎ»ÒÑ¿ªÆô: {Symbol} {Qty} @ {Price}", 
+            "ä»“ä½å·²å¼€å¯: {Symbol} {Qty} @ {Price}", 
             position.Symbol, 
             position.Quantity, 
             position.EntryPrice);
@@ -45,7 +45,7 @@ public class PositionManager : IPositionManager
         if (quantity <= 0 || quantity >= pos.Quantity)
         {
             _positions.TryRemove(symbol, out _);
-            _logger.Information("²ÖÎ»ÒÑÆ½: {Symbol} È«²¿Æ½²Ö", symbol);
+            _logger.Information("ä»“ä½å·²å¹³: {Symbol} å…¨éƒ¨å¹³ä»“", symbol);
             return Task.FromResult(true);
         }
 
@@ -55,7 +55,7 @@ public class PositionManager : IPositionManager
             LastUpdateTime = DateTime.UtcNow 
         };
         _positions[symbol] = updated;
-        _logger.Information("²ÖÎ»ÒÑ²¿·ÖÆ½: {Symbol} ĞÂÊıÁ¿={Qty}", symbol, updated.Quantity);
+        _logger.Information("ä»“ä½å·²éƒ¨åˆ†å¹³: {Symbol} æ–°æ•°é‡={Qty}", symbol, updated.Quantity);
         return Task.FromResult(true);
     }
 
@@ -157,7 +157,7 @@ public class PositionManager : IPositionManager
     public Task<bool> CloseAllPositionsAsync()
     {
         _positions.Clear();
-        _logger.Information("ËùÓĞ²ÖÎ»ÒÑÆ½");
+        _logger.Information("æ‰€æœ‰ä»“ä½å·²å¹³");
         return Task.FromResult(true);
     }
 }

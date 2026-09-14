@@ -1,31 +1,31 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Tests.Integration;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Tests.Integration;
 
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Xunit;
 using FluentAssertions;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Application.ClosedLoopOrchestration;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Application.Services;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Data;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Strategy;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Execution;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Risk;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Persistence;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Application.ClosedLoopOrchestration;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Application.Services;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Data;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Strategy;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Execution;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Risk;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Persistence;
 
 /// <summary>
-/// ±Õ»·½»Ò×ÒıÇæ¼¯³É²âÊÔ
-/// ²âÊÔÍêÕûµÄ½»Ò×Á÷³Ì£ºÊı¾İ²É¼¯ ¡ú ²ßÂÔÆÀ¹À ¡ú Ö´ĞĞ ¡ú ·çÏÕ¹ÜÀí ¡ú ¼ÇÂ¼
+/// é—­ç¯äº¤æ˜“å¼•æ“é›†æˆæµ‹è¯•
+/// æµ‹è¯•å®Œæ•´çš„äº¤æ˜“æµç¨‹ï¼šæ•°æ®é‡‡é›† â†’ ç­–ç•¥è¯„ä¼° â†’ æ‰§è¡Œ â†’ é£é™©ç®¡ç† â†’ è®°å½•
 /// </summary>
 public class ClosedLoopIntegrationTests
 {
     #region Engine Lifecycle Tests
 
-    [Fact(DisplayName = "Æô¶¯ÒıÇæ_Ó¦¸Ã³õÊ¼»¯")]
+    [Fact(DisplayName = "å¯åŠ¨å¼•æ“_åº”è¯¥åˆå§‹åŒ–")]
     public async Task StartEngine_ShouldInitializeAllComponents()
     {
-        // ÕâÊÇÒ»¸ö¼¯³É²âÊÔ¿ò¼Ü£¬Êµ¼Ê²âÊÔĞèÒªÒÀÀµ×¢ÈëÈİÆ÷
-        // ´Ë´¦½ö×÷Îª²âÊÔ½á¹¹Ê¾Àı
+        // è¿™æ˜¯ä¸€ä¸ªé›†æˆæµ‹è¯•æ¡†æ¶ï¼Œå®é™…æµ‹è¯•éœ€è¦ä¾èµ–æ³¨å…¥å®¹å™¨
+        // æ­¤å¤„ä»…ä½œä¸ºæµ‹è¯•ç»“æ„ç¤ºä¾‹
         
         // Arrange
         // var engine = CreateEngineWithAllDependencies();
@@ -41,7 +41,7 @@ public class ClosedLoopIntegrationTests
         await Task.CompletedTask;
     }
 
-    [Fact(DisplayName = "Ö´ĞĞ½»Ò×Ñ­»·_Ó¦¸ÃÍê³É")]
+    [Fact(DisplayName = "æ‰§è¡Œäº¤æ˜“å¾ªç¯_åº”è¯¥å®Œæˆ")]
     public async Task ExecuteTradingCycle_ShouldCompleteSuccessfully()
     {
         // Arrange
@@ -63,7 +63,7 @@ public class ClosedLoopIntegrationTests
 
     #region Strategy Management Tests
 
-    [Fact(DisplayName = "Ìí¼Ó²ßÂÔ_Ó¦¸ÃÆôÓÃ")]
+    [Fact(DisplayName = "æ·»åŠ ç­–ç•¥_åº”è¯¥å¯ç”¨")]
     public async Task AddStrategy_ShouldEnableStrategy()
     {
         // Arrange
@@ -86,7 +86,7 @@ public class ClosedLoopIntegrationTests
         await Task.CompletedTask;
     }
 
-    [Fact(DisplayName = "ÒÆ³ı²ßÂÔ_Ó¦¸Ã½ûÓÃ")]
+    [Fact(DisplayName = "ç§»é™¤ç­–ç•¥_åº”è¯¥ç¦ç”¨")]
     public async Task RemoveStrategy_ShouldDisableStrategy()
     {
         // Arrange
@@ -109,7 +109,7 @@ public class ClosedLoopIntegrationTests
 
     #region Event Subscription Tests
 
-    [Fact(DisplayName = "¶©ÔÄÊÂ¼ş_Ó¦¸Ã½ÓÊÕËùÓĞÊÂ¼ş")]
+    [Fact(DisplayName = "è®¢é˜…äº‹ä»¶_åº”è¯¥æ¥æ”¶æ‰€æœ‰äº‹ä»¶")]
     public async Task EventSubscription_ShouldReceiveAllEvents()
     {
         // Arrange
@@ -126,7 +126,7 @@ public class ClosedLoopIntegrationTests
 
         // Act
         // await engine.ExecuteTradingCycleAsync();
-        // await Task.Delay(500); // µÈ´ıÒì²½ÊÂ¼ş´¦Àí
+        // await Task.Delay(500); // ç­‰å¾…å¼‚æ­¥äº‹ä»¶å¤„ç†
 
         // Assert
         // eventsReceived.Should().NotBeEmpty();
@@ -139,7 +139,7 @@ public class ClosedLoopIntegrationTests
 
     #region Performance Tests
 
-    [Fact(DisplayName = "ĞÔÄÜ_Ö´ĞĞÑ­»·_Ó¦¸ÃÔÚ1·ÖÖÓÄÚÍê³É")]
+    [Fact(DisplayName = "æ€§èƒ½_æ‰§è¡Œå¾ªç¯_åº”è¯¥åœ¨1åˆ†é’Ÿå†…å®Œæˆ")]
     public async Task Performance_ExecuteCycle_ShouldCompleteLessThan1Minute()
     {
         // Arrange
@@ -161,11 +161,11 @@ public class ClosedLoopIntegrationTests
 
     #region Error Handling Tests
 
-    [Fact(DisplayName = "´íÎó´¦Àí_ÍøÂç´íÎó_Ó¦¸Ã»Ö¸´")]
+    [Fact(DisplayName = "é”™è¯¯å¤„ç†_ç½‘ç»œé”™è¯¯_åº”è¯¥æ¢å¤")]
     public async Task ErrorHandling_ShouldRecoverFromNetworkError()
     {
         // Arrange & Act & Assert
-        // ´Ë´¦ĞèÒªÄ£ÄâÍøÂç´íÎó£¬ÑéÖ¤´íÎó»Ö¸´Âß¼­
+        // æ­¤å¤„éœ€è¦æ¨¡æ‹Ÿç½‘ç»œé”™è¯¯ï¼ŒéªŒè¯é”™è¯¯æ¢å¤é€»è¾‘
 
         await Task.CompletedTask;
     }
@@ -174,41 +174,41 @@ public class ClosedLoopIntegrationTests
 }
 
 /// <summary>
-/// ¶Ëµ½¶Ë²âÊÔ
-/// ²âÊÔ´Ó API µ½Êı¾İ¿âµÄÍêÕûÁ÷³Ì
+/// ç«¯åˆ°ç«¯æµ‹è¯•
+/// æµ‹è¯•ä» API åˆ°æ•°æ®åº“çš„å®Œæ•´æµç¨‹
 /// </summary>
 public class EndToEndTests
 {
     #region Complete Trade Lifecycle Tests
 
-    [Fact(DisplayName = "ÍêÕû½»Ò×ÉúÃüÖÜÆÚ_´Ó¿ª²Öµ½Æ½²Ö")]
+    [Fact(DisplayName = "å®Œæ•´äº¤æ˜“ç”Ÿå‘½å‘¨æœŸ_ä»å¼€ä»“åˆ°å¹³ä»“")]
     public async Task CompleteTradeLifecycle_FromOpenToClose()
     {
         // Arrange
-        // 1. Æô¶¯ÒıÇæ
-        // 2. Ìí¼Ó²ßÂÔ
-        // 3. Ö´ĞĞ¶à¸ö½»Ò×Ñ­»·
-        // 4. ÑéÖ¤½»Ò×±»¼ÇÂ¼
+        // 1. å¯åŠ¨å¼•æ“
+        // 2. æ·»åŠ ç­–ç•¥
+        // 3. æ‰§è¡Œå¤šä¸ªäº¤æ˜“å¾ªç¯
+        // 4. éªŒè¯äº¤æ˜“è¢«è®°å½•
 
         // Act & Assert
 
         await Task.CompletedTask;
     }
 
-    [Fact(DisplayName = "¶©µ¥Ö´ĞĞµ½¼ÇÂ¼_ÍêÕûÁ÷³Ì")]
+    [Fact(DisplayName = "è®¢å•æ‰§è¡Œåˆ°è®°å½•_å®Œæ•´æµç¨‹")]
     public async Task PlaceOrder_ToExecution_ToRecording()
     {
         // Arrange
-        // ´´½¨ÍêÕûµÄÒÀÀµ×¢ÈëÈİÆ÷£¬°üº¬£º
+        // åˆ›å»ºå®Œæ•´çš„ä¾èµ–æ³¨å…¥å®¹å™¨ï¼ŒåŒ…å«ï¼š
         // - IOrderExecutor (RobustOrderExecutor)
         // - IErrorRecoveryHandler (ErrorRecoveryHandler)
         // - IPositionManager (PositionManager)
         // - ITradingRecorder (SqliteTradingRecorder)
 
         // Act
-        // 1. Ö´ĞĞ¶©µ¥
-        // 2. ÑéÖ¤¶©µ¥×´Ì¬
-        // 3. ¼ì²é½»Ò×ÊÇ·ñ±»¼ÇÂ¼
+        // 1. æ‰§è¡Œè®¢å•
+        // 2. éªŒè¯è®¢å•çŠ¶æ€
+        // 3. æ£€æŸ¥äº¤æ˜“æ˜¯å¦è¢«è®°å½•
 
         // Assert
 
