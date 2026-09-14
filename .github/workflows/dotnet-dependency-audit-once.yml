@@ -19,10 +19,15 @@ jobs:
         dotnet-version: '8.0.x'
     - name: Restore
       run: dotnet restore "币安量化机器人.sln"
-    - name: Audit direct and transitive packages
+    - name: Enforce clean direct and transitive package graph
       shell: pwsh
       run: |
-        dotnet list "币安量化机器人.csproj" package --include-transitive --vulnerable
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        dotnet list "WPE.Tests\WPE.Tests.csproj" package --include-transitive --vulnerable
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $ErrorActionPreference = 'Stop'
+        foreach ($project in @('币安量化机器人.csproj', 'WPE.Tests\WPE.Tests.csproj')) {
+          $output = (& dotnet list $project package --include-transitive --vulnerable 2>&1 | Out-String)
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($output -match 'has the following vulnerable packages') {
+            throw "Vulnerable NuGet packages remain in $project."
+          }
+        }
