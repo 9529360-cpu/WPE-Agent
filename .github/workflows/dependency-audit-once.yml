@@ -1,0 +1,42 @@
+name: Dependency audit once
+
+on:
+  push:
+    branches: [ codex/security-dependency-upgrade ]
+    paths: [ .github/workflows/dependency-audit-once.yml ]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    if: github.repository == '9529360-cpu/WPE-Agent' && github.ref == 'refs/heads/codex/security-dependency-upgrade'
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10.17.1
+        run_install: false
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22.x'
+        cache: pnpm
+        cache-dependency-path: WebUi/pnpm-lock.yaml
+    - uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+    - name: Restore Web dependencies
+      working-directory: WebUi
+      run: pnpm install --frozen-lockfile
+    - name: Audit Web dependencies
+      working-directory: WebUi
+      shell: pwsh
+      run: |
+        pnpm audit --audit-level high
+    - name: Restore .NET dependencies
+      run: dotnet restore "币安量化机器人.sln"
+    - name: Audit .NET dependencies
+      shell: pwsh
+      run: |
+        dotnet list "币安量化机器人.csproj" package --include-transitive --vulnerable
