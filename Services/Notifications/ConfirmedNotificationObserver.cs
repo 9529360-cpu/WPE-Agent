@@ -92,13 +92,6 @@ public static class ConfirmedNotificationTruth
     }
 
     public static ConfirmedNotificationEvent System(
-        string eventKey,string kindProvider,string environment,
-        DateTime occurredAtUtc,string diagnosticCode,string? symbol=null,string? side=null,string? content=null)
-    {
-        throw new NotSupportedException();
-    }
-
-    public static ConfirmedNotificationEvent System(
         string eventKey,NotificationEventKind kind,string provider,string environment,
         DateTime occurredAtUtc,string diagnosticCode,string? symbol=null,string? side=null,string? content=null)
     {
