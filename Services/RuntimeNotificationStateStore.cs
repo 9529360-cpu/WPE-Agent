@@ -11,12 +11,13 @@ public sealed record RuntimeNotificationState(RuntimeCollectionState State,Runti
     public static RuntimeNotificationState Error(string message)=>new(RuntimeCollectionState.Error,null,[],[],DateTimeOffset.UtcNow,message);
 }
 
-public sealed class RuntimeNotificationStateStore(AgentSettingsStore? settingsStore=null,NotificationOutboxStore? outboxStore=null,TelegramSubscriberStore? subscriberStore=null)
+public sealed class RuntimeNotificationStateStore(AgentSettingsStore? settingsStore=null,NotificationOutboxStore? outboxStore=null,TelegramSubscriberStore? subscriberStore=null,TelegramRuntimeHealthStore? healthStore=null)
 {
     public static readonly TimeSpan StaleAfter=TimeSpan.FromMinutes(5);
     private readonly AgentSettingsStore _settings=settingsStore??new AgentSettingsStore();
     private readonly NotificationOutboxStore _outbox=outboxStore??new NotificationOutboxStore();
     private readonly TelegramSubscriberStore _subscribers=subscriberStore??new TelegramSubscriberStore();
+    private readonly TelegramRuntimeHealthStore _health=healthStore??TelegramRuntimeHealthStore.Shared;
     private readonly object _gate=new();
     private RuntimeNotificationState _current=RuntimeNotificationState.Unsupported("Notification state has not been read.");
 
@@ -32,7 +33,7 @@ public sealed class RuntimeNotificationStateStore(AgentSettingsStore? settingsSt
             var projection=await _outbox.ReadProjectionAsync(20,5,ct);
             await _outbox.PurgeTerminalAsync(TimeSpan.FromDays(30),TimeSpan.FromDays(90),500,ct);
             var s=projection.Summary;
-            var health=TelegramRuntimeHealthStore.Shared.Read();
+            var health=_health.Read();
             var status=new RuntimeNotificationStatusV1(
                 configured.Enabled,telegramStored,telegramReady,whatsAppStored,whatsAppReady,
                 configured.LegacyMigrationPending,configured.LegacyMigrationDiagnosticCode,configured.EventKinds.ToArray(),
