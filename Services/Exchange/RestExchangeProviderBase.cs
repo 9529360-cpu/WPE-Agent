@@ -25,7 +25,7 @@ public abstract class RestExchangeProviderBase:IExchangeProvider,IMarketDataProv
     protected RestExchangeProviderBase(ExchangeConnectionProfile profile)
     {
         Profile=profile;Symbols=new ConventionSymbolMapper(profile.ProviderId,profile.SymbolMappings);Policy=new ProviderCallPolicy(profile.TimeoutSeconds,2);
-        var handler=new HttpClientHandler();if(profile.UseProxy&&Uri.TryCreate(profile.ProxyUrl,UriKind.Absolute,out var proxy)){handler.Proxy=new WebProxy(proxy);handler.UseProxy=true;}
+        var handler=new HttpClientHandler{AllowAutoRedirect=false,UseCookies=false};if(profile.UseProxy&&Uri.TryCreate(profile.ProxyUrl,UriKind.Absolute,out var proxy)){handler.Proxy=new WebProxy(proxy);handler.UseProxy=true;}
         Http=new HttpClient(handler){BaseAddress=new Uri(profile.Endpoint.TrimEnd('/')+"/"),Timeout=Timeout.InfiniteTimeSpan};
     }
 
