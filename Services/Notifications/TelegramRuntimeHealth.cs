@@ -78,6 +78,7 @@ public sealed class TelegramSubscriberRuntime
 
     private async Task RunPollerAsync(CancellationToken ct)
     {
+        var lastSuccess = _health.Read().Poller.LastSuccessAtUtc;
         while (!ct.IsCancellationRequested)
         {
             FileStream? lease;
@@ -92,8 +93,9 @@ public sealed class TelegramSubscriberRuntime
             catch (Exception ex)
             {
                 var now = DateTimeOffset.UtcNow;
-                _health.PublishPoller(Failed("Error", 1, null, now, now + RetryDelay(1), ex, false, now));
-                await _delay(RetryDelay(1), ct);
+                var retry = RetryDelay(1);
+                _health.PublishPoller(Failed("Error", 1, lastSuccess, now, now + retry, ex, false, now));
+                await _delay(retry, ct);
                 continue;
             }
 
@@ -101,7 +103,7 @@ public sealed class TelegramSubscriberRuntime
             {
                 var now = DateTimeOffset.UtcNow;
                 _health.PublishPoller(new(
-                    "Standby", 0, null, null, now + LeaseRetryDelay, "WPE-TG-POLL-SINGLE-OWNER", false, now));
+                    "Standby", 0, lastSuccess, null, now + LeaseRetryDelay, "WPE-TG-POLL-SINGLE-OWNER", false, now));
                 await _delay(LeaseRetryDelay, ct);
                 continue;
             }
@@ -116,7 +118,8 @@ public sealed class TelegramSubscriberRuntime
                         await _poller.PollOnceAsync(ct);
                         failures = 0;
                         var now = DateTimeOffset.UtcNow;
-                        _health.PublishPoller(new("Healthy", 0, now, null, now + HealthyDelay, null, true, now));
+                        lastSuccess = now;
+                        _health.PublishPoller(new("Healthy", 0, lastSuccess, null, now + HealthyDelay, null, true, now));
                         await _delay(HealthyDelay, ct);
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -128,7 +131,7 @@ public sealed class TelegramSubscriberRuntime
                         failures++;
                         var retry = RetryDelay(failures);
                         var now = DateTimeOffset.UtcNow;
-                        _health.PublishPoller(Failed("BackingOff", failures, null, now, now + retry, ex, true, now));
+                        _health.PublishPoller(Failed("BackingOff", failures, lastSuccess, now, now + retry, ex, true, now));
                         await _delay(retry, ct);
                     }
                 }
@@ -139,6 +142,7 @@ public sealed class TelegramSubscriberRuntime
     private async Task RunDispatcherAsync(CancellationToken ct)
     {
         var failures = 0;
+        var lastSuccess = _health.Read().Dispatcher.LastSuccessAtUtc;
         while (!ct.IsCancellationRequested)
         {
             try
@@ -146,7 +150,8 @@ public sealed class TelegramSubscriberRuntime
                 await _dispatcher.DispatchOnceAsync(ct);
                 failures = 0;
                 var now = DateTimeOffset.UtcNow;
-                _health.PublishDispatcher(new("Healthy", 0, now, null, now + HealthyDelay, null, false, now));
+                lastSuccess = now;
+                _health.PublishDispatcher(new("Healthy", 0, lastSuccess, null, now + HealthyDelay, null, false, now));
                 await _delay(HealthyDelay, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -158,7 +163,7 @@ public sealed class TelegramSubscriberRuntime
                 failures++;
                 var retry = RetryDelay(failures);
                 var now = DateTimeOffset.UtcNow;
-                _health.PublishDispatcher(Failed("BackingOff", failures, null, now, now + retry, ex, false, now));
+                _health.PublishDispatcher(Failed("BackingOff", failures, lastSuccess, now, now + retry, ex, false, now));
                 await _delay(retry, ct);
             }
         }
