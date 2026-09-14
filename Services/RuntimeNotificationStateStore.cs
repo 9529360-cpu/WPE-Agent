@@ -32,7 +32,13 @@ public sealed class RuntimeNotificationStateStore(AgentSettingsStore? settingsSt
             var projection=await _outbox.ReadProjectionAsync(20,5,ct);
             await _outbox.PurgeTerminalAsync(TimeSpan.FromDays(30),TimeSpan.FromDays(90),500,ct);
             var s=projection.Summary;
-            var status=new RuntimeNotificationStatusV1(configured.Enabled,telegramStored,telegramReady,whatsAppStored,whatsAppReady,configured.LegacyMigrationPending,configured.LegacyMigrationDiagnosticCode,configured.EventKinds.ToArray(),configured.QuietHoursEnabled,configured.QuietHoursStart,configured.QuietHoursEnd,configured.QuietHoursTimeZone,s.PendingCount,s.RetryingCount,s.SentCount,s.DeadLetterCount);
+            var health=TelegramRuntimeHealthStore.Shared.Read();
+            var status=new RuntimeNotificationStatusV1(
+                configured.Enabled,telegramStored,telegramReady,whatsAppStored,whatsAppReady,
+                configured.LegacyMigrationPending,configured.LegacyMigrationDiagnosticCode,configured.EventKinds.ToArray(),
+                configured.QuietHoursEnabled,configured.QuietHoursStart,configured.QuietHoursEnd,configured.QuietHoursTimeZone,
+                s.PendingCount,s.RetryingCount,s.SentCount,s.DeadLetterCount,
+                ToRuntimeHealth(health.Poller),ToRuntimeHealth(health.Dispatcher));
             var rows=projection.Recent.Select(x=>new RuntimeNotificationOutboxRowV1(x.Id,x.Channel.ToString(),x.Kind.ToString(),x.UiState.ToString(),x.InFlight,x.Attempts,x.MaxAttempts,x.OccurredAtUtc,x.NextAttemptAtUtc,x.UpdatedAtUtc,x.DiagnosticCode)).ToArray();
             var subscribers=(await _subscribers.ListAsync(ct)).Select(x=>new RuntimeTelegramSubscriberV1("tg#"+x.SubscriberKey[..12].ToLowerInvariant(),x.ChatType,x.State.ToString(),x.AllowedEventKinds.Select(k=>k.ToString()).OrderBy(k=>k,StringComparer.Ordinal).ToArray(),x.FirstSeenAtUtc,x.UpdatedAtUtc)).ToArray();
             lock(_gate)_current=new(RuntimeCollectionState.Available,status,rows,subscribers,DateTimeOffset.UtcNow,null);
@@ -41,6 +47,7 @@ public sealed class RuntimeNotificationStateStore(AgentSettingsStore? settingsSt
         catch(Exception ex){lock(_gate)_current=RuntimeNotificationState.Error(UiDiagnostic.Format(ex,"Notification state read failed."));}
     }
     public RuntimeNotificationState Read(){lock(_gate)return _current;}
+    private static RuntimeNotificationWorkerHealthV1 ToRuntimeHealth(TelegramWorkerHealthSnapshot x)=>new(x.State,x.ConsecutiveFailures,x.LastSuccessAtUtc,x.LastFailureAtUtc,x.NextAttemptAtUtc,x.DiagnosticCode,x.OwnsSingleInstanceLease,x.UpdatedAtUtc);
     private static bool HasTelegram(NotificationSlot x)=>!string.IsNullOrWhiteSpace(x.Telegram.EncryptedAccessToken)&&!string.IsNullOrWhiteSpace(x.Telegram.EncryptedDestination);
     private static bool HasWhatsApp(NotificationSlot x)=>!string.IsNullOrWhiteSpace(x.WhatsApp.EncryptedAccessToken)&&!string.IsNullOrWhiteSpace(x.WhatsApp.EncryptedDestination)&&!string.IsNullOrWhiteSpace(x.WhatsApp.EncryptedPhoneNumberId)&&!string.IsNullOrWhiteSpace(x.WhatsApp.TemplateName);
     private static bool CanDecrypt(params string[] values){try{return values.All(x=>!string.IsNullOrWhiteSpace(SecretVaultService.Decrypt(x)));}catch{return false;}}
