@@ -1,0 +1,63 @@
+name: Web audit fix once
+
+on:
+  push:
+    branches: [ codex/security-dependency-upgrade ]
+    paths: [ .github/workflows/web-audit-fix-once.yml ]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.repository == '9529360-cpu/WPE-Agent' && github.ref == 'refs/heads/codex/security-dependency-upgrade'
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: codex/security-dependency-upgrade
+        fetch-depth: 0
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10.17.1
+        run_install: false
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22.x'
+        cache: pnpm
+        cache-dependency-path: WebUi/pnpm-lock.yaml
+    - name: Install locked dependencies
+      working-directory: WebUi
+      run: pnpm install --frozen-lockfile
+    - name: Apply pnpm compatible audit fixes
+      working-directory: WebUi
+      run: pnpm audit --fix
+    - name: Verify no high or critical advisories remain
+      working-directory: WebUi
+      run: pnpm audit --audit-level high
+    - name: Validate Web UI
+      working-directory: WebUi
+      shell: pwsh
+      run: |
+        pnpm lint
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        pnpm typecheck
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        pnpm test:roles
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        pnpm test:i18n
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        pnpm build
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        if (-not (Test-Path -LiteralPath 'out/index.html')) { throw 'Static export missing after dependency fix.' }
+    - name: Commit dependency fix
+      shell: pwsh
+      run: |
+        git diff --check
+        git status --short
+        git config user.name "WPE dependency patch bot"
+        git config user.email "dependency-patch@users.noreply.github.com"
+        git add -- WebUi/package.json WebUi/pnpm-lock.yaml WebUi/pnpm-workspace.yaml
+        if (git diff --cached --quiet) { throw 'Expected pnpm audit fix produced no tracked changes.' }
+        git commit -m "security(web): resolve high dependency advisories"
+        git push origin HEAD:codex/security-dependency-upgrade
