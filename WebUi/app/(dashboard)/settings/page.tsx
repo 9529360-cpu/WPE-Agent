@@ -19,6 +19,16 @@ type AutomaticExecutions = {
   message?: string
   items: AutomaticExecution[]
 }
+type TelegramWorkerHealth = {
+  state: string
+  consecutiveFailures: number
+  lastSuccessAtUtc?: string | null
+  lastFailureAtUtc?: string | null
+  nextAttemptAtUtc?: string | null
+  diagnosticCode?: string | null
+  ownsSingleInstanceLease: boolean
+  updatedAtUtc: string
+}
 
 const isolatedStatuses = new Set([
   'PolicyBlocked',
@@ -36,7 +46,9 @@ export default function SettingsPage() {
   const governance = runtime.runtimeFresh && runtime.llmGovernance?.state === 'available' ? runtime.llmGovernance.value : undefined
   const connection = runtime.connectionStatus?.state === 'available' ? runtime.connectionStatus.value : undefined
   const connectionState = runtime.connectionStatus?.state ?? 'unsupported'
-  const notification = runtime.notificationStatus?.state === 'available' ? runtime.notificationStatus.value : undefined
+  const notification = runtime.notificationStatus?.state === 'available'
+    ? runtime.notificationStatus.value as (typeof runtime.notificationStatus.value & { telegramPoller?: TelegramWorkerHealth | null; telegramDispatcher?: TelegramWorkerHealth | null })
+    : undefined
   const authorization = runtime.authorizationMode
   const approvals = runtime.pendingApprovals
   const automatic = (runtime as typeof runtime & { automaticExecutions?: AutomaticExecutions }).automaticExecutions
@@ -119,6 +131,14 @@ export default function SettingsPage() {
         <RuntimeMetric label="WhatsApp" value={notification.whatsAppReady ? t('common.ready') : t('common.notReady')} />
         <RuntimeMetric label={t('settings.pending')} value={notification.pendingCount} />
         <RuntimeMetric label={t('settings.deadLetter')} value={notification.deadLetterCount} />
+        <RuntimeMetric label="Telegram poller" value={notification.telegramPoller?.state || t('common.notProvided')} />
+        <RuntimeMetric label="Poll failures" value={notification.telegramPoller?.consecutiveFailures ?? 0} />
+        <RuntimeMetric label="Poll owner" value={notification.telegramPoller?.ownsSingleInstanceLease ? 'Active' : notification.telegramPoller?.state === 'Standby' ? 'Standby' : t('common.none')} />
+        <RuntimeMetric label="Next poll" value={notification.telegramPoller?.nextAttemptAtUtc ? formatDate(notification.telegramPoller.nextAttemptAtUtc) : t('common.none')} />
+        <RuntimeMetric label="Telegram dispatcher" value={notification.telegramDispatcher?.state || t('common.notProvided')} />
+        <RuntimeMetric label="Dispatch failures" value={notification.telegramDispatcher?.consecutiveFailures ?? 0} />
+        <RuntimeMetric label="Next dispatch" value={notification.telegramDispatcher?.nextAttemptAtUtc ? formatDate(notification.telegramDispatcher.nextAttemptAtUtc) : t('common.none')} />
+        <RuntimeMetric label="Worker diagnostic" value={notification.telegramPoller?.diagnosticCode || notification.telegramDispatcher?.diagnosticCode || t('common.none')} />
         <RuntimeMetric label="Allowed events" value={notification.eventKinds.length ? notification.eventKinds.join(', ') : t('common.none')} />
       </PanelBody> : <PanelBody className="p-5 text-sm text-muted-foreground">{runtime.notificationStatus?.message || t('settings.notificationHelp')}</PanelBody>}
     </Panel>
