@@ -59,7 +59,7 @@ internal sealed class BinanceApiClient : Services.Exchange.Binance.IBinancePubli
 
     internal BinanceApiClient(HttpClient? httpClient = null, bool useTestnet = true, string? endpoint = null, int timeoutSeconds = 20, bool useProxy = false, string? proxyUrl = null, int receiveWindow = 5000, Func<DateTimeOffset>? utcNow = null)
     {
-        endpoint=string.IsNullOrWhiteSpace(endpoint)?useTestnet?TestnetEndpoint:MainnetEndpoint:endpoint.TrimEnd('/');var handler=new HttpClientHandler();if(useProxy&&Uri.TryCreate(proxyUrl,UriKind.Absolute,out var proxy)){handler.Proxy=new WebProxy(proxy);handler.UseProxy=true;}_httpClient=httpClient??new HttpClient(handler){BaseAddress=new Uri(endpoint),Timeout=TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds,5,120))};_receiveWindow=Math.Clamp(receiveWindow,1000,60000);_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);_officialTestnetEndpoint=useTestnet&&IsOfficialTestnetOrigin(_httpClient.BaseAddress);
+        endpoint=string.IsNullOrWhiteSpace(endpoint)?useTestnet?TestnetEndpoint:MainnetEndpoint:endpoint.TrimEnd('/');var handler=new HttpClientHandler{AllowAutoRedirect=false,UseCookies=false};if(useProxy&&Uri.TryCreate(proxyUrl,UriKind.Absolute,out var proxy)){handler.Proxy=new WebProxy(proxy);handler.UseProxy=true;}_httpClient=httpClient??new HttpClient(handler){BaseAddress=new Uri(endpoint),Timeout=TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds,5,120))};_receiveWindow=Math.Clamp(receiveWindow,1000,60000);_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);_officialTestnetEndpoint=useTestnet&&IsOfficialTestnetOrigin(_httpClient.BaseAddress);
     }
 
     public void SetApiCredentials(string apiKey, string secretKey)
