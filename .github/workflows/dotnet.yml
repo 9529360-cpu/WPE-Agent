@@ -18,6 +18,10 @@ jobs:
       with:
         dotnet-version: '8.0.x'
 
+    - name: Verify UTF-8 source
+      shell: pwsh
+      run: ./eng/verify-utf8.ps1
+
     - name: Restore
       run: dotnet restore "币安量化机器人.sln"
 
