@@ -1,15 +1,16 @@
 'use client'
 
-import {postRuntimeHostCommand,useWpeRuntime,type RuntimeAgentHandoff,type RuntimeAgentOperation} from '@/components/runtime-bridge'
+import {useWpeRuntime,type RuntimeAgentHandoff,type RuntimeAgentOperation} from '@/components/runtime-bridge'
 import {RuntimeMetric,RuntimeUnavailable} from '@/components/runtime-state'
 import {PageHeader} from '@/components/shell/page-header'
 import {Panel,PanelBody,PanelHeader} from '@/components/ui/panel'
 import {getRoleDirectory,validateRoleRegistry,type RoleDefinition} from '@/lib/agents/roles'
+import {postHostCommand} from '@/lib/host-command'
 import {useI18n} from '@/lib/i18n/context'
 
 export default function AgentsPage(){
  const runtime=useWpeRuntime(),{t,formatDate,locale}=useI18n(),roles=getRoleDirectory(),errors=validateRoleRegistry(),operations=new Map(runtime.agentOperations?.map(item=>[item.roleId,item])),handoffs=runtime.agentHandoffs??[],control=agentControlCopy(locale),stopping=runtime.agentIsRunning===true,controlAllowed=stopping?runtime.agentStopAllowed===true:runtime.agentStartAllowed===true
- const requestAgentControl=()=>{const action=stopping?'agent-stop':'agent-start';if(!controlAllowed)return;if(!window.confirm(stopping?control.confirmStop:control.confirmStart))return;if(!postRuntimeHostCommand(action))window.alert(t('settings.desktopOnly'))}
+ const requestAgentControl=()=>{const action=stopping?'agent-stop':'agent-start';if(!controlAllowed)return;if(!window.confirm(stopping?control.confirmStop:control.confirmStart))return;if(!postHostCommand(action))window.alert(t('settings.desktopOnly'))}
  return <div className="flex flex-col gap-6 p-6">
   <PageHeader title={t('agents.title')} description={t('agents.description')} actions={<button type="button" disabled={!controlAllowed} onClick={requestAgentControl} className={`rounded-md border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50 ${stopping?'border-danger/30 bg-danger/10 text-danger':'border-info/30 bg-info/10 text-info'}`}>{stopping?control.stop:control.start}</button>}/>
   {runtime.runtimeFresh?<Panel><PanelBody className="grid gap-3 md:grid-cols-3"><RuntimeMetric label={t('agents.coreStatus')} value={runtime.status}/><RuntimeMetric label={t('dashboard.workflow')} value={runtime.workflowNode}/><RuntimeMetric label="Brain" value={runtime.brainConnected?t('common.connected'):t('common.notConnected')}/><RuntimeMetric label={t('dashboard.progress')} value={runtime.thinkingProgress===undefined?undefined:`${runtime.thinkingProgress}%`}/><RuntimeMetric label={t('dashboard.reviewer')} value={runtime.reviewerStatus}/><RuntimeMetric label={t('dashboard.lastDecision')} value={runtime.lastDecision}/></PanelBody></Panel>:<RuntimeUnavailable stale={Boolean(runtime.lastUpdated)} subject="Agent runtime"/>}
