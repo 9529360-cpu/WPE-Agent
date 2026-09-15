@@ -25,7 +25,10 @@ public static class PrivilegedCommandLineStartupGuard
         "--provider-readonly-access",
         "--access-live-test",
         "--four-pillars-live-test",
-        "--smoke-test"
+        "--smoke-test",
+        "--risk-aggregate-acceptance",
+        "--execution-aggregate-acceptance",
+        "--recovery-aggregate-acceptance"
     };
 
     public static bool RequiresLicensedAccess(IEnumerable<string> args)
