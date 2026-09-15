@@ -17,9 +17,9 @@ public partial class App
     }
 }
 
-internal static class PrivilegedCommandLineStartupGuard
+public static class PrivilegedCommandLineStartupGuard
 {
-    internal const int DeniedExitCode=41;
+    public const int DeniedExitCode=41;
     private static readonly HashSet<string> ProtectedFlags=new(StringComparer.OrdinalIgnoreCase)
     {
         "--provider-readonly-access",
@@ -28,6 +28,6 @@ internal static class PrivilegedCommandLineStartupGuard
         "--smoke-test"
     };
 
-    internal static bool RequiresLicensedAccess(IEnumerable<string> args)
+    public static bool RequiresLicensedAccess(IEnumerable<string> args)
         =>args.Any(ProtectedFlags.Contains);
 }
