@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
-import './console.css'
 import { RuntimeBridge } from '@/components/runtime-bridge'
 import { I18nProvider } from '@/lib/i18n/context'
 
@@ -22,8 +21,8 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  colorScheme: 'light',
-  themeColor: '#f4f6f8',
+  colorScheme: 'dark',
+  themeColor: '#17181a',
 }
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
