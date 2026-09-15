@@ -86,6 +86,18 @@ public sealed class TelegramRuntimeHealthTests : IDisposable
         Assert.DoesNotContain("api.telegram.org", json, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Notification_runtime_routes_subscriber_workers_through_the_health_loop()
+    {
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        var source = File.ReadAllText(Path.Combine(root, "Services", "Notifications", "ConfirmedNotificationObserver.cs"));
+
+        Assert.Contains("var telegramRuntime=new TelegramRuntimeLoop(subscriberPoller,subscriberDispatcher);", source, StringComparison.Ordinal);
+        Assert.Contains("telegramRuntime.RunAsync(ct)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("subscriberPoller.RunAsync(ct)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("subscriberDispatcher.RunAsync(ct)", source, StringComparison.Ordinal);
+    }
+
     public void Dispose()
     {
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
