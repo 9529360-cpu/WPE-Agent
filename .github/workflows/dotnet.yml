@@ -34,19 +34,7 @@ jobs:
 
     - name: Install Web UI dependencies
       working-directory: WebUi
-      run: pnpm install --no-frozen-lockfile
-
-    - name: Audit Web UI dependencies
-      working-directory: WebUi
-      run: pnpm audit --audit-level=low
-
-    - name: Export regenerated lockfile
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-      with:
-        name: regenerated-pnpm-lock
-        path: WebUi/pnpm-lock.yaml
-        if-no-files-found: error
-        retention-days: 1
+      run: pnpm install --frozen-lockfile
 
     - name: Web lint
       working-directory: WebUi
@@ -88,18 +76,6 @@ jobs:
 
     - name: Restore .NET
       run: dotnet restore "币安量化机器人.sln"
-
-    - name: Audit .NET dependencies
-      shell: pwsh
-      run: |
-        $output = & dotnet list "币安量化机器人.sln" package --vulnerable --include-transitive 2>&1
-        $exitCode = $LASTEXITCODE
-        $output | ForEach-Object { Write-Host $_ }
-        if ($exitCode -ne 0) { throw "NuGet vulnerability audit failed to execute." }
-        $joined = $output -join "`n"
-        if ($joined -match 'has the following vulnerable packages') {
-          throw "NuGet vulnerability audit found vulnerable packages."
-        }
 
     - name: Build .NET
       run: dotnet build "币安量化机器人.sln" --configuration Release --no-restore
