@@ -34,11 +34,19 @@ jobs:
 
     - name: Install Web UI dependencies
       working-directory: WebUi
-      run: pnpm install --frozen-lockfile
+      run: pnpm install --no-frozen-lockfile
 
     - name: Audit Web UI dependencies
       working-directory: WebUi
       run: pnpm audit --audit-level=low
+
+    - name: Export regenerated lockfile
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: regenerated-pnpm-lock
+        path: WebUi/pnpm-lock.yaml
+        if-no-files-found: error
+        retention-days: 1
 
     - name: Web lint
       working-directory: WebUi
