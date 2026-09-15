@@ -17,9 +17,19 @@ public sealed class LocalAccountService
     private readonly string _accountsPath;private readonly string _sessionPath;private const int Iterations=210000;
     public LocalAccountService(string? dataDirectory=null){var data=dataDirectory??AppDataPaths.DataDirectory;Directory.CreateDirectory(data);_accountsPath=dataDirectory is null?AppDataPaths.File("local-accounts.json"):Path.Combine(data,"local-accounts.json");_sessionPath=dataDirectory is null?AppDataPaths.File("local-session.dat"):Path.Combine(data,"local-session.dat");}
     public bool HasAccounts=>Load().Count>0;
+    public bool CanCreateInitialAccount
+    {
+        get
+        {
+            try{return Load().Count==0;}
+            catch(InvalidDataException){return false;}
+        }
+    }
     public (LoginResult Result,string RecoveryCode) Create(string userName,string password)
     {
-        userName=Normalize(userName);ValidatePassword(password);var all=Load();if(all.Any(x=>x.UserName.Equals(userName,StringComparison.OrdinalIgnoreCase)))return(new(false,T("Access.AccountExists")),string.Empty);var recovery=Convert.ToHexString(RandomNumberGenerator.GetBytes(12));var salt=RandomNumberGenerator.GetBytes(16);var recoverySalt=RandomNumberGenerator.GetBytes(16);all.Add(new(){UserName=userName,Salt=Convert.ToBase64String(salt),PasswordHash=Hash(password,salt,Iterations),Iterations=Iterations,RecoverySalt=Convert.ToBase64String(recoverySalt),RecoveryHash=Hash(recovery,recoverySalt,Iterations)});Save(all);return(new(true,T("Access.AccountCreated"),userName),recovery);
+        userName=Normalize(userName);ValidatePassword(password);var all=Load();
+        if(all.Count>0)return(new(false,T("Access.AccountExists")),string.Empty);
+        var recovery=Convert.ToHexString(RandomNumberGenerator.GetBytes(12));var salt=RandomNumberGenerator.GetBytes(16);var recoverySalt=RandomNumberGenerator.GetBytes(16);all.Add(new(){UserName=userName,Salt=Convert.ToBase64String(salt),PasswordHash=Hash(password,salt,Iterations),Iterations=Iterations,RecoverySalt=Convert.ToBase64String(recoverySalt),RecoveryHash=Hash(recovery,recoverySalt,Iterations)});Save(all);return(new(true,T("Access.AccountCreated"),userName),recovery);
     }
     public LoginResult Login(string userName,string password,bool remember)
     {
@@ -34,8 +44,41 @@ public sealed class LocalAccountService
         userName=Normalize(userName);ValidatePassword(newPassword);var all=Load();var account=all.FirstOrDefault(x=>x.UserName.Equals(userName,StringComparison.OrdinalIgnoreCase));if(account is null||!Fixed(account.RecoveryHash,Hash(recoveryCode.Trim().ToUpperInvariant(),Convert.FromBase64String(account.RecoverySalt),account.Iterations)))return new(false,T("Access.InvalidRecovery"));var salt=RandomNumberGenerator.GetBytes(16);account.Salt=Convert.ToBase64String(salt);account.PasswordHash=Hash(newPassword,salt,Iterations);account.Iterations=Iterations;account.RememberTokenHash=string.Empty;Save(all);if(File.Exists(_sessionPath))File.Delete(_sessionPath);return new(true,T("Access.PasswordReset"),account.UserName);
     }
     public void SignOut(){if(File.Exists(_sessionPath))File.Delete(_sessionPath);}
-    private List<LocalAccountRecord> Load(){try{return File.Exists(_accountsPath)?JsonSerializer.Deserialize<List<LocalAccountRecord>>(File.ReadAllText(_accountsPath))??[]:[];}catch{return[];}}
+    private List<LocalAccountRecord> Load()
+    {
+        if(!File.Exists(_accountsPath))return[];
+        try
+        {
+            var accounts=JsonSerializer.Deserialize<List<LocalAccountRecord>>(File.ReadAllText(_accountsPath))??throw new JsonException("Local account document is null.");
+            ValidatePersistedAccounts(accounts);
+            return accounts;
+        }
+        catch(Exception ex) when(ex is JsonException or IOException or UnauthorizedAccessException or FormatException)
+        {
+            throw new InvalidDataException("Local account store is unreadable or invalid.",ex);
+        }
+    }
     private void Save(List<LocalAccountRecord> accounts){var temp=_accountsPath+".tmp";File.WriteAllText(temp,JsonSerializer.Serialize(accounts,new JsonSerializerOptions{WriteIndented=true}));File.Move(temp,_accountsPath,true);}
+    private static void ValidatePersistedAccounts(IReadOnlyList<LocalAccountRecord> accounts)
+    {
+        if(accounts.Count>1)throw new InvalidDataException("Only one local account is supported.");
+        foreach(var account in accounts)
+        {
+            _=Normalize(account.UserName);
+            if(account.Iterations<Iterations||account.Iterations>2_000_000)throw new InvalidDataException("Local account KDF parameters are invalid.");
+            ValidateEncodedSecret(account.Salt,16,"salt");
+            ValidateEncodedSecret(account.RecoverySalt,16,"recovery salt");
+            ValidateEncodedSecret(account.PasswordHash,32,"password hash");
+            ValidateEncodedSecret(account.RecoveryHash,32,"recovery hash");
+            if(!string.IsNullOrWhiteSpace(account.RememberTokenHash))ValidateEncodedSecret(account.RememberTokenHash,32,"remember token hash");
+        }
+    }
+    private static void ValidateEncodedSecret(string value,int expectedBytes,string name)
+    {
+        if(string.IsNullOrWhiteSpace(value))throw new InvalidDataException($"Local account {name} is missing.");
+        var bytes=Convert.FromBase64String(value);
+        if(bytes.Length!=expectedBytes)throw new InvalidDataException($"Local account {name} has an invalid size.");
+    }
     private static string Normalize(string value){value=value.Trim();if(value.Length is <3 or >32||value.Any(c=>!char.IsLetterOrDigit(c)&&c is not '_' and not '-'))throw new InvalidOperationException(T("Access.UserRule"));return value;}
     private static void ValidatePassword(string value){if(value.Length<10||!value.Any(char.IsUpper)||!value.Any(char.IsLower)||!value.Any(char.IsDigit))throw new InvalidOperationException(T("Access.PasswordRule"));}
     private static string Hash(string value,byte[] salt,int iterations)=>Convert.ToBase64String(Rfc2898DeriveBytes.Pbkdf2(Encoding.UTF8.GetBytes(value),salt,iterations,HashAlgorithmName.SHA256,32));
