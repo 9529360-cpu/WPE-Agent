@@ -6,10 +6,12 @@ const registryUrl = new URL('../../lib/agents/roles/role-registry.json', import.
 const contractUrl = new URL('../../lib/agents/roles/permissions.contract.json', import.meta.url)
 const adapterUrl = new URL('../../lib/agents/roles/index.ts', import.meta.url)
 const agentsPageUrl = new URL('../../app/(dashboard)/agents/page.tsx', import.meta.url)
+const decisionFlowUrl = new URL('../../components/dashboard/decision-flow.tsx', import.meta.url)
 const registry = JSON.parse(await readFile(registryUrl, 'utf8'))
 const contract = JSON.parse(await readFile(contractUrl, 'utf8'))
 const adapterSource = await readFile(adapterUrl, 'utf8')
 const agentsPageSource = await readFile(agentsPageUrl, 'utf8')
+const decisionFlowSource = await readFile(decisionFlowUrl, 'utf8')
 
 test('role registry is local only and complete', () => {
   assert.equal(registry.localOnly, true)
@@ -48,6 +50,17 @@ test('production model and Agent directory preserve distinct authorization categ
 
   for (const category of contract.properties.roles.items.properties.typedAuthorization.required) {
     assert.ok(agentsPageSource.includes(`authorization.${category}`), `missing Agent directory category: ${category}`)
+  }
+})
+
+test('dashboard decision flow projects canonical runtime roles instead of retired demo workflow', () => {
+  assert.ok(decisionFlowSource.includes('getRoleDirectory'))
+  assert.ok(decisionFlowSource.includes('runtime.agentOperations'))
+  assert.ok(decisionFlowSource.includes('runtime.agentHandoffs'))
+  assert.ok(decisionFlowSource.includes('handoff.sourceRoleId'))
+  assert.ok(decisionFlowSource.includes('handoff.targetRoleId'))
+  for (const retired of ['OBSERVATION', 'PLANNER', 'CRITIC', 'REVIEWER', 'REFLECTION']) {
+    assert.equal(decisionFlowSource.includes(retired), false, `retired workflow step leaked into dashboard: ${retired}`)
   }
 })
 
