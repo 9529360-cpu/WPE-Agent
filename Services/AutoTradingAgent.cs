@@ -207,7 +207,7 @@ public static class AutoTradingAgent
 
     private static async Task Run(CancellationToken ct)
     {
-        var settings=SettingsStore.Load();SettingsStore.ImportDesktopTestnetIfEmpty(settings);SettingsStore.ImportDesktopDeepSeekIfEmpty(settings);
+        var settings=SettingsStore.Load();
         var notifications=NotificationRuntimeFactory.Create();_=notifications.RunDispatcher(ct);
         var exchangeProfile=SettingsStore.GetActiveExchange(settings);if(!exchangeProfile.IsTestnet)throw new InvalidOperationException(L("Agent.MainnetConfirmationRequired"));if(!exchangeProfile.ExecutionEnabled)throw new InvalidOperationException(L("Agent.ApiMissing"));var credentials=SettingsStore.GetExchangeCredentials(exchangeProfile);if(credentials.Values.Any(string.IsNullOrWhiteSpace))throw new InvalidOperationException(L("Agent.ApiMissing"));
         await using var eventBus=new InProcessAgentEventBus();await using var runtime=new AgentRuntimeSupervisor(Db,eventBus);runtime.HealthChanged+=ApplyRuntimeHealth;await runtime.StartAsync(ct);
