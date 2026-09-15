@@ -17,6 +17,9 @@ public sealed class PrivilegedCommandLineAccessTests : IDisposable
     [InlineData("--access-live-test")]
     [InlineData("--four-pillars-live-test")]
     [InlineData("--smoke-test")]
+    [InlineData("--risk-aggregate-acceptance")]
+    [InlineData("--execution-aggregate-acceptance")]
+    [InlineData("--recovery-aggregate-acceptance")]
     [InlineData("--SMOKE-TEST")]
     public void CredentialedOrMutatingCommands_RequireLicensedAccess(string flag)
     {
