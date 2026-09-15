@@ -129,13 +129,13 @@ public static class NotificationRuntimeFactory
                 [telegramTransport,new WhatsAppCloudNotificationTransport()]);
             var subscriberDispatcher=new TelegramSubscriberDispatcher(subscriberStore,configuration,telegramTransport);
             var subscriberPoller=new TelegramSubscriptionPoller(subscriberStore,new HttpTelegramBotUpdateSource(),configuration);
+            var telegramRuntime=new TelegramRuntimeLoop(subscriberPoller,subscriberDispatcher);
             CurrentObserver=observer;
             return new(observer,async ct=>
             {
                 try{await Task.WhenAll(
                     dispatcher.RunAsync(TimeSpan.FromSeconds(5),ct),
-                    subscriberDispatcher.RunAsync(ct),
-                    subscriberPoller.RunAsync(ct));}
+                    telegramRuntime.RunAsync(ct));}
                 catch(OperationCanceledException)when(ct.IsCancellationRequested){}
             });
         }
