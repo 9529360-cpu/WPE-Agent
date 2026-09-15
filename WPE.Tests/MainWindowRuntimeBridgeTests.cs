@@ -26,6 +26,20 @@ public sealed class DesktopRuntimeHostTests
     }
 
     [Fact]
+    public void SnapshotPump_IsCancelledAndAwaitedDuringApplicationExit()
+    {
+        var source = Source();
+        var dispose = Method("public async ValueTask DisposeAsync()", "private async Task RunRuntimeSnapshotPumpAsync(");
+        var app = File.ReadAllText(Path.Combine(Root(), "App.xaml.cs"));
+
+        Assert.Contains("IAsyncDisposable", source, StringComparison.Ordinal);
+        Assert.Contains("Interlocked.Exchange(ref _disposed, 1)", dispose, StringComparison.Ordinal);
+        Assert.Contains("_snapshotPumpCancellation.Cancel();", dispose, StringComparison.Ordinal);
+        Assert.Contains("await _snapshotPumpTask.ConfigureAwait(false);", dispose, StringComparison.Ordinal);
+        Assert.Contains("await _runtimeHost.DisposeAsync();", app, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SnapshotPump_RefreshesAuthorizationStateBeforeSnapshotCreation()
     {
         var method = RefreshRuntimeSnapshotMethod();
@@ -121,7 +135,9 @@ public sealed class DesktopRuntimeHostTests
 
     private static string Source()
     {
-        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-        return File.ReadAllText(Path.Combine(root, "Services", "DesktopRuntimeHost.cs"));
+        return File.ReadAllText(Path.Combine(Root(), "Services", "DesktopRuntimeHost.cs"));
     }
+
+    private static string Root() =>
+        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 }

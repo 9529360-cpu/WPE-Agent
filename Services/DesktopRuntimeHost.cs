@@ -7,7 +7,7 @@ using 币安量化机器人.Services.Agent;
 
 namespace 币安量化机器人.Services;
 
-public sealed class DesktopRuntimeHost
+public sealed class DesktopRuntimeHost : IAsyncDisposable
 {
     private static readonly TimeSpan SnapshotRefreshInterval = TimeSpan.FromSeconds(2);
     private static readonly JsonSerializerOptions SnapshotJsonOptions = new()
@@ -21,6 +21,7 @@ public sealed class DesktopRuntimeHost
     private readonly CancellationTokenSource _snapshotPumpCancellation = new();
     private readonly Task _snapshotPumpTask;
     private string _runtimeJson;
+    private int _disposed;
 
     public DesktopRuntimeHost(string userName)
     {
@@ -50,6 +51,24 @@ public sealed class DesktopRuntimeHost
     }
 
     public string BuildRuntimeJson() => Volatile.Read(ref _runtimeJson);
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+
+        _snapshotPumpCancellation.Cancel();
+        try
+        {
+            await _snapshotPumpTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_snapshotPumpCancellation.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            _snapshotPumpCancellation.Dispose();
+        }
+    }
 
     private async Task RunRuntimeSnapshotPumpAsync(CancellationToken ct)
     {
