@@ -62,19 +62,24 @@ export function DecisionFlow() {
     ? latestCanonicalHandoff(runtime.agentHandoffs ?? [])
     : undefined
   const roleNames = new Map(canonicalRoles.map((role) => [role.id, role.name]))
+  const handoffUnavailable = handoffsState === 'stale'
+    ? t('common.stale')
+    : handoffsState === 'error'
+      ? t('common.error')
+      : t('agents.handoffUnsupported')
 
   return (
     <Panel>
       <PanelHeader
         icon={<Workflow className="size-4" />}
         title={t('dashboard.decisionFlow')}
-        action={<span className="font-mono text-[10px] text-muted-foreground">7 AGENTS · {runtime.status ?? 'IDLE'}</span>}
+        action={<span className="font-mono text-[10px] text-muted-foreground">7 AGENTS · {runtime.status ?? t('common.notProvided')}</span>}
       />
       <PanelBody className="space-y-4">
         <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
           {canonicalRoles.map((role, index) => {
             const operation = operations.get(role.id)
-            const status = operation?.status ?? 'stopped'
+            const status = operation?.status
             return (
               <li key={role.id} className="min-w-0 rounded-md border border-border bg-card/50 p-3">
                 <div className="flex items-start justify-between gap-2">
@@ -84,15 +89,15 @@ export function DecisionFlow() {
                   </div>
                   <StatusBadge
                     token={statusToken(status)}
-                    label={t(`agents.${status}` as 'agents.stopped')}
+                    label={status ? t(`agents.${status}` as 'agents.stopped') : t('common.unavailable')}
                     pulse={status === 'running'}
                   />
                 </div>
                 <p className="mt-3 line-clamp-2 min-h-8 break-words text-xs leading-4 text-muted-foreground">
-                  {operation?.activity ?? t('agents.noActivity')}
+                  {operation ? operation.activity ?? t('agents.noActivity') : t('common.unavailable')}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-2 font-mono text-[10px] text-muted-foreground">
-                  <span>{operation?.mode ?? 'Local Only'}</span>
+                  <span>{operation?.mode ?? t('common.notProvided')}</span>
                   {operation?.lastActivityAtUtc ? <span>{formatDate(operation.lastActivityAtUtc)}</span> : null}
                 </div>
               </li>
@@ -103,7 +108,7 @@ export function DecisionFlow() {
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-3 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{t('agents.recentHandoffs')}</span>
           {handoffsState !== 'available' ? (
-            <span>{t('agents.handoffUnsupported')}</span>
+            <span>{handoffUnavailable}</span>
           ) : latestHandoff ? (
             <>
               <span>
