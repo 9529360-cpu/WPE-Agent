@@ -4,34 +4,54 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 const root = new URL('..', import.meta.url).pathname.replace(/^\/(?:[A-Za-z]:)/, value => value.slice(1))
-const routes = ['/', '/agents', '/orders', '/positions', '/history', '/strategies', '/risk', '/monitoring', '/settings']
-const removed = ['/backtest', '/plugins', '/equities', '/research', '/distribution', '/security']
+const navRoutes = [
+  '/',
+  '/agents',
+  '/teacher',
+  '/orders',
+  '/positions',
+  '/strategies',
+  '/backtest',
+  '/risk',
+  '/history',
+  '/plugins',
+  '/security',
+  '/monitoring',
+  '/settings',
+]
+const intentionallyHiddenRoutes = ['/equities', '/research', '/distribution']
 
 function source(path) {
   return readFileSync(join(root, path), 'utf8')
 }
 
-test('v1 navigation exposes only customer-usable routes', () => {
+test('primary navigation exposes accepted operator routes and keeps unaccepted scopes out', () => {
   const nav = source('lib/nav.ts')
-  for (const route of routes) assert.match(nav, new RegExp(`href:['"]${route === '/' ? '\\/' : route}['"]`), `missing ${route}`)
-  for (const route of removed) assert.doesNotMatch(nav, new RegExp(`href:['"]${route}['"]`), `future route ${route} is visible`)
-  assert.equal((nav.match(/href:['"][^'"]+['"]/g) ?? []).length, routes.length)
+  for (const route of navRoutes) {
+    assert.match(nav, new RegExp(`href:['"]${route === '/' ? '\\/' : route}['"]`), `missing ${route}`)
+  }
+  for (const route of intentionallyHiddenRoutes) {
+    assert.doesNotMatch(nav, new RegExp(`href:['"]${route}['"]`), `unaccepted route ${route} is visible`)
+  }
+  assert.equal((nav.match(/href:['"][^'"]+['"]/g) ?? []).length, navRoutes.length)
 })
 
-test('every v1 route has host provenance and no production fallback markers', () => {
+test('every primary route has host provenance and no production fallback markers', () => {
   const layout = source('app/(dashboard)/layout.tsx')
   const evidence = source('app/(dashboard)/_components/runtime-evidence-strip.tsx')
   assert.match(layout, /<RuntimeEvidenceStrip\s*\/>/)
-  for (const field of ['runtimeProviderId', 'environment', 'sourceTimestampUtc', 'snapshotTimestampUtc', 'runtimeAgeSeconds', 'runtimeDiagnosticReason']) assert.match(evidence, new RegExp(field))
-  const productionSources = routes.map(route => route === '/' ? 'app/(dashboard)/page.tsx' : `app/(dashboard)${route}/page.tsx`)
+  for (const field of ['runtimeProviderId', 'environment', 'sourceTimestampUtc', 'snapshotTimestampUtc', 'runtimeAgeSeconds', 'runtimeDiagnosticReason']) {
+    assert.match(evidence, new RegExp(field))
+  }
+  const productionSources = navRoutes.map(route => route === '/' ? 'app/(dashboard)/page.tsx' : `app/(dashboard)${route}/page.tsx`)
   for (const path of productionSources) {
     const text = source(path)
     assert.doesNotMatch(text, /runtime-preview|fixture|fake|cached fallback/i, path)
   }
 })
 
-test('static export contains deterministic nonblank route DOM', () => {
-  for (const route of routes) {
+test('static export contains deterministic nonblank DOM for every primary route', () => {
+  for (const route of navRoutes) {
     const output = route === '/' ? join(root, 'out/index.html') : join(root, `out${route}/index.html`)
     assert.equal(existsSync(output), true, `missing build output for ${route}`)
     const html = readFileSync(output, 'utf8')
@@ -42,8 +62,37 @@ test('static export contains deterministic nonblank route DOM', () => {
   }
 })
 
-test('visible controls are navigation or completed local interactions', () => {
-  const shell = [source('components/shell/sidebar.tsx'), source('components/shell/topbar.tsx')].join('\n')
-  assert.doesNotMatch(shell, /postMessage|postRuntimeHostCommand|open-settings|agent-start|agent-stop/)
+test('global shell remains read-only and lifecycle commands have one typed bridge owner', () => {
+  const shell = [
+    source('components/shell/sidebar.tsx'),
+    source('components/shell/topbar.tsx'),
+    source('components/shell/status-bar.tsx'),
+  ].join('\n')
+  assert.doesNotMatch(shell, /postMessage|postHostCommand|open-settings|open-notification-settings|agent-start|agent-stop/)
   for (const behavior of ['setCollapsed', 'setLocale', 'setOpen', 'setMobilePath']) assert.match(shell, new RegExp(behavior))
+
+  const hostCommand = source('lib/host-command.ts')
+  for (const command of ['open-settings', 'open-notification-settings', 'agent-start', 'agent-stop']) {
+    assert.match(hostCommand, new RegExp(`'${command}'`), `missing allowed host command ${command}`)
+  }
+  assert.doesNotMatch(hostCommand, /place-order|approve|confirm|submitOrder|direct-exchange-submit/)
+
+  const agents = source('app/(dashboard)/agents/page.tsx')
+  const settings = source('app/(dashboard)/settings/page.tsx')
+  for (const consumer of [agents, settings]) {
+    assert.match(consumer, /postHostCommand/)
+    assert.doesNotMatch(consumer, /\.postMessage\s*\(/)
+  }
+  assert.match(agents, /window\.confirm/)
+  assert.match(agents, /agentStartAllowed/)
+  assert.match(agents, /agentStopAllowed/)
+})
+
+test('motion-heavy status affordances honor reduced-motion preference', () => {
+  const css = source('app/globals.css')
+  assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)/)
+  for (const className of ['animate-pulse-dot', 'animate-ticker', 'animate-sweep']) {
+    assert.match(css, new RegExp(`\\.${className}`))
+  }
+  assert.match(css, /animation:\s*none\s*!important/)
 })

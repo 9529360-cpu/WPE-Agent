@@ -61,6 +61,10 @@ jobs:
           throw "WebUi static export is missing."
         }
 
+    - name: Web visible surface contract
+      working-directory: WebUi
+      run: pnpm test:surface
+
     - name: Enforce zero browser network egress
       shell: pwsh
       run: ./eng/web-egress-gate.ps1

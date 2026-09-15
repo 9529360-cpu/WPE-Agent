@@ -37,11 +37,13 @@ public sealed class TradingReviewProductionWiringTests
         Assert.DoesNotContain("Execute",observer,StringComparison.Ordinal);
         Assert.DoesNotContain("Place",observer,StringComparison.Ordinal);
 
-        var ui=Source("WebUi","components","console","wpe-console.tsx");
-        var dashboard=Slice(ui,"function HomePage","function AgentsPage");
-        Assert.Contains("collectionState(runtime, 'publicMarkets')",dashboard,StringComparison.Ordinal);
-        Assert.Contains("runtime.publicMarkets?.items",dashboard,StringComparison.Ordinal);
-        Assert.DoesNotContain("title=\"市场事实\"",dashboard,StringComparison.Ordinal);
+        var dashboard=Source("WebUi","app","(dashboard)","page.tsx");
+        var marketOverview=Source("WebUi","components","dashboard","market-overview.tsx");
+        Assert.Contains("<MarketOverview />",dashboard,StringComparison.Ordinal);
+        Assert.Contains("runtime.publicMarkets",marketOverview,StringComparison.Ordinal);
+        Assert.Contains("runtime.publicKlines",marketOverview,StringComparison.Ordinal);
+        Assert.Contains("RuntimeUnavailable",marketOverview,StringComparison.Ordinal);
+        Assert.DoesNotContain("wpe-console",dashboard,StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

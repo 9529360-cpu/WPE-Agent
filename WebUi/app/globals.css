@@ -189,3 +189,11 @@
 .animate-sweep {
   animation: sweep 3s ease-in-out infinite;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-dot,
+  .animate-ticker,
+  .animate-sweep {
+    animation: none !important;
+  }
+}
