@@ -50,6 +50,18 @@ test('every primary route has host provenance and no production fallback markers
   }
 })
 
+test('dashboard uses canonical Agent runtime and decision context instead of simulated thought UI', () => {
+  const home = source('app/(dashboard)/page.tsx')
+  const context = source('components/dashboard/decision-context.tsx')
+  assert.match(home, /DecisionFlow/)
+  assert.match(home, /DecisionContext/)
+  assert.doesNotMatch(home, /AgentStatusPanel|ThoughtStream/)
+  for (const field of ['lastDecision', 'decisionDiagnostics', 'lastReason']) assert.match(context, new RegExp(field))
+  for (const legacy of ['currentThought', 'workflowNode', 'thinkingProgress', 'reviewerStatus']) {
+    assert.doesNotMatch(context, new RegExp(legacy), `legacy thought/progress semantic leaked into decision context: ${legacy}`)
+  }
+})
+
 test('static export contains deterministic nonblank DOM for every primary route', () => {
   for (const route of navRoutes) {
     const output = route === '/' ? join(root, 'out/index.html') : join(root, `out${route}/index.html`)
