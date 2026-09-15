@@ -10,14 +10,13 @@ import { ResourceMonitor } from '@/components/dashboard/resource-monitor'
 import { RiskSummary } from '@/components/dashboard/risk-summary'
 import { SystemHealth } from '@/components/dashboard/system-health'
 import { ThoughtStream } from '@/components/dashboard/thought-stream'
-import { WpeConsole } from '@/components/console/wpe-console'
 import { useWpeRuntime } from '@/components/runtime-bridge'
 import { RuntimeMetric, RuntimeUnavailable } from '@/components/runtime-state'
 import { PageHeader } from '@/components/shell/page-header'
 import { Panel, PanelBody } from '@/components/ui/panel'
 import { useI18n } from '@/lib/i18n/context'
 
-function LocalizedDashboard() {
+export default function DashboardPage() {
   const runtime = useWpeRuntime()
   const { t } = useI18n()
   return (
@@ -46,9 +45,4 @@ function LocalizedDashboard() {
       <SystemHealth />
     </div>
   )
-}
-
-export default function DashboardPage() {
-  const { locale } = useI18n()
-  return locale === 'zh_CN' ? <WpeConsole /> : <LocalizedDashboard />
 }
