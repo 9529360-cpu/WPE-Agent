@@ -45,21 +45,28 @@ test('converged route tree preserves accepted Teacher, notification, settings an
   const teacher=fs.readFileSync(path.join(root,'app/(dashboard)/teacher/page.tsx'),'utf8')
   const settings=fs.readFileSync(path.join(root,'app/(dashboard)/settings/page.tsx'),'utf8')
   const agents=fs.readFileSync(path.join(root,'app/(dashboard)/agents/page.tsx'),'utf8')
+  const hostCommand=fs.readFileSync(path.join(root,'lib/host-command.ts'),'utf8')
   const nav=fs.readFileSync(path.join(root,'lib/nav.ts'),'utf8')
 
   for(const field of ['teacherLessons','teacherRecommendations','teacherCorrections','teacherOutcomes'])assert.match(teacher,new RegExp(field))
   assert.match(teacher,/executionAuthority=false/)
-  assert.doesNotMatch(teacher,/postRuntimeHostCommand|postMessage|submitOrder|direct-exchange-submit/)
+  assert.doesNotMatch(teacher,/postHostCommand|postMessage|submitOrder|direct-exchange-submit/)
 
+  assert.match(settings,/postHostCommand/)
   assert.match(settings,/open-settings/)
   assert.match(settings,/open-notification-settings/)
   assert.match(settings,/notificationOutbox/)
   assert.match(settings,/telegramSubscribers/)
+  assert.doesNotMatch(settings,/\.postMessage\s*\(/)
   assert.doesNotMatch(settings,/postMessage\(\{type:['"](?:approve|confirm)/)
 
-  assert.match(agents,/postRuntimeHostCommand/)
+  assert.match(agents,/postHostCommand/)
   assert.match(agents,/agentStartAllowed/)
   assert.match(agents,/agentStopAllowed/)
+  assert.doesNotMatch(agents,/\.postMessage\s*\(/)
+
+  for(const command of ['open-settings','open-notification-settings','agent-start','agent-stop'])assert.ok(hostCommand.includes(`'${command}'`),`host bridge is missing allowed command: ${command}`)
+  assert.doesNotMatch(hostCommand,/place-order|approve|confirm|submitOrder|direct-exchange-submit/)
 
   for(const route of ['/teacher','/backtest','/plugins','/security'])assert.ok(nav.includes(`href:'${route}'`),`missing converged route ${route}`)
   for(const unaccepted of ['/equities','/distribution','/research'])assert.ok(!nav.includes(`href:'${unaccepted}'`),`unaccepted route exposed in primary navigation: ${unaccepted}`)
