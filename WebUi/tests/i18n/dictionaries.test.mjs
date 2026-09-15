@@ -24,7 +24,7 @@ test('critical page copy is explicitly localized instead of silently falling bac
 })
 
 test('reachable pages use the typed i18n context and contain no mojibake',()=>{
-  const files=['app/(dashboard)/page.tsx','app/(dashboard)/agents/page.tsx','app/(dashboard)/settings/page.tsx','app/(dashboard)/orders/page.tsx','app/(dashboard)/backtest/page.tsx','app/(dashboard)/strategies/page.tsx','app/(dashboard)/risk/page.tsx','app/(dashboard)/plugins/page.tsx','app/(dashboard)/monitoring/page.tsx']
+  const files=['app/(dashboard)/page.tsx','app/(dashboard)/agents/page.tsx','app/(dashboard)/teacher/page.tsx','app/(dashboard)/settings/page.tsx','app/(dashboard)/orders/page.tsx','app/(dashboard)/backtest/page.tsx','app/(dashboard)/strategies/page.tsx','app/(dashboard)/risk/page.tsx','app/(dashboard)/plugins/page.tsx','app/(dashboard)/monitoring/page.tsx']
   for(const file of files){const text=fs.readFileSync(path.join(root,file),'utf8');assert.match(text,/useI18n/);assert.doesNotMatch(text,/[鍑锵鏈鏇鐨閲]/,`${file} contains mojibake`);assert.doesNotMatch(text,/<PageHeader\s+title=["']/,`${file} hardcodes a page title`)}
 })
 
@@ -41,9 +41,33 @@ test('dashboard root and shell do not fork the component tree by locale',()=>{
   assert.match(layout,/<StatusBar\s*\/>/)
 })
 
+test('converged route tree preserves accepted Teacher, notification, settings and Agent controls',()=>{
+  const teacher=fs.readFileSync(path.join(root,'app/(dashboard)/teacher/page.tsx'),'utf8')
+  const settings=fs.readFileSync(path.join(root,'app/(dashboard)/settings/page.tsx'),'utf8')
+  const agents=fs.readFileSync(path.join(root,'app/(dashboard)/agents/page.tsx'),'utf8')
+  const nav=fs.readFileSync(path.join(root,'lib/nav.ts'),'utf8')
+
+  for(const field of ['teacherLessons','teacherRecommendations','teacherCorrections','teacherOutcomes'])assert.match(teacher,new RegExp(field))
+  assert.match(teacher,/executionAuthority=false/)
+  assert.doesNotMatch(teacher,/postRuntimeHostCommand|postMessage|submitOrder|direct-exchange-submit/)
+
+  assert.match(settings,/open-settings/)
+  assert.match(settings,/open-notification-settings/)
+  assert.match(settings,/notificationOutbox/)
+  assert.match(settings,/telegramSubscribers/)
+  assert.doesNotMatch(settings,/postMessage\(\{type:['"](?:approve|confirm)/)
+
+  assert.match(agents,/postRuntimeHostCommand/)
+  assert.match(agents,/agentStartAllowed/)
+  assert.match(agents,/agentStopAllowed/)
+
+  for(const route of ['/teacher','/backtest','/plugins','/security'])assert.ok(nav.includes(`href:'${route}'`),`missing converged route ${route}`)
+  for(const unaccepted of ['/equities','/distribution','/research'])assert.ok(!nav.includes(`href:'${unaccepted}'`),`unaccepted route exposed in primary navigation: ${unaccepted}`)
+})
+
 test('authorization copy and read-only approval projection stay complete',()=>{
   const keys=['settings.authorizationHelp','settings.authorizationStale','settings.authorizationError','settings.authorizationUnsupported','settings.modeResearch','settings.modeSignal','settings.modeReview','settings.modeAutoTestnet','settings.approvalId','settings.created','settings.reasonCode','settings.statusPending','settings.statusRevoked','settings.statusExpired','settings.statusArtifactUnavailable']
-  for(const locale of locales.filter(value=>value!=='en_US'))for(const key of keys){assert.notEqual(translate(locale,key),key,`${locale}:${key} returned raw key`);assert.notEqual(translate(locale,key),translate('en_US',key),`${locale}:${key} fell back to English`)}
+  for(const locale of locales.filter(value=>value!=='en_US'))for(const key of keys){assert.notEqual(translate(locale,key),key,`${locale}:${key} returned raw key`);assert.notEqual(value,translate('en_US',key),`${locale}:${key} fell back to English`)}
   const page=fs.readFileSync(path.join(root,'app/(dashboard)/settings/page.tsx'),'utf8')
   const preview=fs.readFileSync(path.join(root,'lib/runtime-preview.development.ts'),'utf8')
   assert.doesNotMatch(page,/runtime\.loggedInUser/)
