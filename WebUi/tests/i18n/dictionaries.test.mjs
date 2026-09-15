@@ -28,6 +28,19 @@ test('reachable pages use the typed i18n context and contain no mojibake',()=>{
   for(const file of files){const text=fs.readFileSync(path.join(root,file),'utf8');assert.match(text,/useI18n/);assert.doesNotMatch(text,/[鍑锵鏈鏇鐨閲]/,`${file} contains mojibake`);assert.doesNotMatch(text,/<PageHeader\s+title=["']/,`${file} hardcodes a page title`)}
 })
 
+test('dashboard root and shell do not fork the component tree by locale',()=>{
+  const page=fs.readFileSync(path.join(root,'app/(dashboard)/page.tsx'),'utf8')
+  const layout=fs.readFileSync(path.join(root,'app/(dashboard)/layout.tsx'),'utf8')
+  assert.doesNotMatch(page,/locale\s*===\s*['"]zh_CN['"]/)
+  assert.doesNotMatch(page,/WpeConsole/)
+  assert.doesNotMatch(layout,/locale\s*===\s*['"]zh_CN['"]/)
+  assert.doesNotMatch(layout,/isConsoleRoot/)
+  assert.match(page,/useI18n/)
+  assert.match(layout,/<Sidebar\s*\/>/)
+  assert.match(layout,/<Topbar\s*\/>/)
+  assert.match(layout,/<StatusBar\s*\/>/)
+})
+
 test('authorization copy and read-only approval projection stay complete',()=>{
   const keys=['settings.authorizationHelp','settings.authorizationStale','settings.authorizationError','settings.authorizationUnsupported','settings.modeResearch','settings.modeSignal','settings.modeReview','settings.modeAutoTestnet','settings.approvalId','settings.created','settings.reasonCode','settings.statusPending','settings.statusRevoked','settings.statusExpired','settings.statusArtifactUnavailable']
   for(const locale of locales.filter(value=>value!=='en_US'))for(const key of keys){assert.notEqual(translate(locale,key),key,`${locale}:${key} returned raw key`);assert.notEqual(translate(locale,key),translate('en_US',key),`${locale}:${key} fell back to English`)}
