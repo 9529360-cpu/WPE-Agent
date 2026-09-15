@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/shell/page-header'
 import { Panel, PanelBody, PanelHeader } from '@/components/ui/panel'
 import { RuntimeMetric, RuntimeUnavailable } from '@/components/runtime-state'
 import { useWpeRuntime } from '@/components/runtime-bridge'
+import {postHostCommand} from '@/lib/host-command'
 import { useI18n } from '@/lib/i18n/context'
 
 type AutomaticExecution = {
@@ -20,7 +21,6 @@ type AutomaticExecutions = {
   message?: string
   items: AutomaticExecution[]
 }
-type SettingsHostCommand='open-settings'|'open-notification-settings'
 
 const isolatedStatuses = new Set([
   'PolicyBlocked',
@@ -31,13 +31,6 @@ const isolatedStatuses = new Set([
   'FailedTerminal',
   'UnknownOutcome',
 ])
-
-function postSettingsHostCommand(type:SettingsHostCommand){
- const bridge=(window as Window&{chrome?:{webview?:{postMessage:(message:{type:SettingsHostCommand})=>void}}}).chrome?.webview
- if(!bridge)return false
- bridge.postMessage({type})
- return true
-}
 
 export default function SettingsPage() {
   const runtime = useWpeRuntime()
@@ -62,7 +55,7 @@ export default function SettingsPage() {
     Expired: t('settings.statusExpired'),
     ArtifactUnavailable: t('settings.statusArtifactUnavailable'),
   }
-  const hostAction=(type:SettingsHostCommand)=>{if(!postSettingsHostCommand(type))setHostActionUnavailable(true)}
+  const hostAction=(type:'open-settings'|'open-notification-settings')=>{if(!postHostCommand(type))setHostActionUnavailable(true)}
   return <div className="flex flex-col gap-6 p-6">
     <PageHeader title={t('settings.title')} description={t('settings.description')} actions={<><button type="button" onClick={()=>hostAction('open-settings')} className="rounded-md border border-border bg-card px-3 py-1.5 text-xs hover:bg-accent">{t('settings.openSecure')}</button><button type="button" onClick={()=>hostAction('open-notification-settings')} className="rounded-md border border-border bg-card px-3 py-1.5 text-xs hover:bg-accent">{t('settings.notifications')}</button></>} />
     {hostActionUnavailable&&<div className="rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">{t('settings.desktopOnly')}</div>}
