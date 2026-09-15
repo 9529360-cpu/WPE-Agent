@@ -1,37 +1,37 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Data;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Data;
 
 /// <summary>
-/// Êı¾İ²É¼¯·şÎñ½Ó¿Ú
-/// ¸ºÔğ´Ó Binance API ²É¼¯ÊµÊ±ÊĞ³¡Êı¾İ
+/// æ•°æ®é‡‡é›†æœåŠ¡æ¥å£
+/// è´Ÿè´£ä» Binance API é‡‡é›†å®æ—¶å¸‚åœºæ•°æ®
 /// </summary>
 public interface IDataCollectionService
 {
     /// <summary>
-    /// Æô¶¯Êı¾İ²É¼¯
+    /// å¯åŠ¨æ•°æ®é‡‡é›†
     /// </summary>
-    /// <param name="cancellationToken">È¡ÏûÁîÅÆ</param>
+    /// <param name="cancellationToken">å–æ¶ˆä»¤ç‰Œ</param>
     Task StartAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Í£Ö¹Êı¾İ²É¼¯
+    /// åœæ­¢æ•°æ®é‡‡é›†
     /// </summary>
     Task StopAsync();
 
     /// <summary>
-    /// »ñÈ¡×îĞÂµÄÊĞ³¡Êı¾İ¿ìÕÕ
+    /// è·å–æœ€æ–°çš„å¸‚åœºæ•°æ®å¿«ç…§
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô£¬Èç "BTCUSDT"</param>
-    /// <returns>ÊĞ³¡Êı¾İ£¬Èç¹û²»´æÔÚÔò·µ»Ø null</returns>
+    /// <param name="symbol">äº¤æ˜“å¯¹ï¼Œå¦‚ "BTCUSDT"</param>
+    /// <returns>å¸‚åœºæ•°æ®ï¼Œå¦‚æœä¸å­˜åœ¨åˆ™è¿”å› null</returns>
     Task<MarketSnapshot?> GetLatestMarketSnapshotAsync(string symbol);
 
     /// <summary>
-    /// »ñÈ¡¸ø¶¨Ê±¼ä·¶Î§ÄÚµÄÀúÊ·À¯ÖòÊı¾İ
+    /// è·å–ç»™å®šæ—¶é—´èŒƒå›´å†…çš„å†å²èœ¡çƒ›æ•°æ®
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="interval">Ê±¼äÖÜÆÚ£¬Èç "1h", "4h", "1d"</param>
-    /// <param name="startTime">¿ªÊ¼Ê±¼ä</param>
-    /// <param name="endTime">½áÊøÊ±¼ä</param>
-    /// <returns>À¯ÖòÊı¾İÁĞ±í</returns>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="interval">æ—¶é—´å‘¨æœŸï¼Œå¦‚ "1h", "4h", "1d"</param>
+    /// <param name="startTime">å¼€å§‹æ—¶é—´</param>
+    /// <param name="endTime">ç»“æŸæ—¶é—´</param>
+    /// <returns>èœ¡çƒ›æ•°æ®åˆ—è¡¨</returns>
     Task<List<KlineData>> GetHistoricalKlinesAsync(
         string symbol,
         string interval,
@@ -39,36 +39,36 @@ public interface IDataCollectionService
         DateTime endTime);
 
     /// <summary>
-    /// ¶©ÔÄÊµÊ±ĞĞÇé¸üĞÂ
+    /// è®¢é˜…å®æ—¶è¡Œæƒ…æ›´æ–°
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="onDataReceived">Êı¾İ½ÓÊÕµÄ»Øµ÷·½·¨</param>
-    /// <returns>¶©ÔÄ ID£¬ÓÃÓÚÈ¡Ïû¶©ÔÄ</returns>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="onDataReceived">æ•°æ®æ¥æ”¶çš„å›è°ƒæ–¹æ³•</param>
+    /// <returns>è®¢é˜… IDï¼Œç”¨äºå–æ¶ˆè®¢é˜…</returns>
     string SubscribeToRealTimeData(string symbol, Func<MarketSnapshot, Task> onDataReceived);
 
     /// <summary>
-    /// È¡Ïû¶©ÔÄÊµÊ±ĞĞÇé
+    /// å–æ¶ˆè®¢é˜…å®æ—¶è¡Œæƒ…
     /// </summary>
-    /// <param name="subscriptionId">¶©ÔÄ ID</param>
+    /// <param name="subscriptionId">è®¢é˜… ID</param>
     void UnsubscribeFromRealTimeData(string subscriptionId);
 
     /// <summary>
-    /// »ñÈ¡¶©µ¥²¾Éî¶ÈÊı¾İ
+    /// è·å–è®¢å•ç°¿æ·±åº¦æ•°æ®
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="depth">Éî¶È¼¶±ğ£¬Èç 5, 10, 20</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="depth">æ·±åº¦çº§åˆ«ï¼Œå¦‚ 5, 10, 20</param>
     Task<OrderBook> GetOrderBookAsync(string symbol, int depth = 20);
 
     /// <summary>
-    /// »ñÈ¡×î½üµÄ½»Ò×¼ÇÂ¼
+    /// è·å–æœ€è¿‘çš„äº¤æ˜“è®°å½•
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="limit">ÏŞÖÆÌõÊı</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="limit">é™åˆ¶æ¡æ•°</param>
     Task<List<RecentTrade>> GetRecentTradesAsync(string symbol, int limit = 100);
 }
 
 /// <summary>
-/// ÊĞ³¡Êı¾İ¿ìÕÕ
+/// å¸‚åœºæ•°æ®å¿«ç…§
 /// </summary>
 public record MarketSnapshot
 {
@@ -84,7 +84,7 @@ public record MarketSnapshot
 }
 
 /// <summary>
-/// KÏßÊı¾İ
+/// Kçº¿æ•°æ®
 /// </summary>
 public record KlineData
 {
@@ -102,7 +102,7 @@ public record KlineData
 }
 
 /// <summary>
-/// ¶©µ¥²¾
+/// è®¢å•ç°¿
 /// </summary>
 public record OrderBook
 {
@@ -113,7 +113,7 @@ public record OrderBook
 }
 
 /// <summary>
-/// ¶©µ¥²¾¼¶±ğ
+/// è®¢å•ç°¿çº§åˆ«
 /// </summary>
 public record OrderBookLevel
 {
@@ -122,7 +122,7 @@ public record OrderBookLevel
 }
 
 /// <summary>
-/// ×î½ü½»Ò×
+/// æœ€è¿‘äº¤æ˜“
 /// </summary>
 public record RecentTrade
 {

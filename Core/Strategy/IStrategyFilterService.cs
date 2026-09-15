@@ -1,83 +1,83 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Strategy;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Strategy;
 
 /// <summary>
-/// ²ßÂÔÉ¸Ñ¡·şÎñ½Ó¿Ú
-/// ¸ºÔğ¸ù¾İĞÔÄÜÖ¸±êºÍ·çÏÕ²ÎÊıÉ¸Ñ¡ºÏÊÊµÄ²ßÂÔ
+/// ç­–ç•¥ç­›é€‰æœåŠ¡æ¥å£
+/// è´Ÿè´£æ ¹æ®æ€§èƒ½æŒ‡æ ‡å’Œé£é™©å‚æ•°ç­›é€‰åˆé€‚çš„ç­–ç•¥
 /// </summary>
 public interface IStrategyFilterService
 {
     /// <summary>
-    /// ¸ù¾İĞÔÄÜãĞÖµÉ¸Ñ¡²ßÂÔ
+    /// æ ¹æ®æ€§èƒ½é˜ˆå€¼ç­›é€‰ç­–ç•¥
     /// </summary>
-    /// <param name="strategies">´ıÉ¸Ñ¡²ßÂÔÁĞ±í</param>
-    /// <param name="criteria">É¸Ñ¡Ìõ¼ş</param>
-    /// <returns>Í¨¹ıÉ¸Ñ¡µÄ²ßÂÔÁĞ±í</returns>
+    /// <param name="strategies">å¾…ç­›é€‰ç­–ç•¥åˆ—è¡¨</param>
+    /// <param name="criteria">ç­›é€‰æ¡ä»¶</param>
+    /// <returns>é€šè¿‡ç­›é€‰çš„ç­–ç•¥åˆ—è¡¨</returns>
     Task<List<StrategyInfo>> FilterStrategiesByCriteriaAsync(
         List<StrategyInfo> strategies,
         FilterCriteria criteria);
 
     /// <summary>
-    /// ÅÅĞò²ßÂÔ
+    /// æ’åºç­–ç•¥
     /// </summary>
-    /// <param name="strategies">²ßÂÔÁĞ±í</param>
-    /// <param name="sortBy">ÅÅĞò×Ö¶Î</param>
-    /// <param name="descending">ÊÇ·ñ½µĞò</param>
+    /// <param name="strategies">ç­–ç•¥åˆ—è¡¨</param>
+    /// <param name="sortBy">æ’åºå­—æ®µ</param>
+    /// <param name="descending">æ˜¯å¦é™åº</param>
     Task<List<StrategyInfo>> SortStrategiesAsync(
         List<StrategyInfo> strategies,
         StrategySortField sortBy,
         bool descending = true);
 
     /// <summary>
-    /// ÆÀ¹À²ßÂÔµÄÊÊÓÃĞÔ
+    /// è¯„ä¼°ç­–ç•¥çš„é€‚ç”¨æ€§
     /// </summary>
-    /// <param name="strategy">²ßÂÔĞÅÏ¢</param>
-    /// <param name="marketConditions">ÊĞ³¡Ìõ¼ş</param>
-    /// <returns>ÊÊÓÃĞÔÆÀ·Ö (0-100)</returns>
+    /// <param name="strategy">ç­–ç•¥ä¿¡æ¯</param>
+    /// <param name="marketConditions">å¸‚åœºæ¡ä»¶</param>
+    /// <returns>é€‚ç”¨æ€§è¯„åˆ† (0-100)</returns>
     Task<int> EvaluateStrategyFitnessAsync(
         StrategyInfo strategy,
         MarketConditions marketConditions);
 
     /// <summary>
-    /// ¹ıÂË¸ß·çÏÕ²ßÂÔ
+    /// è¿‡æ»¤é«˜é£é™©ç­–ç•¥
     /// </summary>
-    /// <param name="strategies">²ßÂÔÁĞ±í</param>
-    /// <param name="maxDrawdown">×î´óÔÊĞí»Ø³·</param>
-    /// <param name="minSharpeRatio">×îĞ¡ÏÄÆÕ±ÈÂÊ</param>
+    /// <param name="strategies">ç­–ç•¥åˆ—è¡¨</param>
+    /// <param name="maxDrawdown">æœ€å¤§å…è®¸å›æ’¤</param>
+    /// <param name="minSharpeRatio">æœ€å°å¤æ™®æ¯”ç‡</param>
     Task<List<StrategyInfo>> FilterByRiskAsync(
         List<StrategyInfo> strategies,
         decimal maxDrawdown,
         decimal minSharpeRatio);
 
     /// <summary>
-    /// ¹ıÂËµÍÊÕÒæ²ßÂÔ
+    /// è¿‡æ»¤ä½æ”¶ç›Šç­–ç•¥
     /// </summary>
-    /// <param name="strategies">²ßÂÔÁĞ±í</param>
-    /// <param name="minAnnualizedReturn">×îĞ¡Äê»¯ÊÕÒæÂÊ</param>
+    /// <param name="strategies">ç­–ç•¥åˆ—è¡¨</param>
+    /// <param name="minAnnualizedReturn">æœ€å°å¹´åŒ–æ”¶ç›Šç‡</param>
     Task<List<StrategyInfo>> FilterByReturnAsync(
         List<StrategyInfo> strategies,
         decimal minAnnualizedReturn);
 
     /// <summary>
-    /// »ñÈ¡ÍÆ¼öµÄ²ßÂÔ×éºÏ
+    /// è·å–æ¨èçš„ç­–ç•¥ç»„åˆ
     /// </summary>
-    /// <param name="strategies">¿ÉÓÃ²ßÂÔÁĞ±í</param>
-    /// <param name="portfolioSize">×éºÏÖĞ²ßÂÔÊıÁ¿</param>
+    /// <param name="strategies">å¯ç”¨ç­–ç•¥åˆ—è¡¨</param>
+    /// <param name="portfolioSize">ç»„åˆä¸­ç­–ç•¥æ•°é‡</param>
     Task<List<StrategyInfo>> GetRecommendedPortfolioAsync(
         List<StrategyInfo> strategies,
         int portfolioSize = 3);
 
     /// <summary>
-    /// ¼ì²é²ßÂÔÔÚ¸ø¶¨ÊĞ³¡Ìõ¼şÏÂµÄ¼æÈİĞÔ
+    /// æ£€æŸ¥ç­–ç•¥åœ¨ç»™å®šå¸‚åœºæ¡ä»¶ä¸‹çš„å…¼å®¹æ€§
     /// </summary>
-    /// <param name="strategy">²ßÂÔ</param>
-    /// <param name="marketConditions">ÊĞ³¡Ìõ¼ş</param>
+    /// <param name="strategy">ç­–ç•¥</param>
+    /// <param name="marketConditions">å¸‚åœºæ¡ä»¶</param>
     Task<StrategyCompatibilityReport> CheckCompatibilityAsync(
         StrategyInfo strategy,
         MarketConditions marketConditions);
 }
 
 /// <summary>
-/// ²ßÂÔĞÅÏ¢
+/// ç­–ç•¥ä¿¡æ¯
 /// </summary>
 public record StrategyInfo
 {
@@ -93,7 +93,7 @@ public record StrategyInfo
 }
 
 /// <summary>
-/// ²ßÂÔÀàĞÍ
+/// ç­–ç•¥ç±»å‹
 /// </summary>
 public enum StrategyType
 {
@@ -107,7 +107,7 @@ public enum StrategyType
 }
 
 /// <summary>
-/// ²ßÂÔ²ÎÊı
+/// ç­–ç•¥å‚æ•°
 /// </summary>
 public record StrategyParameters
 {
@@ -129,7 +129,7 @@ public record StrategyParameters
 }
 
 /// <summary>
-/// É¸Ñ¡Ìõ¼ş
+/// ç­›é€‰æ¡ä»¶
 /// </summary>
 public record FilterCriteria
 {
@@ -143,7 +143,7 @@ public record FilterCriteria
 }
 
 /// <summary>
-/// ²ßÂÔÅÅĞò×Ö¶Î
+/// ç­–ç•¥æ’åºå­—æ®µ
 /// </summary>
 public enum StrategySortField
 {
@@ -156,7 +156,7 @@ public enum StrategySortField
 }
 
 /// <summary>
-/// ÊĞ³¡Ìõ¼ş
+/// å¸‚åœºæ¡ä»¶
 /// </summary>
 public record MarketConditions
 {
@@ -168,7 +168,7 @@ public record MarketConditions
 }
 
 /// <summary>
-/// ÊĞ³¡Ç÷ÊÆ
+/// å¸‚åœºè¶‹åŠ¿
 /// </summary>
 public enum MarketTrend
 {
@@ -178,7 +178,7 @@ public enum MarketTrend
 }
 
 /// <summary>
-/// ²ßÂÔ¼æÈİĞÔ±¨¸æ
+/// ç­–ç•¥å…¼å®¹æ€§æŠ¥å‘Š
 /// </summary>
 public record StrategyCompatibilityReport
 {

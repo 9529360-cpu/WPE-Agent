@@ -1,20 +1,20 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Application.Services;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Application.Services;
 
 using Serilog;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Strategy;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Strategy;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 
 /// <summary>
-/// ²ßÂÔÆÀ¹À·şÎñÊµÏÖ
-/// ¼ÆËã½»Ò×²ßÂÔµÄ¸÷ÖÖĞÔÄÜÖ¸±ê
+/// ç­–ç•¥è¯„ä¼°æœåŠ¡å®ç°
+/// è®¡ç®—äº¤æ˜“ç­–ç•¥çš„å„ç§æ€§èƒ½æŒ‡æ ‡
 /// </summary>
 public class StrategyEvaluationService : IStrategyEvaluationService
 {
     private readonly ILogger _logger;
-    private const decimal RiskFreeRateDefault = 0.02m; // 2% Äê»¯ÎŞ·çÏÕÀûÂÊ
+    private const decimal RiskFreeRateDefault = 0.02m; // 2% å¹´åŒ–æ— é£é™©åˆ©ç‡
 
     public StrategyEvaluationService()
     {
@@ -27,7 +27,7 @@ public class StrategyEvaluationService : IStrategyEvaluationService
     {
         if (trades == null || trades.Count == 0)
         {
-            _logger.Warning("Ã»ÓĞ½»Ò×¼ÇÂ¼£¬ÎŞ·¨ÆÀ¹ÀĞÔÄÜ");
+            _logger.Warning("æ²¡æœ‰äº¤æ˜“è®°å½•ï¼Œæ— æ³•è¯„ä¼°æ€§èƒ½");
             return new StrategyPerformanceMetrics();
         }
 
@@ -37,7 +37,7 @@ public class StrategyEvaluationService : IStrategyEvaluationService
             var losingTrades = trades.Where(t => t.Profit < 0).ToList();
             var totalProfit = trades.Sum(t => t.Profit);
 
-            // ¹¹½¨È¨ÒæÇúÏß
+            // æ„å»ºæƒç›Šæ›²çº¿
             var equityCurve = BuildEquityCurve(trades, initialBalance);
             var maxDrawdown = CalculateDrawdown(equityCurve);
             var dailyReturns = CalculateDailyReturns(trades);
@@ -58,11 +58,11 @@ public class StrategyEvaluationService : IStrategyEvaluationService
                 AverageWin = winningTrades.Count > 0 ? winningTrades.Sum(t => t.Profit) / winningTrades.Count : 0,
                 AverageLoss = losingTrades.Count > 0 ? losingTrades.Sum(t => t.Profit) / losingTrades.Count : 0,
                 ExpectancyPerTrade = trades.Count > 0 ? totalProfit / trades.Count : 0,
-                InformationRatio = 0 // ĞèÒª»ù×¼Êı¾İ¼ÆËã
+                InformationRatio = 0 // éœ€è¦åŸºå‡†æ•°æ®è®¡ç®—
             };
 
             _logger.Information(
-                "?? ²ßÂÔÆÀ¹ÀÍê³É: ×Ü½»Ò×={Trades}, Ê¤ÂÊ={WinRate}%, ÏÄÆÕ={Sharpe}, ×î´ó»Ø³·={Drawdown}%",
+                "?? ç­–ç•¥è¯„ä¼°å®Œæˆ: æ€»äº¤æ˜“={Trades}, èƒœç‡={WinRate}%, å¤æ™®={Sharpe}, æœ€å¤§å›æ’¤={Drawdown}%",
                 metrics.TotalTrades,
                 metrics.WinRate,
                 metrics.SharpeRatio,
@@ -76,7 +76,7 @@ public class StrategyEvaluationService : IStrategyEvaluationService
     {
         if (returns == null || returns.Count < 2)
         {
-            _logger.Warning("·µ»ØÊı¾İ²»×ã£¬ÎŞ·¨¼ÆËãÏÄÆÕ±ÈÂÊ");
+            _logger.Warning("è¿”å›æ•°æ®ä¸è¶³ï¼Œæ— æ³•è®¡ç®—å¤æ™®æ¯”ç‡");
             return 0;
         }
 
@@ -90,7 +90,7 @@ public class StrategyEvaluationService : IStrategyEvaluationService
                 return avgReturn > 0 ? decimal.MaxValue : decimal.MinValue;
             }
 
-            var sharpeRatio = (avgReturn - (riskFreeRate / 252)) / stdDev; // 252 ÊÇ½»Ò×ÈÕÊı
+            var sharpeRatio = (avgReturn - (riskFreeRate / 252)) / stdDev; // 252 æ˜¯äº¤æ˜“æ—¥æ•°
             return Math.Round(sharpeRatio, 4);
         });
     }
@@ -99,7 +99,7 @@ public class StrategyEvaluationService : IStrategyEvaluationService
     {
         if (equityCurve == null || equityCurve.Count < 2)
         {
-            _logger.Warning("È¨ÒæÇúÏßÊı¾İ²»×ã");
+            _logger.Warning("æƒç›Šæ›²çº¿æ•°æ®ä¸è¶³");
             return 0;
         }
 
@@ -147,7 +147,7 @@ public class StrategyEvaluationService : IStrategyEvaluationService
         if (strategyReturns == null || benchmarkReturns == null || 
             strategyReturns.Count < 2 || benchmarkReturns.Count < 2)
         {
-            _logger.Warning("·µ»ØÊı¾İ²»×ã");
+            _logger.Warning("è¿”å›æ•°æ®ä¸è¶³");
             return 0;
         }
 
@@ -175,10 +175,10 @@ public class StrategyEvaluationService : IStrategyEvaluationService
                 StrategyId = strategyId,
                 EvaluationPeriod = evaluationPeriod,
                 GeneratedAt = DateTime.UtcNow,
-                Summary = "ÆÀ¹À±¨¸æÒÑÉú³É"
+                Summary = "è¯„ä¼°æŠ¥å‘Šå·²ç”Ÿæˆ"
             };
 
-            _logger.Information("?? Éú³É²ßÂÔÆÀ¹À±¨¸æ: {StrategyId}", strategyId);
+            _logger.Information("?? ç”Ÿæˆç­–ç•¥è¯„ä¼°æŠ¥å‘Š: {StrategyId}", strategyId);
             return report;
         });
     }

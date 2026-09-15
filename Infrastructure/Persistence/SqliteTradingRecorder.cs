@@ -1,4 +1,4 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Infrastructure.Persistence;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Infrastructure.Persistence;
 
 using System;
 using System.Collections.Generic;
@@ -7,12 +7,12 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Serilog;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Services;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Persistence;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Services;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Persistence;
 
 /// <summary>
-/// SQLite ½»Ò×¼ÇÂ¼Æ÷ÊµÏÖ
-/// Ê¹ÓÃ SQLite Êı¾İ¿â³Ö¾Ã»¯½»Ò×Êı¾İ
+/// SQLite äº¤æ˜“è®°å½•å™¨å®ç°
+/// ä½¿ç”¨ SQLite æ•°æ®åº“æŒä¹…åŒ–äº¤æ˜“æ•°æ®
 /// </summary>
 public class SqliteTradingRecorder : ITradingRecorder
 {
@@ -24,7 +24,7 @@ public class SqliteTradingRecorder : ITradingRecorder
         _databasePath = databasePath ?? AppDataPaths.File("trading.db");
         _logger = Log.ForContext<SqliteTradingRecorder>();
         
-        // È·±£Êı¾İ¿âÄ¿Â¼´æÔÚ
+        // ç¡®ä¿æ•°æ®åº“ç›®å½•å­˜åœ¨
         var directory = Path.GetDirectoryName(_databasePath);
         if (!Directory.Exists(directory))
             Directory.CreateDirectory(directory!);
@@ -36,11 +36,11 @@ public class SqliteTradingRecorder : ITradingRecorder
     {
         try
         {
-            // TODO: ÊµÏÖ SQLite ²åÈëÂß¼­
-            // Ê¹ÓÃ Dapper »ò EF Core Ö´ĞĞ INSERT ²Ù×÷
+            // TODO: å®ç° SQLite æ’å…¥é€»è¾‘
+            // ä½¿ç”¨ Dapper æˆ– EF Core æ‰§è¡Œ INSERT æ“ä½œ
             
             _logger.Information(
-                "½»Ò×ÒÑ¼ÇÂ¼: {Symbol} {Type} ÊıÁ¿={Qty} ÀûÈó={Profit}",
+                "äº¤æ˜“å·²è®°å½•: {Symbol} {Type} æ•°é‡={Qty} åˆ©æ¶¦={Profit}",
                 trade.Symbol,
                 trade.Type,
                 trade.Quantity,
@@ -50,7 +50,7 @@ public class SqliteTradingRecorder : ITradingRecorder
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "¼ÇÂ¼½»Ò×Ê§°Ü: {Symbol}", trade.Symbol);
+            _logger.Error(ex, "è®°å½•äº¤æ˜“å¤±è´¥: {Symbol}", trade.Symbol);
             return false;
         }
     }
@@ -59,10 +59,10 @@ public class SqliteTradingRecorder : ITradingRecorder
     {
         try
         {
-            // TODO: ÊµÏÖ SQLite ²åÈëÂß¼­
+            // TODO: å®ç° SQLite æ’å…¥é€»è¾‘
             
             _logger.Debug(
-                "¶©µ¥ÊÂ¼şÒÑ¼ÇÂ¼: {OrderId} {EventType} {Symbol}",
+                "è®¢å•äº‹ä»¶å·²è®°å½•: {OrderId} {EventType} {Symbol}",
                 orderEvent.OrderId,
                 orderEvent.EventType,
                 orderEvent.Symbol);
@@ -71,7 +71,7 @@ public class SqliteTradingRecorder : ITradingRecorder
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "¼ÇÂ¼¶©µ¥ÊÂ¼şÊ§°Ü: {OrderId}", orderEvent.OrderId);
+            _logger.Error(ex, "è®°å½•è®¢å•äº‹ä»¶å¤±è´¥: {OrderId}", orderEvent.OrderId);
             return false;
         }
     }
@@ -80,10 +80,10 @@ public class SqliteTradingRecorder : ITradingRecorder
     {
         try
         {
-            // TODO: ÊµÏÖ SQLite ²åÈëÂß¼­
+            // TODO: å®ç° SQLite æ’å…¥é€»è¾‘
             
             _logger.Debug(
-                "ÕË»§¿ìÕÕÒÑ¼ÇÂ¼: Óà¶î={Balance} Î´ÊµÏÖÓ¯Àû={UnrealizedProfit}",
+                "è´¦æˆ·å¿«ç…§å·²è®°å½•: ä½™é¢={Balance} æœªå®ç°ç›ˆåˆ©={UnrealizedProfit}",
                 snapshot.TotalBalance,
                 snapshot.UnrealizedProfit);
 
@@ -91,7 +91,7 @@ public class SqliteTradingRecorder : ITradingRecorder
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "¼ÇÂ¼ÕË»§¿ìÕÕÊ§°Ü");
+            _logger.Error(ex, "è®°å½•è´¦æˆ·å¿«ç…§å¤±è´¥");
             return false;
         }
     }
@@ -100,20 +100,20 @@ public class SqliteTradingRecorder : ITradingRecorder
     {
         try
         {
-            // TODO: ÊµÏÖ SQLite ²éÑ¯Âß¼­
-            // ¸ù¾İ filter Ìõ¼ş¹¹½¨ WHERE ×Ó¾ä
+            // TODO: å®ç° SQLite æŸ¥è¯¢é€»è¾‘
+            // æ ¹æ® filter æ¡ä»¶æ„å»º WHERE å­å¥
             
             _logger.Debug(
-                "²éÑ¯½»Ò×: Symbol={Symbol} ¿ªÊ¼ÈÕÆÚ={StartDate}",
+                "æŸ¥è¯¢äº¤æ˜“: Symbol={Symbol} å¼€å§‹æ—¥æœŸ={StartDate}",
                 filter.Symbol,
                 filter.StartDate);
 
-            // ÔİÊ±·µ»Ø¿ÕÁĞ±í
+            // æš‚æ—¶è¿”å›ç©ºåˆ—è¡¨
             return await Task.FromResult(new List<TradingLog>()).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "²éÑ¯½»Ò×Ê§°Ü");
+            _logger.Error(ex, "æŸ¥è¯¢äº¤æ˜“å¤±è´¥");
             return new List<TradingLog>();
         }
     }
@@ -122,7 +122,7 @@ public class SqliteTradingRecorder : ITradingRecorder
     {
         try
         {
-            // TODO: ÊµÏÖ SQLite ¾ÛºÏ²éÑ¯Âß¼­
+            // TODO: å®ç° SQLite èšåˆæŸ¥è¯¢é€»è¾‘
             
             return await Task.FromResult(new TradingSummary
             {
@@ -135,7 +135,7 @@ public class SqliteTradingRecorder : ITradingRecorder
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "»ñÈ¡½»Ò×»ã×ÜÊ§°Ü");
+            _logger.Error(ex, "è·å–äº¤æ˜“æ±‡æ€»å¤±è´¥");
             return new TradingSummary();
         }
     }
@@ -147,7 +147,7 @@ public class SqliteTradingRecorder : ITradingRecorder
     {
         try
         {
-            // TODO: ÊµÏÖ SQLite ²éÑ¯Âß¼­
+            // TODO: å®ç° SQLite æŸ¥è¯¢é€»è¾‘
             
             return await Task.FromResult(new SymbolTradingStats
             {
@@ -161,7 +161,7 @@ public class SqliteTradingRecorder : ITradingRecorder
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "»ñÈ¡½»Ò×¶ÔÍ³¼ÆÊ§°Ü: {Symbol}", symbol);
+            _logger.Error(ex, "è·å–äº¤æ˜“å¯¹ç»Ÿè®¡å¤±è´¥: {Symbol}", symbol);
             return new SymbolTradingStats { Symbol = symbol };
         }
     }
@@ -173,13 +173,13 @@ public class SqliteTradingRecorder : ITradingRecorder
     {
         try
         {
-            // TODO: ÊµÏÖ SQLite ²éÑ¯ºÍ¾ÛºÏÂß¼­
+            // TODO: å®ç° SQLite æŸ¥è¯¢å’Œèšåˆé€»è¾‘
             
             return await Task.FromResult(new List<EquityCurvePoint>()).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "»ñÈ¡È¨ÒæÇúÏßÊ§°Ü");
+            _logger.Error(ex, "è·å–æƒç›Šæ›²çº¿å¤±è´¥");
             return new List<EquityCurvePoint>();
         }
     }
@@ -188,17 +188,17 @@ public class SqliteTradingRecorder : ITradingRecorder
     {
         try
         {
-            // TODO: ÊµÏÖµ¼³öÂß¼­
-            // 1. ²éÑ¯½»Ò×Êı¾İ
-            // 2. Éú³É CSV ¸ñÊ½
-            // 3. Ğ´ÈëÎÄ¼ş
+            // TODO: å®ç°å¯¼å‡ºé€»è¾‘
+            // 1. æŸ¥è¯¢äº¤æ˜“æ•°æ®
+            // 2. ç”Ÿæˆ CSV æ ¼å¼
+            // 3. å†™å…¥æ–‡ä»¶
             
-            _logger.Information("½»Ò×Êı¾İÒÑµ¼³ö: {FilePath}", filePath);
+            _logger.Information("äº¤æ˜“æ•°æ®å·²å¯¼å‡º: {FilePath}", filePath);
             return await Task.FromResult(true).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "µ¼³ö½»Ò×Êı¾İÊ§°Ü");
+            _logger.Error(ex, "å¯¼å‡ºäº¤æ˜“æ•°æ®å¤±è´¥");
             return false;
         }
     }
@@ -207,14 +207,14 @@ public class SqliteTradingRecorder : ITradingRecorder
     {
         try
         {
-            // TODO: ÊµÏÖ SQLite É¾³ıÂß¼­
+            // TODO: å®ç° SQLite åˆ é™¤é€»è¾‘
             
-            _logger.Information("É¾³ı {Date} Ö®Ç°µÄ½»Ò×¼ÇÂ¼", olderThan);
+            _logger.Information("åˆ é™¤ {Date} ä¹‹å‰çš„äº¤æ˜“è®°å½•", olderThan);
             return await Task.FromResult(0).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "É¾³ı¾É½»Ò×Ê§°Ü");
+            _logger.Error(ex, "åˆ é™¤æ—§äº¤æ˜“å¤±è´¥");
             return 0;
         }
     }
@@ -223,13 +223,13 @@ public class SqliteTradingRecorder : ITradingRecorder
     {
         try
         {
-            // TODO: ÊµÏÖ SQLite ²éÑ¯Âß¼­£¬»ñÈ¡×îĞÂµÄ½»Ò×
+            // TODO: å®ç° SQLite æŸ¥è¯¢é€»è¾‘ï¼Œè·å–æœ€æ–°çš„äº¤æ˜“
             
             return await Task.FromResult<TradingLog?>(null).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "»ñÈ¡×îºóÒ»Ìõ½»Ò×Ê§°Ü");
+            _logger.Error(ex, "è·å–æœ€åä¸€æ¡äº¤æ˜“å¤±è´¥");
             return null;
         }
     }
@@ -238,14 +238,14 @@ public class SqliteTradingRecorder : ITradingRecorder
     {
         try
         {
-            // TODO: ÊµÏÖ SQLite Çå¿Õ±íÂß¼­
+            // TODO: å®ç° SQLite æ¸…ç©ºè¡¨é€»è¾‘
             
-            _logger.Warning("ËùÓĞ½»Ò×¼ÇÂ¼ÒÑÇå¿Õ");
+            _logger.Warning("æ‰€æœ‰äº¤æ˜“è®°å½•å·²æ¸…ç©º");
             return await Task.FromResult(true).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Çå¿Õ½»Ò×¼ÇÂ¼Ê§°Ü");
+            _logger.Error(ex, "æ¸…ç©ºäº¤æ˜“è®°å½•å¤±è´¥");
             return false;
         }
     }
@@ -256,21 +256,21 @@ public class SqliteTradingRecorder : ITradingRecorder
     {
         try
         {
-            // TODO: ÊµÏÖÊı¾İ¿â³õÊ¼»¯Âß¼­
-            // 1. ¼ì²éÊÇ·ñĞèÒª´´½¨±í
-            // 2. ´´½¨±ØÒªµÄ±í½á¹¹£¨TradingLogs, OrderEvents, AccountSnapshots µÈ£©
-            // 3. ´´½¨Ë÷ÒıÒÔÌá¸ß²éÑ¯ĞÔÄÜ
+            // TODO: å®ç°æ•°æ®åº“åˆå§‹åŒ–é€»è¾‘
+            // 1. æ£€æŸ¥æ˜¯å¦éœ€è¦åˆ›å»ºè¡¨
+            // 2. åˆ›å»ºå¿…è¦çš„è¡¨ç»“æ„ï¼ˆTradingLogs, OrderEvents, AccountSnapshots ç­‰ï¼‰
+            // 3. åˆ›å»ºç´¢å¼•ä»¥æé«˜æŸ¥è¯¢æ€§èƒ½
             
             if (!File.Exists(_databasePath))
             {
-                _logger.Information("´´½¨ĞÂµÄ SQLite Êı¾İ¿â: {Path}", _databasePath);
+                _logger.Information("åˆ›å»ºæ–°çš„ SQLite æ•°æ®åº“: {Path}", _databasePath);
             }
 
             await Task.CompletedTask.ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "³õÊ¼»¯Êı¾İ¿âÊ§°Ü");
+            _logger.Error(ex, "åˆå§‹åŒ–æ•°æ®åº“å¤±è´¥");
             throw;
         }
     }

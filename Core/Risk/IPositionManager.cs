@@ -1,104 +1,104 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Risk;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Risk;
 
 /// <summary>
-/// ²ÖÎ»¹ÜÀí·şÎñ½Ó¿Ú
-/// ¸ºÔğ¸ú×ÙºÍ¹ÜÀí³Ö²ÖµÄ´óĞ¡ºÍ¸Ü¸Ë±ÈÀı
+/// ä»“ä½ç®¡ç†æœåŠ¡æ¥å£
+/// è´Ÿè´£è·Ÿè¸ªå’Œç®¡ç†æŒä»“çš„å¤§å°å’Œæ æ†æ¯”ä¾‹
 /// </summary>
 public interface IPositionManager
 {
     /// <summary>
-    /// ¿ª²Ö
+    /// å¼€ä»“
     /// </summary>
-    /// <param name="position">²ÖÎ»ĞÅÏ¢</param>
+    /// <param name="position">ä»“ä½ä¿¡æ¯</param>
     Task<bool> OpenPositionAsync(Position position);
 
     /// <summary>
-    /// Æ½²Ö
+    /// å¹³ä»“
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="quantity">Æ½²ÖÊıÁ¿£¨ÈçÎª 0 ÔòÈ«²¿Æ½²Ö£©</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="quantity">å¹³ä»“æ•°é‡ï¼ˆå¦‚ä¸º 0 åˆ™å…¨éƒ¨å¹³ä»“ï¼‰</param>
     Task<bool> ClosePositionAsync(string symbol, decimal quantity = 0);
 
     /// <summary>
-    /// ²¿·ÖÆ½²Ö
+    /// éƒ¨åˆ†å¹³ä»“
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="quantity">Æ½²ÖÊıÁ¿</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="quantity">å¹³ä»“æ•°é‡</param>
     Task<bool> PartialCloseAsync(string symbol, decimal quantity);
 
     /// <summary>
-    /// »ñÈ¡³Ö²ÖĞÅÏ¢
+    /// è·å–æŒä»“ä¿¡æ¯
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô£¨Îª¿ÕÔò·µ»ØËùÓĞ£©</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹ï¼ˆä¸ºç©ºåˆ™è¿”å›æ‰€æœ‰ï¼‰</param>
     Task<List<Position>> GetPositionsAsync(string? symbol = null);
 
     /// <summary>
-    /// »ñÈ¡µ¥¸ö³Ö²ÖĞÅÏ¢
+    /// è·å–å•ä¸ªæŒä»“ä¿¡æ¯
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
     Task<Position?> GetPositionAsync(string symbol);
 
     /// <summary>
-    /// ¼ÆËã³Ö²ÖµÄÎ´ÊµÏÖÀûÈó
+    /// è®¡ç®—æŒä»“çš„æœªå®ç°åˆ©æ¶¦
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="currentPrice">µ±Ç°¼Û¸ñ</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="currentPrice">å½“å‰ä»·æ ¼</param>
     Task<decimal> CalculateUnrealizedProfitAsync(string symbol, decimal currentPrice);
 
     /// <summary>
-    /// ¸üĞÂ³Ö²Ö¼Û¸ñ£¨ÓÃÓÚ±ê¼Ç£©
+    /// æ›´æ–°æŒä»“ä»·æ ¼ï¼ˆç”¨äºæ ‡è®°ï¼‰
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="markPrice">±ê¼Ç¼Û¸ñ</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="markPrice">æ ‡è®°ä»·æ ¼</param>
     Task<bool> UpdatePositionMarkPriceAsync(string symbol, decimal markPrice);
 
     /// <summary>
-    /// »ñÈ¡×Ü³Ö²Ö¼ÛÖµ
+    /// è·å–æ€»æŒä»“ä»·å€¼
     /// </summary>
     Task<decimal> GetTotalPositionValueAsync();
 
     /// <summary>
-    /// »ñÈ¡³Ö²ÖÊıÁ¿
+    /// è·å–æŒä»“æ•°é‡
     /// </summary>
     Task<int> GetOpenPositionCountAsync();
 
     /// <summary>
-    /// ¼ì²éÊÇ·ñ¿ÉÒÔ¿ª²Ö
+    /// æ£€æŸ¥æ˜¯å¦å¯ä»¥å¼€ä»“
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="quantity">¼Æ»®¿ª²ÖÊıÁ¿</param>
-    /// <param name="maxPositionSize">×î´ó³Ö²Ö´óĞ¡ÏŞÖÆ</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="quantity">è®¡åˆ’å¼€ä»“æ•°é‡</param>
+    /// <param name="maxPositionSize">æœ€å¤§æŒä»“å¤§å°é™åˆ¶</param>
     Task<bool> CanOpenPositionAsync(string symbol, decimal quantity, decimal maxPositionSize);
 
     /// <summary>
-    /// µ÷ÕûÖ¹Ëğ¼Û¸ñ
+    /// è°ƒæ•´æ­¢æŸä»·æ ¼
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="newStopLossPrice">ĞÂµÄÖ¹Ëğ¼Û¸ñ</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="newStopLossPrice">æ–°çš„æ­¢æŸä»·æ ¼</param>
     Task<bool> UpdateStopLossAsync(string symbol, decimal newStopLossPrice);
 
     /// <summary>
-    /// µ÷ÕûÖ¹Ó¯¼Û¸ñ
+    /// è°ƒæ•´æ­¢ç›ˆä»·æ ¼
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="newTakeProfitPrice">ĞÂµÄÖ¹Ó¯¼Û¸ñ</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="newTakeProfitPrice">æ–°çš„æ­¢ç›ˆä»·æ ¼</param>
     Task<bool> UpdateTakeProfitAsync(string symbol, decimal newTakeProfitPrice);
 
     /// <summary>
-    /// »ñÈ¡³Ö²ÖÀúÊ·
+    /// è·å–æŒä»“å†å²
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô£¨¿ÉÑ¡£©</param>
-    /// <param name="limit">ÏŞÖÆÌõÊı</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹ï¼ˆå¯é€‰ï¼‰</param>
+    /// <param name="limit">é™åˆ¶æ¡æ•°</param>
     Task<List<PositionHistory>> GetPositionHistoryAsync(string? symbol = null, int limit = 100);
 
     /// <summary>
-    /// Çå¿ÕËùÓĞ³Ö²Ö
+    /// æ¸…ç©ºæ‰€æœ‰æŒä»“
     /// </summary>
     Task<bool> CloseAllPositionsAsync();
 }
 
 /// <summary>
-/// ²ÖÎ»ĞÅÏ¢
+/// ä»“ä½ä¿¡æ¯
 /// </summary>
 public record Position
 {
@@ -116,7 +116,7 @@ public record Position
     public PositionStatus Status { get; init; }
 
     /// <summary>
-    /// ¼ÆËãÎ´ÊµÏÖÀûÈó
+    /// è®¡ç®—æœªå®ç°åˆ©æ¶¦
     /// </summary>
     public decimal UnrealizedProfit => Direction switch
     {
@@ -126,7 +126,7 @@ public record Position
     };
 
     /// <summary>
-    /// ¼ÆËãÎ´ÊµÏÖÀûÈó°Ù·Ö±È
+    /// è®¡ç®—æœªå®ç°åˆ©æ¶¦ç™¾åˆ†æ¯”
     /// </summary>
     public decimal UnrealizedProfitPercent => EntryPrice > 0
         ? (UnrealizedProfit / (EntryPrice * Quantity)) * 100
@@ -134,7 +134,7 @@ public record Position
 }
 
 /// <summary>
-/// ²ÖÎ»·½Ïò
+/// ä»“ä½æ–¹å‘
 /// </summary>
 public enum PositionDirection
 {
@@ -143,7 +143,7 @@ public enum PositionDirection
 }
 
 /// <summary>
-/// ²ÖÎ»×´Ì¬
+/// ä»“ä½çŠ¶æ€
 /// </summary>
 public enum PositionStatus
 {
@@ -154,7 +154,7 @@ public enum PositionStatus
 }
 
 /// <summary>
-/// ²ÖÎ»ÀúÊ·¼ÇÂ¼
+/// ä»“ä½å†å²è®°å½•
 /// </summary>
 public record PositionHistory
 {

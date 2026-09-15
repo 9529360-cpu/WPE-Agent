@@ -1,15 +1,15 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Infrastructure.Persistence;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Infrastructure.Persistence;
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Serilog;
-using ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Persistence;
+using å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Persistence;
 
 /// <summary>
-/// ½»Ò×Êı¾İ²Ö´¢ÊµÏÖ
-/// Ìá¹©½»Ò×Êı¾İµÄ CRUD ²Ù×÷
+/// äº¤æ˜“æ•°æ®ä»“å‚¨å®ç°
+/// æä¾›äº¤æ˜“æ•°æ®çš„ CRUD æ“ä½œ
 /// </summary>
 public class TradeRepository : ITradeRepository
 {
@@ -31,13 +31,13 @@ public class TradeRepository : ITradeRepository
     {
         try
         {
-            // TODO: ÊµÏÖ°´ ID ²éÑ¯Âß¼­
-            _logger.Debug("²éÑ¯½»Ò×: {TradeId}", tradeId);
+            // TODO: å®ç°æŒ‰ ID æŸ¥è¯¢é€»è¾‘
+            _logger.Debug("æŸ¥è¯¢äº¤æ˜“: {TradeId}", tradeId);
             return await Task.FromResult<TradingLog?>(null).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "²éÑ¯½»Ò×Ê§°Ü: {TradeId}", tradeId);
+            _logger.Error(ex, "æŸ¥è¯¢äº¤æ˜“å¤±è´¥: {TradeId}", tradeId);
             return null;
         }
     }
@@ -56,7 +56,7 @@ public class TradeRepository : ITradeRepository
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "²éÑ¯½»Ò×¶Ô½»Ò×Ê§°Ü: {Symbol}", symbol);
+            _logger.Error(ex, "æŸ¥è¯¢äº¤æ˜“å¯¹äº¤æ˜“å¤±è´¥: {Symbol}", symbol);
             return new List<TradingLog>();
         }
     }
@@ -73,7 +73,7 @@ public class TradeRepository : ITradeRepository
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "²éÑ¯²ßÂÔ½»Ò×Ê§°Ü: {StrategyId}", strategyId);
+            _logger.Error(ex, "æŸ¥è¯¢ç­–ç•¥äº¤æ˜“å¤±è´¥: {StrategyId}", strategyId);
             return new List<TradingLog>();
         }
     }
@@ -91,7 +91,7 @@ public class TradeRepository : ITradeRepository
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "²éÑ¯ËùÓĞ½»Ò×Ê§°Ü");
+            _logger.Error(ex, "æŸ¥è¯¢æ‰€æœ‰äº¤æ˜“å¤±è´¥");
             return new List<TradingLog>();
         }
     }
@@ -100,13 +100,13 @@ public class TradeRepository : ITradeRepository
     {
         try
         {
-            // TODO: ÊµÏÖ UPDATE Âß¼­
-            _logger.Debug("¸üĞÂ½»Ò×: {TradeId}", trade.Id);
+            // TODO: å®ç° UPDATE é€»è¾‘
+            _logger.Debug("æ›´æ–°äº¤æ˜“: {TradeId}", trade.Id);
             return await Task.FromResult(true).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "¸üĞÂ½»Ò×Ê§°Ü: {TradeId}", trade.Id);
+            _logger.Error(ex, "æ›´æ–°äº¤æ˜“å¤±è´¥: {TradeId}", trade.Id);
             return false;
         }
     }
@@ -115,13 +115,13 @@ public class TradeRepository : ITradeRepository
     {
         try
         {
-            // TODO: ÊµÏÖ DELETE Âß¼­
-            _logger.Debug("É¾³ı½»Ò×: {TradeId}", tradeId);
+            // TODO: å®ç° DELETE é€»è¾‘
+            _logger.Debug("åˆ é™¤äº¤æ˜“: {TradeId}", tradeId);
             return await Task.FromResult(true).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "É¾³ı½»Ò×Ê§°Ü: {TradeId}", tradeId);
+            _logger.Error(ex, "åˆ é™¤äº¤æ˜“å¤±è´¥: {TradeId}", tradeId);
             return false;
         }
     }
@@ -135,7 +135,7 @@ public class TradeRepository : ITradeRepository
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Í³¼Æ½»Ò×Ê§°Ü");
+            _logger.Error(ex, "ç»Ÿè®¡äº¤æ˜“å¤±è´¥");
             return 0;
         }
     }
@@ -174,7 +174,7 @@ public class TradeRepository : ITradeRepository
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "»ñÈ¡½»Ò×¶ÔÍ³¼ÆÊ§°Ü");
+            _logger.Error(ex, "è·å–äº¤æ˜“å¯¹ç»Ÿè®¡å¤±è´¥");
             return new List<SymbolTradingStats>();
         }
     }
@@ -202,7 +202,7 @@ public class TradeRepository : ITradeRepository
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "µ¼³ö½»Ò×Êı¾İÊ§°Ü");
+            _logger.Error(ex, "å¯¼å‡ºäº¤æ˜“æ•°æ®å¤±è´¥");
             return false;
         }
     }
@@ -214,73 +214,73 @@ public class TradeRepository : ITradeRepository
 }
 
 /// <summary>
-/// ½»Ò×Êı¾İ²Ö´¢½Ó¿Ú
-/// ¶¨Òå½»Ò×Êı¾İµÄ»ù±¾²Ù×÷
+/// äº¤æ˜“æ•°æ®ä»“å‚¨æ¥å£
+/// å®šä¹‰äº¤æ˜“æ•°æ®çš„åŸºæœ¬æ“ä½œ
 /// </summary>
 public interface ITradeRepository
 {
     /// <summary>
-    /// Ìí¼Ó½»Ò×¼ÇÂ¼
+    /// æ·»åŠ äº¤æ˜“è®°å½•
     /// </summary>
     Task<bool> AddAsync(TradingLog trade);
 
     /// <summary>
-    /// °´ ID »ñÈ¡½»Ò×
+    /// æŒ‰ ID è·å–äº¤æ˜“
     /// </summary>
     Task<TradingLog?> GetByIdAsync(string tradeId);
 
     /// <summary>
-    /// °´½»Ò×¶Ô»ñÈ¡½»Ò×
+    /// æŒ‰äº¤æ˜“å¯¹è·å–äº¤æ˜“
     /// </summary>
     Task<List<TradingLog>> GetBySymbolAsync(string symbol, DateTime startDate, DateTime endDate);
 
     /// <summary>
-    /// °´²ßÂÔ»ñÈ¡½»Ò×
+    /// æŒ‰ç­–ç•¥è·å–äº¤æ˜“
     /// </summary>
     Task<List<TradingLog>> GetByStrategyAsync(string strategyId);
 
     /// <summary>
-    /// »ñÈ¡ËùÓĞ½»Ò×£¨·ÖÒ³£©
+    /// è·å–æ‰€æœ‰äº¤æ˜“ï¼ˆåˆ†é¡µï¼‰
     /// </summary>
     Task<List<TradingLog>> GetAllAsync(int limit = 1000, int offset = 0);
 
     /// <summary>
-    /// ¸üĞÂ½»Ò×¼ÇÂ¼
+    /// æ›´æ–°äº¤æ˜“è®°å½•
     /// </summary>
     Task<bool> UpdateAsync(TradingLog trade);
 
     /// <summary>
-    /// É¾³ı½»Ò×¼ÇÂ¼
+    /// åˆ é™¤äº¤æ˜“è®°å½•
     /// </summary>
     Task<bool> DeleteAsync(string tradeId);
 
     /// <summary>
-    /// Í³¼Æ·ûºÏÌõ¼şµÄ½»Ò×ÊıÁ¿
+    /// ç»Ÿè®¡ç¬¦åˆæ¡ä»¶çš„äº¤æ˜“æ•°é‡
     /// </summary>
     Task<int> CountAsync(TradeQueryFilter filter);
 
     /// <summary>
-    /// »ñÈ¡½»Ò×»ã×Ü
+    /// è·å–äº¤æ˜“æ±‡æ€»
     /// </summary>
     Task<TradingSummary> GetSummaryAsync(DateTime startDate, DateTime endDate);
 
     /// <summary>
-    /// »ñÈ¡¸÷½»Ò×¶ÔµÄÍ³¼Æ
+    /// è·å–å„äº¤æ˜“å¯¹çš„ç»Ÿè®¡
     /// </summary>
     Task<List<SymbolTradingStats>> GetSymbolStatsAsync(DateTime startDate, DateTime endDate);
 
     /// <summary>
-    /// »ñÈ¡È¨ÒæÇúÏßÊı¾İ
+    /// è·å–æƒç›Šæ›²çº¿æ•°æ®
     /// </summary>
     Task<List<EquityCurvePoint>> GetEquityCurveAsync(DateTime startDate, DateTime endDate, int intervalMinutes = 60);
 
     /// <summary>
-    /// µ¼³ö½»Ò×Êı¾İÎª CSV
+    /// å¯¼å‡ºäº¤æ˜“æ•°æ®ä¸º CSV
     /// </summary>
     Task<bool> ExportToCsvAsync(string filePath, DateTime startDate, DateTime endDate);
 
     /// <summary>
-    /// É¾³ı¾É¼ÇÂ¼
+    /// åˆ é™¤æ—§è®°å½•
     /// </summary>
     Task<int> DeleteOldRecordsAsync(DateTime olderThan);
 }

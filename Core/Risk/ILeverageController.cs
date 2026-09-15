@@ -1,31 +1,31 @@
-namespace ±Ò°²Á¿»¯»úÆ÷ÈË.Core.Risk;
+namespace å¸å®‰é‡åŒ–æœºå™¨äºº.Core.Risk;
 
 /// <summary>
-/// ¸Ü¸Ë¿ØÖÆ·şÎñ½Ó¿Ú
-/// ¸ºÔğ¹ÜÀí±£Ö¤½ğºÍ¸Ü¸Ë±¶Êı
+/// æ æ†æ§åˆ¶æœåŠ¡æ¥å£
+/// è´Ÿè´£ç®¡ç†ä¿è¯é‡‘å’Œæ æ†å€æ•°
 /// </summary>
 public interface ILeverageController
 {
     /// <summary>
-    /// ÉèÖÃ¸Ü¸Ë±¶Êı
+    /// è®¾ç½®æ æ†å€æ•°
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="leverage">¸Ü¸Ë±¶Êı£¨1-125£©</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="leverage">æ æ†å€æ•°ï¼ˆ1-125ï¼‰</param>
     Task<bool> SetLeverageAsync(string symbol, int leverage);
 
     /// <summary>
-    /// »ñÈ¡µ±Ç°¸Ü¸Ë±¶Êı
+    /// è·å–å½“å‰æ æ†å€æ•°
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
     Task<int> GetCurrentLeverageAsync(string symbol);
 
     /// <summary>
-    /// ¼ÆËãËùĞèµÄ±£Ö¤½ğ
+    /// è®¡ç®—æ‰€éœ€çš„ä¿è¯é‡‘
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="quantity">³Ö²ÖÊıÁ¿</param>
-    /// <param name="price">³Ö²Ö¼Û¸ñ</param>
-    /// <param name="leverage">¸Ü¸Ë±¶Êı</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="quantity">æŒä»“æ•°é‡</param>
+    /// <param name="price">æŒä»“ä»·æ ¼</param>
+    /// <param name="leverage">æ æ†å€æ•°</param>
     Task<decimal> CalculateRequiredMarginAsync(
         string symbol,
         decimal quantity,
@@ -33,51 +33,51 @@ public interface ILeverageController
         int leverage);
 
     /// <summary>
-    /// »ñÈ¡ÕË»§×Ü±£Ö¤½ğ
+    /// è·å–è´¦æˆ·æ€»ä¿è¯é‡‘
     /// </summary>
     Task<decimal> GetTotalMarginAsync();
 
     /// <summary>
-    /// »ñÈ¡ÕË»§¿ÉÓÃ±£Ö¤½ğ
+    /// è·å–è´¦æˆ·å¯ç”¨ä¿è¯é‡‘
     /// </summary>
     Task<decimal> GetAvailableMarginAsync();
 
     /// <summary>
-    /// ¼ÆËã±£Ö¤½ğÂÊ
+    /// è®¡ç®—ä¿è¯é‡‘ç‡
     /// </summary>
     Task<decimal> CalculateMarginRatioAsync();
 
     /// <summary>
-    /// ¼ì²éÊÇ·ñ¼´½«´¥·¢ÇåËã
+    /// æ£€æŸ¥æ˜¯å¦å³å°†è§¦å‘æ¸…ç®—
     /// </summary>
-    /// <param name="warningThreshold">¾¯¸æãĞÖµ£¬Èç 0.2 ±íÊ¾±£Ö¤½ğÂÊµÍÓÚ 20%</param>
+    /// <param name="warningThreshold">è­¦å‘Šé˜ˆå€¼ï¼Œå¦‚ 0.2 è¡¨ç¤ºä¿è¯é‡‘ç‡ä½äº 20%</param>
     Task<bool> IsLiquidationRiskAsync(decimal warningThreshold = 0.2m);
 
     /// <summary>
-    /// ×Ô¶¯µ÷Õû¸Ü¸ËÒÔÎ¬³ÖÄ¿±ê±£Ö¤½ğÂÊ
+    /// è‡ªåŠ¨è°ƒæ•´æ æ†ä»¥ç»´æŒç›®æ ‡ä¿è¯é‡‘ç‡
     /// </summary>
-    /// <param name="targetMarginRatio">Ä¿±ê±£Ö¤½ğÂÊ£¬Èç 0.5 ±íÊ¾ 50%</param>
+    /// <param name="targetMarginRatio">ç›®æ ‡ä¿è¯é‡‘ç‡ï¼Œå¦‚ 0.5 è¡¨ç¤º 50%</param>
     Task<bool> AutoAdjustLeverageToTargetRatioAsync(decimal targetMarginRatio);
 
     /// <summary>
-    /// Ôö¼Ó±£Ö¤½ğ£¨×ªÈë×Ê½ğ£©
+    /// å¢åŠ ä¿è¯é‡‘ï¼ˆè½¬å…¥èµ„é‡‘ï¼‰
     /// </summary>
-    /// <param name="amount">Ôö¼Ó½ğ¶î</param>
+    /// <param name="amount">å¢åŠ é‡‘é¢</param>
     Task<bool> AddMarginAsync(decimal amount);
 
     /// <summary>
-    /// ¼õÉÙ±£Ö¤½ğ£¨×ª³ö×Ê½ğ£©
+    /// å‡å°‘ä¿è¯é‡‘ï¼ˆè½¬å‡ºèµ„é‡‘ï¼‰
     /// </summary>
-    /// <param name="amount">¼õÉÙ½ğ¶î</param>
+    /// <param name="amount">å‡å°‘é‡‘é¢</param>
     Task<bool> RemoveMarginAsync(decimal amount);
 
     /// <summary>
-    /// ¼ì²éÊÇ·ñ¿ÉÒÔÒÔ¸ø¶¨¸Ü¸Ë¿ª²Ö
+    /// æ£€æŸ¥æ˜¯å¦å¯ä»¥ä»¥ç»™å®šæ æ†å¼€ä»“
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
-    /// <param name="quantity">¼Æ»®³Ö²ÖÊıÁ¿</param>
-    /// <param name="price">¼Æ»®³Ö²Ö¼Û¸ñ</param>
-    /// <param name="leverage">¼Æ»®¸Ü¸Ë±¶Êı</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
+    /// <param name="quantity">è®¡åˆ’æŒä»“æ•°é‡</param>
+    /// <param name="price">è®¡åˆ’æŒä»“ä»·æ ¼</param>
+    /// <param name="leverage">è®¡åˆ’æ æ†å€æ•°</param>
     Task<bool> CanOpenWithLeverageAsync(
         string symbol,
         decimal quantity,
@@ -85,25 +85,25 @@ public interface ILeverageController
         int leverage);
 
     /// <summary>
-    /// »ñÈ¡¸Ü¸ËĞÅÏ¢×ÜÀÀ
+    /// è·å–æ æ†ä¿¡æ¯æ€»è§ˆ
     /// </summary>
     Task<LeverageInfo> GetLeverageInfoAsync();
 
     /// <summary>
-    /// »ñÈ¡·ûºÅµÄ×î´ó¿ÉÓÃ¸Ü¸Ë
+    /// è·å–ç¬¦å·çš„æœ€å¤§å¯ç”¨æ æ†
     /// </summary>
-    /// <param name="symbol">½»Ò×¶Ô</param>
+    /// <param name="symbol">äº¤æ˜“å¯¹</param>
     Task<int> GetMaxLeverageAsync(string symbol);
 
     /// <summary>
-    /// »ñÈ¡ÀúÊ·¸Ü¸Ëµ÷Õû¼ÇÂ¼
+    /// è·å–å†å²æ æ†è°ƒæ•´è®°å½•
     /// </summary>
-    /// <param name="limit">ÏŞÖÆÌõÊı</param>
+    /// <param name="limit">é™åˆ¶æ¡æ•°</param>
     Task<List<LeverageAdjustmentRecord>> GetLeverageHistoryAsync(int limit = 100);
 }
 
 /// <summary>
-/// ¸Ü¸ËĞÅÏ¢
+/// æ æ†ä¿¡æ¯
 /// </summary>
 public record LeverageInfo
 {
@@ -117,7 +117,7 @@ public record LeverageInfo
 }
 
 /// <summary>
-/// µ¥¸ö·ûºÅµÄ¸Ü¸ËĞÅÏ¢
+/// å•ä¸ªç¬¦å·çš„æ æ†ä¿¡æ¯
 /// </summary>
 public record SymbolLeverageInfo
 {
@@ -129,7 +129,7 @@ public record SymbolLeverageInfo
 }
 
 /// <summary>
-/// ¸Ü¸Ëµ÷Õû¼ÇÂ¼
+/// æ æ†è°ƒæ•´è®°å½•
 /// </summary>
 public record LeverageAdjustmentRecord
 {
@@ -142,7 +142,7 @@ public record LeverageAdjustmentRecord
 }
 
 /// <summary>
-/// µ÷ÕûÔ­Òò
+/// è°ƒæ•´åŸå› 
 /// </summary>
 public enum AdjustmentReason
 {
