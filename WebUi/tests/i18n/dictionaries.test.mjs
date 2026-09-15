@@ -67,7 +67,7 @@ test('converged route tree preserves accepted Teacher, notification, settings an
 
 test('authorization copy and read-only approval projection stay complete',()=>{
   const keys=['settings.authorizationHelp','settings.authorizationStale','settings.authorizationError','settings.authorizationUnsupported','settings.modeResearch','settings.modeSignal','settings.modeReview','settings.modeAutoTestnet','settings.approvalId','settings.created','settings.reasonCode','settings.statusPending','settings.statusRevoked','settings.statusExpired','settings.statusArtifactUnavailable']
-  for(const locale of locales.filter(value=>value!=='en_US'))for(const key of keys){assert.notEqual(translate(locale,key),key,`${locale}:${key} returned raw key`);assert.notEqual(value,translate('en_US',key),`${locale}:${key} fell back to English`)}
+  for(const locale of locales.filter(value=>value!=='en_US'))for(const key of keys){const value=translate(locale,key);assert.notEqual(value,key,`${locale}:${key} returned raw key`);assert.notEqual(value,translate('en_US',key),`${locale}:${key} fell back to English`)}
   const page=fs.readFileSync(path.join(root,'app/(dashboard)/settings/page.tsx'),'utf8')
   const preview=fs.readFileSync(path.join(root,'lib/runtime-preview.development.ts'),'utf8')
   assert.doesNotMatch(page,/runtime\.loggedInUser/)
