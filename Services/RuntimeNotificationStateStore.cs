@@ -36,8 +36,7 @@ public sealed class RuntimeNotificationStateStore(AgentSettingsStore? settingsSt
             var status=new RuntimeNotificationStatusV1(configured.Enabled,telegramStored,telegramReady,whatsAppStored,whatsAppReady,configured.LegacyMigrationPending,configured.LegacyMigrationDiagnosticCode,configured.EventKinds.ToArray(),configured.QuietHoursEnabled,configured.QuietHoursStart,configured.QuietHoursEnd,configured.QuietHoursTimeZone,s.PendingCount,s.RetryingCount,s.SentCount,s.DeadLetterCount);
             var rows=projection.Recent.Select(x=>new RuntimeNotificationOutboxRowV1(x.Id,x.Channel.ToString(),x.Kind.ToString(),x.UiState.ToString(),x.InFlight,x.Attempts,x.MaxAttempts,x.OccurredAtUtc,x.NextAttemptAtUtc,x.UpdatedAtUtc,x.DiagnosticCode)).ToArray();
             var subscribers=(await _subscribers.ListAsync(ct)).Select(x=>new RuntimeTelegramSubscriberV1("tg#"+x.SubscriberKey[..12].ToLowerInvariant(),x.ChatType,x.State.ToString(),x.AllowedEventKinds.Select(k=>k.ToString()).OrderBy(k=>k,StringComparer.Ordinal).ToArray(),x.FirstSeenAtUtc,x.UpdatedAtUtc)).ToArray();
-            var telegramHealth=_telegramHealth.Read();
-            var healthMessage=telegramHealth.Degraded?telegramHealth.ToSafeStatusMessage():null;
+            var healthMessage=_telegramHealth.Read().ToSafeStatusMessage();
             lock(_gate)_current=new(RuntimeCollectionState.Available,status,rows,subscribers,DateTimeOffset.UtcNow,healthMessage);
         }
         catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
