@@ -2,7 +2,8 @@ using 币安量化机器人.Services.Agent;
 
 namespace 币安量化机器人.Services.Access;
 
-public sealed record PrivilegedLocalAccessResult(bool Allowed,string Code,string UserId="");
+public sealed record PrivilegedLocalAccessResult(
+    bool Allowed,string Code,string UserId="",AgentSettings? Settings=null);
 
 public static class PrivilegedLocalAccessPolicy
 {
@@ -30,6 +31,6 @@ public static class PrivilegedLocalAccessPolicy
         if(requireSetup&&!settings.SetupCompleted)
             return new(false,"privileged-cli.setup-required");
 
-        return new(true,"privileged-cli.allowed",expectedUser);
+        return new(true,"privileged-cli.allowed",expectedUser,settings);
     }
 }
