@@ -1,6 +1,6 @@
 'use client'
 
-import { AgentStatusPanel } from '@/components/dashboard/agent-status'
+import { DecisionContext } from '@/components/dashboard/decision-context'
 import { DecisionFlow } from '@/components/dashboard/decision-flow'
 import { MarketOverview } from '@/components/dashboard/market-overview'
 import { MarketSelector } from '@/components/dashboard/market-selector'
@@ -9,7 +9,6 @@ import { PortfolioPanel } from '@/components/dashboard/portfolio'
 import { ResourceMonitor } from '@/components/dashboard/resource-monitor'
 import { RiskSummary } from '@/components/dashboard/risk-summary'
 import { SystemHealth } from '@/components/dashboard/system-health'
-import { ThoughtStream } from '@/components/dashboard/thought-stream'
 import { useWpeRuntime } from '@/components/runtime-bridge'
 import { RuntimeMetric, RuntimeUnavailable } from '@/components/runtime-state'
 import { PageHeader } from '@/components/shell/page-header'
@@ -38,8 +37,11 @@ export default function DashboardPage() {
       ) : <RuntimeUnavailable stale={Boolean(runtime.lastUpdated)} subject={t('dashboard.runtime')} />}
       <MarketSelector />
       <MarketOverview />
-      <div className="grid gap-4 xl:grid-cols-[1fr_360px]"><AgentStatusPanel /><DecisionFlow /></div>
-      <div className="grid gap-4 xl:grid-cols-[1fr_400px]"><PortfolioPanel /><ThoughtStream /></div>
+      <DecisionFlow />
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+        <PortfolioPanel />
+        <DecisionContext />
+      </div>
       <div className="grid gap-4 lg:grid-cols-2"><OrderFeed /><RiskSummary /></div>
       <ResourceMonitor />
       <SystemHealth />
