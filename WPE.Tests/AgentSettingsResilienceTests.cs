@@ -193,58 +193,12 @@ public sealed class AgentSettingsResilienceTests : IDisposable
         Assert.Empty(settings.Mainnet.EncryptedApiKey);
     }
 
-    [Theory]
-    [InlineData("\u5e01\u5b89API.txt")]
-    [InlineData("\u5e01\u5b89API\u6a21\u677f.txt")]
-    public void DesktopTestnetImport_AcceptsKnownUnicodeNamesAndPersistsOnlyEncryptedTestnetCredentials(string fileName)
+    [Fact]
+    public void SettingsStore_DoesNotExposeAmbientDesktopCredentialImport()
     {
-        const string apiKey = "fake-testnet-api-key";
-        const string apiSecret = "fake-testnet-api-secret";
-        Directory.CreateDirectory(_directory);
-        File.WriteAllText(Path.Combine(_directory, fileName), $"  # fake credentials only\n\n API_KEY = {apiKey} \n // ignored\n API_SECRET = {apiSecret}\n", Encoding.UTF8);
-        var store = new AgentSettingsStore(SettingsPath, null, _directory);
-        var settings = Settings(ExchangeEnvironment.Mainnet);
+        var methods = typeof(AgentSettingsStore).GetMethods(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
 
-        store.ImportDesktopTestnetIfEmpty(settings);
-
-        Assert.NotEqual(apiKey, settings.Testnet.EncryptedApiKey);
-        Assert.NotEqual(apiSecret, settings.Testnet.EncryptedApiSecret);
-        Assert.Equal(apiKey, SecretVaultService.Decrypt(settings.Testnet.EncryptedApiKey));
-        Assert.Equal(apiSecret, SecretVaultService.Decrypt(settings.Testnet.EncryptedApiSecret));
-        Assert.Empty(settings.Mainnet.EncryptedApiKey);
-        Assert.Empty(settings.Mainnet.EncryptedApiSecret);
-        Assert.Equal(ExchangeEnvironment.Mainnet, settings.Environment);
-        Assert.Equal((string.Empty, string.Empty), store.GetCredentials(settings));
-        var importedProfile = Assert.Single(settings.Exchanges);
-        Assert.True(importedProfile.IsTestnet);
-        Assert.Equal("https://testnet.binancefuture.com", importedProfile.Endpoint);
-        Assert.Equal(settings.Testnet.EncryptedApiKey, importedProfile.EncryptedCredentials["apiKey"]);
-        Assert.Equal(settings.Testnet.EncryptedApiSecret, importedProfile.EncryptedCredentials["secret"]);
-        var persisted = File.ReadAllText(SettingsPath);
-        Assert.DoesNotContain(apiKey, persisted, StringComparison.Ordinal);
-        Assert.DoesNotContain(apiSecret, persisted, StringComparison.Ordinal);
-        var loaded = store.Load();
-        Assert.Empty(loaded.Mainnet.EncryptedApiKey);
-        Assert.Empty(loaded.Mainnet.EncryptedApiSecret);
-    }
-
-    [Theory]
-    [InlineData("API_KEY=fake-key\nAPI_KEY=duplicate-key\nAPI_SECRET=fake-secret")]
-    [InlineData("API_KEY=\nAPI_SECRET=fake-secret")]
-    [InlineData("API_KEY=fake-key\nAPI_SECRET=")]
-    [InlineData("API_KEY=fake-key\nAPI_SECRET=fake-secret\nPASSPHRASE=extra-sensitive-value")]
-    public void DesktopTestnetImport_RejectsAmbiguousOrAdditionalCredentialData(string content)
-    {
-        Directory.CreateDirectory(_directory);
-        File.WriteAllText(Path.Combine(_directory, "\u5e01\u5b89API\u6a21\u677f.txt"), content, Encoding.UTF8);
-        var store = new AgentSettingsStore(SettingsPath, null, _directory);
-        var settings = Settings(ExchangeEnvironment.Testnet);
-
-        store.ImportDesktopTestnetIfEmpty(settings);
-
-        Assert.Empty(settings.Testnet.EncryptedApiKey);
-        Assert.Empty(settings.Testnet.EncryptedApiSecret);
-        Assert.False(File.Exists(SettingsPath));
+        Assert.DoesNotContain(methods, method => method.Name.StartsWith("ImportDesktop", StringComparison.Ordinal));
     }
 
     public void Dispose()

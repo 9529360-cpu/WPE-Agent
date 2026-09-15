@@ -48,17 +48,10 @@ public sealed class AgentSettings { public ExchangeEnvironment Environment { get
 public sealed record AgentSettingsLoadDiagnostic(string ErrorType,string ConfigurationPath);
 public sealed class AgentSettingsStore
 {
-    private static readonly string[] DesktopTestnetCredentialFileNames =
-    [
-        "\u5e01\u5b89API.txt",
-        "\u5e01\u5b89API\u6a21\u677f.txt"
-    ];
     private readonly string _path;
     private readonly Func<DateTimeOffset> _utcNow;
-    private readonly string _desktopDirectory;
-    public AgentSettingsStore(string? path=null):this(path,null,null){}
-    internal AgentSettingsStore(string? path,Func<DateTimeOffset>? utcNow):this(path,utcNow,null){}
-    internal AgentSettingsStore(string? path,Func<DateTimeOffset>? utcNow,string? desktopDirectory){_path=path??AppDataPaths.File("agent-settings.json");_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);_desktopDirectory=desktopDirectory??Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);}
+    public AgentSettingsStore(string? path=null):this(path,null){}
+    internal AgentSettingsStore(string? path,Func<DateTimeOffset>? utcNow){_path=path??AppDataPaths.File("agent-settings.json");_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);}
     public AgentSettingsLoadDiagnostic? LastLoadDiagnostic { get; private set; }
     public AgentSettings Load()
     {
@@ -145,51 +138,6 @@ public sealed class AgentSettingsStore
         catch(IOException){}
         catch(UnauthorizedAccessException){}
         return TradingAuthorizationMode.Review;
-    }
-    public void ImportDesktopTestnetIfEmpty(AgentSettings settings)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        if (!string.IsNullOrWhiteSpace(settings.Testnet.EncryptedApiKey) || !string.IsNullOrWhiteSpace(settings.Testnet.EncryptedApiSecret)) return;
-        var path = DesktopTestnetCredentialFileNames.Select(x => Path.Combine(_desktopDirectory,x)).FirstOrDefault(File.Exists);
-        if (path is null) return;
-        if (!TryReadDesktopTestnetCredentials(path,out var key,out var secret)) return;
-        settings.Testnet.EncryptedApiKey=SecretVaultService.Encrypt(key);
-        settings.Testnet.EncryptedApiSecret=SecretVaultService.Encrypt(secret);
-        EnsureExchangeProfiles(settings);
-        var profile=settings.Exchanges.First(x=>x.ProviderId=="binance-futures"&&x.IsTestnet);
-        profile.EncryptedCredentials["apiKey"]=settings.Testnet.EncryptedApiKey;
-        profile.EncryptedCredentials["secret"]=settings.Testnet.EncryptedApiSecret;
-        Save(settings);
-    }
-    private static bool TryReadDesktopTestnetCredentials(string path,out string key,out string secret)
-    {
-        key=string.Empty;secret=string.Empty;
-        var values=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            foreach(var rawLine in File.ReadLines(path,Encoding.UTF8))
-            {
-                var line=rawLine.Trim();
-                if(line.Length==0||line.StartsWith('#')||line.StartsWith(';')||line.StartsWith("//",StringComparison.Ordinal))continue;
-                var separator=line.IndexOf('=');
-                if(separator<=0)return false;
-                var name=line[..separator].Trim();
-                var value=line[(separator+1)..].Trim();
-                if((!name.Equals("API_KEY",StringComparison.OrdinalIgnoreCase)&&!name.Equals("API_SECRET",StringComparison.OrdinalIgnoreCase))||value.Length==0||!values.TryAdd(name,value))return false;
-            }
-        }
-        catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or DecoderFallbackException)
-        {
-            return false;
-        }
-        if(!values.TryGetValue("API_KEY",out var parsedKey)||!values.TryGetValue("API_SECRET",out var parsedSecret))return false;
-        key=parsedKey;secret=parsedSecret;
-        return true;
-    }
-    public void ImportDesktopDeepSeekIfEmpty(AgentSettings settings)
-    {
-        if(!settings.Brains.TryGetValue("DeepSeek",out var slot)){slot=new BrainSlot();settings.Brains["DeepSeek"]=slot;}if(!string.IsNullOrWhiteSpace(slot.EncryptedKey))return;
-        var path=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),"API.txt");if(!File.Exists(path))return;var key=File.ReadAllText(path).Trim();if(key.Length>10){slot.EncryptedKey=SecretVaultService.Encrypt(key);Save(settings);}
     }
     public (string Key,string Secret) GetCredentials(AgentSettings s)
     {
