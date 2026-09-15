@@ -22,7 +22,7 @@ public sealed class LocalAccountService
         get
         {
             try{return Load().Count==0;}
-            catch(InvalidDataException){return false;}
+            catch{return false;}
         }
     }
     public (LoginResult Result,string RecoveryCode) Create(string userName,string password)
@@ -61,10 +61,10 @@ public sealed class LocalAccountService
     private void Save(List<LocalAccountRecord> accounts){var temp=_accountsPath+".tmp";File.WriteAllText(temp,JsonSerializer.Serialize(accounts,new JsonSerializerOptions{WriteIndented=true}));File.Move(temp,_accountsPath,true);}
     private static void ValidatePersistedAccounts(IReadOnlyList<LocalAccountRecord> accounts)
     {
-        if(accounts.Count>1)throw new InvalidDataException("Only one local account is supported.");
         foreach(var account in accounts)
         {
-            _=Normalize(account.UserName);
+            var userName=account.UserName?.Trim()??string.Empty;
+            if(userName.Length is <3 or >32||userName.Any(c=>!char.IsLetterOrDigit(c)&&c is not '_' and not '-'))throw new InvalidDataException("Local account user name is invalid.");
             if(account.Iterations<Iterations||account.Iterations>2_000_000)throw new InvalidDataException("Local account KDF parameters are invalid.");
             ValidateEncodedSecret(account.Salt,16,"salt");
             ValidateEncodedSecret(account.RecoverySalt,16,"recovery salt");
