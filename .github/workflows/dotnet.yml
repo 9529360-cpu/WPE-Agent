@@ -36,6 +36,10 @@ jobs:
       working-directory: WebUi
       run: pnpm install --frozen-lockfile
 
+    - name: Audit Web UI dependencies
+      working-directory: WebUi
+      run: pnpm audit --audit-level=low
+
     - name: Web lint
       working-directory: WebUi
       run: pnpm lint
@@ -76,6 +80,18 @@ jobs:
 
     - name: Restore .NET
       run: dotnet restore "币安量化机器人.sln"
+
+    - name: Audit .NET dependencies
+      shell: pwsh
+      run: |
+        $output = & dotnet list "币安量化机器人.sln" package --vulnerable --include-transitive 2>&1
+        $exitCode = $LASTEXITCODE
+        $output | ForEach-Object { Write-Host $_ }
+        if ($exitCode -ne 0) { throw "NuGet vulnerability audit failed to execute." }
+        $joined = $output -join "`n"
+        if ($joined -match 'has the following vulnerable packages') {
+          throw "NuGet vulnerability audit found vulnerable packages."
+        }
 
     - name: Build .NET
       run: dotnet build "币安量化机器人.sln" --configuration Release --no-restore
