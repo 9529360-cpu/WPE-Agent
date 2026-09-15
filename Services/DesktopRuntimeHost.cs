@@ -7,15 +7,28 @@ using 币安量化机器人.Services.Agent;
 
 namespace 币安量化机器人.Services;
 
-public sealed class DesktopRuntimeHost
+public sealed class DesktopRuntimeHost : IAsyncDisposable
 {
+    private static readonly TimeSpan SnapshotRefreshInterval = TimeSpan.FromSeconds(2);
+    private static readonly JsonSerializerOptions SnapshotJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+    };
+
     private readonly AgentSettingsStore _settingsStore = new();
     private readonly AccessReadinessService _readiness = new();
+    private readonly CancellationTokenSource _snapshotPumpCancellation = new();
+    private readonly Task _snapshotPumpTask;
+    private string _runtimeJson;
+    private int _disposed;
 
     public DesktopRuntimeHost(string userName)
     {
         UserName = userName;
         ServiceLocator.SystemState.LoggedInUser = userName;
+        _runtimeJson = SerializeSnapshot(RuntimeSnapshotFactory.Create(ServiceLocator.SystemState, DateTime.UtcNow));
+        _snapshotPumpTask = Task.Run(() => RunRuntimeSnapshotPumpAsync(_snapshotPumpCancellation.Token));
     }
 
     public string UserName { get; }
@@ -37,18 +50,67 @@ public sealed class DesktopRuntimeHost
         return true;
     }
 
-    public string BuildRuntimeJson()
+    public string BuildRuntimeJson() => Volatile.Read(ref _runtimeJson);
+
+    public async ValueTask DisposeAsync()
     {
-        ServiceLocator.RuntimeAudit.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
-        ServiceLocator.RuntimeEquity.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
-        ServiceLocator.RuntimeStrategyRegistry.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
-        ServiceLocator.RuntimeSkillCalls.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
-        ServiceLocator.RuntimeMemory.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
-        ServiceLocator.RuntimeAgentOperations.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
-        ServiceLocator.RuntimeTeacher.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
-        ServiceLocator.RuntimeNotifications.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
-        ServiceLocator.RuntimeAuthorization.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
-        ServiceLocator.RuntimeHistoricalCollections.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+
+        _snapshotPumpCancellation.Cancel();
+        try
+        {
+            await _snapshotPumpTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_snapshotPumpCancellation.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            _snapshotPumpCancellation.Dispose();
+        }
+    }
+
+    private async Task RunRuntimeSnapshotPumpAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await RefreshRuntimeSnapshotAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"WPE runtime snapshot refresh failed: {ex.GetType().Name}");
+            }
+
+            try
+            {
+                await Task.Delay(SnapshotRefreshInterval, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+        }
+    }
+
+    private async Task RefreshRuntimeSnapshotAsync(CancellationToken ct)
+    {
+        await ServiceLocator.RuntimeAudit.RefreshAsync(ct);
+        await ServiceLocator.RuntimeEquity.RefreshAsync(ct);
+        await ServiceLocator.RuntimeStrategyRegistry.RefreshAsync(ct);
+        await ServiceLocator.RuntimeSkillCalls.RefreshAsync(ct);
+        await ServiceLocator.RuntimeMemory.RefreshAsync(ct);
+        await ServiceLocator.RuntimeAgentOperations.RefreshAsync(ct);
+        await ServiceLocator.RuntimeTeacher.RefreshAsync(ct);
+        await ServiceLocator.RuntimeNotifications.RefreshAsync(ct);
+        await ServiceLocator.RuntimeAuthorization.RefreshAsync(ct);
+        await ServiceLocator.RuntimeHistoricalCollections.RefreshAsync(ct);
+
         var snapshot = RuntimeSnapshotFactory.Create(
             ServiceLocator.SystemState,
             DateTime.UtcNow,
@@ -74,12 +136,11 @@ public sealed class DesktopRuntimeHost
             ServiceLocator.RuntimeDistribution.Read(),
             ServiceLocator.PublicMarket.Read(),
             ServiceLocator.SecurityStorage.Read());
-        return JsonSerializer.Serialize(snapshot, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
-        });
+
+        Volatile.Write(ref _runtimeJson, SerializeSnapshot(snapshot));
     }
+
+    private static string SerializeSnapshot(object snapshot) => JsonSerializer.Serialize(snapshot, SnapshotJsonOptions);
 
     private static void PublishAccess(AccessReadinessReport report, AgentSettings settings)
     {

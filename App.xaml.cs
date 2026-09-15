@@ -13,6 +13,7 @@ namespace 币安量化机器人;
 public partial class App : global::System.Windows.Application
 {
     private static IServiceProvider? _serviceProvider;
+    private DesktopRuntimeHost? _runtimeHost;
 
     public static IServiceProvider ServiceProvider
     {
@@ -409,6 +410,7 @@ public partial class App : global::System.Windows.Application
             if (setup.ShowDialog() != true || !setup.SetupCompleted) { Shutdown(); return; }
         }
         var runtimeHost = new DesktopRuntimeHost(localIdentity);
+        _runtimeHost = runtimeHost;
         var accessReady = await runtimeHost.RefreshAccessAsync();
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         var reference = new WpeAgent.ReferenceUiWindow(runtimeHost.BuildRuntimeJson, () =>
@@ -432,6 +434,11 @@ public partial class App : global::System.Windows.Application
         try
         {
             await AutoTradingAgent.StopAsync();
+            if (_runtimeHost is not null)
+            {
+                await _runtimeHost.DisposeAsync();
+                _runtimeHost = null;
+            }
             await ServiceLocator.DisposeAsync();
             if (ServiceProvider is IAsyncDisposable asyncDisposable)
             {

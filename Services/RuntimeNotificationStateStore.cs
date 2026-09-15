@@ -11,12 +11,13 @@ public sealed record RuntimeNotificationState(RuntimeCollectionState State,Runti
     public static RuntimeNotificationState Error(string message)=>new(RuntimeCollectionState.Error,null,[],[],DateTimeOffset.UtcNow,message);
 }
 
-public sealed class RuntimeNotificationStateStore(AgentSettingsStore? settingsStore=null,NotificationOutboxStore? outboxStore=null,TelegramSubscriberStore? subscriberStore=null)
+public sealed class RuntimeNotificationStateStore(AgentSettingsStore? settingsStore=null,NotificationOutboxStore? outboxStore=null,TelegramSubscriberStore? subscriberStore=null,TelegramRuntimeHealthStore? telegramHealthStore=null)
 {
     public static readonly TimeSpan StaleAfter=TimeSpan.FromMinutes(5);
     private readonly AgentSettingsStore _settings=settingsStore??new AgentSettingsStore();
     private readonly NotificationOutboxStore _outbox=outboxStore??new NotificationOutboxStore();
     private readonly TelegramSubscriberStore _subscribers=subscriberStore??new TelegramSubscriberStore();
+    private readonly TelegramRuntimeHealthStore _telegramHealth=telegramHealthStore??TelegramRuntimeHealthStore.Shared;
     private readonly object _gate=new();
     private RuntimeNotificationState _current=RuntimeNotificationState.Unsupported("Notification state has not been read.");
 
@@ -35,7 +36,8 @@ public sealed class RuntimeNotificationStateStore(AgentSettingsStore? settingsSt
             var status=new RuntimeNotificationStatusV1(configured.Enabled,telegramStored,telegramReady,whatsAppStored,whatsAppReady,configured.LegacyMigrationPending,configured.LegacyMigrationDiagnosticCode,configured.EventKinds.ToArray(),configured.QuietHoursEnabled,configured.QuietHoursStart,configured.QuietHoursEnd,configured.QuietHoursTimeZone,s.PendingCount,s.RetryingCount,s.SentCount,s.DeadLetterCount);
             var rows=projection.Recent.Select(x=>new RuntimeNotificationOutboxRowV1(x.Id,x.Channel.ToString(),x.Kind.ToString(),x.UiState.ToString(),x.InFlight,x.Attempts,x.MaxAttempts,x.OccurredAtUtc,x.NextAttemptAtUtc,x.UpdatedAtUtc,x.DiagnosticCode)).ToArray();
             var subscribers=(await _subscribers.ListAsync(ct)).Select(x=>new RuntimeTelegramSubscriberV1("tg#"+x.SubscriberKey[..12].ToLowerInvariant(),x.ChatType,x.State.ToString(),x.AllowedEventKinds.Select(k=>k.ToString()).OrderBy(k=>k,StringComparer.Ordinal).ToArray(),x.FirstSeenAtUtc,x.UpdatedAtUtc)).ToArray();
-            lock(_gate)_current=new(RuntimeCollectionState.Available,status,rows,subscribers,DateTimeOffset.UtcNow,null);
+            var healthMessage=_telegramHealth.Read().ToSafeStatusMessage();
+            lock(_gate)_current=new(RuntimeCollectionState.Available,status,rows,subscribers,DateTimeOffset.UtcNow,healthMessage);
         }
         catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
         catch(Exception ex){lock(_gate)_current=RuntimeNotificationState.Error(UiDiagnostic.Format(ex,"Notification state read failed."));}
