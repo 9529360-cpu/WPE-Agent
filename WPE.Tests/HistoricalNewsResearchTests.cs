@@ -38,10 +38,11 @@ public sealed class HistoricalNewsResearchTests : IDisposable
             var close=100m+i*.05m;
             return new CandleEvidence(start.AddHours(i).UtcDateTime,close-.1m,close+.2m,close-.2m,close,100,10000,10,50);
         }).ToArray();
-        var profile=new StrategyProfile{Id="NEWS-POINT-IN-TIME",Version="news-v1",Symbol="BTCUSDT",Family=StrategyFamily.NewsMomentum,Parameters=LocalStrategyParameters.For(StrategyFamily.NewsMomentum,0)};
+        var registry=new DeterministicStrategyRegistry();
+        var profile=new StrategyProfile{Id="NEWS-POINT-IN-TIME",Version=registry.BindProfileVersion(StrategyFamily.NewsMomentum,"news-v1"),Symbol="BTCUSDT",Family=StrategyFamily.NewsMomentum,Parameters=LocalStrategyParameters.For(StrategyFamily.NewsMomentum,0)};
         NewsFeature[] past=[new("BTC",1,.9,2,"MARKET",candles[500].OpenTime)];
         NewsFeature[] future=[new("BTC",1,.9,2,"MARKET",candles[^1].OpenTime.AddHours(1))];
-        var engine=new HistoricalResearchEngine();
+        var engine=new HistoricalResearchEngine(strategies:registry);
 
         var withPast=engine.Validate(profile,candles,past,new RiskLimits{MinimumBacktestTrades=1});
         var withFuture=engine.Validate(profile,candles,future,new RiskLimits{MinimumBacktestTrades=1});
