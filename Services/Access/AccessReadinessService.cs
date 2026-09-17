@@ -72,7 +72,8 @@ public sealed class AccessReadinessService
         void Add(string key, bool pass, bool critical, string detail, long ms = 0) => report.Checks.Add(new(key, pass, critical, detail, ms));
 
         var runtimeMode = RuntimeModePolicy.Resolve(settings);
-        Add("runtime_mode", true, true, $"AI runtime mode {runtimeMode.RequestedMode}; effective {runtimeMode.EffectiveMode}");
+        Add("runtime_mode", true, true,
+            $"Model-off deterministic strategy runtime is authoritative; legacy requested mode {runtimeMode.RequestedMode} cannot enable a model provider.");
 
         var settingsStore = new AgentSettingsStore();
         var profile = settingsStore.GetActiveExchange(settings);
@@ -137,7 +138,8 @@ public sealed class AccessReadinessService
             }
         }
 
-        Add("model_diagnostic", true, false, "Optional model diagnostic omitted from critical readiness; deterministic verdict is authoritative.", 0);
+        Add("model_diagnostic", true, false,
+            "Model providers are disabled by product policy; no online or local model readiness check is required.", 0);
 
         try
         {
@@ -153,7 +155,9 @@ public sealed class AccessReadinessService
         var risk = settings.Risk.MaxRiskPerTrade > 0 && settings.Risk.MaxAccountExposure <= .60m && settings.Risk.Leverage <= 20;
         Add("risk", risk, true, risk ? "Risk Manager parameters are valid" : "Risk parameters are out of bounds");
         Add("data", ProviderReadPathAvailable(providerCanRead), true, providerCanRead ? "Provider read path is healthy" : "Provider read path is unavailable");
-        Add("local_brain", true, true, "WPE Local Brain / deterministic rules ready");
+        // Keep the legacy key so current desktop projections remain compatible while the UI vocabulary migrates away from "Brain".
+        Add("brain", true, true, "Model-off strategy runtime ready; no online or local model is required");
+        Add("strategy_runtime", true, true, "Versioned deterministic strategy runtime is ready");
         return report;
     }
 
