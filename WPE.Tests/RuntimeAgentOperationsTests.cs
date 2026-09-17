@@ -130,6 +130,51 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
     }
 
     [Fact]
+    public void StaleFastWorkerCannotHideBehindFreshPeerActivity()
+    {
+        var registry=new AgentRoleRuntimeRegistry();
+        var now=DateTime.UtcNow;
+        registry.Publish("execution","waiting","Execution queue idle.",now-AgentRoleRuntimeRegistry.StaleAfter("execution")-TimeSpan.FromSeconds(1));
+        registry.Publish("audit","monitoring","Audit heartbeat active.",now);
+
+        var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath),registry).Read();
+
+        var execution=state.Operations.Single(x=>x.RoleId=="execution");
+        Assert.Equal("degraded",execution.Status);
+        Assert.Equal("Role activity is stale; worker liveness cannot be proven.",execution.Activity);
+        Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="audit").Status);
+    }
+
+    [Fact]
+    public void SlowCycleRolesUseLongerLivenessWindowThanDedicatedWorkers()
+    {
+        Assert.True(AgentRoleRuntimeRegistry.StaleAfter("market")>AgentRoleRuntimeRegistry.StaleAfter("execution"));
+        Assert.True(AgentRoleRuntimeRegistry.StaleAfter("research")>AgentRoleRuntimeRegistry.StaleAfter("strategy"));
+        Assert.True(AgentRoleRuntimeRegistry.StaleAfter("risk")>AgentRoleRuntimeRegistry.StaleAfter("audit"));
+
+        var registry=new AgentRoleRuntimeRegistry();
+        var now=DateTime.UtcNow;
+        registry.Publish("market","monitoring","Waiting for a market trigger.",now-TimeSpan.FromMinutes(10));
+        registry.Publish("execution","waiting","Execution queue idle.",now-TimeSpan.FromMinutes(10));
+        var states=registry.Read();
+
+        Assert.Equal("monitoring",states["market"].Status);
+        Assert.Equal("degraded",states["execution"].Status);
+    }
+
+    [Fact]
+    public void FutureActivityTimestampFailsClosed()
+    {
+        var registry=new AgentRoleRuntimeRegistry();
+        registry.Publish("risk","monitoring","Risk gate active.",DateTime.UtcNow.AddMinutes(2));
+
+        var risk=registry.Read()["risk"];
+
+        Assert.Equal("degraded",risk.Status);
+        Assert.Equal("Role activity time is invalid; worker liveness cannot be proven.",risk.Activity);
+    }
+
+    [Fact]
     public async Task SnapshotNeverProjectsSecretBearingSkillMetadata()
     {
         const string secret="sk-agent-operations-secret-123456";var db=new AgentSqliteStore(DatabasePath);
