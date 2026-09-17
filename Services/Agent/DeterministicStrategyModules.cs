@@ -38,7 +38,7 @@ internal sealed class DeterministicStrategyRegistry
             throw new InvalidOperationException("Every deterministic strategy module requires an implementation version.");
     }
 
-    internal IReadOnlyList<StrategyFamily> Families => _modules.Keys.Order().ToArray();
+    internal IReadOnlyList<StrategyFamily> Families => _modules.Keys.OrderBy(x => x).ToArray();
     internal IDeterministicStrategyModule Resolve(StrategyFamily family) =>
         _modules.TryGetValue(family, out var module)
             ? module
@@ -72,7 +72,7 @@ internal sealed class TrendBreakoutStrategyModule : IDeterministicStrategyModule
             : fast < slow && market.Price < candles.TakeLast(48).Min(x => x.Low) * (decimal)(1 + p.BreakoutBuffer)
                 ? -1
                 : 0;
-        return new(profile.Id, market.Symbol, direction, direction == 0 ? 0 : confidence,
+        return new(profile.Id, market.Symbol, direction, confidence,
             $"strategy={ImplementationVersion}; family={Family}; local deterministic signal");
     }
 
@@ -107,7 +107,7 @@ internal sealed class NewsMomentumStrategyModule : IDeterministicStrategyModule
             .Average();
         var threshold = profile.Parameters.NewsSentimentThreshold;
         var direction = sentiment >= threshold ? 1 : sentiment <= -threshold ? -1 : 0;
-        return new(profile.Id, market.Symbol, direction, direction == 0 ? 0 : Math.Min(1, Math.Abs(sentiment)),
+        return new(profile.Id, market.Symbol, direction, Math.Min(1, Math.Abs(sentiment)),
             $"strategy={ImplementationVersion}; family={Family}; sentiment={sentiment:F3}");
     }
 
