@@ -15,71 +15,34 @@ public sealed record RuntimeModeResolution(
 
 public static class RuntimeModePolicy
 {
+    public const string DeterministicRuntimeName = "WPE Deterministic Strategy Runtime";
+    public const string ModelOffReason = "Model-off product policy: trading intelligence comes from versioned deterministic strategies, research, risk, execution and recovery; online and local model providers are disabled.";
+
     public static RuntimeModeResolution Resolve(AgentSettings settings)
     {
-        var requested = settings.AiMode;
-        var slot = GetActiveBrain(settings);
+        ArgumentNullException.ThrowIfNull(settings);
 
-        if (requested == AiRuntimeMode.LocalOnly)
-        {
-            return new(
-                requested,
-                AiRuntimeMode.LocalOnly,
-                false,
-                "WPE Local Brain",
-                "local-deterministic",
-                "Local Only mode disables remote Brain calls.");
-        }
-
-        if (slot is null)
-        {
-            return new(
-                requested,
-                AiRuntimeMode.LocalOnly,
-                false,
-                "WPE Local Brain",
-                "local-deterministic",
-                "No active Brain slot is configured; falling back to local deterministic mode.");
-        }
-
-        if (slot.IsLocal || slot.Provider.Equals("WPE Local Brain", StringComparison.OrdinalIgnoreCase))
-        {
-            return new(
-                requested,
-                AiRuntimeMode.LocalOnly,
-                false,
-                slot.Provider,
-                string.IsNullOrWhiteSpace(slot.Model) ? "local-deterministic" : slot.Model,
-                "The selected Brain is local-only, so remote Brain calls remain disabled.");
-        }
-
-        var configured =
-            !string.IsNullOrWhiteSpace(slot.Endpoint) &&
-            !string.IsNullOrWhiteSpace(slot.Model) &&
-            !string.IsNullOrWhiteSpace(slot.EncryptedKey);
-
-        if (!configured)
-        {
-            return new(
-                requested,
-                AiRuntimeMode.LocalOnly,
-                false,
-                slot.Provider,
-                slot.Model,
-                "Remote Brain configuration is incomplete; falling back to local deterministic mode.");
-        }
-
+        // AiMode and Brain slots are retained only for backward-compatible settings reads.
+        // They are not trading-runtime authority. A stale or previously configured remote
+        // provider must never re-enable model calls in the autonomous trading path.
         return new(
-            requested,
-            requested,
-            true,
-            slot.Provider,
-            slot.Model,
-            string.Empty);
+            settings.AiMode,
+            AiRuntimeMode.LocalOnly,
+            false,
+            DeterministicRuntimeName,
+            string.Empty,
+            ModelOffReason);
     }
 
+    /// <summary>
+    /// Legacy configuration lookup for non-authoritative compatibility surfaces.
+    /// RuntimeModePolicy.Resolve never grants trading authority to the returned slot.
+    /// </summary>
     public static BrainSlot? GetActiveBrain(AgentSettings settings)
-        => settings.Brains.TryGetValue(settings.ActiveBrain, out var slot)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        return settings.Brains.TryGetValue(settings.ActiveBrain, out var slot)
             ? slot
             : settings.Brains.Values.FirstOrDefault();
+    }
 }

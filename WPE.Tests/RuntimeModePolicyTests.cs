@@ -6,90 +6,47 @@ namespace WPE.Tests;
 
 public sealed class RuntimeModePolicyTests
 {
+    [Theory]
+    [InlineData(AiRuntimeMode.LocalOnly)]
+    [InlineData(AiRuntimeMode.Hybrid)]
+    [InlineData(AiRuntimeMode.AIResearch)]
+    public void EveryLegacyModeResolvesToModelOffDeterministicRuntime(AiRuntimeMode requested)
+    {
+        var result = RuntimeModePolicy.Resolve(Configured(requested));
+
+        Assert.Equal(requested, result.RequestedMode);
+        Assert.Equal(AiRuntimeMode.LocalOnly, result.EffectiveMode);
+        Assert.False(result.AllowRemoteBrain);
+        Assert.Equal(RuntimeModePolicy.DeterministicRuntimeName, result.ProviderName);
+        Assert.Equal(string.Empty, result.ModelName);
+        Assert.Contains("Model-off product policy", result.FallbackReason, StringComparison.Ordinal);
+    }
+
     [Fact]
-    public void LocalOnly_Disables_Remote_Brain()
+    public void NoModelConfigurationIsRequired()
     {
         var settings = new AgentSettings
         {
             AiMode = AiRuntimeMode.LocalOnly,
-            ActiveBrain = "DeepSeek",
+            ActiveBrain = string.Empty,
             Brains = new(StringComparer.OrdinalIgnoreCase)
-            {
-                ["DeepSeek"] = new BrainSlot
-                {
-                    Provider = "DeepSeek",
-                    Endpoint = "https://api.deepseek.com/chat/completions",
-                    Model = "deepseek-chat",
-                    EncryptedKey = "encrypted"
-                }
-            }
         };
 
         var result = RuntimeModePolicy.Resolve(settings);
 
-        Assert.Equal(AiRuntimeMode.LocalOnly, result.RequestedMode);
-        Assert.Equal(AiRuntimeMode.LocalOnly, result.EffectiveMode);
+        Assert.True(result.IsLocalOnly);
         Assert.False(result.AllowRemoteBrain);
+        Assert.Equal(RuntimeModePolicy.DeterministicRuntimeName, result.ProviderName);
+        Assert.Null(RuntimeModePolicy.GetActiveBrain(settings));
     }
 
-    [Fact]
-    public void Hybrid_Falls_Back_To_Local_When_Remote_Config_Is_Incomplete()
+    [Theory]
+    [InlineData(AiRuntimeMode.LocalOnly)]
+    [InlineData(AiRuntimeMode.Hybrid)]
+    [InlineData(AiRuntimeMode.AIResearch)]
+    public void SmokeAlwaysUsesDeterministicRuntimeWithoutDecryptingOrConstructingModelProvider(AiRuntimeMode mode)
     {
-        var settings = new AgentSettings
-        {
-            AiMode = AiRuntimeMode.Hybrid,
-            ActiveBrain = "DeepSeek",
-            Brains = new(StringComparer.OrdinalIgnoreCase)
-            {
-                ["DeepSeek"] = new BrainSlot
-                {
-                    Provider = "DeepSeek",
-                    Endpoint = "https://api.deepseek.com/chat/completions",
-                    Model = "",
-                    EncryptedKey = ""
-                }
-            }
-        };
-
-        var result = RuntimeModePolicy.Resolve(settings);
-
-        Assert.Equal(AiRuntimeMode.Hybrid, result.RequestedMode);
-        Assert.Equal(AiRuntimeMode.LocalOnly, result.EffectiveMode);
-        Assert.False(result.AllowRemoteBrain);
-        Assert.Contains("falling back", result.FallbackReason, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void AIResearch_Allows_Remote_Brain_When_Config_Is_Complete()
-    {
-        var settings = new AgentSettings
-        {
-            AiMode = AiRuntimeMode.AIResearch,
-            ActiveBrain = "DeepSeek",
-            Brains = new(StringComparer.OrdinalIgnoreCase)
-            {
-                ["DeepSeek"] = new BrainSlot
-                {
-                    Provider = "DeepSeek",
-                    Endpoint = "https://api.deepseek.com/chat/completions",
-                    Model = "deepseek-chat",
-                    EncryptedKey = "encrypted"
-                }
-            }
-        };
-
-        var result = RuntimeModePolicy.Resolve(settings);
-
-        Assert.Equal(AiRuntimeMode.AIResearch, result.RequestedMode);
-        Assert.Equal(AiRuntimeMode.AIResearch, result.EffectiveMode);
-        Assert.True(result.AllowRemoteBrain);
-        Assert.Equal("DeepSeek", result.ProviderName);
-    }
-
-    [Fact]
-    public void SmokeLocalOnly_UsesDeterministicBrainWithoutDecryptingOrConstructingRemoteProvider()
-    {
-        var settings=Configured(AiRuntimeMode.LocalOnly);
+        var settings=Configured(mode);
         var decryptCalls=0;var localCalls=0;var remoteCalls=0;
 
         var brain=SmokeTestRunner.CreateBrain(settings,
@@ -102,32 +59,6 @@ public sealed class RuntimeModePolicyTests
         Assert.Equal(1,localCalls);
         Assert.Equal(0,decryptCalls);
         Assert.Equal(0,remoteCalls);
-    }
-
-    [Theory]
-    [InlineData(AiRuntimeMode.Hybrid)]
-    [InlineData(AiRuntimeMode.AIResearch)]
-    public void SmokeRemoteModes_PreserveConfiguredRemoteProviderBehavior(AiRuntimeMode mode)
-    {
-        var settings=Configured(mode);
-        var decryptCalls=0;var localCalls=0;var remoteCalls=0;
-
-        var brain=SmokeTestRunner.CreateBrain(settings,
-            _=>{decryptCalls++;return"fake-remote-secret";},
-            ()=>{localCalls++;return new DeterministicBrainProvider();},
-            (slot,secret,effectiveMode)=>
-            {
-                remoteCalls++;
-                Assert.Equal("DeepSeek",slot.Provider);
-                Assert.Equal("fake-remote-secret",secret);
-                Assert.Equal(mode,effectiveMode);
-                return new FakeAssistant(false);
-            });
-
-        Assert.False(brain.IsLocal);
-        Assert.Equal(0,localCalls);
-        Assert.Equal(1,decryptCalls);
-        Assert.Equal(1,remoteCalls);
     }
 
     private static AgentSettings Configured(AiRuntimeMode mode)=>new()
