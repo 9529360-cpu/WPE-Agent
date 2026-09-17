@@ -8,9 +8,7 @@ public sealed class StrategyRegimeValidationTests
     public void StablePerformanceAcrossChronologicalRegimesPasses()
     {
         var returns=Enumerable.Range(0,400).Select(i=>(i%10==0?-.001:.0005,true)).ToArray();
-
         var result=HistoricalResearchEngine.EvaluateRobustness(returns);
-
         Assert.True(result.Passed);Assert.Equal(4,result.PassingRegimes);Assert.Equal(4,result.EvaluatedRegimes);Assert.InRange(result.TrainTestExpectancyGap,0,.003);
     }
 
@@ -18,9 +16,7 @@ public sealed class StrategyRegimeValidationTests
     public void PerformanceConcentratedInEarlyHistoryFailsOverfitGate()
     {
         var returns=Enumerable.Range(0,400).Select(i=>(i<260?.002:-.01,true)).ToArray();
-
         var result=HistoricalResearchEngine.EvaluateRobustness(returns);
-
         Assert.False(result.Passed);Assert.True(result.PassingRegimes<3||result.WorstRegimeReturn<-.12||result.TrainTestExpectancyGap>.003);Assert.True(result.TrainTestExpectancyGap>.003);
     }
 
@@ -50,11 +46,10 @@ public sealed class StrategyRegimeValidationTests
             return new CandleEvidence(start.AddMinutes(i),open,close+.2m,open-.2m,close,100m,10000m,10,50m);
         }).ToArray();
         var state=MeanReversionRegimeAnalyzer.Analyze(candles,parameters);
-        var profile=new 币安量化机器人.Core.Strategy.StrategyProfile{Id="trend-gate",Symbol="BTCUSDT",Family=币安量化机器人.Core.Strategy.StrategyFamily.MeanReversion,Parameters=parameters};
+        var registry=new DeterministicStrategyRegistry();
+        var profile=new 币安量化机器人.Core.Strategy.StrategyProfile{Id="trend-gate",Version=registry.BindProfileVersion(币安量化机器人.Core.Strategy.StrategyFamily.MeanReversion,"mean-regime-test"),Symbol="BTCUSDT",Family=币安量化机器人.Core.Strategy.StrategyFamily.MeanReversion,Parameters=parameters};
         var market=new MarketEvidence("BTCUSDT",candles[^1].Close,candles[^1].Low,candles[^1].High,50,1,1,1,new(0,0,1,1,1,1,0),candles[^1].OpenTime){Candles=candles};
-
-        var signal=new HistoricalResearchEngine().Signal(profile,market,Array.Empty<NewsEvidence>());
-
+        var signal=new HistoricalResearchEngine(strategies:registry).Signal(profile,market,Array.Empty<NewsEvidence>());
         Assert.Equal(币安量化机器人.Core.Strategy.MeanReversionRegime.Trend,state.Regime);
         Assert.Equal(0,signal.Direction);
         Assert.Contains("regime=Trend",signal.Reason,StringComparison.Ordinal);
@@ -77,7 +72,6 @@ public sealed class StrategyRegimeValidationTests
         var now=DateTime.UtcNow;var governor=new StrategyGovernor();
         var old=new 币安量化机器人.Core.Strategy.StrategyProfile{Lifecycle=币安量化机器人.Core.Strategy.StrategyLifecycle.Shadow,ShadowObservations=StrategyGovernor.MaximumUnqualifiedShadowObservations,QualityScore=.4,Expectancy=-.001,MaxDrawdown=.1,StateChangedAtUtc=now-StrategyGovernor.MinimumShadowEvaluationTime-TimeSpan.FromMinutes(1)};
         var young=new 币安量化机器人.Core.Strategy.StrategyProfile{Lifecycle=币安量化机器人.Core.Strategy.StrategyLifecycle.Shadow,ShadowObservations=StrategyGovernor.MaximumUnqualifiedShadowObservations,QualityScore=.4,Expectancy=-.001,MaxDrawdown=.1,StateChangedAtUtc=now-TimeSpan.FromMinutes(5)};
-
         Assert.True(governor.ShouldRetireShadow(old,now));
         Assert.False(governor.ShouldRetireShadow(young,now));
     }
