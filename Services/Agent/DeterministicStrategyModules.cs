@@ -20,6 +20,7 @@ internal interface IDeterministicStrategyModule
 
 internal sealed class DeterministicStrategyRegistry
 {
+    private const string ImplementationMarker = "--impl-";
     private readonly IReadOnlyDictionary<StrategyFamily, IDeterministicStrategyModule> _modules;
 
     internal DeterministicStrategyRegistry(IEnumerable<IDeterministicStrategyModule>? modules = null)
@@ -34,8 +35,8 @@ internal sealed class DeterministicStrategyRegistry
         if (missing.Length > 0)
             throw new InvalidOperationException($"Strategy registry is missing deterministic modules: {string.Join(',', missing)}");
 
-        if (_modules.Values.Any(x => string.IsNullOrWhiteSpace(x.ImplementationVersion)))
-            throw new InvalidOperationException("Every deterministic strategy module requires an implementation version.");
+        if (_modules.Values.Any(x => !ValidImplementationVersion(x.ImplementationVersion)))
+            throw new InvalidOperationException("Every deterministic strategy module requires a filesystem-safe implementation version containing only lowercase letters, digits and hyphens.");
     }
 
     internal IReadOnlyList<StrategyFamily> Families => _modules.Keys.OrderBy(x => x).ToArray();
@@ -43,6 +44,29 @@ internal sealed class DeterministicStrategyRegistry
         _modules.TryGetValue(family, out var module)
             ? module
             : throw new InvalidOperationException($"No deterministic strategy module is registered for {family}.");
+
+    internal string BindProfileVersion(StrategyFamily family, string candidateVersion)
+    {
+        if (string.IsNullOrWhiteSpace(candidateVersion)) throw new ArgumentException("Candidate version is required.", nameof(candidateVersion));
+        return $"{candidateVersion}{ImplementationMarker}{Resolve(family).ImplementationVersion}";
+    }
+
+    internal string CandidateId(string symbol, StrategyFamily family, string suffix)
+    {
+        if (string.IsNullOrWhiteSpace(symbol)) throw new ArgumentException("Strategy symbol is required.", nameof(symbol));
+        if (string.IsNullOrWhiteSpace(suffix)) throw new ArgumentException("Strategy suffix is required.", nameof(suffix));
+        return $"{symbol.ToUpperInvariant()}-{family}-{Resolve(family).ImplementationVersion}-{suffix}";
+    }
+
+    internal bool IsProfileCompatible(StrategyProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        var expected = ImplementationMarker + Resolve(profile.Family).ImplementationVersion;
+        return profile.Version.EndsWith(expected, StringComparison.Ordinal);
+    }
+
+    private static bool ValidImplementationVersion(string value) =>
+        !string.IsNullOrWhiteSpace(value) && value.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 
     private static IEnumerable<IDeterministicStrategyModule> BuiltIns()
     {
@@ -55,7 +79,7 @@ internal sealed class DeterministicStrategyRegistry
 internal sealed class TrendBreakoutStrategyModule : IDeterministicStrategyModule
 {
     public StrategyFamily Family => StrategyFamily.TrendBreakout;
-    public string ImplementationVersion => "trend-breakout/1.0";
+    public string ImplementationVersion => "trend-breakout-v1";
 
     public StrategySignal Signal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
     {
@@ -91,7 +115,7 @@ internal sealed class TrendBreakoutStrategyModule : IDeterministicStrategyModule
 internal sealed class NewsMomentumStrategyModule : IDeterministicStrategyModule
 {
     public StrategyFamily Family => StrategyFamily.NewsMomentum;
-    public string ImplementationVersion => "news-momentum/1.0";
+    public string ImplementationVersion => "news-momentum-v1";
 
     public StrategySignal Signal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
     {
@@ -133,7 +157,7 @@ internal sealed class NewsMomentumStrategyModule : IDeterministicStrategyModule
 internal sealed class MeanReversionStrategyModule : IDeterministicStrategyModule
 {
     public StrategyFamily Family => StrategyFamily.MeanReversion;
-    public string ImplementationVersion => "mean-reversion/1.0";
+    public string ImplementationVersion => "mean-reversion-v1";
 
     public StrategySignal Signal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
     {
