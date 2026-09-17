@@ -96,6 +96,54 @@ public sealed class DeterministicStrategyModuleTests
     }
 
     [Fact]
+    public async Task ResearchCycleRetiresLegacyActiveAndCreatesImplementationBoundCandidates()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"wpe-strategy-version-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new AgentSqliteStore(path);
+            var parameters = LocalStrategyParameters.For(StrategyFamily.TrendBreakout, 0);
+            var hash = LocalStrategyParameters.Hash(parameters);
+            var legacy = new StrategyProfile
+            {
+                Id = "BTCUSDT-TrendBreakout-legacy-active",
+                Version = "trendbreakout-legacy",
+                Symbol = "BTCUSDT",
+                Family = StrategyFamily.TrendBreakout,
+                Parameters = parameters,
+                ParametersHash = hash,
+                LineageHash = StrategyLineage.Hash("BTCUSDT", StrategyFamily.TrendBreakout, null, null, 0, hash),
+                Lifecycle = StrategyLifecycle.Active,
+                ValidationTrades = StrategyGovernor.MinimumValidationTrades,
+                ShadowObservations = StrategyGovernor.MinimumShadowObservations,
+                QualityScore = .9,
+                Expectancy = .01,
+                MaxDrawdown = .05
+            };
+            await store.UpsertStrategyAsync(legacy, CancellationToken.None);
+
+            var agent = new StrategyResearchAgent(store, utcNow: () => new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc));
+            await agent.RunOnceAsync(["BTCUSDT"], new RiskLimits { MinimumBacktestTrades = 10 }, CancellationToken.None);
+
+            var rows = await store.GetStrategiesAsync(CancellationToken.None);
+            var retired = rows.Single(x => x.Id == legacy.Id);
+            Assert.Equal(StrategyLifecycle.Retired, retired.Lifecycle);
+            Assert.Contains("implementation changed", retired.LastReason, StringComparison.OrdinalIgnoreCase);
+
+            var currentTrend = rows.Where(x => x.Family == StrategyFamily.TrendBreakout && x.Id != legacy.Id).ToArray();
+            Assert.NotEmpty(currentTrend);
+            Assert.All(currentTrend, x => Assert.Contains("trend-breakout-v1", x.Id, StringComparison.Ordinal));
+            Assert.All(currentTrend, x => Assert.EndsWith("--impl-trend-breakout-v1", x.Version, StringComparison.Ordinal));
+        }
+        finally
+        {
+            DeleteIfExists(path);
+            DeleteIfExists(path + "-wal");
+            DeleteIfExists(path + "-shm");
+        }
+    }
+
+    [Fact]
     public void HistoricalResearchEngineContainsNoStrategySpecificFamilyBranches()
     {
         var source = File.ReadAllText(ProductPath("Services", "Agent", "StrategyResearchAgent.cs"));
@@ -146,6 +194,11 @@ public sealed class DeterministicStrategyModuleTests
             IReadOnlyList<CandleEvidence> candles,
             IReadOnlyList<NewsFeature> news,
             ResearchRealityModel reality) => [];
+    }
+
+    private static void DeleteIfExists(string path)
+    {
+        if (File.Exists(path)) File.Delete(path);
     }
 
     private static string ProductPath(params string[] segments)
