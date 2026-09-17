@@ -126,30 +126,43 @@ public sealed class StrategyResearchAgent
     private async Task<IReadOnlyList<StrategyProfile>> EnsureCandidatesAsync(IReadOnlyList<string> symbols, CancellationToken ct)
     {
         var existing = await _database.GetStrategiesAsync(ct);
+        foreach(var profile in existing.Where(x=>x.Lifecycle!=StrategyLifecycle.Retired&&!_engine.Strategies.IsProfileCompatible(x)).ToArray())
+        {
+            var previous=profile.Lifecycle;
+            profile.Lifecycle=StrategyLifecycle.Retired;
+            profile.StateChangedAtUtc=_utcNow();
+            profile.LastReason=$"strategy implementation changed; current={profile.Version}; required={_engine.Strategies.Resolve(profile.Family).ImplementationVersion}; full revalidation required";
+            await _database.UpsertStrategyAsync(profile,ct);
+            await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
+        }
+
         var result = new List<StrategyProfile>(existing);
         foreach (var symbolValue in symbols.Distinct(StringComparer.OrdinalIgnoreCase))
-        foreach (var family in Enum.GetValues<StrategyFamily>())
+        foreach (var family in _engine.Strategies.Families)
         {
             var symbol=symbolValue.ToUpperInvariant();
-            var live=result.Count(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family&&x.Lifecycle is StrategyLifecycle.Draft or StrategyLifecycle.Shadow or StrategyLifecycle.Active);
+            var live=result.Count(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family&&_engine.Strategies.IsProfileCompatible(x)&&x.Lifecycle is StrategyLifecycle.Draft or StrategyLifecycle.Shadow or StrategyLifecycle.Active);
             for(var variant=0;live<TargetConcurrentCandidatesPerFamily&&variant<MaximumVariantsPerFamily;variant++)
             {
-                var id=$"{symbol}-{family}-{variant}";if(result.Any(x=>x.Id.Equals(id,StringComparison.OrdinalIgnoreCase)))continue;
-                var parent=result.Where(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family&&x.Lifecycle==StrategyLifecycle.Active&&x.ValidationTrades>=StrategyGovernor.MinimumValidationTrades&&x.ShadowObservations>=StrategyGovernor.MinimumShadowObservations&&x.QualityScore>=StrategyGovernor.MinimumQualityScore&&x.Expectancy>0&&x.MaxDrawdown<=StrategyGovernor.MaximumPromotedDrawdown)
+                var id=_engine.Strategies.CandidateId(symbol,family,variant.ToString());if(result.Any(x=>x.Id.Equals(id,StringComparison.OrdinalIgnoreCase)))continue;
+                var parent=result.Where(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family&&_engine.Strategies.IsProfileCompatible(x)&&x.Lifecycle==StrategyLifecycle.Active&&x.ValidationTrades>=StrategyGovernor.MinimumValidationTrades&&x.ShadowObservations>=StrategyGovernor.MinimumShadowObservations&&x.QualityScore>=StrategyGovernor.MinimumQualityScore&&x.Expectancy>0&&x.MaxDrawdown<=StrategyGovernor.MaximumPromotedDrawdown)
                     .OrderByDescending(x=>x.QualityScore).ThenByDescending(x=>x.Expectancy).ThenBy(x=>x.Id,StringComparer.Ordinal).FirstOrDefault();
                 var derived=variant>=2&&parent is not null;var generation=derived?parent!.Generation+1:0;
                 var parameters=derived?LocalStrategyParameters.Derive(family,parent!.Parameters,variant-1):LocalStrategyParameters.For(family,variant);
-                var profile=new StrategyProfile{Id=id,Version=$"{family.ToString().ToLowerInvariant()}-{variant+1}",Symbol=symbol,Family=family,Parameters=parameters,ParametersHash=LocalStrategyParameters.Hash(parameters),ParentStrategyId=derived?parent!.Id:null,ParentStrategyVersion=derived?parent!.Version:null,Generation=generation,Lifecycle=StrategyLifecycle.Draft,BuiltIn=family==StrategyFamily.TrendBreakout&&variant==0,LastReason=derived?"bounded deterministic child of qualified active strategy":variant<2?"deterministic local seed":"bounded deterministic replacement"};
+                var version=_engine.Strategies.BindProfileVersion(family,$"{family.ToString().ToLowerInvariant()}-{variant+1}");
+                var profile=new StrategyProfile{Id=id,Version=version,Symbol=symbol,Family=family,Parameters=parameters,ParametersHash=LocalStrategyParameters.Hash(parameters),ParentStrategyId=derived?parent!.Id:null,ParentStrategyVersion=derived?parent!.Version:null,Generation=generation,Lifecycle=StrategyLifecycle.Draft,BuiltIn=family==StrategyFamily.TrendBreakout&&variant==0,LastReason=derived?"bounded deterministic child of qualified active strategy":variant<2?"deterministic local seed":"bounded deterministic replacement"};
                 result.Add(profile);await _database.UpsertStrategyAsync(profile,ct);live++;
             }
             if(live>=TargetConcurrentCandidatesPerFamily)continue;
-            var familyRows=result.Where(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family).ToArray();
+            var familyRows=result.Where(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family&&_engine.Strategies.IsProfileCompatible(x)).ToArray();
             if(familyRows.Length<MaximumVariantsPerFamily||familyRows.Max(x=>x.CreatedAtUtc)>_utcNow()-ExplorationCooldown)continue;
             var index=Math.Max(MaximumVariantsPerFamily,familyRows.Max(x=>ExplorationIndex(x.Id))+1);StrategyProfile? exploration=null;
             for(var attempt=0;attempt<512&&exploration is null;attempt++,index++)
             {
                 var parameters=Explore(family,index);var hash=LocalStrategyParameters.Hash(parameters);if(familyRows.Any(x=>string.Equals(x.ParametersHash,hash,StringComparison.Ordinal)))continue;
-                exploration=new StrategyProfile{Id=$"{symbol}-{family}-explore-{index}",Version=$"{family.ToString().ToLowerInvariant()}-explore-{index}",Symbol=symbol,Family=family,Parameters=parameters,ParametersHash=hash,Generation=0,Lifecycle=StrategyLifecycle.Draft,CreatedAtUtc=_utcNow(),LastReason="budgeted deterministic exploration candidate"};
+                var id=_engine.Strategies.CandidateId(symbol,family,$"explore-{index}");
+                var version=_engine.Strategies.BindProfileVersion(family,$"{family.ToString().ToLowerInvariant()}-explore-{index}");
+                exploration=new StrategyProfile{Id=id,Version=version,Symbol=symbol,Family=family,Parameters=parameters,ParametersHash=hash,Generation=0,Lifecycle=StrategyLifecycle.Draft,CreatedAtUtc=_utcNow(),LastReason="budgeted deterministic exploration candidate"};
             }
             if(exploration is not null){result.Add(exploration);await _database.UpsertStrategyAsync(exploration,ct);}
         }
@@ -194,8 +207,9 @@ internal sealed class HistoricalResearchEngine
 
     public StrategyValidation Validate(StrategyProfile profile, IReadOnlyList<CandleEvidence> candles, IReadOnlyList<NewsFeature> news, RiskLimits limits)
     {
-        if (candles.Count < 500) return new(profile.Id, candles.Count, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, false, "insufficient hourly history");
         var strategy=_strategies.Resolve(profile.Family);
+        if(!_strategies.IsProfileCompatible(profile))return new(profile.Id,candles.Count,0,0,0,0,1,0,0,0,1,0,false,$"strategy implementation mismatch; current={profile.Version}; required={strategy.ImplementationVersion}; revalidation required");
+        if (candles.Count < 500) return new(profile.Id, candles.Count, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, false, "insufficient hourly history");
         var returns = strategy.Simulate(profile,candles,news,_reality); var split = Math.Clamp((int)(returns.Count * .65), 1, returns.Count); var train = returns.Take(split).ToArray(); var test = returns.Skip(split).ToArray();
         var all = Metrics(returns); var trainMetrics=Metrics(train);var oos = Metrics(test); var walk = WalkForward(profile, candles, news); var mc = MonteCarlo(returns);var robustness=EvaluateRobustness(returns,trainMetrics.Expectancy,oos.Expectancy);
         var score = Math.Clamp(.16 * Math.Min(1, all.ProfitFactor / 1.5) + .16 * Math.Max(0, (oos.TotalReturn + .10) / .30) + .16 * (1 - Math.Min(1, all.MaxDrawdown / .25)) + .16 * walk + .16 * (1 - mc)+.20*robustness.Score, 0, 1);
@@ -219,10 +233,15 @@ internal sealed class HistoricalResearchEngine
     }
 
     public StrategySignal Signal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
-        => _strategies.Resolve(profile.Family).Signal(profile,market,news);
+    {
+        var strategy=_strategies.Resolve(profile.Family);
+        return _strategies.IsProfileCompatible(profile)
+            ? strategy.Signal(profile,market,news)
+            : new StrategySignal(profile.Id,profile.Symbol,0,0,$"strategy implementation mismatch; current={profile.Version}; required={strategy.ImplementationVersion}; hold until revalidated");
+    }
 
     internal List<(double Return, bool Trade)> Simulate(StrategyProfile profile, IReadOnlyList<CandleEvidence> candles, IReadOnlyList<NewsFeature> news)
-        => _strategies.Resolve(profile.Family).Simulate(profile,candles,news,_reality);
+        => _strategies.IsProfileCompatible(profile)?_strategies.Resolve(profile.Family).Simulate(profile,candles,news,_reality):[];
 
     private static (double WinRate, double ProfitFactor, double Expectancy, double MaxDrawdown, double Sharpe, double TotalReturn) Metrics(IReadOnlyList<(double Return, bool Trade)> values) { var r = values.Select(x => x.Return).ToArray(); if (r.Length == 0) return (0, 0, 0, 1, 0, 0); var wins = r.Where(x => x > 0).Sum(); var losses = -r.Where(x => x < 0).Sum(); var equity = 1d; var high = 1d; var dd = 0d; foreach (var x in r) { equity *= Math.Max(.01, 1 + x); high = Math.Max(high, equity); dd = Math.Max(dd, (high - equity) / high); } var avg = r.Average(); var sd = Math.Sqrt(r.Select(x => (x - avg) * (x - avg)).Average()); return (r.Count(x => x > 0) / (double)r.Length, losses > 0 ? wins / losses : wins > 0 ? 9 : 0, avg, dd, sd > 0 ? avg / sd * Math.Sqrt(24 * 365) : 0, equity - 1); }
     private double WalkForward(StrategyProfile p, IReadOnlyList<CandleEvidence> c, IReadOnlyList<NewsFeature> n) { var scores = new List<double>(); for (var i = 0; i < 4; i++) { var start = i * c.Count / 8; var length = Math.Min(c.Count - start, c.Count / 2); scores.Add(Math.Clamp(.5 + Metrics(Simulate(p, c.Skip(start).Take(length).ToArray(), n)).Expectancy * 100 - Metrics(Simulate(p, c.Skip(start).Take(length).ToArray(), n)).MaxDrawdown, 0, 1)); } return scores.DefaultIfEmpty(0).Average(); }
