@@ -9,7 +9,8 @@ namespace 币安量化机器人.Services.Agent;
 /// <summary>
 /// Produces deterministic, audit-friendly multiple-testing evidence from the actual persisted
 /// parameter candidates for one symbol/family. The statistical test only sees the training region;
-/// the purged/embargoed holdout is hashed and evaluated separately by HistoricalResearchEngine.
+/// purged/embargoed historical OOS is hashed as robustness evidence, while forward Shadow/live
+/// observations remain the independent qualification boundary.
 /// </summary>
 internal static class StrategyParameterSearchEvaluatorV1
 {
@@ -62,9 +63,6 @@ internal static class StrategyParameterSearchEvaluatorV1
             SearchSpaceHash(selected.Symbol,selected.Family,trials),
             DatasetHash(selectionTimeline),
             DatasetHash(holdoutTimeline),
-            HoldoutUntouched:true,
-            HoldoutUsedForSelection:false,
-            HoldoutEvaluationCount:holdoutTimeline.Length>0?1:0,
             TestMethod,
             CorrectionMethod,
             NominalAlpha,
@@ -81,11 +79,8 @@ internal static class StrategyParameterSearchEvaluatorV1
            ||evidence.SelectedTrialIndex>=evidence.TrialCount
            ||!Sha(evidence.SearchSpaceHash)
            ||!Sha(evidence.SelectionDatasetHash)
-           ||!Sha(evidence.HoldoutDatasetHash)
-           ||string.Equals(evidence.SelectionDatasetHash,evidence.HoldoutDatasetHash,StringComparison.Ordinal)
-           ||!evidence.HoldoutUntouched
-           ||evidence.HoldoutUsedForSelection
-           ||evidence.HoldoutEvaluationCount!=1
+           ||!Sha(evidence.HistoricalOosDatasetHash)
+           ||string.Equals(evidence.SelectionDatasetHash,evidence.HistoricalOosDatasetHash,StringComparison.Ordinal)
            ||!string.Equals(evidence.TestMethod,TestMethod,StringComparison.Ordinal)
            ||!string.Equals(evidence.CorrectionMethod,CorrectionMethod,StringComparison.Ordinal)
            ||Math.Abs(evidence.NominalAlpha-NominalAlpha)>1e-12
@@ -124,7 +119,7 @@ internal static class StrategyParameterSearchEvaluatorV1
             "wpe.strategy-search-space/1",
             symbol,
             family.ToString(),
-            string.Join("\n",trials.Select((x,i)=>$"{i}|{ParameterHash(x)}"))));
+            string.Join("\n",trials.Select((x,i)=>$"{i}|{x.Version}|{ParameterHash(x)}"))));
 
     private static string DatasetHash(IReadOnlyList<StrategyExposureDecisionV1> values)
         =>Hash(string.Join("\n",
