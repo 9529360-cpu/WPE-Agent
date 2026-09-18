@@ -11,9 +11,9 @@ public sealed class StrategyExposureTimelineTests
     {
         var registry=new DeterministicStrategyRegistry();
         var profile=Profile(StrategyFamily.TrendBreakout,registry);
-        var original=Candles(90);
+        var original=Candles(260);
         var changed=original.ToArray();
-        var executionIndex=profile.Parameters.SlowPeriod+1;
+        var executionIndex=Math.Max(StrategyExposureTimelineV1.MinimumWarmupBars,profile.Parameters.SlowPeriod+1);
         changed[executionIndex]=changed[executionIndex] with { Close=changed[executionIndex].Close*5 };
 
         var first=registry.Resolve(profile.Family).BuildResearchTimeline(profile,original,[]);
@@ -76,10 +76,11 @@ public sealed class StrategyExposureTimelineTests
     {
         var registry=new DeterministicStrategyRegistry();
         var profile=Profile(StrategyFamily.TrendBreakout,registry);
-        var candles=Candles(90).ToArray();
-        candles[profile.Parameters.SlowPeriod+1]=candles[profile.Parameters.SlowPeriod+1] with
+        var candles=Candles(260).ToArray();
+        var executionIndex=Math.Max(StrategyExposureTimelineV1.MinimumWarmupBars,profile.Parameters.SlowPeriod+1);
+        candles[executionIndex]=candles[executionIndex] with
         {
-            OpenTime=DateTime.SpecifyKind(candles[profile.Parameters.SlowPeriod+1].OpenTime,DateTimeKind.Unspecified)
+            OpenTime=DateTime.SpecifyKind(candles[executionIndex].OpenTime,DateTimeKind.Unspecified)
         };
 
         var timeline=registry.Resolve(profile.Family).BuildResearchTimeline(profile,candles,[]);
