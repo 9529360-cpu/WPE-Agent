@@ -42,7 +42,7 @@ public sealed class StrategyResearchAgent
         var candidates = await EnsureCandidatesAsync(symbols, ct);
         foreach(var profile in candidates.Where(x=>x.Lifecycle==StrategyLifecycle.Degraded).ToArray())
         {
-            var previous=profile.Lifecycle;profile.Lifecycle=StrategyLifecycle.Retired;profile.StateChangedAtUtc=DateTime.UtcNow;profile.LastReason="degraded strategy archived before bounded replacement";
+            var previous=profile.Lifecycle;profile.Lifecycle=StrategyLifecycle.Retired;profile.StateChangedAtUtc=_utcNow().ToUniversalTime();profile.LastReason="degraded strategy archived before bounded replacement";
             await _database.UpsertStrategyAsync(profile,ct);await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
         }
         var newsBySymbol=new Dictionary<string,IReadOnlyList<NewsFeature>>(StringComparer.Ordinal);
@@ -55,8 +55,8 @@ public sealed class StrategyResearchAgent
             if(profile.Lifecycle!=StrategyLifecycle.Active)continue;
             var exactValidation=await _database.GetLatestStrategyValidationAsync(profile.Id,profile.Version,ct);
             var latestBacktest=await _database.GetLatestBacktestRunAsync(profile.Id,profile.Version,ct);
-            var completed=latestBacktest?.CompletedAtUtc.ToUniversalTime();
-            if(exactValidation is null||latestBacktest is null||completed is null||completed>researchNow||researchNow-completed.Value>=ActiveRevalidationInterval)
+            var backtestCompletedAt=latestBacktest?.CompletedAtUtc.ToUniversalTime();
+            if(exactValidation is null||latestBacktest is null||backtestCompletedAt is null||backtestCompletedAt>researchNow||researchNow-backtestCompletedAt.Value>=ActiveRevalidationInterval)
                 validationCandidates.Add(profile);
         }
         foreach (var profile in validationCandidates)
@@ -78,7 +78,7 @@ public sealed class StrategyResearchAgent
                 : _governor.NextLifecycle(profile, validation);
             profile.QualityScore = validation.QualityScore; profile.Expectancy = validation.Expectancy;
             profile.MaxDrawdown = validation.MaxDrawdown; profile.Sharpe = validation.Sharpe; profile.ValidationTrades = validation.Trades;
-            if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = DateTime.UtcNow; profile.LastReason = validation.Summary; }
+            if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = _utcNow().ToUniversalTime(); profile.LastReason = validation.Summary; }
             await _database.UpsertStrategyAsync(profile, ct);
             if(next!=previous)await _database.RecordStrategyLifecycleAsync(profile,previous,validation.Summary,ct);
             validated++;
@@ -87,7 +87,7 @@ public sealed class StrategyResearchAgent
         if (_runtimeBacktests is not null) await _runtimeBacktests.RefreshAsync(ct);
 
         var snapshot = await _database.GetStrategySnapshotAsync(ct);
-        var completedAt = DateTime.UtcNow;
+        var completedAt = _utcNow().ToUniversalTime();
         var newsFeatureCount=newsBySymbol.Values.Sum(x=>x.Count);
         var completed = snapshot with { Status = "LOCAL_RESEARCH_COMPLETE", LastRunAtUtc = completedAt, LastMessage = $"validated={validated}; news_features={newsFeatureCount}" };
         await _database.SetStateAsync("strategy-research:last-run", JsonSerializer.Serialize(new { snapshot = completed, NewsFeatures = newsFeatureCount, validated }), ct);
