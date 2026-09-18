@@ -1,3 +1,4 @@
+using WpeAgent.CrossAssetResearch;
 using 币安量化机器人.Core.Strategy;
 
 namespace 币安量化机器人.Services.Agent;
@@ -23,6 +24,7 @@ internal sealed record StrategyExposureDecisionV1(
 
 internal static class StrategyExposureTimelineV1
 {
+    internal const string Schema="wpe.strategy-exposure/1";
     internal static StrategyExposureDecisionV1? Create(
         StrategyProfile profile,
         int sequence,
@@ -79,8 +81,7 @@ internal static class StrategyExposureTimelineV1
           &&Utc(value.SignalGeneratedAtUtc)
           &&Utc(value.TradableAtUtc)
           &&value.SourceCandleOpenTimeUtc<value.EvidenceAvailableAtUtc
-          &&value.EvidenceAvailableAtUtc<=value.SignalGeneratedAtUtc
-          &&value.SignalGeneratedAtUtc<=value.TradableAtUtc;
+          &&!ResearchTemporalIsolationV1.HasLookAhead(value.TradableAtUtc,value.EvidenceAvailableAtUtc,value.SignalGeneratedAtUtc);
 
     private static bool Utc(DateTimeOffset value)=>value!=default&&value.Offset==TimeSpan.Zero;
 }
