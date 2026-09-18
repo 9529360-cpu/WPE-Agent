@@ -27,13 +27,16 @@ public sealed class StrategyGovernor
            && validation.TrainTestExpectancyGap <= MaximumTrainTestExpectancyGap
            && StrategyParameterSearchEvaluatorV1.IsQualified(validation.ParameterSearch);
 
-    public bool CanActivateFromShadow(StrategyProfile profile)
-        => profile.Lifecycle == StrategyLifecycle.Shadow
-           && profile.ShadowObservations >= MinimumShadowObservations
+    public bool HasForwardQualification(StrategyProfile profile)
+        => profile.ShadowObservations >= MinimumShadowObservations
            && profile.QualityScore >= MinimumQualityScore
            && profile.Expectancy > 0
            && profile.MaxDrawdown <= MaximumPromotedDrawdown
            && profile.FailureStreak == 0;
+
+    public bool CanActivateFromShadow(StrategyProfile profile)
+        => profile.Lifecycle == StrategyLifecycle.Shadow
+           && HasForwardQualification(profile);
 
     public bool ShouldDemote(StrategyProfile profile)
         => profile.Lifecycle == StrategyLifecycle.Active
