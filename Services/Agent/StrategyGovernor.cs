@@ -35,7 +35,7 @@ public sealed class StrategyGovernor
            && performance.FailureStreak == 0;
 
     public bool HasForwardQualification(StrategyProfile profile)
-        => HasForwardQualification(new(profile.ShadowObservations,profile.Expectancy,profile.MaxDrawdown,profile.QualityScore,profile.FailureStreak,profile.LastReason));
+        => HasForwardQualification(new StrategyObservationPerformance(profile.ShadowObservations,profile.Expectancy,profile.MaxDrawdown,profile.QualityScore,profile.FailureStreak,profile.LastReason));
 
     public bool CanActivateFromShadow(StrategyProfile profile)
         => profile.Lifecycle == StrategyLifecycle.Shadow
