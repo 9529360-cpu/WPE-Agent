@@ -359,7 +359,21 @@ public static class DeterministicResearchCapabilityProducerV1
         foreach(var name in new[]{"winRate","maxDrawdown","walkForwardScore","monteCarloLossProbability","qualityScore"})
             if(!FiniteFact(facts,name,out var value)||value is<0 or>1)yield return $"research.invalid.backtest_{name.ToLowerInvariant()}";
         if(!FiniteFact(facts,"profitFactor",out var profitFactor)||profitFactor<0)yield return "research.invalid.backtest_profit_factor";
-        foreach(var name in new[]{"expectancy","sharpe","outOfSampleReturn"})if(!FiniteFact(facts,name,out _))yield return $"research.invalid.backtest_{name.ToLowerInvariant()}";
+        foreach(var name in new[]{"expectancy","sharpe","outOfSampleReturn","strategyReturn","benchmarkReturn","worstRegimeReturn","trainTestExpectancyGap"})if(!FiniteFact(facts,name,out _))yield return $"research.invalid.backtest_{name.ToLowerInvariant()}";
+        if(!IntFact(facts,"passingRegimes",out var passingRegimes)||passingRegimes<0)yield return "research.invalid.backtest_passing_regimes";
+        if(!IntFact(facts,"evaluatedRegimes",out var evaluatedRegimes)||evaluatedRegimes<0||passingRegimes>evaluatedRegimes)yield return "research.invalid.backtest_evaluated_regimes";
+        if(!BoolFact(facts,"historicalPassed",out var historicalPassed))yield return "research.invalid.backtest_historical_passed";
+        if(!IntFact(facts,"trialCount",out var trialCount)||trialCount<1)yield return "research.invalid.backtest_trial_count";
+        if(!IntFact(facts,"selectedTrialIndex",out var selectedTrialIndex)||selectedTrialIndex<0||selectedTrialIndex>=trialCount)yield return "research.invalid.backtest_selected_trial";
+        foreach(var name in new[]{"searchSpaceHash","selectionDatasetHash","historicalOosDatasetHash"})if(!StringFact(facts,name,out var hashValue)||!ValidSha(hashValue))yield return $"research.invalid.backtest_{name.ToLowerInvariant()}";
+        if(!StringFact(facts,"testMethod",out var testMethod))yield return "research.invalid.backtest_test_method";
+        if(!StringFact(facts,"correctionMethod",out var correctionMethod))yield return "research.invalid.backtest_correction_method";
+        if(!StringFact(facts,"selectionRule",out var selectionRule))yield return "research.invalid.backtest_selection_rule";
+        if(!FiniteFact(facts,"nominalAlpha",out var nominalAlpha)||nominalAlpha is<=0 or>=1)yield return "research.invalid.backtest_nominal_alpha";
+        if(!FiniteFact(facts,"selectedTrialPValue",out var selectedTrialPValue)||selectedTrialPValue is<0 or>1)yield return "research.invalid.backtest_selected_trial_p_value";
+        if(!FiniteFact(facts,"correctedSignificanceThreshold",out var correctedThreshold)||correctedThreshold is<=0 or>=1)yield return "research.invalid.backtest_corrected_threshold";
+        if(!IntFact(facts,"forwardObservations",out var forwardObservations)||forwardObservations<0)yield return "research.invalid.backtest_forward_observations";
+        if(!BoolFact(facts,"forwardQualified",out var forwardQualified))yield return "research.invalid.backtest_forward_qualified";
         if(!BoolFact(facts,"approved",out var approved))yield return "research.invalid.backtest_approved";
         if(!BoolFact(facts,"promoted",out var promoted))yield return "research.invalid.backtest_promoted";
         if(promoted&&!approved)yield return "research.invalid.backtest_lifecycle";
@@ -369,9 +383,19 @@ public static class DeterministicResearchCapabilityProducerV1
            FiniteFact(facts,"winRate",out var winRate)&&FiniteFact(facts,"profitFactor",out profitFactor)&&FiniteFact(facts,"expectancy",out var expectancy)&&
            FiniteFact(facts,"maxDrawdown",out var maxDrawdown)&&FiniteFact(facts,"sharpe",out var sharpe)&&FiniteFact(facts,"outOfSampleReturn",out var oosReturn)&&
            FiniteFact(facts,"walkForwardScore",out var walkForward)&&FiniteFact(facts,"monteCarloLossProbability",out var monteCarlo)&&FiniteFact(facts,"qualityScore",out var qualityScore)&&
-           BoolFact(facts,"approved",out approved)&&BoolFact(facts,"promoted",out promoted))
+           FiniteFact(facts,"strategyReturn",out var strategyReturn)&&FiniteFact(facts,"benchmarkReturn",out var benchmarkReturn)&&
+           FiniteFact(facts,"worstRegimeReturn",out var worstRegimeReturn)&&FiniteFact(facts,"trainTestExpectancyGap",out var trainTestGap)&&
+           StringFact(facts,"searchSpaceHash",out var searchSpaceHash)&&StringFact(facts,"selectionDatasetHash",out var selectionDatasetHash)&&StringFact(facts,"historicalOosDatasetHash",out var historicalOosDatasetHash)&&
+           BoolFact(facts,"historicalPassed",out historicalPassed)&&BoolFact(facts,"forwardQualified",out forwardQualified)&&BoolFact(facts,"approved",out approved)&&BoolFact(facts,"promoted",out promoted))
         {
-            var expected=BacktestValidationCanonicalizerV1.Create(symbol,strategyId,strategyVersion,validatedAt,sampleSize,trades,outOfSampleTrades,coverageDays,winRate,profitFactor,expectancy,maxDrawdown,sharpe,oosReturn,walkForward,monteCarlo,qualityScore,approved,promoted);
+            var parameterSearch=new 币安量化机器人.Core.Strategy.StrategyParameterSearchEvidence(
+                trialCount,selectedTrialIndex,searchSpaceHash,selectionDatasetHash,historicalOosDatasetHash,testMethod,correctionMethod,
+                nominalAlpha,selectedTrialPValue,correctedThreshold,selectionRule);
+            var expected=BacktestValidationCanonicalizerV1.Create(symbol,strategyId,strategyVersion,validatedAt,sampleSize,trades,outOfSampleTrades,coverageDays,
+                winRate,profitFactor,expectancy,maxDrawdown,sharpe,oosReturn,walkForward,monteCarlo,qualityScore,
+                strategyReturn,benchmarkReturn,worstRegimeReturn,trainTestGap,passingRegimes,evaluatedRegimes,historicalPassed,
+                parameterSearch,forwardObservations,forwardQualified,approved,promoted);
+            if(!BacktestValidationCanonicalizerV1.IsCanonical(expected,input.EvaluationTimeUtc))yield return "research.invalid.backtest_promotion_evidence";
             if(!string.Equals(expected.CanonicalSha256,canonicalHash,StringComparison.Ordinal))yield return "research.invalid.backtest_canonical_hash";
             if(!input.Sources.Any(x=>x.Kind==ModelOffSourceKindV1.Strategy&&x.SourceId==$"backtest:{symbol}:{strategyId}:{strategyVersion}"&&x.AsOfUtc>=validatedAt&&x.ArtifactHash=="sha256:"+canonicalHash))yield return "research.invalid.backtest_source";
         }
