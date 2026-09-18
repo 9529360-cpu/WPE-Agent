@@ -19,7 +19,7 @@ internal static class StrategyParameterSearchEvaluatorV1
     internal const double NominalAlpha=.05;
     internal const string TestMethod="24bar-block-sign-normal-v1";
     internal const string CorrectionMethod="Bonferroni";
-    internal const string SelectionRule="candidate must pass corrected training significance and untouched purged holdout";
+    internal const string SelectionRule="training evidence must pass corrected significance; historical OOS is robustness evidence; forward observations qualify execution";
 
     internal static StrategyParameterSearchEvidence Evaluate(
         StrategyProfile selected,
@@ -53,7 +53,7 @@ internal static class StrategyParameterSearchEvaluatorV1
         var pValue=TrainingPValue(training);
         var threshold=ResearchMultipleTestingV1.BonferroniThreshold(NominalAlpha,trialCount);
         var selectionTimeline=timeline.Take(Math.Clamp(oosWindow.TrainingEndExclusive,0,timeline.Count)).ToArray();
-        var holdoutTimeline=timeline.Skip(Math.Clamp(oosWindow.Start,0,timeline.Count))
+        var historicalOosTimeline=timeline.Skip(Math.Clamp(oosWindow.Start,0,timeline.Count))
             .Take(Math.Clamp(oosWindow.Count,0,Math.Max(0,timeline.Count-Math.Clamp(oosWindow.Start,0,timeline.Count))))
             .ToArray();
 
@@ -62,7 +62,7 @@ internal static class StrategyParameterSearchEvaluatorV1
             selectedIndex,
             SearchSpaceHash(selected.Symbol,selected.Family,trials),
             DatasetHash(selectionTimeline),
-            DatasetHash(holdoutTimeline),
+            DatasetHash(historicalOosTimeline),
             TestMethod,
             CorrectionMethod,
             NominalAlpha,
