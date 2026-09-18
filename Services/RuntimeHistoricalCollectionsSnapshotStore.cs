@@ -26,7 +26,8 @@ public sealed class RuntimeHistoricalCollectionsSnapshotStore
         var backtests = await _store.ReadBacktestsAsync(request, ct);
         var skillCalls = await _store.ReadSkillCallsAsync(request, ct);
         var auditEvents = await _store.ReadAuditEventsAsync(request, ct);
-        lock (_gate) _current = new(orders, equity, backtests, skillCalls, auditEvents);
+        var executionReality = await _store.ReadExecutionRealityAsync(request, ct);
+        lock (_gate) _current = new(orders, equity, backtests, skillCalls, auditEvents, executionReality);
     }
 }
 
@@ -35,14 +36,16 @@ public sealed record RuntimeHistoricalCollectionsSnapshot(
     HistoricalCollectionPageV1<HistoricalEquityPointV1> Equity,
     HistoricalCollectionPageV1<HistoricalBacktestV1> Backtests,
     HistoricalCollectionPageV1<HistoricalSkillCallV1> SkillCalls,
-    HistoricalCollectionPageV1<HistoricalAuditEventV1> AuditEvents)
+    HistoricalCollectionPageV1<HistoricalAuditEventV1> AuditEvents,
+    HistoricalCollectionPageV1<HistoricalExecutionRealityV1> ExecutionReality)
 {
     public static RuntimeHistoricalCollectionsSnapshot Unsupported() => new(
         Page<HistoricalOrderV1>(HistoricalCollectionKindV1.Orders),
         Page<HistoricalEquityPointV1>(HistoricalCollectionKindV1.Equity),
         Page<HistoricalBacktestV1>(HistoricalCollectionKindV1.Backtests),
         Page<HistoricalSkillCallV1>(HistoricalCollectionKindV1.SkillCalls),
-        Page<HistoricalAuditEventV1>(HistoricalCollectionKindV1.AuditEvents));
+        Page<HistoricalAuditEventV1>(HistoricalCollectionKindV1.AuditEvents),
+        Page<HistoricalExecutionRealityV1>(HistoricalCollectionKindV1.ExecutionReality));
 
     private static HistoricalCollectionPageV1<T> Page<T>(HistoricalCollectionKindV1 kind) =>
         new(HistoricalCollectionPageV1<T>.CurrentContractVersion, kind, RuntimeCollectionState.Unsupported, [], null, null, "local-agent-sqlite", "Historical collection has not been refreshed.");

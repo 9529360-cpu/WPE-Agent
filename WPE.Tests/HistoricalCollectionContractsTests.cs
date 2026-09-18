@@ -72,12 +72,69 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
         var item=Assert.Single(audit.Items);var json=System.Text.Json.JsonSerializer.Serialize(audit);Assert.DoesNotContain(secret,json);Assert.DoesNotContain("payload_json",json,StringComparison.OrdinalIgnoreCase);Assert.Equal("[REDACTED]",item.Category);Assert.Equal("[REDACTED]",item.Source);Assert.Equal("[REDACTED]",item.CorrelationId);Assert.Equal(RuntimeCollectionState.Unsupported,backtests.State);Assert.Empty(backtests.Items);
     }
 
+    [Fact]
+    public async Task ExecutionRealityIsReadOnlySafeAndDoesNotProjectOpaqueOrderIdentity()
+    {
+        await InitializeAsync();
+        await ExecuteAsync("""
+            INSERT INTO execution_reality_drift(
+                canonical_sha256,schema,correlation_id,client_order_id,strategy_id,strategy_version,cost_model_version,
+                symbol,state,terminal,comparable,fee_comparable,total_comparable,fill_ratio,slippage_drift_bps,
+                fee_drift_bps,total_execution_drift_bps,observation_latency_ms,observed_at,reason_code)
+            VALUES('hash-a','wpe.execution-reality-drift/1.0','SECRET-CORRELATION','SECRET-ORDER',
+                'trend-alpha','v7','research-cost-v1','BTCUSDT','Filled',1,1,0,0,'1','12.5','0','0',480,$t,'filled-fee-unavailable')
+            """,("$t",Now.ToString("O")));
+
+        var page=await new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now).ReadExecutionRealityAsync(new());
+        Assert.Equal(RuntimeCollectionState.Available,page.State);
+        var item=Assert.Single(page.Items);
+        Assert.Equal("trend-alpha",item.StrategyId);
+        Assert.Equal("v7",item.StrategyVersion);
+        Assert.Equal("research-cost-v1",item.CostModelVersion);
+        Assert.Equal(12.5m,item.SlippageDriftBps);
+        Assert.False(item.FeeComparable);
+        Assert.False(item.TotalComparable);
+        Assert.Null(item.FeeDriftBps);
+        Assert.Null(item.TotalExecutionDriftBps);
+        var json=System.Text.Json.JsonSerializer.Serialize(page);
+        Assert.DoesNotContain("SECRET-CORRELATION",json,StringComparison.Ordinal);
+        Assert.DoesNotContain("SECRET-ORDER",json,StringComparison.Ordinal);
+        Assert.DoesNotContain("canonical_sha256",json,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExecutionRealityWithholdsSlippageWhenPriceIsNotComparable()
+    {
+        await InitializeAsync();
+        await ExecuteAsync("""
+            INSERT INTO execution_reality_drift(
+                canonical_sha256,schema,correlation_id,client_order_id,strategy_id,strategy_version,cost_model_version,
+                symbol,state,terminal,comparable,fee_comparable,total_comparable,fill_ratio,slippage_drift_bps,
+                fee_drift_bps,total_execution_drift_bps,observation_latency_ms,observed_at,reason_code)
+            VALUES('hash-b','wpe.execution-reality-drift/1.0','cycle-b','order-b',
+                'trend-alpha','v7','research-cost-v1','BTCUSDT','NotFilled',1,0,0,0,'0','0','0','0',250,$t,'terminal-no-fill')
+            """,("$t",Now.ToString("O")));
+
+        var page=await new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now).ReadExecutionRealityAsync(new());
+        var item=Assert.Single(page.Items);
+        Assert.False(item.PriceComparable);
+        Assert.Null(item.SlippageDriftBps);
+        Assert.Null(item.FeeDriftBps);
+        Assert.Null(item.TotalExecutionDriftBps);
+    }
+
     private async Task InitializeAsync(){Directory.CreateDirectory(_directory);await ExecuteAsync("""
         CREATE TABLE execution_events(id INTEGER PRIMARY KEY AUTOINCREMENT,cycle_id TEXT,client_order_id TEXT,symbol TEXT,side TEXT,action TEXT,reduce_only INTEGER,quantity TEXT,avg_price TEXT,status TEXT,occurred_at TEXT);
         CREATE TABLE equity_snapshots(id INTEGER PRIMARY KEY AUTOINCREMENT,observed_at TEXT,equity TEXT,available_balance TEXT,environment TEXT,provider_id TEXT);
         CREATE TABLE runtime_skill_calls(id INTEGER PRIMARY KEY AUTOINCREMENT,occurred_at TEXT,skill TEXT,status TEXT,duration_ms INTEGER,mode TEXT,remote_llm INTEGER,tokens INTEGER,cost_usd TEXT);
         CREATE TABLE backtest_runs(id TEXT PRIMARY KEY,strategy_id TEXT,strategy_version TEXT,symbol TEXT,status TEXT,completed_at TEXT,coverage_days INTEGER,trades INTEGER,out_of_sample_return REAL,max_drawdown REAL,sharpe REAL);
         CREATE TABLE runtime_events(event_id TEXT,sequence INTEGER,correlation_id TEXT,event_type TEXT,source TEXT,payload_json TEXT,occurred_at TEXT);
+        CREATE TABLE execution_reality_drift(
+            canonical_sha256 TEXT PRIMARY KEY,schema TEXT,correlation_id TEXT,client_order_id TEXT,
+            strategy_id TEXT,strategy_version TEXT,cost_model_version TEXT,symbol TEXT,state TEXT,
+            terminal INTEGER,comparable INTEGER,fee_comparable INTEGER,total_comparable INTEGER,
+            fill_ratio TEXT,slippage_drift_bps TEXT,fee_drift_bps TEXT,total_execution_drift_bps TEXT,
+            observation_latency_ms INTEGER,observed_at TEXT,reason_code TEXT);
         """);}
     private async Task ExecuteAsync(string sql,params (string Name,object Value)[] values){Directory.CreateDirectory(_directory);await using var c=new SqliteConnection($"Data Source={DatabasePath}");await c.OpenAsync();await using var q=c.CreateCommand();q.CommandText=sql;foreach(var value in values)q.Parameters.AddWithValue(value.Name,value.Value);await q.ExecuteNonQueryAsync();}
     public void Dispose(){SqliteConnection.ClearAllPools();if(Directory.Exists(_directory))Directory.Delete(_directory,true);}

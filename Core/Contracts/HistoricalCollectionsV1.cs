@@ -6,7 +6,8 @@ public enum HistoricalCollectionKindV1
     Equity,
     Backtests,
     SkillCalls,
-    AuditEvents
+    AuditEvents,
+    ExecutionReality
 }
 
 public sealed record HistoricalCollectionRequestV1(int Limit = 50, string? Cursor = null)
@@ -80,3 +81,21 @@ public sealed record HistoricalAuditEventV1(
     string Source,
     string? CorrelationId,
     string Status);
+
+public sealed record HistoricalExecutionRealityV1(
+    DateTimeOffset ObservedAtUtc,
+    string StrategyId,
+    string StrategyVersion,
+    string CostModelVersion,
+    string Symbol,
+    string State,
+    bool Terminal,
+    bool PriceComparable,
+    bool FeeComparable,
+    bool TotalComparable,
+    decimal FillRatio,
+    decimal? SlippageDriftBps,
+    decimal? FeeDriftBps,
+    decimal? TotalExecutionDriftBps,
+    long ObservationLatencyMs,
+    string ReasonCode);

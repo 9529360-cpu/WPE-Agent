@@ -48,6 +48,33 @@ public sealed class RuntimeHistoricalCollectionStateStore
             "SELECT event_id,occurred_at,event_type,source,correlation_id FROM runtime_events ORDER BY occurred_at DESC,sequence DESC LIMIT $limit OFFSET $offset",
             r => new HistoricalAuditEventV1(Safe(r.GetString(0),120), Instant(r.GetString(1)), Safe(r.GetString(2),80), Safe(r.GetString(3),80), Text(r,4,120), "RECORDED"), ct);
 
+    public Task<HistoricalCollectionPageV1<HistoricalExecutionRealityV1>> ReadExecutionRealityAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default) =>
+        ReadAsync(HistoricalCollectionKindV1.ExecutionReality, request, "execution_reality_drift", "observed_at", TimeSpan.FromDays(30),
+            "SELECT observed_at,strategy_id,strategy_version,cost_model_version,symbol,state,terminal,comparable,fee_comparable,total_comparable,fill_ratio,slippage_drift_bps,fee_drift_bps,total_execution_drift_bps,observation_latency_ms,reason_code FROM execution_reality_drift ORDER BY observed_at DESC,rowid DESC LIMIT $limit OFFSET $offset",
+            r =>
+            {
+                var priceComparable=r.GetInt32(7)==1;
+                var feeComparable=r.GetInt32(8)==1;
+                var totalComparable=r.GetInt32(9)==1;
+                return new HistoricalExecutionRealityV1(
+                    Instant(r.GetString(0)),
+                    Safe(r.GetString(1),120),
+                    Safe(r.GetString(2),80),
+                    Safe(r.GetString(3),80),
+                    Safe(r.GetString(4),80),
+                    Safe(r.GetString(5),40),
+                    r.GetInt32(6)==1,
+                    priceComparable,
+                    feeComparable,
+                    totalComparable,
+                    Decimal(r,10),
+                    priceComparable?Decimal(r,11):null,
+                    feeComparable?Decimal(r,12):null,
+                    totalComparable?Decimal(r,13):null,
+                    Math.Max(0,r.GetInt64(14)),
+                    Safe(r.GetString(15),80));
+            }, ct);
+
     private async Task<HistoricalCollectionPageV1<T>> ReadAsync<T>(HistoricalCollectionKindV1 kind, HistoricalCollectionRequestV1 request, string table, string timestampColumn, TimeSpan staleAfter, string sql, Func<SqliteDataReader,T> map, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
