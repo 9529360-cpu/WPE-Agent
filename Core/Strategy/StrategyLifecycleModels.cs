@@ -58,7 +58,7 @@ public sealed record LocalStrategyParameters(
     };
 }
 
-public sealed record StrategySignal(string StrategyId, string Symbol, int Direction, double Confidence, string Reason);
+public sealed record StrategySignal(string StrategyId, string Symbol, int Direction, double Confidence, string Reason, string StrategyVersion = "");
 
 public static class StrategyLineage
 {
@@ -110,7 +110,8 @@ public sealed record StrategyValidation(
     double WorstRegimeReturn = 0,
     double TrainTestExpectancyGap = 0,
     int PassingRegimes = 0,
-    int EvaluatedRegimes = 0);
+    int EvaluatedRegimes = 0,
+    string StrategyVersion = "");
 
 public sealed record StrategyResearchSnapshot(
     string Status,
