@@ -108,7 +108,7 @@ internal static class ExecutionDriftCanonicalizerV1
     internal static bool IsCanonical(ExecutionDriftObservationV1 value)
     {
         if(value is null||value.Schema!=Schema||value.CanonicalBytes is null||value.ObservedAtUtc.Offset!=TimeSpan.Zero
-           ||value.ExchangeUpdatedAtUtc is {Offset: not TimeSpan.Zero})return false;
+           ||value.ExchangeUpdatedAtUtc is { } exchange&&exchange.Offset!=TimeSpan.Zero)return false;
         try
         {
             var expected=Create(new(value.CycleId,value.ClientOrderId,value.Phase,value.Source,value.Symbol,value.Side,
