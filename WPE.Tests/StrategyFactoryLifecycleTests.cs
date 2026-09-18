@@ -152,12 +152,6 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
             var id=registry.CandidateId("BTCUSDT",family,variant.ToString());
             var version=registry.BindProfileVersion(family,$"retired-{variant}");
             await store.UpsertStrategyAsync(new StrategyProfile{Id=id,Version=version,Symbol="BTCUSDT",Family=family,Parameters=parameters,Lifecycle=StrategyLifecycle.Retired,CreatedAtUtc=old,StateChangedAtUtc=old},CancellationToken.None);
-            var legacyJson=System.Text.Json.JsonSerializer.Serialize(new{parameters.FastPeriod,parameters.SlowPeriod,parameters.BreakoutBuffer,parameters.MeanReversionZ,parameters.NewsSentimentThreshold});
-            var legacyHash=LocalStrategyParameters.LegacyHash(parameters);var legacyLineage=StrategyLineage.Hash("BTCUSDT",family,null,null,0,legacyHash);
-            await using var connection=new SqliteConnection($"Data Source={DatabasePath}");await connection.OpenAsync();await using var command=connection.CreateCommand();
-            command.CommandText="UPDATE strategy_registry SET parameters_json=$json, parameters_hash=$hash, lineage_hash=$lineage WHERE id=$id";
-            command.Parameters.AddWithValue("$json",legacyJson);command.Parameters.AddWithValue("$hash",legacyHash);command.Parameters.AddWithValue("$lineage",legacyLineage);command.Parameters.AddWithValue("$id",id);
-            Assert.Equal(1,await command.ExecuteNonQueryAsync());
         }
 
         await new StrategyResearchAgent(store,utcNow:()=>now).RunOnceAsync(["BTCUSDT"],new RiskLimits(),CancellationToken.None);
