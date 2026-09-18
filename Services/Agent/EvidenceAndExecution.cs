@@ -330,22 +330,54 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         }return new(safe,messages);
     }
 
-    private async Task PreflightAsync(ExecutionIntent intent,CancellationToken ct)
+    private async Task<MarketEvidence> PreflightAsync(ExecutionIntent intent,CancellationToken ct)
     {
         var market=await _ex.GetMarketAsync(intent.Symbol,ct);var quality=market.Quality;
         if(quality.QualityScore<65||quality.LiquidityScore<_limits.MinimumLiquidityScore||quality.SpreadBps>_limits.MaximumSpreadBps||quality.AtrPercent>_limits.MaxAtrPercent)throw new InvalidOperationException(L("Execution.PreflightBlocked",quality.QualityScore,quality.LiquidityScore,quality.SpreadBps,quality.AtrPercent));
         if(intent.ExpectedPrice>0){var slippage=Math.Abs((double)((market.Price-intent.ExpectedPrice)/intent.ExpectedPrice))*10000;if(slippage>_limits.MaximumSlippageBps)throw new InvalidOperationException(L("Execution.SlippageBlocked",slippage,_limits.MaximumSlippageBps));}
+        return market;
     }
-    private async Task<ExchangeOrder> SubmitIdempotentlyAsync(ExecutionIntent intent,CancellationToken ct)
+    private async Task<ExchangeOrder> SubmitIdempotentlyAsync(string cycle,ExecutionIntent intent,CancellationToken ct)
     {
-        var existing=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);if(existing is not null)return existing;try{return intent.OrderType==ExecutionOrderType.Limit&&intent.LimitPrice>0?await _ex.PlaceLimitAsync(intent.Symbol,intent.Side,intent.Quantity,intent.LimitPrice,intent.ClientOrderId,intent.ReduceOnly,ct):await _ex.PlaceMarketAsync(intent.Symbol,intent.Side,intent.Quantity,intent.ClientOrderId,intent.ReduceOnly,ct);}catch{existing=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);if(existing is not null)return existing;throw;}
+        var existing=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);
+        if(existing is not null){await ObserveOrderDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.ProviderObserved,existing,ct);return existing;}
+        await ObserveExecutionDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.SubmissionAttempted,ExecutionDriftSourceV1.Local,"SUBMISSION_ATTEMPTED",0,0,null,ct);
+        try
+        {
+            var placed=intent.OrderType==ExecutionOrderType.Limit&&intent.LimitPrice>0
+                ?await _ex.PlaceLimitAsync(intent.Symbol,intent.Side,intent.Quantity,intent.LimitPrice,intent.ClientOrderId,intent.ReduceOnly,ct)
+                :await _ex.PlaceMarketAsync(intent.Symbol,intent.Side,intent.Quantity,intent.ClientOrderId,intent.ReduceOnly,ct);
+            await ObserveOrderDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.ProviderObserved,placed,ct);return placed;
+        }
+        catch
+        {
+            existing=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);
+            if(existing is not null){await ObserveOrderDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.ProviderObserved,existing,ct);return existing;}
+            throw;
+        }
     }
-    private async Task<ExchangeOrder> WaitAndCancelOnTimeoutAsync(string symbol,string clientOrderId,ExchangeOrder order,CancellationToken ct)
+    private async Task<ExchangeOrder> WaitAndCancelOnTimeoutAsync(string cycle,ExecutionIntent intent,ExchangeOrder order,CancellationToken ct)
     {
-        var deadline=_poll.UtcNow+_poll.OrderTimeout;while(!IsTerminal(order.Status)&&_poll.UtcNow<deadline){await _poll.DelayAsync(ct);order=await _ex.FindOrderAsync(symbol,clientOrderId,ct)??order;}if(IsTerminal(order.Status))return order;
-        await EnsureFreshCapabilityAsync(new ExecutionIntent(symbol,order.PositionSide??PositionSide.Long,0,true,0,0,clientOrderId,"timeout cancellation capability refresh"),ct);var cancelFailed=false;try{await _ex.CancelOrderAsync(symbol,order.OrderId,ct);}catch{cancelFailed=true;}
-        var observed=await _ex.FindOrderAsync(symbol,clientOrderId,ct)??order with{Status="UNKNOWN"};var postCancelDeadline=_poll.UtcNow+_poll.PostCancelWindow;while(_poll.UtcNow<postCancelDeadline){await _poll.DelayAsync(ct);var latest=await _ex.FindOrderAsync(symbol,clientOrderId,ct);if(latest is not null)observed=latest;}
-        if(!IsTerminal(observed.Status)&&observed.Status!="FILLED")observed=observed with{Status=cancelFailed?"UNKNOWN":observed.Status};return observed;
+        var deadline=_poll.UtcNow+_poll.OrderTimeout;
+        while(!IsTerminal(order.Status)&&_poll.UtcNow<deadline)
+        {
+            await _poll.DelayAsync(ct);var latest=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);
+            if(latest is not null){order=latest;await ObserveOrderDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.ProviderObserved,order,ct);}
+        }
+        if(IsTerminal(order.Status))return order;
+        await ObserveExecutionDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.TimeoutCancelRequested,ExecutionDriftSourceV1.Local,"CANCEL_REQUESTED",order.ExecutedQuantity,order.AvgPrice,ExchangeTime(order),ct);
+        await EnsureFreshCapabilityAsync(new ExecutionIntent(intent.Symbol,order.PositionSide??intent.Side,0,true,0,0,intent.ClientOrderId,"timeout cancellation capability refresh"),ct);
+        var cancelFailed=false;try{await _ex.CancelOrderAsync(intent.Symbol,order.OrderId,ct);}catch{cancelFailed=true;}
+        var observed=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct)??order with{Status="UNKNOWN"};
+        await ObserveOrderDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.PostCancelObserved,observed,ct);
+        var postCancelDeadline=_poll.UtcNow+_poll.PostCancelWindow;
+        while(_poll.UtcNow<postCancelDeadline)
+        {
+            await _poll.DelayAsync(ct);var latest=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);
+            if(latest is not null){observed=latest;await ObserveOrderDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.PostCancelObserved,observed,ct);}
+        }
+        if(!IsTerminal(observed.Status)&&observed.Status!="FILLED")observed=observed with{Status=cancelFailed?"UNKNOWN":observed.Status};
+        return observed;
     }
     private void EnsureMutationAllowed(ExecutionIntent intent)
     {
