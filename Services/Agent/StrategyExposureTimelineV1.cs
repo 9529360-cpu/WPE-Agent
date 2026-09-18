@@ -25,6 +25,7 @@ internal sealed record StrategyExposureDecisionV1(
 internal static class StrategyExposureTimelineV1
 {
     internal const string Schema="wpe.strategy-exposure/1";
+    internal const int MinimumWarmupBars=200;
     internal static StrategyExposureDecisionV1? Create(
         StrategyProfile profile,
         int sequence,
