@@ -78,8 +78,11 @@ public sealed class StrategyResearchAgent
             var next = profile.BuiltIn&&profile.ValidationTrades==0
                 ? (_governor.CanPromote(profile,validation)?StrategyLifecycle.Shadow:StrategyLifecycle.Retired)
                 : _governor.NextLifecycle(profile, validation);
-            profile.QualityScore = validation.QualityScore; profile.Expectancy = validation.Expectancy;
-            profile.MaxDrawdown = validation.MaxDrawdown; profile.Sharpe = validation.Sharpe; profile.ValidationTrades = validation.Trades;
+            if(previous is StrategyLifecycle.Draft or StrategyLifecycle.Shadow)
+            {
+                profile.QualityScore=validation.QualityScore;profile.Expectancy=validation.Expectancy;profile.MaxDrawdown=validation.MaxDrawdown;
+            }
+            profile.Sharpe=validation.Sharpe;profile.ValidationTrades=validation.Trades;
             if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = _utcNow().ToUniversalTime(); profile.LastReason = validation.Summary; }
             await _database.UpsertStrategyAsync(profile, ct);
             if(next!=previous)await _database.RecordStrategyLifecycleAsync(profile,previous,validation.Summary,ct);
