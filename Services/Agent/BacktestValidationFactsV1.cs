@@ -24,6 +24,13 @@ public sealed record BacktestValidationFactV1(
     double WalkForwardScore,
     double MonteCarloLossProbability,
     double QualityScore,
+    double StrategyReturn,
+    double BenchmarkReturn,
+    double WorstRegimeReturn,
+    double TrainTestExpectancyGap,
+    int PassingRegimes,
+    int EvaluatedRegimes,
+    bool HistoricalPassed,
     StrategyParameterSearchEvidence ParameterSearch,
     int ForwardObservations,
     bool ForwardQualified,
@@ -42,6 +49,8 @@ public static class BacktestValidationCanonicalizerV1
         double winRate, double profitFactor, double expectancy, double maxDrawdown,
         double sharpe, double outOfSampleReturn, double walkForwardScore,
         double monteCarloLossProbability, double qualityScore,
+        double strategyReturn, double benchmarkReturn, double worstRegimeReturn,
+        double trainTestExpectancyGap, int passingRegimes, int evaluatedRegimes, bool historicalPassed,
         StrategyParameterSearchEvidence parameterSearch,
         int forwardObservations, bool forwardQualified, bool approved, bool promoted)
     {
@@ -54,6 +63,9 @@ public static class BacktestValidationCanonicalizerV1
             outOfSampleTrades.ToString(CultureInfo.InvariantCulture), coverageDays.ToString(CultureInfo.InvariantCulture),
             Number(winRate), Number(profitFactor), Number(expectancy), Number(maxDrawdown), Number(sharpe),
             Number(outOfSampleReturn), Number(walkForwardScore), Number(monteCarloLossProbability), Number(qualityScore),
+            Number(strategyReturn), Number(benchmarkReturn), Number(worstRegimeReturn), Number(trainTestExpectancyGap),
+            passingRegimes.ToString(CultureInfo.InvariantCulture), evaluatedRegimes.ToString(CultureInfo.InvariantCulture),
+            historicalPassed ? "true" : "false",
             parameterSearch.TrialCount.ToString(CultureInfo.InvariantCulture),
             parameterSearch.SelectedTrialIndex.ToString(CultureInfo.InvariantCulture),
             parameterSearch.SearchSpaceHash,
@@ -74,8 +86,9 @@ public static class BacktestValidationCanonicalizerV1
         var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
         return new(Schema, symbol, strategyId, strategyVersion, utc, sampleSize, trades, outOfSampleTrades, coverageDays,
             winRate, profitFactor, expectancy, maxDrawdown, sharpe, outOfSampleReturn, walkForwardScore,
-            monteCarloLossProbability, qualityScore, parameterSearch, forwardObservations, forwardQualified,
-            approved, promoted, hash, bytes);
+            monteCarloLossProbability, qualityScore, strategyReturn, benchmarkReturn, worstRegimeReturn,
+            trainTestExpectancyGap, passingRegimes, evaluatedRegimes, historicalPassed, parameterSearch,
+            forwardObservations, forwardQualified, approved, promoted, hash, bytes);
     }
 
     public static bool IsCanonical(BacktestValidationFactV1 value, DateTimeOffset evaluationTimeUtc)
@@ -89,20 +102,38 @@ public static class BacktestValidationCanonicalizerV1
         if (!Finite(value.WinRate, 0, 1) || !Finite(value.ProfitFactor, 0, double.MaxValue) ||
             !double.IsFinite(value.Expectancy) || !Finite(value.MaxDrawdown, 0, 1) || !double.IsFinite(value.Sharpe) ||
             !double.IsFinite(value.OutOfSampleReturn) || !Finite(value.WalkForwardScore, 0, 1) ||
-            !Finite(value.MonteCarloLossProbability, 0, 1) || !Finite(value.QualityScore, 0, 1)) return false;
+            !Finite(value.MonteCarloLossProbability, 0, 1) || !Finite(value.QualityScore, 0, 1) ||
+            !double.IsFinite(value.StrategyReturn) || !double.IsFinite(value.BenchmarkReturn) ||
+            !double.IsFinite(value.WorstRegimeReturn) || !double.IsFinite(value.TrainTestExpectancyGap) ||
+            value.TrainTestExpectancyGap < 0) return false;
+        if (value.EvaluatedRegimes < 0 || value.PassingRegimes < 0 || value.PassingRegimes > value.EvaluatedRegimes) return false;
         if (!StrategyParameterSearchEvaluatorV1.IsCanonical(value.ParameterSearch) ||
             !Token(value.ParameterSearch.TestMethod,128) ||
             !Token(value.ParameterSearch.CorrectionMethod,64) ||
             !SafeText(value.ParameterSearch.SelectionRule,256)) return false;
         if (value.ForwardObservations < 0 ||
             value.ForwardQualified && value.ForwardObservations < StrategyGovernor.MinimumShadowObservations) return false;
-        if (value.Approved && (!value.ForwardQualified || !StrategyParameterSearchEvaluatorV1.IsQualified(value.ParameterSearch))) return false;
+
+        var promotionFactsQualified=value.HistoricalPassed
+            &&value.Trades>=StrategyGovernor.MinimumValidationTrades
+            &&value.QualityScore>=StrategyGovernor.MinimumQualityScore
+            &&value.MaxDrawdown<=StrategyGovernor.MaximumPromotedDrawdown
+            &&value.EvaluatedRegimes==StrategyGovernor.RequiredEvaluatedRegimes
+            &&value.PassingRegimes>=StrategyGovernor.MinimumPassingRegimes
+            &&value.WorstRegimeReturn>=StrategyGovernor.MinimumWorstRegimeReturn
+            &&value.TrainTestExpectancyGap<=StrategyGovernor.MaximumTrainTestExpectancyGap
+            &&StrategyParameterSearchEvaluatorV1.IsQualified(value.ParameterSearch);
+
+        if (value.Approved && (!promotionFactsQualified || !value.ForwardQualified)) return false;
         if (value.Promoted && !value.Approved) return false;
+
         var expected = Create(value.Symbol, value.StrategyId, value.StrategyVersion, value.ValidatedAtUtc, value.SampleSize, value.Trades,
             value.OutOfSampleTrades, value.CoverageDays, value.WinRate, value.ProfitFactor, value.Expectancy,
             value.MaxDrawdown, value.Sharpe, value.OutOfSampleReturn, value.WalkForwardScore,
-            value.MonteCarloLossProbability, value.QualityScore, value.ParameterSearch,
-            value.ForwardObservations, value.ForwardQualified, value.Approved, value.Promoted);
+            value.MonteCarloLossProbability, value.QualityScore, value.StrategyReturn, value.BenchmarkReturn,
+            value.WorstRegimeReturn, value.TrainTestExpectancyGap, value.PassingRegimes, value.EvaluatedRegimes,
+            value.HistoricalPassed, value.ParameterSearch, value.ForwardObservations, value.ForwardQualified,
+            value.Approved, value.Promoted);
         return string.Equals(expected.CanonicalSha256, value.CanonicalSha256, StringComparison.Ordinal) &&
                CryptographicOperations.FixedTimeEquals(expected.CanonicalBytes, value.CanonicalBytes);
     }
