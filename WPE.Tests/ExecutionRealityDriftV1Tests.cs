@@ -49,10 +49,10 @@ public sealed class ExecutionRealityDriftV1Tests
     }
 
     [Fact]
-    public void FilledShortOpen_FavorablePriceIsNegativeSlippage()
+    public void FilledShortOpen_FavorableHigherSellPriceIsNegativeSlippage()
     {
         var expected = Expectation(PositionSide.Short, reduceOnly:false, expectedPrice:100m);
-        var observed = Observation(expected, "FILLED", 2m, 99m, .0792m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddMilliseconds(500));
+        var observed = Observation(expected, "FILLED", 2m, 101m, .0808m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddMilliseconds(500));
 
         var fact = ExecutionRealityDriftV1.Analyze(expected, observed);
 
