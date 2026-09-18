@@ -1,0 +1,286 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text.Json;
+using Microsoft.Data.Sqlite;
+
+namespace 币安量化机器人.Services.Agent;
+
+internal enum ExecutionRealityCalibrationStatusV1 { Available, Unsupported }
+
+internal sealed record ExecutionRealityCalibrationBucketV1(
+    string ProviderId,
+    string Environment,
+    string Symbol,
+    ExecutionOrderType OrderType,
+    bool ReduceOnly,
+    int SampleCount,
+    int FullFillCount,
+    int PartialFillCount,
+    int SlippageSampleCount,
+    int SubmitLatencySampleCount,
+    int IntentLatencySampleCount,
+    int PreflightContextSampleCount,
+    double PartialFillRate,
+    double MedianFillRatio,
+    double P10FillRatio,
+    double? MedianAdverseSlippageBps,
+    double? P90AdverseSlippageBps,
+    double? MedianSubmitToFirstExchangeMilliseconds,
+    double? P90SubmitToFirstExchangeMilliseconds,
+    double? MedianIntentToFinalMilliseconds,
+    double? P90IntentToFinalMilliseconds,
+    double? MedianSpreadBps,
+    double? MedianLiquidityScore,
+    double? MedianAtrPercent,
+    bool Qualified);
+
+internal sealed record ExecutionRealityCalibrationReportV1(
+    string Schema,
+    DateTimeOffset GeneratedAtUtc,
+    string SourcePositionLinkId,
+    string SourcePositionLinkSha256,
+    string SourceExecutionLedgerSha256,
+    string SourceExecutionTraceSha256,
+    long SourceLastExecutionEventId,
+    string SourceDriftSchema,
+    int MinimumSamplesPerBucket,
+    ExecutionRealityCalibrationStatusV1 Status,
+    IReadOnlyList<string> ReasonCodes,
+    IReadOnlyList<ExecutionRealityCalibrationBucketV1> Buckets,
+    string CanonicalSha256,
+    byte[] CanonicalBytes);
+
+internal sealed record ExecutionRealityCalibrationSourceV1(
+    string PositionLinkId,
+    string PositionLinkSha256,
+    string ExecutionLedgerSha256,
+    string ExecutionTraceSha256,
+    long LastExecutionEventId,
+    DateTimeOffset LinkedAtUtc);
+
+internal static class ExecutionRealityCalibrationCanonicalizerV1
+{
+    internal const string Schema="wpe.execution-reality-calibration/1.0";
+
+    internal static ExecutionRealityCalibrationReportV1 Create(
+        ExecutionRealityCalibrationSourceV1 source,
+        DateTimeOffset generatedAtUtc,
+        int minimumSamplesPerBucket,
+        IReadOnlyList<ExecutionRealityCalibrationBucketV1> buckets,
+        IReadOnlyList<string> reasonCodes)
+    {
+        ArgumentNullException.ThrowIfNull(source);ArgumentNullException.ThrowIfNull(buckets);ArgumentNullException.ThrowIfNull(reasonCodes);
+        if(minimumSamplesPerBucket<1||source.LastExecutionEventId<1
+           ||source.PositionLinkId!="execution-position-drift:"+source.PositionLinkSha256
+           ||!Sha(source.PositionLinkSha256)||!Sha(source.ExecutionLedgerSha256)||!Sha(source.ExecutionTraceSha256))
+            throw new ArgumentException("Execution calibration source is invalid.");
+        generatedAtUtc=generatedAtUtc.ToUniversalTime();
+        var rows=buckets.OrderBy(x=>x.ProviderId,StringComparer.Ordinal).ThenBy(x=>x.Environment,StringComparer.Ordinal)
+            .ThenBy(x=>x.Symbol,StringComparer.Ordinal).ThenBy(x=>x.OrderType).ThenBy(x=>x.ReduceOnly).ToArray();
+        if(rows.Any(x=>!ValidBucket(x,minimumSamplesPerBucket)))throw new ArgumentException("Execution calibration bucket is invalid.");
+        var reasons=reasonCodes.Where(x=>!string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).OrderBy(x=>x,StringComparer.Ordinal).ToArray();
+        var status=rows.Any(x=>x.Qualified)?ExecutionRealityCalibrationStatusV1.Available:ExecutionRealityCalibrationStatusV1.Unsupported;
+        if(status==ExecutionRealityCalibrationStatusV1.Unsupported&&!reasons.Contains("execution-calibration.samples-insufficient",StringComparer.Ordinal))
+            reasons=[..reasons,"execution-calibration.samples-insufficient"];
+        var bytes=JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            schema=Schema,generatedAtUtc,
+            sourcePositionLinkId=source.PositionLinkId,sourcePositionLinkSha256=source.PositionLinkSha256,
+            sourceExecutionLedgerSha256=source.ExecutionLedgerSha256,sourceExecutionTraceSha256=source.ExecutionTraceSha256,
+            sourceLastExecutionEventId=source.LastExecutionEventId,sourceDriftSchema=ExecutionDriftCanonicalizerV1.Schema,
+            minimumSamplesPerBucket,status=status.ToString().ToLowerInvariant(),reasonCodes=reasons,
+            buckets=rows.Select(Row)
+        });
+        var hash=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        return new(Schema,generatedAtUtc,source.PositionLinkId,source.PositionLinkSha256,source.ExecutionLedgerSha256,
+            source.ExecutionTraceSha256,source.LastExecutionEventId,ExecutionDriftCanonicalizerV1.Schema,minimumSamplesPerBucket,
+            status,reasons,rows,hash,bytes);
+    }
+
+    internal static bool IsCanonical(ExecutionRealityCalibrationReportV1 value)
+    {
+        if(value is null||value.Schema!=Schema||value.GeneratedAtUtc.Offset!=TimeSpan.Zero||value.MinimumSamplesPerBucket<1
+           ||value.SourceLastExecutionEventId<1||value.SourceDriftSchema!=ExecutionDriftCanonicalizerV1.Schema
+           ||value.SourcePositionLinkId!="execution-position-drift:"+value.SourcePositionLinkSha256
+           ||!Sha(value.SourcePositionLinkSha256)||!Sha(value.SourceExecutionLedgerSha256)
+           ||!Sha(value.SourceExecutionTraceSha256)||!Sha(value.CanonicalSha256)||value.CanonicalBytes is null)return false;
+        try
+        {
+            var source=new ExecutionRealityCalibrationSourceV1(value.SourcePositionLinkId,value.SourcePositionLinkSha256,
+                value.SourceExecutionLedgerSha256,value.SourceExecutionTraceSha256,value.SourceLastExecutionEventId,value.GeneratedAtUtc);
+            var expected=Create(source,value.GeneratedAtUtc,value.MinimumSamplesPerBucket,value.Buckets,value.ReasonCodes);
+            return expected.Status==value.Status
+                   &&string.Equals(expected.CanonicalSha256,value.CanonicalSha256,StringComparison.Ordinal)
+                   &&CryptographicOperations.FixedTimeEquals(expected.CanonicalBytes,value.CanonicalBytes);
+        }
+        catch(ArgumentException){return false;}
+    }
+
+    private static object Row(ExecutionRealityCalibrationBucketV1 x)=>new
+    {
+        x.ProviderId,x.Environment,x.Symbol,orderType=x.OrderType.ToString(),x.ReduceOnly,x.SampleCount,x.FullFillCount,x.PartialFillCount,
+        x.SlippageSampleCount,x.SubmitLatencySampleCount,x.IntentLatencySampleCount,x.PreflightContextSampleCount,
+        x.PartialFillRate,x.MedianFillRatio,x.P10FillRatio,x.MedianAdverseSlippageBps,x.P90AdverseSlippageBps,
+        x.MedianSubmitToFirstExchangeMilliseconds,x.P90SubmitToFirstExchangeMilliseconds,
+        x.MedianIntentToFinalMilliseconds,x.P90IntentToFinalMilliseconds,
+        x.MedianSpreadBps,x.MedianLiquidityScore,x.MedianAtrPercent,x.Qualified
+    };
+
+    private static bool ValidBucket(ExecutionRealityCalibrationBucketV1 x,int minimum)
+    {
+        if(string.IsNullOrWhiteSpace(x.ProviderId)||string.IsNullOrWhiteSpace(x.Environment)||string.IsNullOrWhiteSpace(x.Symbol)
+           ||!Enum.IsDefined(x.OrderType)||x.SampleCount<1||x.FullFillCount<0||x.PartialFillCount<0
+           ||x.FullFillCount+x.PartialFillCount!=x.SampleCount||x.SlippageSampleCount<0||x.SlippageSampleCount>x.SampleCount
+           ||x.SubmitLatencySampleCount<0||x.SubmitLatencySampleCount>x.SampleCount||x.IntentLatencySampleCount<0||x.IntentLatencySampleCount>x.SampleCount
+           ||x.PreflightContextSampleCount<0||x.PreflightContextSampleCount>x.SampleCount
+           ||!double.IsFinite(x.PartialFillRate)||x.PartialFillRate is<0 or>1
+           ||!double.IsFinite(x.MedianFillRatio)||x.MedianFillRatio is<0 or>1
+           ||!double.IsFinite(x.P10FillRatio)||x.P10FillRatio is<0 or>1)return false;
+        foreach(var v in new[]{x.MedianAdverseSlippageBps,x.P90AdverseSlippageBps,x.MedianSubmitToFirstExchangeMilliseconds,
+                    x.P90SubmitToFirstExchangeMilliseconds,x.MedianIntentToFinalMilliseconds,x.P90IntentToFinalMilliseconds,
+                    x.MedianSpreadBps,x.MedianLiquidityScore,x.MedianAtrPercent})
+            if(v is { } number&&!double.IsFinite(number))return false;
+        var qualified=x.SampleCount>=minimum&&x.SlippageSampleCount>=minimum
+            &&x.SubmitLatencySampleCount>=minimum&&x.IntentLatencySampleCount>=minimum;
+        return x.Qualified==qualified;
+    }
+
+    private static bool Sha(string value)=>value is{Length:64}&&value.All(Uri.IsHexDigit);
+}
+
+internal sealed class ExecutionRealityCalibrationServiceV1(AgentSqliteStore store,Func<DateTimeOffset>? utcNow=null)
+{
+    internal const int MinimumSamplesPerBucket=30;
+    private readonly AgentSqliteStore _store=store??throw new ArgumentNullException(nameof(store));
+    private readonly Func<DateTimeOffset> _utcNow=utcNow??(()=>DateTimeOffset.UtcNow);
+
+    internal async Task<ExecutionRealityCalibrationReportV1?> BuildAsync(CancellationToken ct)
+    {
+        var source=await _store.GetExecutionRealityCalibrationSourceAsync(ct);
+        if(source is null)return null;
+        var summaries=await _store.GetExecutionDriftSummariesThroughEventAsync(source.LastExecutionEventId,ct);
+        var eligible=summaries.Where(Eligible).ToArray();
+        var buckets=eligible.GroupBy(x=>new{x.ProviderId,x.Environment,x.Symbol,x.OrderType,x.ReduceOnly})
+            .Select(g=>Bucket(g.Key.ProviderId,g.Key.Environment,g.Key.Symbol,g.Key.OrderType,g.Key.ReduceOnly,g.ToArray()))
+            .OrderBy(x=>x.ProviderId,StringComparer.Ordinal).ThenBy(x=>x.Environment,StringComparer.Ordinal)
+            .ThenBy(x=>x.Symbol,StringComparer.Ordinal).ThenBy(x=>x.OrderType).ThenBy(x=>x.ReduceOnly).ToArray();
+        var reasons=new List<string>();
+        if(eligible.Length==0)reasons.Add("execution-calibration.no-current-schema-samples");
+        if(buckets.All(x=>!x.Qualified))reasons.Add("execution-calibration.samples-insufficient");
+        return ExecutionRealityCalibrationCanonicalizerV1.Create(source,_utcNow().ToUniversalTime(),MinimumSamplesPerBucket,buckets,reasons);
+    }
+
+    private static bool Eligible(ExecutionDriftSummaryV1 x)
+        =>string.Equals(x.Environment,"Testnet",StringComparison.Ordinal)
+          &&x.RequestedQuantity>0&&x.FinalObservedQuantity>0&&x.FillRatio is>0 and<=1
+          &&x.FinalStatus is "FILLED" or "PARTIALLY_FILLED";
+
+    private static ExecutionRealityCalibrationBucketV1 Bucket(
+        string provider,string environment,string symbol,ExecutionOrderType orderType,bool reduceOnly,IReadOnlyList<ExecutionDriftSummaryV1> values)
+    {
+        var fill=values.Select(x=>(double)x.FillRatio).ToArray();
+        var slip=values.Where(x=>x.AdverseSlippageBps is not null).Select(x=>x.AdverseSlippageBps!.Value).ToArray();
+        var submit=values.Where(x=>x.SubmitToFirstExchangeMilliseconds is>=0).Select(x=>x.SubmitToFirstExchangeMilliseconds!.Value).ToArray();
+        var end=values.Where(x=>x.IntentToFinalMilliseconds is>=0).Select(x=>x.IntentToFinalMilliseconds!.Value).ToArray();
+        var context=values.Where(x=>x.PreflightPrice is>0&&x.PreflightSpreadBps is>=0&&x.PreflightLiquidityScore is>=0&&x.PreflightAtrPercent is>=0).ToArray();
+        var partial=values.Count(x=>x.FillRatio<1);
+        var qualified=values.Count>=MinimumSamplesPerBucket&&slip.Length>=MinimumSamplesPerBucket
+            &&submit.Length>=MinimumSamplesPerBucket&&end.Length>=MinimumSamplesPerBucket;
+        return new(provider,environment,symbol,orderType,reduceOnly,values.Count,values.Count-partial,partial,
+            slip.Length,submit.Length,end.Length,context.Length,partial/(double)values.Count,Q(fill,.5),Q(fill,.1),
+            Qn(slip,.5),Qn(slip,.9),Qn(submit,.5),Qn(submit,.9),Qn(end,.5),Qn(end,.9),
+            Qn(context.Select(x=>x.PreflightSpreadBps!.Value).ToArray(),.5),
+            Qn(context.Select(x=>x.PreflightLiquidityScore!.Value).ToArray(),.5),
+            Qn(context.Select(x=>x.PreflightAtrPercent!.Value).ToArray(),.5),qualified);
+    }
+
+    private static double? Qn(IReadOnlyList<double> values,double p)=>values.Count==0?null:Q(values,p);
+    private static double Q(IReadOnlyList<double> values,double p)
+    {
+        if(values.Count==0)throw new ArgumentException("Quantile requires at least one value.",nameof(values));
+        var sorted=values.OrderBy(x=>x).ToArray();if(sorted.Length==1)return sorted[0];
+        var position=(sorted.Length-1)*Math.Clamp(p,0,1);var low=(int)Math.Floor(position);var high=(int)Math.Ceiling(position);
+        if(low==high)return sorted[low];var weight=position-low;return sorted[low]+(sorted[high]-sorted[low])*weight;
+    }
+}
+
+public sealed partial class AgentSqliteStore
+{
+    private void EnsureExecutionRealityCalibrationSchema()
+    {
+        using var c=new SqliteConnection(_cs);c.Open();using var q=c.CreateCommand();q.CommandText="""
+            CREATE TABLE IF NOT EXISTS execution_reality_calibrations(
+                canonical_sha256 TEXT PRIMARY KEY,
+                schema TEXT NOT NULL,
+                generated_at TEXT NOT NULL,
+                source_position_link_id TEXT NOT NULL,
+                source_position_link_sha256 TEXT NOT NULL,
+                source_execution_ledger_sha256 TEXT NOT NULL,
+                source_execution_trace_sha256 TEXT NOT NULL,
+                source_last_execution_event_id INTEGER NOT NULL,
+                source_drift_schema TEXT NOT NULL,
+                minimum_samples_per_bucket INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                canonical_bytes BLOB NOT NULL,
+                UNIQUE(source_execution_trace_sha256,source_drift_schema,minimum_samples_per_bucket));
+            CREATE INDEX IF NOT EXISTS ix_execution_reality_calibration_time ON execution_reality_calibrations(generated_at DESC);
+            CREATE TRIGGER IF NOT EXISTS execution_reality_calibrations_no_update BEFORE UPDATE ON execution_reality_calibrations BEGIN SELECT RAISE(ABORT,'execution reality calibrations are append-only'); END;
+            CREATE TRIGGER IF NOT EXISTS execution_reality_calibrations_no_delete BEFORE DELETE ON execution_reality_calibrations BEGIN SELECT RAISE(ABORT,'execution reality calibrations are append-only'); END;
+            """;
+        q.ExecuteNonQuery();
+    }
+
+    internal async Task<ExecutionRealityCalibrationSourceV1?> GetExecutionRealityCalibrationSourceAsync(CancellationToken ct)
+    {
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
+            SELECT l.link_id,l.canonical_sha256,l.execution_ledger_sha256,s.execution_trace_sha256,s.last_execution_event_id,l.linked_at
+            FROM execution_position_drift_reconciliations l
+            JOIN execution_position_ledger_snapshots s ON s.canonical_sha256=l.execution_ledger_sha256
+            WHERE l.position_state='Confirmed' AND l.allows_risk_increase=1 AND l.calibratable=1
+            ORDER BY l.linked_at DESC,l.rowid DESC LIMIT 1
+            """;
+        await using var r=await q.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct))return null;
+        return new(r.GetString(0),r.GetString(1),r.GetString(2),r.GetString(3),r.GetInt64(4),
+            DateTimeOffset.Parse(r.GetString(5),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind).ToUniversalTime());
+    }
+
+    internal async Task<IReadOnlyList<ExecutionDriftSummaryV1>> GetExecutionDriftSummariesThroughEventAsync(long lastExecutionEventId,CancellationToken ct)
+    {
+        if(lastExecutionEventId<1)return [];
+        var ids=new List<string>();await using(var c=new SqliteConnection(_cs)){await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
+            SELECT client_order_id FROM execution_events
+            WHERE id<=$cursor AND client_order_id IS NOT NULL AND status IN ('FILLED','PARTIALLY_FILLED')
+            ORDER BY id LIMIT 5000
+            """;q.Parameters.AddWithValue("$cursor",lastExecutionEventId);await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))ids.Add(r.GetString(0));}
+        var result=new List<ExecutionDriftSummaryV1>(ids.Count);
+        foreach(var id in ids)
+        {
+            ct.ThrowIfCancellationRequested();
+            var summary=await GetExecutionDriftSummaryAsync(id,ct);
+            if(summary is not null)result.Add(summary);
+        }
+        return result;
+    }
+
+    internal async Task<bool> SaveExecutionRealityCalibrationAsync(ExecutionRealityCalibrationReportV1 value,CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if(!ExecutionRealityCalibrationCanonicalizerV1.IsCanonical(value))throw new InvalidOperationException("Execution reality calibration canonical identity is invalid.");
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
+            INSERT OR IGNORE INTO execution_reality_calibrations(
+                canonical_sha256,schema,generated_at,source_position_link_id,source_position_link_sha256,
+                source_execution_ledger_sha256,source_execution_trace_sha256,source_last_execution_event_id,
+                source_drift_schema,minimum_samples_per_bucket,status,canonical_bytes)
+            VALUES($hash,$schema,$generated,$link,$linkHash,$ledger,$trace,$cursor,$driftSchema,$minimum,$status,$bytes);
+            SELECT changes();
+            """;
+        q.Parameters.AddWithValue("$hash",value.CanonicalSha256);q.Parameters.AddWithValue("$schema",value.Schema);
+        q.Parameters.AddWithValue("$generated",value.GeneratedAtUtc.ToString("O",CultureInfo.InvariantCulture));
+        q.Parameters.AddWithValue("$link",value.SourcePositionLinkId);q.Parameters.AddWithValue("$linkHash",value.SourcePositionLinkSha256);
+        q.Parameters.AddWithValue("$ledger",value.SourceExecutionLedgerSha256);q.Parameters.AddWithValue("$trace",value.SourceExecutionTraceSha256);
+        q.Parameters.AddWithValue("$cursor",value.SourceLastExecutionEventId);q.Parameters.AddWithValue("$driftSchema",value.SourceDriftSchema);
+        q.Parameters.AddWithValue("$minimum",value.MinimumSamplesPerBucket);q.Parameters.AddWithValue("$status",value.Status.ToString());
+        q.Parameters.Add("$bytes",SqliteType.Blob).Value=value.CanonicalBytes;
+        return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1;
+    }
+}
