@@ -11,11 +11,10 @@ internal interface IDeterministicStrategyModule
     StrategyFamily Family { get; }
     string ImplementationVersion { get; }
     StrategySignal Signal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news);
-    List<(double Return, bool Trade)> Simulate(
+    IReadOnlyList<StrategyExposureDecisionV1> BuildResearchTimeline(
         StrategyProfile profile,
         IReadOnlyList<CandleEvidence> candles,
-        IReadOnlyList<NewsFeature> news,
-        ResearchRealityModel reality);
+        IReadOnlyList<NewsFeature> news);
 }
 
 internal sealed class DeterministicStrategyRegistry
@@ -100,12 +99,11 @@ internal sealed class TrendBreakoutStrategyModule : IDeterministicStrategyModule
             $"strategy={ImplementationVersion}; family={Family}; local deterministic signal");
     }
 
-    public List<(double Return, bool Trade)> Simulate(
+    public IReadOnlyList<StrategyExposureDecisionV1> BuildResearchTimeline(
         StrategyProfile profile,
         IReadOnlyList<CandleEvidence> candles,
-        IReadOnlyList<NewsFeature> news,
-        ResearchRealityModel reality)
-        => StrategyModuleSimulation.SimulateDirectional(profile, candles, reality,
+        IReadOnlyList<NewsFeature> news)
+        => StrategyModuleSimulation.BuildDirectionalTimeline(profile, candles,
             (market, _) => Signal(profile, market, Array.Empty<NewsEvidence>()).Direction);
 
     private static StrategySignal Hold(StrategyProfile profile, string symbol, string reason) =>
@@ -135,15 +133,15 @@ internal sealed class NewsMomentumStrategyModule : IDeterministicStrategyModule
             $"strategy={ImplementationVersion}; family={Family}; sentiment={sentiment:F3}");
     }
 
-    public List<(double Return, bool Trade)> Simulate(
+    public IReadOnlyList<StrategyExposureDecisionV1> BuildResearchTimeline(
         StrategyProfile profile,
         IReadOnlyList<CandleEvidence> candles,
-        IReadOnlyList<NewsFeature> news,
-        ResearchRealityModel reality)
-        => StrategyModuleSimulation.SimulateDirectional(profile, candles, reality, (_, asOf) =>
+        IReadOnlyList<NewsFeature> news)
+        => StrategyModuleSimulation.BuildDirectionalTimeline(profile, candles, (_, asOf) =>
         {
+            var decisionTime=asOf.UtcDateTime;
             var weighted = news
-                .Where(x => x.PublishedAtUtc.Kind == DateTimeKind.Utc && x.PublishedAtUtc <= asOf && x.PublishedAtUtc > asOf.AddHours(-48) &&
+                .Where(x => x.PublishedAtUtc.Kind == DateTimeKind.Utc && x.PublishedAtUtc <= decisionTime && x.PublishedAtUtc > decisionTime.AddHours(-48) &&
                             (x.Asset.Equals(profile.Symbol, StringComparison.OrdinalIgnoreCase) || profile.Symbol.StartsWith(x.Asset, StringComparison.OrdinalIgnoreCase)))
                 .OrderByDescending(x => x.PublishedAtUtc)
                 .Take(5)
@@ -182,56 +180,38 @@ internal sealed class MeanReversionStrategyModule : IDeterministicStrategyModule
             $"strategy={ImplementationVersion}; family={Family}; regime={state.Regime}; z={state.ZScore:F2}; rsi={state.Rsi:F1}; adx={state.Adx:F1}; atr={state.AtrRatio:P2}; distanceAtr={state.DistanceAtr:F2}; volume={state.VolumeRatio:F2}");
     }
 
-    public List<(double Return, bool Trade)> Simulate(
+    public IReadOnlyList<StrategyExposureDecisionV1> BuildResearchTimeline(
         StrategyProfile profile,
         IReadOnlyList<CandleEvidence> candles,
-        IReadOnlyList<NewsFeature> news,
-        ResearchRealityModel reality)
+        IReadOnlyList<NewsFeature> news)
     {
-        var result = new List<(double Return, bool Trade)>();
-        var p = profile.Parameters;
-        var position = 0;
-        var held = 0;
-        for (var i = Math.Max(p.SlowPeriod, 42); i < candles.Count; i++)
+        var result=new List<StrategyExposureDecisionV1>();
+        var p=profile.Parameters;
+        var position=0;
+        var held=0;
+        for(var i=Math.Max(p.SlowPeriod,42);i<candles.Count;i++)
         {
-            var prefix = candles.Take(i).ToArray();
-            var state = MeanReversionRegimeAnalyzer.Analyze(prefix, p);
-            var close = (double)candles[i].Close;
-            var previous = (double)candles[i - 1].Close;
-            var value = position * (close / previous - 1);
-            var closed = false;
-            if (position != 0)
+            var prefix=candles.Take(i).ToArray();
+            var state=MeanReversionRegimeAnalyzer.Analyze(prefix,p);
+            var target=position;
+            var closed=false;
+            if(position!=0)
             {
                 held++;
-                var exit = state.Regime != MeanReversionRegime.Range || Math.Abs(state.ZScore) <= p.MeanReversionExitZ ||
-                           Math.Abs(state.ZScore) >= p.MeanReversionStopZ || held >= p.MaximumHoldingBars;
-                if (exit)
-                {
-                    value -= reality.CloseCost(position);
-                    position = 0;
-                    held = 0;
-                    closed = true;
-                }
+                var exit=state.Regime!=MeanReversionRegime.Range||Math.Abs(state.ZScore)<=p.MeanReversionExitZ||
+                         Math.Abs(state.ZScore)>=p.MeanReversionStopZ||held>=p.MaximumHoldingBars;
+                if(exit){target=0;position=0;held=0;closed=true;}
             }
-
-            if (position == 0 && !closed && state.Regime == MeanReversionRegime.Range && state.VolumeRatio >= p.VolumeMultiplier &&
-                Math.Abs(state.ZScore) < p.MeanReversionStopZ && state.DistanceAtr < p.AtrStopMultiple)
+            if(position==0&&!closed&&state.Regime==MeanReversionRegime.Range&&state.VolumeRatio>=p.VolumeMultiplier&&
+               Math.Abs(state.ZScore)<p.MeanReversionStopZ&&state.DistanceAtr<p.AtrStopMultiple)
             {
-                var next = state.ZScore <= -p.MeanReversionZ && state.Rsi <= 40 ? 1 : state.ZScore >= p.MeanReversionZ && state.Rsi >= 60 ? -1 : 0;
-                if (next != 0)
-                {
-                    position = next;
-                    held = 0;
-                    value -= reality.CloseCost(position);
-                }
+                var next=state.ZScore<=-p.MeanReversionZ&&state.Rsi<=40?1:state.ZScore>=p.MeanReversionZ&&state.Rsi>=60?-1:0;
+                if(next!=0){target=next;position=next;held=0;}
             }
-            result.Add((value, closed));
-        }
-
-        if (position != 0 && result.Count > 0)
-        {
-            var last = result[^1];
-            result[^1] = (last.Return - reality.CloseCost(position), true);
+            var decision=StrategyExposureTimelineV1.Create(profile,result.Count,candles[i-1],candles[i],target);
+            if(decision is null)return [];
+            result.Add(decision);
+            position=target;
         }
         return result;
     }
@@ -239,33 +219,27 @@ internal sealed class MeanReversionStrategyModule : IDeterministicStrategyModule
 
 internal static class StrategyModuleSimulation
 {
-    internal static List<(double Return, bool Trade)> SimulateDirectional(
+    internal static IReadOnlyList<StrategyExposureDecisionV1> BuildDirectionalTimeline(
         StrategyProfile profile,
         IReadOnlyList<CandleEvidence> candles,
-        ResearchRealityModel reality,
-        Func<MarketEvidence, DateTime, int> desiredPosition)
+        Func<MarketEvidence, DateTimeOffset, int> desiredPosition)
     {
-        var result = new List<(double Return, bool Trade)>();
-        var position = 0;
-        for (var i = profile.Parameters.SlowPeriod + 1; i < candles.Count; i++)
+        var result=new List<StrategyExposureDecisionV1>();
+        for(var i=profile.Parameters.SlowPeriod+1;i<candles.Count;i++)
         {
-            var prefix = candles.Take(i).ToArray();
-            var asOf = prefix[^1].OpenTime.ToUniversalTime();
-            var market = new MarketEvidence(profile.Symbol, prefix[^1].Close, prefix.TakeLast(48).Min(x => x.Low), prefix.TakeLast(48).Max(x => x.High), 50, 0, 0, 0, new(0, 0, 1, 1, 1, 1, 0), asOf)
+            var prefix=candles.Take(i).ToArray();
+            var source=candles[i-1];
+            var execution=candles[i];
+            if(execution.OpenTime.Kind!=DateTimeKind.Utc)return [];
+            var asOf=new DateTimeOffset(execution.OpenTime);
+            var market=new MarketEvidence(profile.Symbol,prefix[^1].Close,prefix.TakeLast(48).Min(x=>x.Low),prefix.TakeLast(48).Max(x=>x.High),50,0,0,0,new(0,0,1,1,1,1,0),asOf.UtcDateTime)
             {
-                Candles = prefix
+                Candles=prefix
             };
-            var direction = desiredPosition(market, asOf);
-            var grossReturn = (double)(candles[i].Close / candles[i - 1].Close - 1);
-            var step = reality.Apply(position, direction, grossReturn);
-            result.Add((step.NetReturn, step.CompletedTrade));
-            position = step.Position;
-        }
-
-        if (position != 0 && result.Count > 0)
-        {
-            var last = result[^1];
-            result[^1] = (last.Return - reality.CloseCost(position), true);
+            var target=desiredPosition(market,asOf);
+            var decision=StrategyExposureTimelineV1.Create(profile,result.Count,source,execution,target);
+            if(decision is null)return [];
+            result.Add(decision);
         }
         return result;
     }
