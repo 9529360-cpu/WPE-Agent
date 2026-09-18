@@ -182,6 +182,7 @@ public sealed class ExecutionRealityDriftV1Tests
         ClientOrderId:"order-1",
         StrategyId:"trend-btc",
         StrategyVersion:"v1",
+        CostModelVersion:"research-cost-v1",
         Symbol:"BTCUSDT",
         Side:side,
         ReduceOnly:reduceOnly,
