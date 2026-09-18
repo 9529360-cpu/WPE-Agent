@@ -280,7 +280,7 @@ public sealed partial class AgentSqliteStore
     internal async Task<ExecutionPositionLedgerSnapshotV1> GetExecutionPositionLedgerSnapshotAsync(CancellationToken ct)
     {
         var events=new List<ExecutionPositionEventRow>();var totals=new Dictionary<(string Symbol,PositionSide Side),decimal>();
-        var driftRows=new List<(string ClientOrderId,int Sequence,string Phase,string CanonicalSha256,byte[] CanonicalBytes)>();
+        var driftRows=new List<(string Schema,string ClientOrderId,int Sequence,string Phase,string CanonicalSha256,byte[] CanonicalBytes)>();
         var driftIntegrity=true;
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
         await using(var q=c.CreateCommand())
@@ -307,7 +307,7 @@ public sealed partial class AgentSqliteStore
         try
         {
             await using var q=c.CreateCommand();q.Transaction=tx;q.CommandText="""
-                SELECT d.client_order_id,d.sequence,d.phase,d.canonical_sha256,d.canonical_bytes
+                SELECT d.schema,d.client_order_id,d.sequence,d.phase,d.canonical_sha256,d.canonical_bytes
                 FROM execution_drift_observations d
                 JOIN execution_events e ON e.client_order_id=d.client_order_id
                 WHERE e.status IN ('FILLED','PARTIALLY_FILLED')
@@ -316,11 +316,12 @@ public sealed partial class AgentSqliteStore
             await using var r=await q.ExecuteReaderAsync(ct);
             while(await r.ReadAsync(ct))
             {
-                var hash=r.GetString(3);var bytes=(byte[])r[4];
-                if(!ExecutionPositionLedgerSnapshotCanonicalizerV1.Sha(hash)
+                var schema=r.GetString(0);var hash=r.GetString(4);var bytes=(byte[])r[5];
+                if(!string.Equals(schema,ExecutionDriftCanonicalizerV1.Schema,StringComparison.Ordinal)
+                   ||!ExecutionPositionLedgerSnapshotCanonicalizerV1.Sha(hash)
                    ||!string.Equals(Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),hash,StringComparison.Ordinal))
                     driftIntegrity=false;
-                driftRows.Add((r.GetString(0),r.GetInt32(1),r.GetString(2),hash,bytes));
+                driftRows.Add((schema,r.GetString(1),r.GetInt32(2),r.GetString(3),hash,bytes));
             }
         }
         catch(SqliteException)
@@ -335,7 +336,7 @@ public sealed partial class AgentSqliteStore
             x.Id,x.ClientOrderId,x.Symbol,side=x.Side.ToString(),x.ReduceOnly,
             quantity=x.Quantity.ToString("G29",CultureInfo.InvariantCulture),x.Status,x.OccurredAt,x.ExchangeUpdatedAt
         }));
-        var driftTraceBytes=JsonSerializer.SerializeToUtf8Bytes(driftRows.Select(x=>new{x.ClientOrderId,x.Sequence,x.Phase,x.CanonicalSha256}));
+        var driftTraceBytes=JsonSerializer.SerializeToUtf8Bytes(driftRows.Select(x=>new{x.Schema,x.ClientOrderId,x.Sequence,x.Phase,x.CanonicalSha256}));
         var eventHash=Convert.ToHexString(SHA256.HashData(eventTraceBytes)).ToLowerInvariant();
         var driftHash=Convert.ToHexString(SHA256.HashData(driftTraceBytes)).ToLowerInvariant();
         var eventClients=events.Select(x=>x.ClientOrderId).ToHashSet(StringComparer.Ordinal);
