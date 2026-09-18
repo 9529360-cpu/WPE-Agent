@@ -145,6 +145,20 @@ public sealed class DeterministicStrategyModuleTests
     }
 
     [Fact]
+    public void StrategyModulesCannotOwnResearchExecutionEconomics()
+    {
+        var source=File.ReadAllText(ProductPath("Services","Agent","DeterministicStrategyModules.cs"));
+        var interfaceStart=source.IndexOf("internal interface IDeterministicStrategyModule",StringComparison.Ordinal);
+        var registryStart=source.IndexOf("internal sealed class DeterministicStrategyRegistry",StringComparison.Ordinal);
+        Assert.True(interfaceStart>=0&&registryStart>interfaceStart);
+        var contract=source[interfaceStart..registryStart];
+
+        Assert.Contains("BuildResearchTimeline",contract,StringComparison.Ordinal);
+        Assert.DoesNotContain("ResearchRealityModel",contract,StringComparison.Ordinal);
+        Assert.DoesNotContain("double Return",contract,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HistoricalResearchEngineContainsNoStrategySpecificFamilyBranches()
     {
         var source = File.ReadAllText(ProductPath("Services", "Agent", "StrategyResearchAgent.cs"));
@@ -190,11 +204,10 @@ public sealed class DeterministicStrategyModuleTests
         public StrategySignal Signal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news) =>
             new(profile.Id, profile.Symbol, direction, direction == 0 ? 0 : .75, $"strategy={ImplementationVersion}; fake");
 
-        public List<(double Return, bool Trade)> Simulate(
+        public IReadOnlyList<StrategyExposureDecisionV1> BuildResearchTimeline(
             StrategyProfile profile,
             IReadOnlyList<CandleEvidence> candles,
-            IReadOnlyList<NewsFeature> news,
-            ResearchRealityModel reality) => [];
+            IReadOnlyList<NewsFeature> news) => [];
     }
 
     private static void DeleteIfExists(string path)
