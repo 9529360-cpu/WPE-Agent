@@ -8,6 +8,7 @@ public sealed class StrategyResearchAgent
     internal const int MaximumVariantsPerFamily = 6;
     internal const int TargetConcurrentCandidatesPerFamily = 2;
     internal static readonly TimeSpan ExplorationCooldown=TimeSpan.FromHours(6);
+    internal static readonly TimeSpan ActiveRevalidationInterval=TimeSpan.FromHours(12);
     public static WpeAgent.ModelOff.ModelOffAgentOutputV1 ProduceTechnicalModelOff(ModelOffResearchInputV1 input)
         => input.Capability == ModelOffResearchCapabilityV1.Technical
             ? DeterministicResearchCapabilityProducerV1.Produce(input)
@@ -41,12 +42,24 @@ public sealed class StrategyResearchAgent
         var candidates = await EnsureCandidatesAsync(symbols, ct);
         foreach(var profile in candidates.Where(x=>x.Lifecycle==StrategyLifecycle.Degraded).ToArray())
         {
-            var previous=profile.Lifecycle;profile.Lifecycle=StrategyLifecycle.Retired;profile.StateChangedAtUtc=DateTime.UtcNow;profile.LastReason="degraded strategy archived before bounded replacement";
+            var previous=profile.Lifecycle;profile.Lifecycle=StrategyLifecycle.Retired;profile.StateChangedAtUtc=_utcNow().ToUniversalTime();profile.LastReason="degraded strategy archived before bounded replacement";
             await _database.UpsertStrategyAsync(profile,ct);await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
         }
         var newsBySymbol=new Dictionary<string,IReadOnlyList<NewsFeature>>(StringComparer.Ordinal);
         var validated = 0;
-        foreach (var profile in candidates.Where(x => x.Lifecycle == StrategyLifecycle.Draft || (x.BuiltIn && x.ValidationTrades == 0)).ToArray())
+        var validationCandidates=new List<StrategyProfile>();
+        var researchNow=_utcNow().ToUniversalTime();
+        foreach(var profile in candidates)
+        {
+            if(profile.Lifecycle==StrategyLifecycle.Draft||(profile.BuiltIn&&profile.ValidationTrades==0)){validationCandidates.Add(profile);continue;}
+            if(profile.Lifecycle!=StrategyLifecycle.Active)continue;
+            var exactValidation=await _database.GetLatestStrategyValidationAsync(profile.Id,profile.Version,ct);
+            var latestBacktest=await _database.GetLatestBacktestRunAsync(profile.Id,profile.Version,ct);
+            var backtestCompletedAt=latestBacktest?.CompletedAtUtc.ToUniversalTime();
+            if(exactValidation is null||latestBacktest is null||backtestCompletedAt is null||backtestCompletedAt>researchNow||researchNow-backtestCompletedAt.Value>=ActiveRevalidationInterval)
+                validationCandidates.Add(profile);
+        }
+        foreach (var profile in validationCandidates)
         {
             var candles = await _database.LoadHistoricalCandlesAsync(profile.Symbol, "1h", 5000, ct);
             if(!newsBySymbol.TryGetValue(profile.Symbol,out var news))
@@ -56,7 +69,7 @@ public sealed class StrategyResearchAgent
             }
             var validation = _engine.Validate(profile, candles, news, limits);
             await _database.SaveStrategyValidationAsync(validation, ct);
-            var validationCompletedAt = DateTime.UtcNow;
+            var validationCompletedAt = _utcNow().ToUniversalTime();
             var coverageDays = candles.Count < 2 ? 0 : Math.Max(0, (int)Math.Floor((candles[^1].OpenTime.ToUniversalTime() - candles[0].OpenTime.ToUniversalTime()).TotalDays));
             await _database.SaveBacktestRunAsync(new PersistedBacktestRun(Guid.NewGuid().ToString("N"),profile.Id,profile.Version,profile.Symbol,validation.Passed?"PASSED":"FAILED",validationCompletedAt,coverageDays,validation.Trades,validation.OutOfSampleReturn,validation.MaxDrawdown,validation.Sharpe),ct);
             var previous=profile.Lifecycle;
@@ -65,7 +78,7 @@ public sealed class StrategyResearchAgent
                 : _governor.NextLifecycle(profile, validation);
             profile.QualityScore = validation.QualityScore; profile.Expectancy = validation.Expectancy;
             profile.MaxDrawdown = validation.MaxDrawdown; profile.Sharpe = validation.Sharpe; profile.ValidationTrades = validation.Trades;
-            if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = DateTime.UtcNow; profile.LastReason = validation.Summary; }
+            if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = _utcNow().ToUniversalTime(); profile.LastReason = validation.Summary; }
             await _database.UpsertStrategyAsync(profile, ct);
             if(next!=previous)await _database.RecordStrategyLifecycleAsync(profile,previous,validation.Summary,ct);
             validated++;
@@ -74,7 +87,7 @@ public sealed class StrategyResearchAgent
         if (_runtimeBacktests is not null) await _runtimeBacktests.RefreshAsync(ct);
 
         var snapshot = await _database.GetStrategySnapshotAsync(ct);
-        var completedAt = DateTime.UtcNow;
+        var completedAt = _utcNow().ToUniversalTime();
         var newsFeatureCount=newsBySymbol.Values.Sum(x=>x.Count);
         var completed = snapshot with { Status = "LOCAL_RESEARCH_COMPLETE", LastRunAtUtc = completedAt, LastMessage = $"validated={validated}; news_features={newsFeatureCount}" };
         await _database.SetStateAsync("strategy-research:last-run", JsonSerializer.Serialize(new { snapshot = completed, NewsFeatures = newsFeatureCount, validated }), ct);
@@ -121,7 +134,7 @@ public sealed class StrategyResearchAgent
     }
 
     public StrategySignal GetSignal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
-        => _schedulerHealthy ? _engine.Signal(profile, market, news) : new StrategySignal(profile.Id, profile.Symbol, 0, 0, "strategy research heartbeat is stale; hold");
+        => _schedulerHealthy ? _engine.Signal(profile, market, news) : new StrategySignal(profile.Id, profile.Symbol, 0, 0, "strategy research heartbeat is stale; hold", profile.Version);
 
     private async Task<IReadOnlyList<StrategyProfile>> EnsureCandidatesAsync(IReadOnlyList<string> symbols, CancellationToken ct)
     {
@@ -208,13 +221,13 @@ internal sealed class HistoricalResearchEngine
     public StrategyValidation Validate(StrategyProfile profile, IReadOnlyList<CandleEvidence> candles, IReadOnlyList<NewsFeature> news, RiskLimits limits)
     {
         var strategy=_strategies.Resolve(profile.Family);
-        if(!_strategies.IsProfileCompatible(profile))return new(profile.Id,candles.Count,0,0,0,0,1,0,0,0,1,0,false,$"strategy implementation mismatch; current={profile.Version}; required={strategy.ImplementationVersion}; revalidation required");
-        if (candles.Count < 500) return new(profile.Id, candles.Count, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, false, "insufficient hourly history");
+        if(!_strategies.IsProfileCompatible(profile))return new(profile.Id,candles.Count,0,0,0,0,1,0,0,0,1,0,false,$"strategy implementation mismatch; current={profile.Version}; required={strategy.ImplementationVersion}; revalidation required",StrategyVersion:profile.Version);
+        if (candles.Count < 500) return new(profile.Id, candles.Count, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, false, "insufficient hourly history",StrategyVersion:profile.Version);
         var returns = strategy.Simulate(profile,candles,news,_reality); var split = Math.Clamp((int)(returns.Count * .65), 1, returns.Count); var train = returns.Take(split).ToArray(); var test = returns.Skip(split).ToArray();
-        var all = Metrics(returns); var trainMetrics=Metrics(train);var oos = Metrics(test); var walk = WalkForward(profile, candles, news); var mc = MonteCarlo(returns);var robustness=EvaluateRobustness(returns,trainMetrics.Expectancy,oos.Expectancy);
+        var all = Metrics(returns); var trainMetrics=Metrics(train);var oos = Metrics(test); var walk = WalkForward(profile, candles, news); var mc = MonteCarlo(returns);var robustness=EvaluateRobustness(returns,trainMetrics.Expectancy,oos.Expectancy);var benchmark=candles[0].Close>0?(double)(candles[^1].Close/candles[0].Close-1):0;
         var score = Math.Clamp(.16 * Math.Min(1, all.ProfitFactor / 1.5) + .16 * Math.Max(0, (oos.TotalReturn + .10) / .30) + .16 * (1 - Math.Min(1, all.MaxDrawdown / .25)) + .16 * walk + .16 * (1 - mc)+.20*robustness.Score, 0, 1);
         var passed = returns.Count(x => x.Trade) >= Math.Max(StrategyGovernor.MinimumValidationTrades, limits.MinimumBacktestTrades) && oos.Expectancy > 0 && all.ProfitFactor >= 1.1 && all.MaxDrawdown <= .25 && walk >= .5 && mc <= .45&&robustness.Passed;
-        return new(profile.Id, candles.Count, returns.Count(x => x.Trade), all.WinRate, all.ProfitFactor, all.Expectancy, all.MaxDrawdown, all.Sharpe, oos.TotalReturn, walk, mc, score, passed, $"{profile.Id} strategy_impl={strategy.ImplementationVersion} trades={returns.Count(x => x.Trade)} OOS={oos.TotalReturn:P1} PF={all.ProfitFactor:F2} DD={all.MaxDrawdown:P1} WF={walk:F2} MC={mc:P0} regimes={robustness.PassingRegimes}/{robustness.EvaluatedRegimes} worst={robustness.WorstRegimeReturn:P1} gap={robustness.TrainTestExpectancyGap:P3} cost_rt={_reality.Costs.RoundTripVariableRate:P4} passed={passed}",robustness.WorstRegimeReturn,robustness.TrainTestExpectancyGap,robustness.PassingRegimes,robustness.EvaluatedRegimes);
+        return new(profile.Id, candles.Count, returns.Count(x => x.Trade), all.WinRate, all.ProfitFactor, all.Expectancy, all.MaxDrawdown, all.Sharpe, oos.TotalReturn, walk, mc, score, passed, $"{profile.Id} strategy_impl={strategy.ImplementationVersion} trades={returns.Count(x => x.Trade)} OOS={oos.TotalReturn:P1} PF={all.ProfitFactor:F2} DD={all.MaxDrawdown:P1} WF={walk:F2} MC={mc:P0} regimes={robustness.PassingRegimes}/{robustness.EvaluatedRegimes} worst={robustness.WorstRegimeReturn:P1} gap={robustness.TrainTestExpectancyGap:P3} cost_rt={_reality.Costs.RoundTripVariableRate:P4} passed={passed}",robustness.WorstRegimeReturn,robustness.TrainTestExpectancyGap,robustness.PassingRegimes,robustness.EvaluatedRegimes,profile.Version,test.Count(x=>x.Trade),all.TotalReturn,benchmark);
     }
 
     internal static StrategyRobustness EvaluateRobustness(IReadOnlyList<(double Return,bool Trade)> values,double? trainExpectancy=null,double? testExpectancy=null)
@@ -235,9 +248,9 @@ internal sealed class HistoricalResearchEngine
     public StrategySignal Signal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
     {
         var strategy=_strategies.Resolve(profile.Family);
-        return _strategies.IsProfileCompatible(profile)
-            ? strategy.Signal(profile,market,news)
-            : new StrategySignal(profile.Id,profile.Symbol,0,0,$"strategy implementation mismatch; current={profile.Version}; required={strategy.ImplementationVersion}; hold until revalidated");
+        if(!_strategies.IsProfileCompatible(profile))return new StrategySignal(profile.Id,profile.Symbol,0,0,$"strategy implementation mismatch; current={profile.Version}; required={strategy.ImplementationVersion}; hold until revalidated",profile.Version);
+        var signal=strategy.Signal(profile,market,news);
+        return signal with { StrategyVersion=profile.Version };
     }
 
     internal List<(double Return, bool Trade)> Simulate(StrategyProfile profile, IReadOnlyList<CandleEvidence> candles, IReadOnlyList<NewsFeature> news)

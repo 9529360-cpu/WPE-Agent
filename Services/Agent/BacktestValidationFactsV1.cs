@@ -7,6 +7,7 @@ namespace 币安量化机器人.Services.Agent;
 public sealed record BacktestValidationFactV1(
     string Schema,
     string Symbol,
+    string StrategyId,
     string StrategyVersion,
     DateTimeOffset ValidatedAtUtc,
     int SampleSize,
@@ -29,10 +30,10 @@ public sealed record BacktestValidationFactV1(
 
 public static class BacktestValidationCanonicalizerV1
 {
-    public const string Schema = "wpe.backtest-validation/1.0";
+    public const string Schema = "wpe.backtest-validation/1.1";
 
     public static BacktestValidationFactV1 Create(
-        string symbol, string strategyVersion, DateTimeOffset validatedAtUtc,
+        string symbol, string strategyId, string strategyVersion, DateTimeOffset validatedAtUtc,
         int sampleSize, int trades, int outOfSampleTrades, int coverageDays,
         double winRate, double profitFactor, double expectancy, double maxDrawdown,
         double sharpe, double outOfSampleReturn, double walkForwardScore,
@@ -41,7 +42,7 @@ public static class BacktestValidationCanonicalizerV1
         var utc = validatedAtUtc.ToUniversalTime();
         var values = new[]
         {
-            Schema, symbol, strategyVersion, utc.ToString("O", CultureInfo.InvariantCulture),
+            Schema, symbol, strategyId, strategyVersion, utc.ToString("O", CultureInfo.InvariantCulture),
             sampleSize.ToString(CultureInfo.InvariantCulture), trades.ToString(CultureInfo.InvariantCulture),
             outOfSampleTrades.ToString(CultureInfo.InvariantCulture), coverageDays.ToString(CultureInfo.InvariantCulture),
             Number(winRate), Number(profitFactor), Number(expectancy), Number(maxDrawdown), Number(sharpe),
@@ -50,7 +51,7 @@ public static class BacktestValidationCanonicalizerV1
         };
         var bytes = Encoding.UTF8.GetBytes(string.Join('|', values));
         var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-        return new(Schema, symbol, strategyVersion, utc, sampleSize, trades, outOfSampleTrades, coverageDays,
+        return new(Schema, symbol, strategyId, strategyVersion, utc, sampleSize, trades, outOfSampleTrades, coverageDays,
             winRate, profitFactor, expectancy, maxDrawdown, sharpe, outOfSampleReturn, walkForwardScore,
             monteCarloLossProbability, qualityScore, approved, promoted, hash, bytes);
     }
@@ -60,7 +61,7 @@ public static class BacktestValidationCanonicalizerV1
         if (value.Schema != Schema || value.CanonicalBytes is null || evaluationTimeUtc.Offset != TimeSpan.Zero ||
             value.ValidatedAtUtc.Offset != TimeSpan.Zero || value.ValidatedAtUtc > evaluationTimeUtc ||
             evaluationTimeUtc - value.ValidatedAtUtc > TimeSpan.FromHours(24)) return false;
-        if (!CanonicalSymbol(value.Symbol) || !Token(value.StrategyVersion) || !Sha(value.CanonicalSha256)) return false;
+        if (!CanonicalSymbol(value.Symbol) || !Token(value.StrategyId) || !Token(value.StrategyVersion) || !Sha(value.CanonicalSha256)) return false;
         if (value.SampleSize < 1 || value.Trades < 0 || value.Trades > value.SampleSize ||
             value.OutOfSampleTrades < 0 || value.OutOfSampleTrades > value.Trades || value.CoverageDays < 0) return false;
         if (!Finite(value.WinRate, 0, 1) || !Finite(value.ProfitFactor, 0, double.MaxValue) ||
@@ -68,7 +69,7 @@ public static class BacktestValidationCanonicalizerV1
             !double.IsFinite(value.OutOfSampleReturn) || !Finite(value.WalkForwardScore, 0, 1) ||
             !Finite(value.MonteCarloLossProbability, 0, 1) || !Finite(value.QualityScore, 0, 1)) return false;
         if (value.Promoted && !value.Approved) return false;
-        var expected = Create(value.Symbol, value.StrategyVersion, value.ValidatedAtUtc, value.SampleSize, value.Trades,
+        var expected = Create(value.Symbol, value.StrategyId, value.StrategyVersion, value.ValidatedAtUtc, value.SampleSize, value.Trades,
             value.OutOfSampleTrades, value.CoverageDays, value.WinRate, value.ProfitFactor, value.Expectancy,
             value.MaxDrawdown, value.Sharpe, value.OutOfSampleReturn, value.WalkForwardScore,
             value.MonteCarloLossProbability, value.QualityScore, value.Approved, value.Promoted);

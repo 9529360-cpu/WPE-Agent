@@ -66,6 +66,33 @@ public sealed class ModelOffSignalAggregationDeterminismTests
     }
 
     [Fact]
+    public void ProductionAggregationCarriesExactActiveStrategyIdentity()
+    {
+        var signal=new 币安量化机器人.Core.Strategy.StrategySignal("strategy-alpha","BTCUSDT",1,.8,"qualified","candidate-v7");
+        var assessment=new SignalAggregationSkill().Analyze(
+            Pack(Market("BTCUSDT",Now.AddMinutes(-1).UtcDateTime)),Policy(),Now,
+            new Dictionary<string,币安量化机器人.Core.Strategy.StrategySignal>{{"BTCUSDT",signal}}).Single();
+
+        Assert.Equal("strategy-alpha",assessment.StrategyId);
+        Assert.Equal("candidate-v7",assessment.StrategyVersion);
+        Assert.True(assessment.EntryReady);
+    }
+
+    [Fact]
+    public void ProductionAggregationFailsClosedWithoutExactActiveStrategySignal()
+    {
+        var assessment=new SignalAggregationSkill().Analyze(
+            Pack(Market("BTCUSDT",Now.AddMinutes(-1).UtcDateTime)),Policy(),Now,
+            new Dictionary<string,币安量化机器人.Core.Strategy.StrategySignal>()).Single();
+
+        Assert.False(assessment.EntryReady);
+        Assert.Equal(DecisionAction.Hold,assessment.RecommendedAction);
+        Assert.Contains("strategy.active-signal-required",assessment.MissingConditions);
+        Assert.Empty(assessment.StrategyId);
+        Assert.Empty(assessment.StrategyVersion);
+    }
+
+    [Fact]
     public void IdenticalInputsAndTimeProduceIdenticalOrderedAssessments()
     {
         var first=Pack(Market("ZZZUSDT",Now.AddMinutes(-1).UtcDateTime),Market("AAAUSDT",Now.AddMinutes(-1).UtcDateTime));
