@@ -71,7 +71,7 @@ internal static class StrategyParameterSearchEvaluatorV1
             SelectionRule);
     }
 
-    internal static bool IsQualified(StrategyParameterSearchEvidence? evidence)
+    internal static bool IsCanonical(StrategyParameterSearchEvidence? evidence)
     {
         if(evidence is null
            ||evidence.TrialCount is <1 or >MaximumTrials
@@ -90,10 +90,11 @@ internal static class StrategyParameterSearchEvaluatorV1
             return false;
 
         var expected=ResearchMultipleTestingV1.BonferroniThreshold(evidence.NominalAlpha,evidence.TrialCount);
-        return expected>0
-               &&Math.Abs(evidence.CorrectedSignificanceThreshold-expected)<=1e-12
-               &&evidence.SelectedTrialPValue<=expected;
+        return expected>0&&Math.Abs(evidence.CorrectedSignificanceThreshold-expected)<=1e-12;
     }
+
+    internal static bool IsQualified(StrategyParameterSearchEvidence? evidence)
+        =>IsCanonical(evidence)&&evidence!.SelectedTrialPValue<=evidence.CorrectedSignificanceThreshold;
 
     internal static double TrainingPValue(IReadOnlyList<(double Return,bool Trade)> trainingReturns)
     {
