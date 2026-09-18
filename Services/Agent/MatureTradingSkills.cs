@@ -112,10 +112,10 @@ public sealed class IndependentRiskManagerSkill
         Check(equity<=0||history.DailyRealizedPnl>-equity*limits.MaxDailyLoss,"daily_loss",L("RiskReview.DailyLoss",history.DailyRealizedPnl));
         Check(history.ApiFailures<limits.ApiFailureThreshold,"api_health",L("RiskReview.ApiFailures",history.ApiFailures));
         Check(!history.OrderStateUncertain,"order_state",L("RiskReview.OrderUncertain"));
-        Check(!string.IsNullOrWhiteSpace(decision.StrategyId)&&!string.IsNullOrWhiteSpace(decision.StrategyVersion),"strategy_identity",L("RiskReview.StrategyIdentity"));
+        Check(!string.IsNullOrWhiteSpace(decision.StrategyId)&&!string.IsNullOrWhiteSpace(decision.StrategyVersion),"strategy_identity",L("RiskReview.Research",research?.QualityScore??0));
         Check(assessment is not null&&string.Equals(assessment.StrategyId,decision.StrategyId,StringComparison.Ordinal)&&string.Equals(assessment.StrategyVersion,decision.StrategyVersion,StringComparison.Ordinal),"strategy_binding",L("RiskReview.StrategyIdentity"));
-        Check(research is not null&&string.Equals(research.StrategyId,decision.StrategyId,StringComparison.Ordinal)&&string.Equals(research.StrategyVersion,decision.StrategyVersion,StringComparison.Ordinal)&&string.Equals(research.Symbol,decision.Instrument,StringComparison.Ordinal),"research_identity",L("RiskReview.ResearchIdentity"));
-        Check(research is not null&&research.ValidatedAtUtc!=default&&research.ValidatedAtUtc.Offset==TimeSpan.Zero&&research.ValidatedAtUtc<=now&&now-research.ValidatedAtUtc<=TimeSpan.FromHours(24),"research_fresh",L("RiskReview.ResearchFreshness"));
+        Check(research is not null&&string.Equals(research.StrategyId,decision.StrategyId,StringComparison.Ordinal)&&string.Equals(research.StrategyVersion,decision.StrategyVersion,StringComparison.Ordinal)&&string.Equals(research.Symbol,decision.Instrument,StringComparison.Ordinal),"research_identity",L("RiskReview.Research",research?.QualityScore??0));
+        Check(research is not null&&research.ValidatedAtUtc!=default&&research.ValidatedAtUtc.Offset==TimeSpan.Zero&&research.ValidatedAtUtc<=now&&now-research.ValidatedAtUtc<=TimeSpan.FromHours(24),"research_fresh",L("RiskReview.Research",research?.QualityScore??0));
         Check(research is not null&&research.CoverageDays>=limits.MinimumHistoricalDays,"historical_coverage",L("RiskReview.History",research?.CoverageDays??0,limits.MinimumHistoricalDays));
         Check(research is{Promoted:true,Approved:true},"research_gate",L("RiskReview.Research",research?.QualityScore??0));
         Check(portfolio is{Approved:true},"portfolio_risk",L("RiskReview.Portfolio",portfolio?.Summary??"unavailable"));
