@@ -52,10 +52,11 @@ internal sealed class StrategyResearchAuthority
 
         var now=_utcNow().ToUniversalTime();
         var fresh=completedAt<=now&&now-completedAt<=MaximumValidationAge;
+        var forward=await _store.GetStrategyObservationPerformanceAsync(profile.Id,profile.Version,ct);
         var qualified=string.Equals(backtest.Status,"PASSED",StringComparison.Ordinal)
                       &&validation.Passed
                       &&_governor.CanPromote(profile,validation)
-                      &&_governor.HasForwardQualification(profile);
+                      &&_governor.HasForwardQualification(forward);
         var approved=fresh&&qualified;
 
         return new()
@@ -82,7 +83,7 @@ internal sealed class StrategyResearchAuthority
             StrategyReturn=validation.StrategyReturn,
             BenchmarkReturn=validation.BenchmarkReturn,
             RegimeReturns=new Dictionary<string,double>(),
-            Summary=$"authority=exact-strategy-validation; strategy={profile.Id}; version={profile.Version}; fresh={fresh}; qualified={qualified}; {validation.Summary}"
+            Summary=$"authority=exact-strategy-validation; strategy={profile.Id}; version={profile.Version}; fresh={fresh}; forward_observations={forward.Observations}; forward_expectancy={forward.Expectancy:F6}; qualified={qualified}; {validation.Summary}"
         };
     }
 
