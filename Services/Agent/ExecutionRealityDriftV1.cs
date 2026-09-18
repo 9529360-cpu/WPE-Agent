@@ -11,6 +11,7 @@ public sealed record ExecutionRealityExpectationV1(
     string ClientOrderId,
     string StrategyId,
     string StrategyVersion,
+    string CostModelVersion,
     string Symbol,
     PositionSide Side,
     bool ReduceOnly,
@@ -112,6 +113,7 @@ public static class ExecutionRealityDriftV1
             expected.ClientOrderId,
             expected.StrategyId,
             expected.StrategyVersion,
+            expected.CostModelVersion,
             expected.Symbol,
             expected.Side,
             expected.ReduceOnly,
@@ -165,6 +167,7 @@ public static class ExecutionRealityDriftV1
         if (string.IsNullOrWhiteSpace(expected.ClientOrderId)) throw new ArgumentException("Client order id is required.", nameof(expected));
         if (string.IsNullOrWhiteSpace(expected.StrategyId)) throw new ArgumentException("Strategy id is required.", nameof(expected));
         if (string.IsNullOrWhiteSpace(expected.StrategyVersion)) throw new ArgumentException("Strategy version is required.", nameof(expected));
+        if (string.IsNullOrWhiteSpace(expected.CostModelVersion)) throw new ArgumentException("Cost model version is required.", nameof(expected));
         if (string.IsNullOrWhiteSpace(expected.Symbol)) throw new ArgumentException("Symbol is required.", nameof(expected));
         if (expected.Quantity <= 0) throw new ArgumentOutOfRangeException(nameof(expected), "Intended quantity must be positive.");
         if (expected.ExpectedPrice <= 0) throw new ArgumentOutOfRangeException(nameof(expected), "Expected price must be positive.");
@@ -247,6 +250,7 @@ public static class ExecutionRealityDriftV1
             writer.WriteNumber("average_price", value.AveragePrice);
             writer.WriteBoolean("comparable", value.Comparable);
             writer.WriteString("correlation_id", value.CorrelationId);
+            writer.WriteString("cost_model_version", value.CostModelVersion);
             writer.WriteString("exchange_status", value.ExchangeStatus);
             writer.WriteString("exchange_updated_at_utc", value.ExchangeUpdatedAtUtc.ToUniversalTime());
             writer.WriteNumber("executed_quantity", value.ExecutedQuantity);
