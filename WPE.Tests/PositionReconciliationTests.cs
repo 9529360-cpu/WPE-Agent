@@ -109,6 +109,31 @@ public sealed class PositionReconciliationTests : IDisposable
     }
 
     [Fact]
+    public async Task NewTrackedExecutionCanCalibrateWithoutClaimingLegacyFullCoverage()
+    {
+        var store=new AgentSqliteStore(Database,()=>Now);
+        var legacy=Intent("legacy-untracked",false,.5m);var current=Intent("current-tracked",false,.5m);
+        await store.RecordExecutionAsync("legacy-cycle",legacy,Order(legacy,"FILLED",.5m),"v1",default);
+        await store.RecordExecutionAsync("current-cycle",current,Order(current,"FILLED",.5m),"v1",default);
+        await store.AppendExecutionDriftObservationAsync(new(
+            "current-cycle",current.ClientOrderId,ExecutionDriftPhaseV1.ExecutionRecorded,ExecutionDriftSourceV1.Exchange,
+            "local","Testnet",current.Symbol,current.Side,current.ReduceOnly,current.OrderType,current.Quantity,current.LimitPrice,
+            .5m,current.ExpectedPrice,100m,"FILLED",0,0,0,Now),default);
+
+        var snapshot=await store.GetExecutionPositionLedgerSnapshotAsync(default);
+        Assert.Equal(2,snapshot.ExecutionEventCount);
+        Assert.Equal(1,snapshot.DriftTrackedExecutionCount);
+        Assert.True(snapshot.DriftIntegrityValid);
+        Assert.False(snapshot.DriftCoverageComplete);
+
+        var report=PositionReconciliationServiceV1.Reconcile(snapshot.Legs,[Position("BTCUSDT",PositionSide.Long,1m)],Now,Now);
+        var link=ExecutionPositionDriftReconciliationCanonicalizerV1.Create(snapshot,report,Now);
+        Assert.True(report.AllowsRiskIncrease);
+        Assert.True(link.Calibratable);
+        Assert.False(link.DriftCoverageComplete);
+    }
+
+    [Fact]
     public async Task PositionDriftLinkRejectsAReconciliationFromAnotherLedgerSnapshot()
     {
         var store=new AgentSqliteStore(Database,()=>Now);var open=Intent("snapshot-open",false,1m);
