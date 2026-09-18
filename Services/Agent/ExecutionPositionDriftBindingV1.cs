@@ -100,9 +100,9 @@ internal static class ExecutionPositionLedgerSnapshotCanonicalizerV1
         foreach(var row in legs)
         {
             var symbol=(row.Symbol??string.Empty).Trim().ToUpperInvariant();
-            if(!Symbol(symbol)||row.Quantity<0||!Enum.IsDefined(row.Side)||!seen.Add((symbol,row.Side)))
-                throw new ArgumentException("Execution position ledger leg is invalid.");
-            if(row.Quantity>0)result.Add(new(symbol,row.Side,row.Quantity));
+            if(string.IsNullOrWhiteSpace(symbol)||symbol.Length>80||!Enum.IsDefined(row.Side)||!seen.Add((symbol,row.Side)))
+                throw new ArgumentException("Execution position ledger leg identity is invalid.");
+            if(row.Quantity!=0)result.Add(new(symbol,row.Side,row.Quantity));
         }
         return result.OrderBy(x=>x.Symbol,StringComparer.Ordinal).ThenBy(x=>x.Side).ToArray();
     }
@@ -380,6 +380,24 @@ public sealed partial class AgentSqliteStore
         q.Parameters.AddWithValue("$executionTrace",value.ExecutionTraceSha256);q.Parameters.AddWithValue("$driftTrace",value.DriftTraceSha256);q.Parameters.AddWithValue("$hash",value.CanonicalSha256);
         q.Parameters.Add("$bytes",SqliteType.Blob).Value=value.CanonicalBytes;
         return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1;
+    }
+
+    internal async Task<bool> PersistExecutionPositionDriftEvidenceSafelyAsync(
+        ExecutionPositionLedgerSnapshotV1 snapshot,PositionReconciliationReportV1 report,CancellationToken ct)
+    {
+        try
+        {
+            await SaveExecutionPositionLedgerSnapshotAsync(snapshot,ct);
+            var link=ExecutionPositionDriftReconciliationCanonicalizerV1.Create(snapshot,report,_utcNow().ToUniversalTime());
+            await SaveExecutionPositionDriftReconciliationAsync(link,ct);
+            return true;
+        }
+        catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
+        catch
+        {
+            // This evidence is observational. Persistence or linkage failure must not change position authority.
+            return false;
+        }
     }
 
     internal async Task<ExecutionPositionDriftReconciliationV1?> GetLatestExecutionPositionDriftReconciliationAsync(CancellationToken ct)
