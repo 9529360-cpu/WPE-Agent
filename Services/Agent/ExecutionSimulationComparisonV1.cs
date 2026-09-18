@@ -383,11 +383,56 @@ public static class ExecutionSimulationComparisonCanonicalizerV1
     {
         if (value.Schema != Schema || value.CanonicalBytes.Length == 0 || value.CanonicalSha256.Length != 64)
             return false;
+        try
+        {
+            ValidateComparison(value);
+        }
+        catch
+        {
+            return false;
+        }
         var bytes = Serialize(value);
         var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
         return string.Equals(hash, value.CanonicalSha256, StringComparison.Ordinal)
             && CryptographicOperations.FixedTimeEquals(bytes, value.CanonicalBytes);
     }
+
+    private static void ValidateComparison(ExecutionSimulationComparisonV1 value)
+    {
+        if (string.IsNullOrWhiteSpace(value.CorrelationId)
+            || string.IsNullOrWhiteSpace(value.ClientOrderId)
+            || string.IsNullOrWhiteSpace(value.StrategyId)
+            || string.IsNullOrWhiteSpace(value.StrategyVersion)
+            || string.IsNullOrWhiteSpace(value.CostModelVersion)
+            || string.IsNullOrWhiteSpace(value.SimulationModelVersion)
+            || string.IsNullOrWhiteSpace(value.VenueRuleVersion)
+            || string.IsNullOrWhiteSpace(value.Symbol)
+            || string.IsNullOrWhiteSpace(value.ReasonCode))
+            throw new InvalidOperationException("Execution simulation comparison identity is incomplete.");
+        if (value.SimulatedFillRatio < 0 || value.SimulatedFillRatio > 1
+            || value.ObservedFillRatio < 0 || value.ObservedFillRatio > 1)
+            throw new InvalidOperationException("Execution simulation comparison fill ratios are invalid.");
+        if (value.FillRatioDelta != value.ObservedFillRatio - value.SimulatedFillRatio)
+            throw new InvalidOperationException("Execution simulation comparison fill-ratio delta is inconsistent.");
+        if (value.PriceComparable != value.PriceDriftBps.HasValue)
+            throw new InvalidOperationException("Execution simulation comparison price comparability is inconsistent.");
+        if (value.FeeComparable != value.FeeDriftBps.HasValue || (value.FeeComparable && !value.PriceComparable))
+            throw new InvalidOperationException("Execution simulation comparison fee comparability is inconsistent.");
+        if (value.LatencyComparable != value.LatencyDriftMs.HasValue)
+            throw new InvalidOperationException("Execution simulation comparison latency comparability is inconsistent.");
+        if (value.TotalComparable != value.TotalExecutionDriftBps.HasValue
+            || (value.TotalComparable && (!value.PriceComparable || !value.FeeComparable)))
+            throw new InvalidOperationException("Execution simulation comparison total comparability is inconsistent.");
+        if (value.TotalComparable && value.TotalExecutionDriftBps != value.PriceDriftBps + value.FeeDriftBps)
+            throw new InvalidOperationException("Execution simulation comparison total drift is inconsistent.");
+        if (value.ComparedAtUtc == default || value.ComparedAtUtc.Offset != TimeSpan.Zero)
+            throw new InvalidOperationException("Execution simulation comparison time must be UTC.");
+        if (!IsLowerHexSha256(value.SimulatedCanonicalSha256) || !IsLowerHexSha256(value.ObservedCanonicalSha256))
+            throw new InvalidOperationException("Execution simulation comparison source hashes are invalid.");
+    }
+
+    private static bool IsLowerHexSha256(string value) =>
+        value.Length == 64 && value.All(ch => ch is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     private static void RequireIdentity(ExecutionSimulationFillV1 simulated, ExecutionRealityDriftFactV1 observed)
     {
