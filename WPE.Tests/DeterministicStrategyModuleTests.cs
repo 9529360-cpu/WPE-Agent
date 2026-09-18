@@ -137,6 +137,7 @@ public sealed class DeterministicStrategyModuleTests
         }
         finally
         {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             DeleteIfExists(path);
             DeleteIfExists(path + "-wal");
             DeleteIfExists(path + "-shm");
