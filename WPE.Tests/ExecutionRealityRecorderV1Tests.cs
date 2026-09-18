@@ -128,11 +128,19 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
     }
 
     [Fact]
-    public async Task NonTestnetArtifactCannotAuthorizeRealityWrite()
+    public async Task TamperedArtifactMetadataCannotAuthorizeRealityWrite()
     {
         var store = Store();
-        var artifact = Artifact("cycle-a", "strategy-a", "v7", "order-a") with { Environment = "Mainnet" };
+        var artifact = Artifact("cycle-a", "strategy-a", "v7", "order-a");
         Assert.True((await store.SaveAutomaticExecutionAsync(artifact.CorrelationId, artifact, default)).Succeeded);
+
+        await using (var connection = new SqliteConnection($"Data Source={Database}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE automatic_execution_queue SET environment='Mainnet' WHERE execution_id='cycle-a'";
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
 
         var result = await new ExecutionRealityRecorderV1(store, () => Now).RecordAsync(
             "cycle-a",
@@ -142,7 +150,7 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
             default);
 
         Assert.False(result.Recorded);
-        Assert.Equal("intent-authority-automatic-artifact-non-testnet", result.Code);
+        Assert.Equal("intent-authority-automatic-artifact-invalid", result.Code);
         Assert.Empty(await store.GetRecentExecutionRealityDriftAsync(10, default));
     }
 
