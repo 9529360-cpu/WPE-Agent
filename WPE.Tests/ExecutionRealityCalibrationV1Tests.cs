@@ -17,7 +17,7 @@ public sealed class ExecutionRealityCalibrationV1Tests
             Fact("d", "REJECTED", 0m, 0m, 0m, false, 400)
         };
 
-        var snapshot = ExecutionRealityCalibrationV1.Create("strategy-a", "v1", facts);
+        var snapshot = ExecutionRealityCalibrationV1.Create("strategy-a", "v1", "research-cost-v1", facts);
 
         Assert.Equal(4, snapshot.ObservationCount);
         Assert.Equal(3, snapshot.ComparableCount);
@@ -48,18 +48,18 @@ public sealed class ExecutionRealityCalibrationV1Tests
         var other = MakeFact("strategy-b", "v1", "b", "FILLED", 1m, 100m, .04m, true, 200);
 
         Assert.Throws<InvalidOperationException>(() =>
-            ExecutionRealityCalibrationV1.Create("strategy-a", "v1", new[] { valid, other }));
+            ExecutionRealityCalibrationV1.Create("strategy-a", "v1", "research-cost-v1", new[] { valid, other }));
 
         var tampered = valid with { AveragePrice = 101m };
         Assert.Throws<InvalidOperationException>(() =>
-            ExecutionRealityCalibrationV1.Create("strategy-a", "v1", new[] { tampered }));
+            ExecutionRealityCalibrationV1.Create("strategy-a", "v1", "research-cost-v1", new[] { tampered }));
     }
 
     [Fact]
     public void CalibrationHashDetectsProjectionTampering()
     {
         var snapshot = ExecutionRealityCalibrationV1.Create(
-            "strategy-a", "v1", new[] { Fact("a", "FILLED", 1m, 100m, .04m, true, 100) });
+            "strategy-a", "v1", "research-cost-v1", new[] { Fact("a", "FILLED", 1m, 100m, .04m, true, 100) });
 
         Assert.True(ExecutionRealityCalibrationV1.IsCanonical(snapshot));
         Assert.False(ExecutionRealityCalibrationV1.IsCanonical(snapshot with { FilledCount = 99 }));
@@ -91,6 +91,7 @@ public sealed class ExecutionRealityCalibrationV1Tests
             orderId,
             strategyId,
             strategyVersion,
+            "research-cost-v1",
             "BTCUSDT",
             PositionSide.Long,
             false,
