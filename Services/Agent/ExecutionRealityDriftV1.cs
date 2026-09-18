@@ -26,6 +26,7 @@ public sealed record ExecutionRealityObservationV1(
     decimal ExecutedQuantity,
     decimal AveragePrice,
     decimal ObservedFee,
+    string FeeBasis,
     DateTimeOffset ExchangeUpdatedAtUtc,
     DateTimeOffset ObservedAtUtc);
 
@@ -52,9 +53,12 @@ public sealed record ExecutionRealityDriftFactV1(
     decimal ExpectedSlippageBps,
     decimal SlippageDriftBps,
     decimal ObservedFee,
+    string FeeBasis,
+    bool FeeComparable,
     decimal ObservedFeeRateBps,
     decimal ExpectedCommissionBps,
     decimal FeeDriftBps,
+    bool TotalComparable,
     decimal TotalExecutionDriftBps,
     long ObservationLatencyMs,
     DateTimeOffset ExchangeUpdatedAtUtc,
@@ -66,6 +70,8 @@ public sealed record ExecutionRealityDriftFactV1(
 public static class ExecutionRealityDriftV1
 {
     public const string Schema = "wpe.execution-reality-drift/1.0";
+    public const string ExchangeReportedFeeBasis = "exchange-reported";
+    public const string UnavailableFeeBasis = "unavailable";
 
     private static readonly HashSet<string> OpenStatuses = new(StringComparer.Ordinal)
     {
@@ -84,15 +90,17 @@ public static class ExecutionRealityDriftV1
         var terminal = status == "FILLED" || TerminalNoFillStatuses.Contains(status);
         var state = Classify(status, observed.ExecutedQuantity, expected.Quantity);
         var comparable = state is ExecutionRealityStateV1.Filled or ExecutionRealityStateV1.Partial;
+        var feeComparable = comparable && observed.FeeBasis == ExchangeReportedFeeBasis;
+        var totalComparable = comparable && feeComparable;
         var fillRatio = observed.ExecutedQuantity / expected.Quantity;
         var expectedSlippageBps = expected.ExpectedSlippageRate * 10000m;
         var expectedCommissionBps = expected.ExpectedCommissionRate * 10000m;
         var adverseSlippageBps = comparable ? AdverseSlippageBps(expected, observed.AveragePrice) : 0m;
-        var observedFeeRateBps = comparable
+        var observedFeeRateBps = feeComparable
             ? observed.ObservedFee / (observed.AveragePrice * observed.ExecutedQuantity) * 10000m
             : 0m;
         var slippageDriftBps = comparable ? adverseSlippageBps - expectedSlippageBps : 0m;
-        var feeDriftBps = comparable ? observedFeeRateBps - expectedCommissionBps : 0m;
+        var feeDriftBps = feeComparable ? observedFeeRateBps - expectedCommissionBps : 0m;
         var latencyMs = checked((long)Math.Round(
             (observed.ObservedAtUtc - expected.IntendedAtUtc).TotalMilliseconds,
             MidpointRounding.AwayFromZero));
@@ -120,14 +128,17 @@ public static class ExecutionRealityDriftV1
             expectedSlippageBps,
             slippageDriftBps,
             observed.ObservedFee,
+            observed.FeeBasis,
+            feeComparable,
             observedFeeRateBps,
             expectedCommissionBps,
             feeDriftBps,
-            comparable ? slippageDriftBps + feeDriftBps : 0m,
+            totalComparable,
+            totalComparable ? slippageDriftBps + feeDriftBps : 0m,
             latencyMs,
             observed.ExchangeUpdatedAtUtc.ToUniversalTime(),
             observed.ObservedAtUtc.ToUniversalTime(),
-            Reason(state, terminal),
+            Reason(state, terminal, feeComparable),
             Array.Empty<byte>(),
             string.Empty);
 
@@ -163,13 +174,20 @@ public static class ExecutionRealityDriftV1
         if (!string.Equals(expected.ClientOrderId, observed.ClientOrderId, StringComparison.Ordinal))
             throw new InvalidOperationException("Execution observation does not match the intended client order id.");
         if (string.IsNullOrWhiteSpace(observed.Status)) throw new ArgumentException("Exchange status is required.", nameof(observed));
+        if (observed.FeeBasis is not ExchangeReportedFeeBasis and not UnavailableFeeBasis)
+            throw new InvalidOperationException("Execution fee basis is unsupported.");
+        if (observed.FeeBasis == UnavailableFeeBasis && observed.ObservedFee != 0)
+            throw new InvalidOperationException("Unavailable fee evidence cannot carry an observed fee.");
         if (observed.ExecutedQuantity < 0 || observed.ExecutedQuantity > expected.Quantity)
             throw new InvalidOperationException("Executed quantity is outside the intended quantity.");
         if (observed.ExecutedQuantity == 0 && observed.AveragePrice != 0)
             throw new InvalidOperationException("Unfilled execution cannot have an average fill price.");
         if (observed.ExecutedQuantity > 0 && observed.AveragePrice <= 0)
             throw new InvalidOperationException("Filled execution requires a positive average fill price.");
-        if (observed.ObservedFee < 0) throw new InvalidOperationException("Observed fee cannot be negative in the current fee evidence contract.");
+        if (observed.ObservedFee < 0)
+            throw new InvalidOperationException("Observed fee cannot be negative in the current exchange fee evidence contract.");
+        if (observed.FeeBasis == ExchangeReportedFeeBasis && observed.ExecutedQuantity <= 0)
+            throw new InvalidOperationException("Exchange-reported fee evidence requires an executed quantity.");
         if (observed.ExchangeUpdatedAtUtc == default || observed.ObservedAtUtc == default)
             throw new ArgumentException("Execution timestamps are required.", nameof(observed));
         if (observed.ObservedAtUtc < expected.IntendedAtUtc)
@@ -202,15 +220,21 @@ public static class ExecutionRealityDriftV1
         return delta / expected.ExpectedPrice * 10000m;
     }
 
-    private static string Reason(ExecutionRealityStateV1 state, bool terminal) => state switch
+    private static string Reason(ExecutionRealityStateV1 state, bool terminal, bool feeComparable)
     {
-        ExecutionRealityStateV1.Filled => "filled",
-        ExecutionRealityStateV1.Partial when terminal => "terminal-partial-fill",
-        ExecutionRealityStateV1.Partial => "partial-fill",
-        ExecutionRealityStateV1.Open => "open-unfilled",
-        ExecutionRealityStateV1.NotFilled => "terminal-no-fill",
-        _ => "unknown-status"
-    };
+        var reason = state switch
+        {
+            ExecutionRealityStateV1.Filled => "filled",
+            ExecutionRealityStateV1.Partial when terminal => "terminal-partial-fill",
+            ExecutionRealityStateV1.Partial => "partial-fill",
+            ExecutionRealityStateV1.Open => "open-unfilled",
+            ExecutionRealityStateV1.NotFilled => "terminal-no-fill",
+            _ => "unknown-status"
+        };
+        return state is ExecutionRealityStateV1.Filled or ExecutionRealityStateV1.Partial && !feeComparable
+            ? reason + "-fee-unavailable"
+            : reason;
+    }
 
     private static byte[] Serialize(ExecutionRealityDriftFactV1 value)
     {
@@ -228,6 +252,8 @@ public static class ExecutionRealityDriftV1
             writer.WriteNumber("expected_commission_bps", value.ExpectedCommissionBps);
             writer.WriteNumber("expected_price", value.ExpectedPrice);
             writer.WriteNumber("expected_slippage_bps", value.ExpectedSlippageBps);
+            writer.WriteString("fee_basis", value.FeeBasis);
+            writer.WriteBoolean("fee_comparable", value.FeeComparable);
             writer.WriteNumber("fee_drift_bps", value.FeeDriftBps);
             writer.WriteNumber("fill_ratio", value.FillRatio);
             writer.WriteNumber("intended_quantity", value.IntendedQuantity);
@@ -247,6 +273,7 @@ public static class ExecutionRealityDriftV1
             writer.WriteString("strategy_version", value.StrategyVersion);
             writer.WriteString("symbol", value.Symbol);
             writer.WriteBoolean("terminal", value.Terminal);
+            writer.WriteBoolean("total_comparable", value.TotalComparable);
             writer.WriteNumber("total_execution_drift_bps", value.TotalExecutionDriftBps);
             writer.WriteEndObject();
         }
