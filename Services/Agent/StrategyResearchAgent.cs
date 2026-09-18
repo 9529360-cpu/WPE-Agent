@@ -156,27 +156,31 @@ public sealed class StrategyResearchAgent
         foreach (var family in _engine.Strategies.Families)
         {
             var symbol=symbolValue.ToUpperInvariant();
-            var live=result.Count(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family&&_engine.Strategies.IsProfileCompatible(x)&&x.Lifecycle is StrategyLifecycle.Draft or StrategyLifecycle.Shadow or StrategyLifecycle.Active);
-            for(var variant=0;live<TargetConcurrentCandidatesPerFamily&&variant<MaximumVariantsPerFamily;variant++)
+            var existingFamily=result.Where(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family&&_engine.Strategies.IsProfileCompatible(x)).ToArray();
+            var attemptedHashes=existingFamily.Select(x=>string.IsNullOrWhiteSpace(x.ParametersHash)?LocalStrategyParameters.Hash(x.Parameters):x.ParametersHash).ToHashSet(StringComparer.Ordinal);
+            if(attemptedHashes.Count>=StrategyParameterSearchEvaluatorV1.MaximumTrials)continue;
+            var live=existingFamily.Count(x=>x.Lifecycle is StrategyLifecycle.Draft or StrategyLifecycle.Shadow or StrategyLifecycle.Active);
+            for(var variant=0;live<TargetConcurrentCandidatesPerFamily&&variant<MaximumVariantsPerFamily&&attemptedHashes.Count<StrategyParameterSearchEvaluatorV1.MaximumTrials;variant++)
             {
                 var id=_engine.Strategies.CandidateId(symbol,family,variant.ToString());if(result.Any(x=>x.Id.Equals(id,StringComparison.OrdinalIgnoreCase)))continue;
                 var parent=result.Where(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family&&_engine.Strategies.IsProfileCompatible(x)&&x.Lifecycle==StrategyLifecycle.Active&&x.ValidationTrades>=StrategyGovernor.MinimumValidationTrades&&x.ShadowObservations>=StrategyGovernor.MinimumShadowObservations&&x.QualityScore>=StrategyGovernor.MinimumQualityScore&&x.Expectancy>0&&x.MaxDrawdown<=StrategyGovernor.MaximumPromotedDrawdown)
                     .OrderByDescending(x=>x.QualityScore).ThenByDescending(x=>x.Expectancy).ThenBy(x=>x.Id,StringComparer.Ordinal).FirstOrDefault();
                 var derived=variant>=2&&parent is not null;var generation=derived?parent!.Generation+1:0;
                 var parameters=derived?LocalStrategyParameters.Derive(family,parent!.Parameters,variant-1):LocalStrategyParameters.For(family,variant);
+                var parameterHash=LocalStrategyParameters.Hash(parameters);if(attemptedHashes.Contains(parameterHash))continue;
                 var version=_engine.Strategies.BindProfileVersion(family,$"{family.ToString().ToLowerInvariant()}-{variant+1}");
-                var profile=new StrategyProfile{Id=id,Version=version,Symbol=symbol,Family=family,Parameters=parameters,ParametersHash=LocalStrategyParameters.Hash(parameters),ParentStrategyId=derived?parent!.Id:null,ParentStrategyVersion=derived?parent!.Version:null,Generation=generation,Lifecycle=StrategyLifecycle.Draft,BuiltIn=family==StrategyFamily.TrendBreakout&&variant==0,CreatedAtUtc=_utcNow(),LastReason=derived?"bounded deterministic child of qualified active strategy":variant<2?"deterministic local seed":"bounded deterministic replacement"};
-                result.Add(profile);await _database.UpsertStrategyAsync(profile,ct);live++;
+                var profile=new StrategyProfile{Id=id,Version=version,Symbol=symbol,Family=family,Parameters=parameters,ParametersHash=parameterHash,ParentStrategyId=derived?parent!.Id:null,ParentStrategyVersion=derived?parent!.Version:null,Generation=generation,Lifecycle=StrategyLifecycle.Draft,BuiltIn=family==StrategyFamily.TrendBreakout&&variant==0,CreatedAtUtc=_utcNow(),LastReason=derived?"bounded deterministic child of qualified active strategy":variant<2?"deterministic local seed":"bounded deterministic replacement"};
+                result.Add(profile);attemptedHashes.Add(parameterHash);await _database.UpsertStrategyAsync(profile,ct);live++;
             }
             if(live>=TargetConcurrentCandidatesPerFamily)continue;
             var familyRows=result.Where(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family&&_engine.Strategies.IsProfileCompatible(x)).ToArray();
-            var attemptedTrials=familyRows.Select(x=>string.IsNullOrWhiteSpace(x.ParametersHash)?LocalStrategyParameters.Hash(x.Parameters):x.ParametersHash).Distinct(StringComparer.Ordinal).Count();
+            var attemptedTrials=attemptedHashes.Count;
             if(attemptedTrials>=StrategyParameterSearchEvaluatorV1.MaximumTrials)continue;
             if(familyRows.Length<MaximumVariantsPerFamily||familyRows.Max(x=>x.CreatedAtUtc)>_utcNow()-ExplorationCooldown)continue;
             var index=Math.Max(MaximumVariantsPerFamily,familyRows.Max(x=>ExplorationIndex(x.Id))+1);StrategyProfile? exploration=null;
             for(var attempt=0;attempt<512&&exploration is null;attempt++,index++)
             {
-                var parameters=Explore(family,index);var hash=LocalStrategyParameters.Hash(parameters);if(familyRows.Any(x=>string.Equals(x.ParametersHash,hash,StringComparison.Ordinal)))continue;
+                var parameters=Explore(family,index);var hash=LocalStrategyParameters.Hash(parameters);if(attemptedHashes.Contains(hash))continue;
                 var id=_engine.Strategies.CandidateId(symbol,family,$"explore-{index}");
                 var version=_engine.Strategies.BindProfileVersion(family,$"{family.ToString().ToLowerInvariant()}-explore-{index}");
                 exploration=new StrategyProfile{Id=id,Version=version,Symbol=symbol,Family=family,Parameters=parameters,ParametersHash=hash,Generation=0,Lifecycle=StrategyLifecycle.Draft,CreatedAtUtc=_utcNow(),LastReason="budgeted deterministic exploration candidate"};
