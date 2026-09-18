@@ -25,17 +25,18 @@ public sealed class ResearchRealityModelTests
     [Fact]
     public void TrendSimulationChargesOneRoundTripForOneContinuousPosition()
     {
+        var registry=new DeterministicStrategyRegistry();
         var profile=new StrategyProfile
         {
             Id="trend-cost-test",
-            Version="v1",
+            Version=registry.BindProfileVersion(StrategyFamily.TrendBreakout,"v1"),
             Symbol="BTCUSDT",
             Family=StrategyFamily.TrendBreakout,
             Parameters=LocalStrategyParameters.For(StrategyFamily.TrendBreakout,0)
         };
         var candles=RisingCandles(220);
-        var free=new HistoricalResearchEngine(new ResearchRealityModel(new ResearchCostModel(0,0))).Simulate(profile,candles,[]);
-        var costly=new HistoricalResearchEngine().Simulate(profile,candles,[]);
+        var free=new HistoricalResearchEngine(new ResearchRealityModel(new ResearchCostModel(0,0)),registry).Simulate(profile,candles,[]);
+        var costly=new HistoricalResearchEngine(strategies:registry).Simulate(profile,candles,[]);
 
         Assert.NotEmpty(costly);
         Assert.Equal(1,costly.Count(x=>x.Trade));
