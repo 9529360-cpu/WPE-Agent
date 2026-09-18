@@ -63,7 +63,7 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
     }
 
     [Fact]
-    public async Task QualifiedParentProducesBoundedHashedDraftChildren()
+    public async Task QualifiedParentCannotBiasFutureParameterTrials()
     {
         var store=new AgentSqliteStore(DatabasePath);var registry=new DeterministicStrategyRegistry();var parentParameters=LocalStrategyParameters.For(StrategyFamily.TrendBreakout,0);
         var parent=new StrategyProfile{Id="BTCUSDT-TrendBreakout-parent",Version=registry.BindProfileVersion(StrategyFamily.TrendBreakout,"trend-parent-1"),Symbol="BTCUSDT",Family=StrategyFamily.TrendBreakout,Parameters=parentParameters,ParametersHash=LocalStrategyParameters.Hash(parentParameters),Lifecycle=StrategyLifecycle.Active,QualityScore=.8,Expectancy=.01,ValidationTrades=50,ShadowObservations=30};
@@ -71,10 +71,14 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
         for(var variant=0;variant<2;variant++)await store.UpsertStrategyAsync(new StrategyProfile{Id=registry.CandidateId("BTCUSDT",StrategyFamily.TrendBreakout,variant.ToString()),Version=registry.BindProfileVersion(StrategyFamily.TrendBreakout,$"retired-{variant}"),Symbol="BTCUSDT",Family=StrategyFamily.TrendBreakout,Parameters=LocalStrategyParameters.For(StrategyFamily.TrendBreakout,variant),Lifecycle=StrategyLifecycle.Retired},CancellationToken.None);
 
         await new StrategyResearchAgent(store).RunOnceAsync(["BTCUSDT"],new RiskLimits(),CancellationToken.None);
-        var children=(await store.GetStrategiesAsync(CancellationToken.None)).Where(x=>x.ParentStrategyId==parent.Id).ToArray();
+        var rows=await store.GetStrategiesAsync(CancellationToken.None);
+        var independent=Assert.Single(rows,x=>x.Family==StrategyFamily.TrendBreakout&&x.Id.Contains("independent-2",StringComparison.Ordinal));
 
-        Assert.Single(children);Assert.All(children,x=>{Assert.Equal(StrategyLifecycle.Retired,x.Lifecycle);Assert.Equal(parent.Version,x.ParentStrategyVersion);Assert.Equal(1,x.Generation);Assert.Equal(LocalStrategyParameters.Hash(x.Parameters),x.ParametersHash);Assert.Equal(StrategyLineage.Hash(x.Symbol,x.Family,x.ParentStrategyId,x.ParentStrategyVersion,x.Generation,x.ParametersHash),x.LineageHash);Assert.NotEqual(parent.Parameters,x.Parameters);Assert.True(registry.IsProfileCompatible(x));});
-        Assert.True(children.Length<=StrategyResearchAgent.TargetConcurrentCandidatesPerFamily);
+        Assert.Null(independent.ParentStrategyId);
+        Assert.Null(independent.ParentStrategyVersion);
+        Assert.Equal(0,independent.Generation);
+        Assert.Equal(LocalStrategyParameters.For(StrategyFamily.TrendBreakout,2),independent.Parameters);
+        Assert.DoesNotContain(rows,x=>x.ParentStrategyId==parent.Id);
     }
 
     [Fact]
@@ -117,9 +121,7 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
         foreach(var family in Enum.GetValues<StrategyFamily>())
         for(var variant=0;variant<StrategyResearchAgent.MaximumVariantsPerFamily;variant++)
         {
-            var parameters=family==StrategyFamily.MeanReversion
-                ?new LocalStrategyParameters(12+variant*4,48+variant*8,0,1.4+variant*.2,0)
-                :LocalStrategyParameters.For(family,variant);
+            var parameters=LocalStrategyParameters.For(family,variant);
             var id=registry.CandidateId("BTCUSDT",family,variant.ToString());
             var version=registry.BindProfileVersion(family,$"retired-{variant}");
             await store.UpsertStrategyAsync(new StrategyProfile{Id=id,Version=version,Symbol="BTCUSDT",Family=family,Parameters=parameters,Lifecycle=StrategyLifecycle.Retired,CreatedAtUtc=old,StateChangedAtUtc=old},CancellationToken.None);
