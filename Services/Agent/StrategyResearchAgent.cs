@@ -104,8 +104,8 @@ public sealed class StrategyResearchAgent
             var market = evidence.Markets.GetValueOrDefault(profile.Symbol);
             if (market is null) continue;
             var signal = _engine.Signal(profile, market, evidence.News);
-            await _database.RecordStrategyObservationAsync(profile.Id, profile.Symbol, signal.Direction, market.Price, signal.Confidence, ct);
-            var performance = await _database.GetStrategyObservationPerformanceAsync(profile.Id, ct);
+            await _database.RecordStrategyObservationAsync(profile.Id, profile.Version, profile.Symbol, signal.Direction, market.Price, signal.Confidence, ct);
+            var performance = await _database.GetStrategyObservationPerformanceAsync(profile.Id, profile.Version, ct);
             profile.ShadowObservations = performance.Observations; profile.Expectancy = performance.Expectancy;
             profile.MaxDrawdown = performance.MaxDrawdown; profile.FailureStreak = performance.FailureStreak; profile.QualityScore = performance.QualityScore;
             var previous=profile.Lifecycle;var next = _governor.NextLifecycle(profile);
