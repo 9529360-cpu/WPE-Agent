@@ -177,6 +177,11 @@ public sealed class ResearchValidationResult
     public int OutOfSampleTrades { get; init; }
     public double StrategyReturn { get; init; }
     public double BenchmarkReturn { get; init; }
+    public double WorstRegimeReturn { get; init; }
+    public double TrainTestExpectancyGap { get; init; }
+    public int PassingRegimes { get; init; }
+    public int EvaluatedRegimes { get; init; }
+    public bool HistoricalPassed { get; init; }
     public StrategyParameterSearchEvidence? ParameterSearch { get; init; }
     public int ForwardObservations { get; init; }
     public bool ForwardQualified { get; init; }
