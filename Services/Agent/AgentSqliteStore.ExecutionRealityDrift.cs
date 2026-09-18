@@ -11,6 +11,8 @@ public sealed record ExecutionRealityDriftSummaryV1(
     string StrategyVersion,
     int ObservationCount,
     int ComparableCount,
+    int FeeComparableCount,
+    int TotalComparableCount,
     int TerminalCount,
     decimal AverageFillRatio,
     decimal AverageSlippageDriftBps,
@@ -38,17 +40,19 @@ public sealed partial class AgentSqliteStore
                 canonical_sha256,schema,correlation_id,client_order_id,strategy_id,strategy_version,symbol,side,
                 reduce_only,order_type,intended_quantity,executed_quantity,expected_price,average_price,
                 exchange_status,state,terminal,comparable,fill_ratio,adverse_slippage_bps,expected_slippage_bps,
-                slippage_drift_bps,observed_fee,observed_fee_rate_bps,expected_commission_bps,fee_drift_bps,
-                total_execution_drift_bps,observation_latency_ms,exchange_updated_at,observed_at,reason_code,canonical_bytes)
+                slippage_drift_bps,observed_fee,fee_basis,fee_comparable,observed_fee_rate_bps,expected_commission_bps,
+                fee_drift_bps,total_comparable,total_execution_drift_bps,observation_latency_ms,exchange_updated_at,
+                observed_at,reason_code,canonical_bytes)
             VALUES(
                 $hash,$schema,$correlation,$client,$strategy,$version,$symbol,$side,
                 $reduce,$type,$intended,$executed,$expectedPrice,$averagePrice,
                 $status,$state,$terminal,$comparable,$fillRatio,$adverse,$expectedSlippage,
-                $slippageDrift,$fee,$feeRate,$expectedCommission,$feeDrift,
-                $totalDrift,$latency,$exchangeUpdated,$observed,$reason,$bytes)
+                $slippageDrift,$fee,$feeBasis,$feeComparable,$feeRate,$expectedCommission,
+                $feeDrift,$totalComparable,$totalDrift,$latency,$exchangeUpdated,
+                $observed,$reason,$bytes)
             ON CONFLICT(canonical_sha256) DO NOTHING;
             """;
-        BindFact(insert, fact);
+        BindRealityFact(insert, fact);
         var affected = await insert.ExecuteNonQueryAsync(ct);
         if (affected == 1)
             return new(true, false, "stored");
@@ -91,8 +95,9 @@ public sealed partial class AgentSqliteStore
             SELECT schema,correlation_id,client_order_id,strategy_id,strategy_version,symbol,side,reduce_only,order_type,
                    intended_quantity,executed_quantity,expected_price,average_price,exchange_status,state,terminal,
                    comparable,fill_ratio,adverse_slippage_bps,expected_slippage_bps,slippage_drift_bps,observed_fee,
-                   observed_fee_rate_bps,expected_commission_bps,fee_drift_bps,total_execution_drift_bps,
-                   observation_latency_ms,exchange_updated_at,observed_at,reason_code,canonical_bytes,canonical_sha256
+                   fee_basis,fee_comparable,observed_fee_rate_bps,expected_commission_bps,fee_drift_bps,total_comparable,
+                   total_execution_drift_bps,observation_latency_ms,exchange_updated_at,observed_at,reason_code,
+                   canonical_bytes,canonical_sha256
             FROM execution_reality_drift
             {(where.Count == 0 ? string.Empty : "WHERE " + string.Join(" AND ", where))}
             ORDER BY observed_at DESC, rowid DESC
@@ -104,7 +109,7 @@ public sealed partial class AgentSqliteStore
         await using var reader = await query.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
-            var fact = ReadFact(reader);
+            var fact = ReadRealityFact(reader);
             if (!ExecutionRealityDriftV1.IsCanonical(fact))
                 throw new InvalidOperationException("Persisted execution reality drift fact failed canonical verification.");
             result.Add(fact);
@@ -125,16 +130,20 @@ public sealed partial class AgentSqliteStore
         if (values.Count == 0) return null;
 
         var comparable = values.Where(x => x.Comparable).ToArray();
+        var feeComparable = values.Where(x => x.FeeComparable).ToArray();
+        var totalComparable = values.Where(x => x.TotalComparable).ToArray();
         return new(
             strategyId,
             strategyVersion,
             values.Count,
             comparable.Length,
+            feeComparable.Length,
+            totalComparable.Length,
             values.Count(x => x.Terminal),
             comparable.Length == 0 ? 0 : comparable.Average(x => x.FillRatio),
             comparable.Length == 0 ? 0 : comparable.Average(x => x.SlippageDriftBps),
-            comparable.Length == 0 ? 0 : comparable.Average(x => x.FeeDriftBps),
-            comparable.Length == 0 ? 0 : comparable.Average(x => x.TotalExecutionDriftBps),
+            feeComparable.Length == 0 ? 0 : feeComparable.Average(x => x.FeeDriftBps),
+            totalComparable.Length == 0 ? 0 : totalComparable.Average(x => x.TotalExecutionDriftBps),
             values.Max(x => x.ObservationLatencyMs),
             values.Max(x => x.ObservedAtUtc));
     }
@@ -167,9 +176,12 @@ public sealed partial class AgentSqliteStore
                 expected_slippage_bps TEXT NOT NULL,
                 slippage_drift_bps TEXT NOT NULL,
                 observed_fee TEXT NOT NULL,
+                fee_basis TEXT NOT NULL,
+                fee_comparable INTEGER NOT NULL CHECK(fee_comparable IN (0,1)),
                 observed_fee_rate_bps TEXT NOT NULL,
                 expected_commission_bps TEXT NOT NULL,
                 fee_drift_bps TEXT NOT NULL,
+                total_comparable INTEGER NOT NULL CHECK(total_comparable IN (0,1)),
                 total_execution_drift_bps TEXT NOT NULL,
                 observation_latency_ms INTEGER NOT NULL,
                 exchange_updated_at TEXT NOT NULL,
@@ -192,7 +204,7 @@ public sealed partial class AgentSqliteStore
         await command.ExecuteNonQueryAsync(ct);
     }
 
-    private static void BindFact(SqliteCommand command, ExecutionRealityDriftFactV1 fact)
+    private static void BindRealityFact(SqliteCommand command, ExecutionRealityDriftFactV1 fact)
     {
         command.Parameters.AddWithValue("$hash", fact.CanonicalSha256);
         command.Parameters.AddWithValue("$schema", fact.Schema);
@@ -217,9 +229,12 @@ public sealed partial class AgentSqliteStore
         command.Parameters.AddWithValue("$expectedSlippage", RealityText(fact.ExpectedSlippageBps));
         command.Parameters.AddWithValue("$slippageDrift", RealityText(fact.SlippageDriftBps));
         command.Parameters.AddWithValue("$fee", RealityText(fact.ObservedFee));
+        command.Parameters.AddWithValue("$feeBasis", fact.FeeBasis);
+        command.Parameters.AddWithValue("$feeComparable", fact.FeeComparable ? 1 : 0);
         command.Parameters.AddWithValue("$feeRate", RealityText(fact.ObservedFeeRateBps));
         command.Parameters.AddWithValue("$expectedCommission", RealityText(fact.ExpectedCommissionBps));
         command.Parameters.AddWithValue("$feeDrift", RealityText(fact.FeeDriftBps));
+        command.Parameters.AddWithValue("$totalComparable", fact.TotalComparable ? 1 : 0);
         command.Parameters.AddWithValue("$totalDrift", RealityText(fact.TotalExecutionDriftBps));
         command.Parameters.AddWithValue("$latency", fact.ObservationLatencyMs);
         command.Parameters.AddWithValue("$exchangeUpdated", fact.ExchangeUpdatedAtUtc.ToUniversalTime().ToString("O"));
@@ -228,7 +243,7 @@ public sealed partial class AgentSqliteStore
         command.Parameters.AddWithValue("$bytes", fact.CanonicalBytes);
     }
 
-    private static ExecutionRealityDriftFactV1 ReadFact(SqliteDataReader reader) => new(
+    private static ExecutionRealityDriftFactV1 ReadRealityFact(SqliteDataReader reader) => new(
         reader.GetString(0),
         reader.GetString(1),
         reader.GetString(2),
@@ -251,16 +266,19 @@ public sealed partial class AgentSqliteStore
         RealityDecimal(reader.GetString(19)),
         RealityDecimal(reader.GetString(20)),
         RealityDecimal(reader.GetString(21)),
-        RealityDecimal(reader.GetString(22)),
-        RealityDecimal(reader.GetString(23)),
+        reader.GetString(22),
+        reader.GetInt32(23) == 1,
         RealityDecimal(reader.GetString(24)),
         RealityDecimal(reader.GetString(25)),
-        reader.GetInt64(26),
-        DateTimeOffset.Parse(reader.GetString(27), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
-        DateTimeOffset.Parse(reader.GetString(28), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
-        reader.GetString(29),
-        (byte[])reader[30],
-        reader.GetString(31));
+        RealityDecimal(reader.GetString(26)),
+        reader.GetInt32(27) == 1,
+        RealityDecimal(reader.GetString(28)),
+        reader.GetInt64(29),
+        DateTimeOffset.Parse(reader.GetString(30), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+        DateTimeOffset.Parse(reader.GetString(31), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+        reader.GetString(32),
+        (byte[])reader[33],
+        reader.GetString(34));
 
     private static string RealityText(decimal value) => value.ToString(CultureInfo.InvariantCulture);
     private static decimal RealityDecimal(string value) => decimal.Parse(value, NumberStyles.Number, CultureInfo.InvariantCulture);
