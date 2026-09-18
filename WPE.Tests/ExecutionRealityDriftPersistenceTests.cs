@@ -59,7 +59,7 @@ public sealed class ExecutionRealityDriftPersistenceTests : IDisposable
             Fact("strategy-b", "v7", "other", "FILLED", 1m, 110m, .044m, true, IntendedAt.AddSeconds(4), expectedPrice:110m),
             default);
 
-        var summary = await store.GetExecutionRealityDriftSummaryAsync("strategy-a", "v1", 100, default);
+        var summary = await store.GetExecutionRealityDriftSummaryAsync("strategy-a", "v1", "research-cost-v1", 100, default);
 
         Assert.NotNull(summary);
         Assert.Equal(4, summary!.ObservationCount);
@@ -74,14 +74,14 @@ public sealed class ExecutionRealityDriftPersistenceTests : IDisposable
         Assert.Equal(3000, summary.MaximumObservationLatencyMs);
         Assert.Equal(IntendedAt.AddSeconds(3), summary.LatestObservedAtUtc);
 
-        var calibration = await store.GetExecutionRealityCalibrationAsync("strategy-a", "v1", 100, default);
+        var calibration = await store.GetExecutionRealityCalibrationAsync("strategy-a", "v1", "research-cost-v1", 100, default);
         Assert.NotNull(calibration);
         Assert.True(ExecutionRealityCalibrationV1.IsCanonical(calibration!));
         Assert.Equal(4, calibration!.ObservationCount);
         Assert.Equal(3, calibration.ComparableCount);
         Assert.Equal(2, calibration.TotalComparableCount);
 
-        var rows = await store.GetRecentExecutionRealityDriftAsync(100, default, "strategy-a", "v1");
+        var rows = await store.GetRecentExecutionRealityDriftAsync(100, default, "strategy-a", "v1", "research-cost-v1");
         Assert.Equal(4, rows.Count);
         Assert.DoesNotContain(rows, x => x.StrategyId == "strategy-b");
         var missingFee = Assert.Single(rows, x => x.ClientOrderId == "fee-missing");
@@ -119,6 +119,7 @@ public sealed class ExecutionRealityDriftPersistenceTests : IDisposable
             ClientOrderId:orderId,
             StrategyId:strategyId,
             StrategyVersion:version,
+            CostModelVersion:"research-cost-v1",
             Symbol:"BTCUSDT",
             Side:PositionSide.Long,
             ReduceOnly:false,
