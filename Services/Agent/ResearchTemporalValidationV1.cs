@@ -41,7 +41,7 @@ public static class ResearchTemporalValidationV1
         if(bounds.OosCount<policy.MinimumOutOfSampleObservations)
             reasons.Add("research.temporal-isolation-insufficient");
 
-        if(points is null||points.Any(point=>
+        if(points is {Count:>0}&&points.Any(point=>
                point.DataAvailableAtUtc is null||
                point.SignalGeneratedAtUtc is null||
                point.DataAvailableAtUtc>point.SignalGeneratedAtUtc||
