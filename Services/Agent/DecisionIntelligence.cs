@@ -344,6 +344,7 @@ public static class DeterministicResearchCapabilityProducerV1
         var facts=input.Facts;
         if(!StringFact(facts,"schema",out var schema)||schema!=BacktestValidationCanonicalizerV1.Schema)yield return "research.invalid.backtest_schema";
         if(!StringFact(facts,"symbol",out var symbol)||!CanonicalSymbol(symbol))yield return "research.invalid.backtest_symbol";
+        if(!StringFact(facts,"strategyId",out var strategyId)||strategyId.Length>160||!strategyId.All(c=>char.IsLetterOrDigit(c)||c is '-' or '_' or '.'))yield return "research.invalid.backtest_strategy_id";
         if(!StringFact(facts,"strategyVersion",out var strategyVersion)||strategyVersion.Length>128||!strategyVersion.All(c=>char.IsLetterOrDigit(c)||c is '-' or '_' or '.'))yield return "research.invalid.backtest_strategy_version";
         var validated=UtcFact(facts,"validatedAtUtc",out var validatedAt);
         if(!validated)yield return "research.invalid.backtest_validation_time";
@@ -361,16 +362,16 @@ public static class DeterministicResearchCapabilityProducerV1
         if(!BoolFact(facts,"promoted",out var promoted))yield return "research.invalid.backtest_promoted";
         if(promoted&&!approved)yield return "research.invalid.backtest_lifecycle";
         if(!StringFact(facts,"canonicalSha256",out var canonicalHash)||!ValidSha(canonicalHash))yield return "research.invalid.backtest_hash";
-        if(validated&&CanonicalSymbol(symbol)&&!string.IsNullOrWhiteSpace(strategyVersion)&&ValidSha(canonicalHash)&&
+        if(validated&&CanonicalSymbol(symbol)&&!string.IsNullOrWhiteSpace(strategyId)&&!string.IsNullOrWhiteSpace(strategyVersion)&&ValidSha(canonicalHash)&&
            sampleSize>=1&&trades>=0&&trades<=sampleSize&&outOfSampleTrades>=0&&outOfSampleTrades<=trades&&coverageDays>=0&&
            FiniteFact(facts,"winRate",out var winRate)&&FiniteFact(facts,"profitFactor",out profitFactor)&&FiniteFact(facts,"expectancy",out var expectancy)&&
            FiniteFact(facts,"maxDrawdown",out var maxDrawdown)&&FiniteFact(facts,"sharpe",out var sharpe)&&FiniteFact(facts,"outOfSampleReturn",out var oosReturn)&&
            FiniteFact(facts,"walkForwardScore",out var walkForward)&&FiniteFact(facts,"monteCarloLossProbability",out var monteCarlo)&&FiniteFact(facts,"qualityScore",out var qualityScore)&&
            BoolFact(facts,"approved",out approved)&&BoolFact(facts,"promoted",out promoted))
         {
-            var expected=BacktestValidationCanonicalizerV1.Create(symbol,strategyVersion,validatedAt,sampleSize,trades,outOfSampleTrades,coverageDays,winRate,profitFactor,expectancy,maxDrawdown,sharpe,oosReturn,walkForward,monteCarlo,qualityScore,approved,promoted);
+            var expected=BacktestValidationCanonicalizerV1.Create(symbol,strategyId,strategyVersion,validatedAt,sampleSize,trades,outOfSampleTrades,coverageDays,winRate,profitFactor,expectancy,maxDrawdown,sharpe,oosReturn,walkForward,monteCarlo,qualityScore,approved,promoted);
             if(!string.Equals(expected.CanonicalSha256,canonicalHash,StringComparison.Ordinal))yield return "research.invalid.backtest_canonical_hash";
-            if(!input.Sources.Any(x=>x.Kind==ModelOffSourceKindV1.Strategy&&x.SourceId==$"backtest:{symbol}:{strategyVersion}"&&x.AsOfUtc>=validatedAt&&x.ArtifactHash=="sha256:"+canonicalHash))yield return "research.invalid.backtest_source";
+            if(!input.Sources.Any(x=>x.Kind==ModelOffSourceKindV1.Strategy&&x.SourceId==$"backtest:{symbol}:{strategyId}:{strategyVersion}"&&x.AsOfUtc>=validatedAt&&x.ArtifactHash=="sha256:"+canonicalHash))yield return "research.invalid.backtest_source";
         }
     }
 
