@@ -68,7 +68,8 @@ public sealed class StrategyResearchAgent
                 news=candles.Count==0?[]:await _database.GetHistoricalNewsFeaturesAsync(profile.Symbol,new DateTimeOffset(candles[0].OpenTime.ToUniversalTime()).AddHours(-48),new DateTimeOffset(candles[^1].OpenTime.ToUniversalTime()),20000,ct);
                 newsBySymbol[profile.Symbol]=news;
             }
-            var validation = _engine.Validate(profile, candles, news, limits);
+            var parameterTrials=candidates.Where(x=>x.Family==profile.Family&&string.Equals(x.Symbol,profile.Symbol,StringComparison.Ordinal)&&_engine.Strategies.IsProfileCompatible(x)).ToArray();
+            var validation = _engine.Validate(profile, candles, news, limits, parameterTrials);
             await _database.SaveStrategyValidationAsync(validation, ct);
             var validationCompletedAt = _utcNow().ToUniversalTime();
             var coverageDays = candles.Count < 2 ? 0 : Math.Max(0, (int)Math.Floor((candles[^1].OpenTime.ToUniversalTime() - candles[0].OpenTime.ToUniversalTime()).TotalDays));
@@ -164,11 +165,13 @@ public sealed class StrategyResearchAgent
                 var derived=variant>=2&&parent is not null;var generation=derived?parent!.Generation+1:0;
                 var parameters=derived?LocalStrategyParameters.Derive(family,parent!.Parameters,variant-1):LocalStrategyParameters.For(family,variant);
                 var version=_engine.Strategies.BindProfileVersion(family,$"{family.ToString().ToLowerInvariant()}-{variant+1}");
-                var profile=new StrategyProfile{Id=id,Version=version,Symbol=symbol,Family=family,Parameters=parameters,ParametersHash=LocalStrategyParameters.Hash(parameters),ParentStrategyId=derived?parent!.Id:null,ParentStrategyVersion=derived?parent!.Version:null,Generation=generation,Lifecycle=StrategyLifecycle.Draft,BuiltIn=family==StrategyFamily.TrendBreakout&&variant==0,LastReason=derived?"bounded deterministic child of qualified active strategy":variant<2?"deterministic local seed":"bounded deterministic replacement"};
+                var profile=new StrategyProfile{Id=id,Version=version,Symbol=symbol,Family=family,Parameters=parameters,ParametersHash=LocalStrategyParameters.Hash(parameters),ParentStrategyId=derived?parent!.Id:null,ParentStrategyVersion=derived?parent!.Version:null,Generation=generation,Lifecycle=StrategyLifecycle.Draft,BuiltIn=family==StrategyFamily.TrendBreakout&&variant==0,CreatedAtUtc=_utcNow(),LastReason=derived?"bounded deterministic child of qualified active strategy":variant<2?"deterministic local seed":"bounded deterministic replacement"};
                 result.Add(profile);await _database.UpsertStrategyAsync(profile,ct);live++;
             }
             if(live>=TargetConcurrentCandidatesPerFamily)continue;
             var familyRows=result.Where(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family&&_engine.Strategies.IsProfileCompatible(x)).ToArray();
+            var attemptedTrials=familyRows.Select(x=>string.IsNullOrWhiteSpace(x.ParametersHash)?LocalStrategyParameters.Hash(x.Parameters):x.ParametersHash).Distinct(StringComparer.Ordinal).Count();
+            if(attemptedTrials>=StrategyParameterSearchEvaluatorV1.MaximumTrials)continue;
             if(familyRows.Length<MaximumVariantsPerFamily||familyRows.Max(x=>x.CreatedAtUtc)>_utcNow()-ExplorationCooldown)continue;
             var index=Math.Max(MaximumVariantsPerFamily,familyRows.Max(x=>ExplorationIndex(x.Id))+1);StrategyProfile? exploration=null;
             for(var attempt=0;attempt<512&&exploration is null;attempt++,index++)
@@ -220,7 +223,7 @@ internal sealed class HistoricalResearchEngine
     internal DeterministicStrategyRegistry Strategies=>_strategies;
     internal sealed record StrategyRobustness(double WorstRegimeReturn,double TrainTestExpectancyGap,int PassingRegimes,int EvaluatedRegimes,bool Passed,double Score);
 
-    public StrategyValidation Validate(StrategyProfile profile, IReadOnlyList<CandleEvidence> candles, IReadOnlyList<NewsFeature> news, RiskLimits limits)
+    public StrategyValidation Validate(StrategyProfile profile, IReadOnlyList<CandleEvidence> candles, IReadOnlyList<NewsFeature> news, RiskLimits limits, IReadOnlyList<StrategyProfile>? parameterTrials=null)
     {
         var strategy=_strategies.Resolve(profile.Family);
         if(!_strategies.IsProfileCompatible(profile))return new(profile.Id,candles.Count,0,0,0,0,1,0,0,0,1,0,false,$"strategy implementation mismatch; current={profile.Version}; required={strategy.ImplementationVersion}; revalidation required",StrategyVersion:profile.Version);
@@ -238,9 +241,12 @@ internal sealed class HistoricalResearchEngine
         var train=returns.Take(oosWindow.TrainingEndExclusive).ToArray();
         var test=returns.Skip(oosWindow.Start).Take(oosWindow.Count).ToArray();
         var all = Metrics(returns); var trainMetrics=Metrics(train);var oos = Metrics(test); var walk = WalkForward(profile, candles, news); var mc = MonteCarlo(returns);var robustness=EvaluateRobustness(returns,trainMetrics.Expectancy,oos.Expectancy);var benchmark=candles[0].Close>0?(double)(candles[^1].Close/candles[0].Close-1):0;
+        var trials=(parameterTrials??[profile]).Where(x=>x.Family==profile.Family&&string.Equals(x.Symbol,profile.Symbol,StringComparison.Ordinal)&&_strategies.IsProfileCompatible(x)).ToArray();
+        var parameterSearch=StrategyParameterSearchEvaluatorV1.Evaluate(profile,trials,timeline,returns,oosWindow);
+        var multipleTestingPassed=StrategyParameterSearchEvaluatorV1.IsQualified(parameterSearch);
         var score = Math.Clamp(.16 * Math.Min(1, all.ProfitFactor / 1.5) + .16 * Math.Max(0, (oos.TotalReturn + .10) / .30) + .16 * (1 - Math.Min(1, all.MaxDrawdown / .25)) + .16 * walk + .16 * (1 - mc)+.20*robustness.Score, 0, 1);
-        var passed = returns.Count(x => x.Trade) >= Math.Max(StrategyGovernor.MinimumValidationTrades, limits.MinimumBacktestTrades) && oos.Expectancy > 0 && all.ProfitFactor >= 1.1 && all.MaxDrawdown <= .25 && walk >= .5 && mc <= .45&&robustness.Passed;
-        return new(profile.Id, candles.Count, returns.Count(x => x.Trade), all.WinRate, all.ProfitFactor, all.Expectancy, all.MaxDrawdown, all.Sharpe, oos.TotalReturn, walk, mc, score, passed, $"{profile.Id} strategy_impl={strategy.ImplementationVersion} trades={returns.Count(x => x.Trade)} OOS={oos.TotalReturn:P1} PF={all.ProfitFactor:F2} DD={all.MaxDrawdown:P1} WF={walk:F2} MC={mc:P0} regimes={robustness.PassingRegimes}/{robustness.EvaluatedRegimes} worst={robustness.WorstRegimeReturn:P1} gap={robustness.TrainTestExpectancyGap:P3} timeline={StrategyExposureTimelineV1.Schema} oos_purge={ProductionTemporalPolicy.OosPurgeObservations} oos_embargo={ProductionTemporalPolicy.OosEmbargoObservations} cost_rt={_reality.Costs.RoundTripVariableRate:P4} passed={passed}",robustness.WorstRegimeReturn,robustness.TrainTestExpectancyGap,robustness.PassingRegimes,robustness.EvaluatedRegimes,profile.Version,test.Count(x=>x.Trade),all.TotalReturn,benchmark);
+        var passed = returns.Count(x => x.Trade) >= Math.Max(StrategyGovernor.MinimumValidationTrades, limits.MinimumBacktestTrades) && oos.Expectancy > 0 && all.ProfitFactor >= 1.1 && all.MaxDrawdown <= .25 && walk >= .5 && mc <= .45&&robustness.Passed&&multipleTestingPassed;
+        return new(profile.Id, candles.Count, returns.Count(x => x.Trade), all.WinRate, all.ProfitFactor, all.Expectancy, all.MaxDrawdown, all.Sharpe, oos.TotalReturn, walk, mc, score, passed, $"{profile.Id} strategy_impl={strategy.ImplementationVersion} trades={returns.Count(x => x.Trade)} OOS={oos.TotalReturn:P1} PF={all.ProfitFactor:F2} DD={all.MaxDrawdown:P1} WF={walk:F2} MC={mc:P0} regimes={robustness.PassingRegimes}/{robustness.EvaluatedRegimes} worst={robustness.WorstRegimeReturn:P1} gap={robustness.TrainTestExpectancyGap:P3} timeline={StrategyExposureTimelineV1.Schema} oos_purge={ProductionTemporalPolicy.OosPurgeObservations} oos_embargo={ProductionTemporalPolicy.OosEmbargoObservations} trials={parameterSearch.TrialCount} trial_index={parameterSearch.SelectedTrialIndex} p={parameterSearch.SelectedTrialPValue:F6} corrected={parameterSearch.CorrectedSignificanceThreshold:F6} cost_rt={_reality.Costs.RoundTripVariableRate:P4} passed={passed}",robustness.WorstRegimeReturn,robustness.TrainTestExpectancyGap,robustness.PassingRegimes,robustness.EvaluatedRegimes,profile.Version,test.Count(x=>x.Trade),all.TotalReturn,benchmark,parameterSearch);
     }
 
     internal static StrategyRobustness EvaluateRobustness(IReadOnlyList<(double Return,bool Trade)> values,double? trainExpectancy=null,double? testExpectancy=null)
