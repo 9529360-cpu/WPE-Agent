@@ -17,7 +17,9 @@ public sealed class ExecutionDriftLedgerTests : IDisposable
         var store=new AgentSqliteStore(Database,()=>_now);
         var client="drift-order-1";
         await Add(store,client,ExecutionDriftPhaseV1.IntentAccepted,ExecutionDriftSourceV1.Local,"INTENT",0,0,null);
-        _now=_now.AddMilliseconds(10);
+        _now=_now.AddMilliseconds(5);
+        await Add(store,client,ExecutionDriftPhaseV1.PreflightQuote,ExecutionDriftSourceV1.Local,"QUOTE",0,100m,null,spread:4,liquidity:.8,atr:.02);
+        _now=_now.AddMilliseconds(5);
         await Add(store,client,ExecutionDriftPhaseV1.SubmissionAttempted,ExecutionDriftSourceV1.Local,"SUBMISSION_ATTEMPTED",0,0,null);
         _now=_now.AddMilliseconds(10);
         await Add(store,client,ExecutionDriftPhaseV1.ProviderObserved,ExecutionDriftSourceV1.Exchange,"NEW",0,0,_now.AddMilliseconds(-2));
@@ -29,13 +31,20 @@ public sealed class ExecutionDriftLedgerTests : IDisposable
         var values=await store.GetExecutionDriftObservationsAsync(client,100,CancellationToken.None);
         var summary=await store.GetExecutionDriftSummaryAsync(client,CancellationToken.None);
 
-        Assert.Equal(5,values.Count);
-        Assert.Equal(Enumerable.Range(0,5),values.Select(x=>x.Sequence));
+        Assert.Equal(6,values.Count);
+        Assert.Equal(Enumerable.Range(0,6),values.Select(x=>x.Sequence));
         Assert.All(values,x=>Assert.True(ExecutionDriftCanonicalizerV1.IsCanonical(x)));
         Assert.NotNull(summary);
-        Assert.Equal(.4m,summary!.FillRatio);
+        Assert.Equal("local",summary!.ProviderId);
+        Assert.Equal("Testnet",summary.Environment);
+        Assert.Equal(ExecutionOrderType.Market,summary.OrderType);
+        Assert.Equal(.4m,summary.FillRatio);
         Assert.Equal(.4m,summary.FinalObservedQuantity);
         Assert.Equal(101m,summary.FinalAveragePrice);
+        Assert.Equal(100m,summary.PreflightPrice);
+        Assert.Equal(4d,summary.PreflightSpreadBps);
+        Assert.Equal(.8d,summary.PreflightLiquidityScore);
+        Assert.Equal(.02d,summary.PreflightAtrPercent);
         Assert.Equal(10d,summary.SubmitToFirstExchangeMilliseconds);
         Assert.Equal(50d,summary.IntentToFinalMilliseconds);
         Assert.Equal(100d,summary.AdverseSlippageBps);
@@ -85,11 +94,12 @@ public sealed class ExecutionDriftLedgerTests : IDisposable
 
     private async Task Add(
         AgentSqliteStore store,string client,ExecutionDriftPhaseV1 phase,ExecutionDriftSourceV1 source,string status,
-        decimal executed,decimal average,DateTimeOffset? exchange)
+        decimal executed,decimal average,DateTimeOffset? exchange,double spread=0,double liquidity=0,double atr=0,
+        ExecutionOrderType orderType=ExecutionOrderType.Market,decimal limitPrice=0)
     {
         var added=await store.AppendExecutionDriftObservationAsync(new(
-            "cycle-drift",client,phase,source,"BTCUSDT",PositionSide.Long,false,1m,executed,100m,average,status,exchange),
-            CancellationToken.None);
+            "cycle-drift",client,phase,source,"local","Testnet","BTCUSDT",PositionSide.Long,false,orderType,1m,limitPrice,
+            executed,100m,average,status,spread,liquidity,atr,exchange),CancellationToken.None);
         Assert.True(added);
     }
 
