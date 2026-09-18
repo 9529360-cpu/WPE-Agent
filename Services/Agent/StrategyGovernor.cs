@@ -27,12 +27,15 @@ public sealed class StrategyGovernor
            && validation.TrainTestExpectancyGap <= MaximumTrainTestExpectancyGap
            && StrategyParameterSearchEvaluatorV1.IsQualified(validation.ParameterSearch);
 
+    public bool HasForwardQualification(StrategyObservationPerformance performance)
+        => performance.Observations >= MinimumShadowObservations
+           && performance.QualityScore >= MinimumQualityScore
+           && performance.Expectancy > 0
+           && performance.MaxDrawdown <= MaximumPromotedDrawdown
+           && performance.FailureStreak == 0;
+
     public bool HasForwardQualification(StrategyProfile profile)
-        => profile.ShadowObservations >= MinimumShadowObservations
-           && profile.QualityScore >= MinimumQualityScore
-           && profile.Expectancy > 0
-           && profile.MaxDrawdown <= MaximumPromotedDrawdown
-           && profile.FailureStreak == 0;
+        => HasForwardQualification(new(profile.ShadowObservations,profile.Expectancy,profile.MaxDrawdown,profile.QualityScore,profile.FailureStreak,profile.LastReason));
 
     public bool CanActivateFromShadow(StrategyProfile profile)
         => profile.Lifecycle == StrategyLifecycle.Shadow
