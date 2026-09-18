@@ -100,7 +100,7 @@ public sealed class StrategyResearchAuthorityTests : IDisposable
         profile.Id,1000,80,.58,1.5,.002,.10,1.2,.08,.70,.20,.80,passed,
         passed?"qualified exact strategy validation":"failed exact strategy validation",
         -.02,.0005,4,4,profile.Version,30,.12,.05,
-        new StrategyParameterSearchEvidence(1,0,new string('a',64),new string('b',64),new string('c',64),true,false,1,
+        new StrategyParameterSearchEvidence(1,0,new string('a',64),new string('b',64),new string('c',64),
             StrategyParameterSearchEvaluatorV1.TestMethod,StrategyParameterSearchEvaluatorV1.CorrectionMethod,
             StrategyParameterSearchEvaluatorV1.NominalAlpha,passed?.01:1,.05,StrategyParameterSearchEvaluatorV1.SelectionRule));
 
