@@ -57,7 +57,10 @@ public sealed class StrategyResearchAgent
             var exactValidation=await _database.GetLatestStrategyValidationAsync(profile.Id,profile.Version,ct);
             var latestBacktest=await _database.GetLatestBacktestRunAsync(profile.Id,profile.Version,ct);
             var backtestCompletedAt=latestBacktest?.CompletedAtUtc.ToUniversalTime();
-            if(exactValidation is null||latestBacktest is null||backtestCompletedAt is null||backtestCompletedAt>researchNow||researchNow-backtestCompletedAt.Value>=ActiveRevalidationInterval)
+            var temporalUpgradeRequired=exactValidation is null||
+                exactValidation.Validation.OosPurgeObservations!=HistoricalResearchEngine.PromotionTemporalPolicy.OosPurgeObservations||
+                exactValidation.Validation.OosEmbargoObservations!=HistoricalResearchEngine.PromotionTemporalPolicy.OosEmbargoObservations;
+            if(temporalUpgradeRequired||latestBacktest is null||backtestCompletedAt is null||backtestCompletedAt>researchNow||researchNow-backtestCompletedAt.Value>=ActiveRevalidationInterval)
                 validationCandidates.Add(profile);
         }
         foreach (var profile in validationCandidates)
