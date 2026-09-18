@@ -14,7 +14,7 @@ public static class StrategyLifecycleTestRunner
         void Check(string name, bool condition, string detail) { if (!condition) passed = false; cases.Add($"{(condition ? "PASS" : "FAIL")} {name}: {detail}"); }
         var governor = new StrategyGovernor();
         var profile = new StrategyProfile { Id = "TEST", Symbol = "BTCUSDT", Family = StrategyFamily.TrendBreakout, Parameters = LocalStrategyParameters.For(StrategyFamily.TrendBreakout, 0), Lifecycle = StrategyLifecycle.Draft };
-        var searchEvidence=new StrategyParameterSearchEvidence(1,0,new string('a',64),new string('b',64),new string('c',64),true,false,1,StrategyParameterSearchEvaluatorV1.TestMethod,StrategyParameterSearchEvaluatorV1.CorrectionMethod,StrategyParameterSearchEvaluatorV1.NominalAlpha,.01,.05,StrategyParameterSearchEvaluatorV1.SelectionRule);
+        var searchEvidence=new StrategyParameterSearchEvidence(1,0,new string('a',64),new string('b',64),new string('c',64),StrategyParameterSearchEvaluatorV1.TestMethod,StrategyParameterSearchEvaluatorV1.CorrectionMethod,StrategyParameterSearchEvaluatorV1.NominalAlpha,.01,.05,StrategyParameterSearchEvaluatorV1.SelectionRule);
         var good = new StrategyValidation("TEST", 1000, 80, .58, 1.5, .002, .12, 1.2, .08, .7, .2, .78, true, "good",-.02,.0005,4,4,ParameterSearch:searchEvidence);
         Check("严格验证晋级到影子", governor.NextLifecycle(profile, good) == StrategyLifecycle.Shadow, "backtest passed -> shadow");
         profile.Lifecycle = StrategyLifecycle.Shadow; profile.QualityScore = .78; profile.Expectancy = .002; profile.MaxDrawdown = .12; profile.ShadowObservations = StrategyGovernor.MinimumShadowObservations; profile.FailureStreak = 0;
