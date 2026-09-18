@@ -153,41 +153,100 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     {
         EnsureMutationAllowed(intent);
         EnsureCapability(intent);
-        if(!intent.ReduceOnly)try{await PreflightAsync(intent,ct);}catch(Exception ex){await _db.SaveIntentAsync(cycle,intent,"PREFLIGHT_BLOCKED",null,ct);var blocked=ConfirmedNotificationTruth.System(ConfirmedNotificationTruth.EventKey(cycle,intent.ClientOrderId,NotificationEventKind.RiskBlocked),NotificationEventKind.RiskBlocked,ProviderName(),_ex.Environment.ToString(),DateTime.UtcNow,UiDiagnostic.FromText(ex.ToString(),"Risk blocked").Code,intent.Symbol,intent.Side.ToString());await ObserveSafelyAsync(blocked);throw;}
-        await _db.SaveIntentAsync(cycle,intent,"INTENT",null,ct);
-        try{await _ex.SetHedgeModeAsync(true,ct);await _ex.SetMarginModeAsync(intent.Symbol,isolated,ct);await _ex.SetLeverageAsync(intent.Symbol,leverage,ct);}
-        catch(BinanceHttpException ex){await _db.SaveIntentAsync(cycle,intent,ex.Outcome==BinanceHttpOutcome.Rejected?"REJECTED":"UNKNOWN",null,ct);throw;}
-        catch{await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",null,ct);throw;}
-        ExchangeOrder? order=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);
-        if(order is null)try
+        if(!intent.ReduceOnly)try
         {
-            order=intent.OrderType==ExecutionOrderType.Limit&&intent.LimitPrice>0
-                ?await _ex.PlaceLimitAsync(intent.Symbol,intent.Side,intent.Quantity,intent.LimitPrice,intent.ClientOrderId,intent.ReduceOnly,ct)
-                :await _ex.PlaceMarketAsync(intent.Symbol,intent.Side,intent.Quantity,intent.ClientOrderId,intent.ReduceOnly,ct);
-        }catch(BinanceHttpException ex) when(ex.Outcome==BinanceHttpOutcome.Rejected){await _db.SaveIntentAsync(cycle,intent,"REJECTED",null,ct);throw;}
-        catch{order=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);if(order is null){await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",null,ct);throw;}}
+            var quote=await PreflightAsync(intent,ct);
+            await ObserveExecutionDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.PreflightQuote,ExecutionDriftSourceV1.Local,"QUOTE",0,quote.Price,null,ct);
+        }
+        catch(Exception ex)
+        {
+            await _db.SaveIntentAsync(cycle,intent,"PREFLIGHT_BLOCKED",null,ct);
+            var blocked=ConfirmedNotificationTruth.System(
+                ConfirmedNotificationTruth.EventKey(cycle,intent.ClientOrderId,NotificationEventKind.RiskBlocked),
+                NotificationEventKind.RiskBlocked,ProviderName(),_ex.Environment.ToString(),DateTime.UtcNow,
+                UiDiagnostic.FromText(ex.ToString(),"Risk blocked").Code,intent.Symbol,intent.Side.ToString());
+            await ObserveSafelyAsync(blocked);throw;
+        }
+
+        await _db.SaveIntentAsync(cycle,intent,"INTENT",null,ct);
+        await ObserveExecutionDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.IntentAccepted,ExecutionDriftSourceV1.Local,"INTENT",0,0,null,ct);
+        try
+        {
+            await _ex.SetHedgeModeAsync(true,ct);
+            await _ex.SetMarginModeAsync(intent.Symbol,isolated,ct);
+            await _ex.SetLeverageAsync(intent.Symbol,leverage,ct);
+        }
+        catch(BinanceHttpException ex)
+        {
+            await _db.SaveIntentAsync(cycle,intent,ex.Outcome==BinanceHttpOutcome.Rejected?"REJECTED":"UNKNOWN",null,ct);
+            throw;
+        }
+        catch
+        {
+            await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",null,ct);throw;
+        }
+
+        ExchangeOrder? order=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);
+        if(order is null)
+        {
+            await ObserveExecutionDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.SubmissionAttempted,ExecutionDriftSourceV1.Local,"SUBMISSION_ATTEMPTED",0,0,null,ct);
+            try
+            {
+                order=intent.OrderType==ExecutionOrderType.Limit&&intent.LimitPrice>0
+                    ?await _ex.PlaceLimitAsync(intent.Symbol,intent.Side,intent.Quantity,intent.LimitPrice,intent.ClientOrderId,intent.ReduceOnly,ct)
+                    :await _ex.PlaceMarketAsync(intent.Symbol,intent.Side,intent.Quantity,intent.ClientOrderId,intent.ReduceOnly,ct);
+            }
+            catch(BinanceHttpException ex) when(ex.Outcome==BinanceHttpOutcome.Rejected)
+            {
+                await _db.SaveIntentAsync(cycle,intent,"REJECTED",null,ct);throw;
+            }
+            catch
+            {
+                order=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);
+                if(order is null){await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",null,ct);throw;}
+            }
+        }
+
+        await ObserveOrderDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.ProviderObserved,order,ct);
         await _db.SaveIntentAsync(cycle,intent,order.Status,order.OrderId,ct);
-        order=await WaitAndCancelOnTimeoutAsync(intent.Symbol,intent.ClientOrderId,order,ct);
+        order=await WaitAndCancelOnTimeoutAsync(cycle,intent,order,ct);
         await _db.SaveIntentAsync(cycle,intent,order.Status,order.OrderId,ct);
+
         if(order.ExecutedQuantity<=0)
         {
-            if(order.Status is "CANCELED" or "EXPIRED" or "REJECTED"){await _db.SaveIntentAsync(cycle,intent,order.Status,order.OrderId,ct);throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));}
+            if(order.Status is "CANCELED" or "EXPIRED" or "REJECTED")
+            {
+                await _db.SaveIntentAsync(cycle,intent,order.Status,order.OrderId,ct);
+                throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));
+            }
             await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",order.OrderId,ct);
             throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));
         }
-        var filledIntent=intent with{Quantity=order.ExecutedQuantity};var recordedOrder=order.ExecutedQuantity>0&&order.Status!="FILLED"?order with{Status="PARTIALLY_FILLED"}:order;await CaptureFeeEvidenceAsync(recordedOrder,ct);if(intent.ReduceOnly&&recordedOrder.Status=="FILLED")await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);await _db.RecordExecutionAsync(cycle,filledIntent,recordedOrder,"wpe-core-v2",ct);
+
+        var filledIntent=intent with{Quantity=order.ExecutedQuantity};
+        var recordedOrder=order.ExecutedQuantity>0&&order.Status!="FILLED"?order with{Status="PARTIALLY_FILLED"}:order;
+        await CaptureFeeEvidenceAsync(recordedOrder,ct);
+        if(intent.ReduceOnly&&recordedOrder.Status=="FILLED")await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);
+        await _db.RecordExecutionAsync(cycle,filledIntent,recordedOrder,"wpe-core-v2",ct);
+        await ObserveOrderDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.ExecutionRecorded,recordedOrder,ct);
+
         if(intent.ReduceOnly)
         {
             if(IsFullClose(intent.Action)){await CancelProtectionOrdersAsync(intent.Symbol,intent.Side,ct);await _db.ClearLockedSideIfMatchesAsync(intent.Symbol,intent.Side,ct);}
             if(intent.Action==DecisionAction.Unlock)await _db.ClearLockedSideAsync(intent.Symbol,ct);
-            var partial=order.ExecutedQuantity<intent.Quantity;await _db.SaveIntentAsync(cycle,intent,partial?"COMPLETED_PARTIAL":"COMPLETED",order.OrderId,ct);if(partial)throw new InvalidOperationException(L("Execution.PartialClose",order.ExecutedQuantity,intent.Quantity));await NotifyExecutionAsync(cycle,intent,order,ct);return L("Execution.CloseConfirmed");
+            var partial=order.ExecutedQuantity<intent.Quantity;
+            await _db.SaveIntentAsync(cycle,intent,partial?"COMPLETED_PARTIAL":"COMPLETED",order.OrderId,ct);
+            if(partial)throw new InvalidOperationException(L("Execution.PartialClose",order.ExecutedQuantity,intent.Quantity));
+            await NotifyExecutionAsync(cycle,intent,order,ct);return L("Execution.CloseConfirmed");
         }
+
         var partiallyFilled=order.ExecutedQuantity<intent.Quantity;
         try
         {
             await _ex.PlaceProtectionAsync(intent.Symbol,intent.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);
             if(intent.Action==DecisionAction.Lock)await _db.SetLockedSideAsync(intent.Symbol,intent.Side,ct);
-            var status=partiallyFilled?"PROTECTED_PARTIAL":"PROTECTED";await _db.SaveIntentAsync(cycle,intent,status,order.OrderId,ct);
+            var status=partiallyFilled?"PROTECTED_PARTIAL":"PROTECTED";
+            await _db.SaveIntentAsync(cycle,intent,status,order.OrderId,ct);
             await NotifyExecutionAsync(cycle,intent,order,ct);
             await NotifyProtectionAsync(cycle,intent,NotificationEventKind.ProtectionPlaced,"protection confirmed",ct);
         }
@@ -196,13 +255,24 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             await _db.SaveIntentAsync(cycle,intent,"PROTECTION_FAILED",order.OrderId,ct);
             await NotifyProtectionAsync(cycle,intent,NotificationEventKind.ProtectionFailed,protectionError.ToString(),ct);
             var emergency=filledIntent with{ReduceOnly=true,OrderType=ExecutionOrderType.Market,ClientOrderId=EmergencyId(intent.ClientOrderId)};
-            var close=await SubmitIdempotentlyAsync(emergency,ct);await _db.SaveIntentAsync(cycle,intent,"EMERGENCY_SUBMITTED",close.OrderId,ct);close=await WaitAndCancelOnTimeoutAsync(intent.Symbol,emergency.ClientOrderId,close,ct);
-            var fullyClosed=close.Status=="FILLED"&&close.ExecutedQuantity>=order.ExecutedQuantity;await _db.SaveIntentAsync(cycle,intent,fullyClosed?"EMERGENCY_CLOSED":"EMERGENCY_UNKNOWN",close.OrderId,ct);
-            if(fullyClosed){await CaptureFeeEvidenceAsync(close,ct);await CaptureFundingEvidenceAsync(emergency.Symbol,emergency.Side,close.ExecutedQuantity,ct);await _db.RecordExecutionAsync(cycle,emergency with{Quantity=close.ExecutedQuantity},close,"wpe-core-v2",ct);}
+            var close=await SubmitIdempotentlyAsync(cycle,emergency,ct);
+            await _db.SaveIntentAsync(cycle,intent,"EMERGENCY_SUBMITTED",close.OrderId,ct);
+            close=await WaitAndCancelOnTimeoutAsync(cycle,emergency,close,ct);
+            var fullyClosed=close.Status=="FILLED"&&close.ExecutedQuantity>=order.ExecutedQuantity;
+            await _db.SaveIntentAsync(cycle,intent,fullyClosed?"EMERGENCY_CLOSED":"EMERGENCY_UNKNOWN",close.OrderId,ct);
+            if(fullyClosed)
+            {
+                await CaptureFeeEvidenceAsync(close,ct);
+                await CaptureFundingEvidenceAsync(emergency.Symbol,emergency.Side,close.ExecutedQuantity,ct);
+                await _db.RecordExecutionAsync(cycle,emergency with{Quantity=close.ExecutedQuantity},close,"wpe-core-v2",ct);
+                await ObserveOrderDriftSafelyAsync(cycle,emergency,ExecutionDriftPhaseV1.ExecutionRecorded,close,ct);
+            }
             var safety=fullyClosed?L("Execution.ProtectionEmergencyClosed"):L("Execution.ProtectionEmergencyUnknown",close.Status);
             throw new InvalidOperationException($"{safety} · {SensitiveDataRedactor.ForLog(protectionError.Message,180)}",protectionError);
         }
-        if(partiallyFilled)throw new InvalidOperationException(L("Execution.PartialProtected",order.ExecutedQuantity,intent.Quantity));return L("Execution.Protected");
+
+        if(partiallyFilled)throw new InvalidOperationException(L("Execution.PartialProtected",order.ExecutedQuantity,intent.Quantity));
+        return L("Execution.Protected");
     }
 
     private async Task CaptureFeeEvidenceAsync(ExchangeOrder order,CancellationToken ct)
