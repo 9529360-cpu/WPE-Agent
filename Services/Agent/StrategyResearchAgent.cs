@@ -150,6 +150,15 @@ public sealed class StrategyResearchAgent
             await _database.UpsertStrategyAsync(profile,ct);
             await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
         }
+        foreach(var profile in existing.Where(x=>x.Lifecycle!=StrategyLifecycle.Retired&&x.Generation>0).ToArray())
+        {
+            var previous=profile.Lifecycle;
+            profile.Lifecycle=StrategyLifecycle.Retired;
+            profile.StateChangedAtUtc=_utcNow();
+            profile.LastReason="adaptive parameter lineage retired; deterministic search no longer derives parameters from previously selected winners";
+            await _database.UpsertStrategyAsync(profile,ct);
+            await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
+        }
 
         var result = new List<StrategyProfile>(existing);
         foreach (var symbolValue in symbols.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -162,14 +171,11 @@ public sealed class StrategyResearchAgent
             var live=existingFamily.Count(x=>x.Lifecycle is StrategyLifecycle.Draft or StrategyLifecycle.Shadow or StrategyLifecycle.Active);
             for(var variant=0;live<TargetConcurrentCandidatesPerFamily&&variant<MaximumVariantsPerFamily&&attemptedHashes.Count<StrategyParameterSearchEvaluatorV1.MaximumTrials;variant++)
             {
-                var id=_engine.Strategies.CandidateId(symbol,family,variant.ToString());if(result.Any(x=>x.Id.Equals(id,StringComparison.OrdinalIgnoreCase)))continue;
-                var parent=result.Where(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family&&_engine.Strategies.IsProfileCompatible(x)&&x.Lifecycle==StrategyLifecycle.Active&&x.ValidationTrades>=StrategyGovernor.MinimumValidationTrades&&x.ShadowObservations>=StrategyGovernor.MinimumShadowObservations&&x.QualityScore>=StrategyGovernor.MinimumQualityScore&&x.Expectancy>0&&x.MaxDrawdown<=StrategyGovernor.MaximumPromotedDrawdown)
-                    .OrderByDescending(x=>x.QualityScore).ThenByDescending(x=>x.Expectancy).ThenBy(x=>x.Id,StringComparer.Ordinal).FirstOrDefault();
-                var derived=variant>=2&&parent is not null;var generation=derived?parent!.Generation+1:0;
-                var parameters=derived?LocalStrategyParameters.Derive(family,parent!.Parameters,variant-1):LocalStrategyParameters.For(family,variant);
+                var id=_engine.Strategies.CandidateId(symbol,family,$"independent-{variant}");if(result.Any(x=>x.Id.Equals(id,StringComparison.OrdinalIgnoreCase)))continue;
+                var parameters=LocalStrategyParameters.For(family,variant);
                 var parameterHash=LocalStrategyParameters.Hash(parameters);if(attemptedHashes.Contains(parameterHash))continue;
-                var version=_engine.Strategies.BindProfileVersion(family,$"{family.ToString().ToLowerInvariant()}-{variant+1}");
-                var profile=new StrategyProfile{Id=id,Version=version,Symbol=symbol,Family=family,Parameters=parameters,ParametersHash=parameterHash,ParentStrategyId=derived?parent!.Id:null,ParentStrategyVersion=derived?parent!.Version:null,Generation=generation,Lifecycle=StrategyLifecycle.Draft,BuiltIn=family==StrategyFamily.TrendBreakout&&variant==0,CreatedAtUtc=_utcNow(),LastReason=derived?"bounded deterministic child of qualified active strategy":variant<2?"deterministic local seed":"bounded deterministic replacement"};
+                var version=_engine.Strategies.BindProfileVersion(family,$"{family.ToString().ToLowerInvariant()}-independent-{variant+1}");
+                var profile=new StrategyProfile{Id=id,Version=version,Symbol=symbol,Family=family,Parameters=parameters,ParametersHash=parameterHash,Generation=0,Lifecycle=StrategyLifecycle.Draft,BuiltIn=family==StrategyFamily.TrendBreakout&&variant==0,CreatedAtUtc=_utcNow(),LastReason=variant<2?"deterministic local seed":"predeclared deterministic parameter trial"};
                 result.Add(profile);attemptedHashes.Add(parameterHash);await _database.UpsertStrategyAsync(profile,ct);live++;
             }
             if(live>=TargetConcurrentCandidatesPerFamily)continue;
