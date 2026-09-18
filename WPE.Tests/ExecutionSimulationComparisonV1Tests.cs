@@ -166,11 +166,11 @@ public sealed class ExecutionSimulationComparisonV1Tests
             feeRole:ExecutionSimulationFeeRoleV1.Taker,
             latencyModeled:true,
             latencyMs:500);
-        var observed = Observed("FILLED", 1m, 100m, .04m, feeAvailable:true, latencyMs:500) with
-        {
-            StrategyVersion = "different-version"
-        };
+        var observed = Observed(
+            "FILLED", 1m, 100m, .04m, feeAvailable:true, latencyMs:500,
+            strategyVersion:"different-version");
 
+        Assert.True(ExecutionRealityDriftV1.IsCanonical(observed));
         Assert.Throws<InvalidOperationException>(() =>
             ExecutionSimulationComparisonCanonicalizerV1.Create(simulated, observed, ObservedAt.AddSeconds(1)));
     }
@@ -258,11 +258,13 @@ public sealed class ExecutionSimulationComparisonV1Tests
         decimal price,
         decimal fee,
         bool feeAvailable,
-        long latencyMs)
+        long latencyMs,
+        string strategyVersion = "v7")
     {
         var expectation = new ExecutionRealityExpectationV1(
-            "cycle-1","order-1","strategy-a","v7","research-cost-v1","BTCUSDT",
+            "cycle-1","order-1","strategy-a",strategyVersion,"research-cost-v1","BTCUSDT",
             PositionSide.Long,false,ExecutionOrderType.Market,1m,100m,.0004m,.001m,SimulatedAt);
+        var observedAt = SimulatedAt.AddMilliseconds(latencyMs);
         var observation = new ExecutionRealityObservationV1(
             "order-1",
             status,
@@ -270,8 +272,8 @@ public sealed class ExecutionSimulationComparisonV1Tests
             price,
             feeAvailable ? fee : 0m,
             feeAvailable ? ExecutionRealityDriftV1.ExchangeReportedFeeBasis : ExecutionRealityDriftV1.UnavailableFeeBasis,
-            ObservedAt.AddMilliseconds(-100),
-            SimulatedAt.AddMilliseconds(latencyMs));
+            observedAt.AddMilliseconds(-100),
+            observedAt);
         return ExecutionRealityDriftV1.Analyze(expectation, observation);
     }
 }
