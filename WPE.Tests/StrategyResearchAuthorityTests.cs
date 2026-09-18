@@ -22,6 +22,7 @@ public sealed class StrategyResearchAuthorityTests : IDisposable
         await store.UpsertStrategyAsync(profile,CancellationToken.None);
         await store.SaveStrategyValidationAsync(Validation(profile,true),CancellationToken.None);
         await store.SaveBacktestRunAsync(Backtest(profile,now.AddMinutes(-1),"PASSED"),CancellationToken.None);
+        await SeedForwardQualificationAsync(store,profile);
 
         var result=await new StrategyResearchAuthority(store,utcNow:()=>now).ReadAsync(profile.Id,profile.Version,profile.Symbol,CancellationToken.None);
 
@@ -33,6 +34,29 @@ public sealed class StrategyResearchAuthorityTests : IDisposable
         Assert.Equal(30,result.OutOfSampleTrades);
         Assert.Equal(.12,result.StrategyReturn,10);
         Assert.Equal(.05,result.BenchmarkReturn,10);
+    }
+
+    [Fact]
+    public async Task ForwardObservationsFromOldStrategyVersionCannotAuthorizeCurrentVersion()
+    {
+        var now=DateTimeOffset.UtcNow;
+        var store=new AgentSqliteStore(Database,()=>now);
+        var registry=new DeterministicStrategyRegistry();
+        var version=registry.BindProfileVersion(StrategyFamily.TrendBreakout,"candidate-current");
+        var profile=Profile("strategy-version-bound",version,StrategyLifecycle.Active);
+        await store.UpsertStrategyAsync(profile,CancellationToken.None);
+        await store.SaveStrategyValidationAsync(Validation(profile,true),CancellationToken.None);
+        await store.SaveBacktestRunAsync(Backtest(profile,now.AddMinutes(-1),"PASSED"),CancellationToken.None);
+        var old=profile withVersion(version+"-old");
+        await SeedForwardQualificationAsync(store,old);
+
+        var currentPerformance=await store.GetStrategyObservationPerformanceAsync(profile.Id,profile.Version,CancellationToken.None);
+        var result=await new StrategyResearchAuthority(store,utcNow:()=>now)
+            .ReadAsync(profile.Id,profile.Version,profile.Symbol,CancellationToken.None);
+
+        Assert.Equal(0,currentPerformance.Observations);
+        Assert.NotNull(result);
+        Assert.False(result!.Approved);
     }
 
     [Fact]
@@ -124,6 +148,21 @@ public sealed class StrategyResearchAuthorityTests : IDisposable
         new StrategyParameterSearchEvidence(1,0,new string('a',64),new string('b',64),new string('c',64),
             StrategyParameterSearchEvaluatorV1.TestMethod,StrategyParameterSearchEvaluatorV1.CorrectionMethod,
             StrategyParameterSearchEvaluatorV1.NominalAlpha,passed ? .01 : 1,.05,StrategyParameterSearchEvaluatorV1.SelectionRule));
+
+    private static async Task SeedForwardQualificationAsync(AgentSqliteStore store,StrategyProfile profile)
+    {
+        for(var i=0;i<StrategyGovernor.MinimumShadowObservations;i++)
+            await store.RecordStrategyObservationAsync(profile.Id,profile.Version,profile.Symbol,1,100m+i,1,CancellationToken.None);
+    }
+
+    private static StrategyProfile withVersion(this StrategyProfile profile,string version)=>new()
+    {
+        Id=profile.Id,Version=version,Symbol=profile.Symbol,Family=profile.Family,Parameters=profile.Parameters,
+        Lifecycle=profile.Lifecycle,BuiltIn=profile.BuiltIn,ParentStrategyId=profile.ParentStrategyId,ParentStrategyVersion=profile.ParentStrategyVersion,
+        Generation=profile.Generation,ParametersHash=profile.ParametersHash,LineageHash=profile.LineageHash,CreatedAtUtc=profile.CreatedAtUtc,
+        StateChangedAtUtc=profile.StateChangedAtUtc,QualityScore=profile.QualityScore,Expectancy=profile.Expectancy,MaxDrawdown=profile.MaxDrawdown,
+        Sharpe=profile.Sharpe,ValidationTrades=profile.ValidationTrades,ShadowObservations=profile.ShadowObservations,FailureStreak=profile.FailureStreak,LastReason=profile.LastReason
+    };
 
     private static PersistedBacktestRun Backtest(StrategyProfile profile,DateTimeOffset completed,string status)=>new(
         Guid.NewGuid().ToString("N"),profile.Id,profile.Version,profile.Symbol,status,completed.UtcDateTime,
