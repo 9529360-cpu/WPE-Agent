@@ -160,7 +160,7 @@ internal static class ModelOffLiveCycleInputComposerV1
                 instrument = SafeToken(decision.Instrument) ? decision.Instrument : "unknown",
                 decision.TargetTier, decision.Confidence, decision.EntryPrice, decision.StopLossPrice,
                 decision.TakeProfitPrice, decision.RiskRewardRatio, order_type = decision.OrderType.ToString().ToLowerInvariant(),
-                strategy_id=targetResearchValid?targetResearch!.StrategyId:"unknown",strategy_version=targetResearchValid?targetResearch.StrategyVersion:"unknown",
+                strategy_id=targetResearchValid?targetResearch!.StrategyId:"unknown",strategy_version=targetResearchValid?targetResearch!.StrategyVersion:"unknown",
                 assessment_count = request.Assessments.Count, target_assessment_present=targetAssessment is not null });
         outputs.Add(Input(strategy));
 
