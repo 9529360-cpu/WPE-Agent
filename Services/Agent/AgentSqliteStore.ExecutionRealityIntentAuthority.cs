@@ -1,3 +1,5 @@
+using WpeAgent.TradingAuthorization;
+
 namespace 币安量化机器人.Services.Agent;
 
 public sealed record ExecutionRealityIntentAuthorityV1(
