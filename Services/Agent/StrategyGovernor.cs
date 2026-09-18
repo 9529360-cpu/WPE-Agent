@@ -24,7 +24,8 @@ public sealed class StrategyGovernor
            && validation.EvaluatedRegimes == RequiredEvaluatedRegimes
            && validation.PassingRegimes >= MinimumPassingRegimes
            && validation.WorstRegimeReturn >= MinimumWorstRegimeReturn
-           && validation.TrainTestExpectancyGap <= MaximumTrainTestExpectancyGap;
+           && validation.TrainTestExpectancyGap <= MaximumTrainTestExpectancyGap
+           && StrategyParameterSearchEvaluatorV1.IsQualified(validation.ParameterSearch);
 
     public bool CanActivateFromShadow(StrategyProfile profile)
         => profile.Lifecycle == StrategyLifecycle.Shadow
