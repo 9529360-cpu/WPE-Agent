@@ -41,6 +41,26 @@ internal sealed class ResearchRealityModel
         if (position is < -1 or > 1) throw new ArgumentOutOfRangeException(nameof(position));
         return Math.Abs(position) * SideVariableRate;
     }
+
+    internal List<(double Return,bool Trade)> Simulate(IReadOnlyList<StrategyExposureDecisionV1> timeline)
+    {
+        if(!StrategyExposureTimelineV1.IsCanonical(timeline)||timeline.Count==0)return [];
+        var result=new List<(double Return,bool Trade)>(timeline.Count);
+        var position=0;
+        foreach(var decision in timeline)
+        {
+            var underlyingReturn=(double)(decision.ExecutionClosePrice/decision.ExecutionOpenPrice-1);
+            var step=Apply(position,decision.TargetExposure,underlyingReturn);
+            result.Add((step.NetReturn,step.CompletedTrade));
+            position=step.Position;
+        }
+        if(position!=0)
+        {
+            var last=result[^1];
+            result[^1]=(last.Return-CloseCost(position),true);
+        }
+        return result;
+    }
 }
 
 internal readonly record struct ResearchExposureStep(
