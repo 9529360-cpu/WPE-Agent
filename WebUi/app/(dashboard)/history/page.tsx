@@ -23,6 +23,7 @@ export function projectRuntimeHistory(runtime: WpeRuntimeState): HistoryProjecti
   const backtests = runtime.historicalBacktests
   const skillCalls = runtime.historicalSkillCalls
   const auditEvents = runtime.historicalAuditEvents
+  const executionReality = runtime.historicalExecutionReality
 
   return {
     orders: orders ? { ...pageMetadata(orders), items: orders.state === 'available' ? orders.items.map(({ sequence, occurredAtUtc, symbol, side, action, quantity, averagePrice, status }) => ({ sequence, occurredAtUtc, symbol, side, action, quantity, averagePrice, status })) : [] } : unsupportedHistoryProjection.orders,
@@ -30,6 +31,7 @@ export function projectRuntimeHistory(runtime: WpeRuntimeState): HistoryProjecti
     backtests: backtests ? { ...pageMetadata(backtests), items: backtests.state === 'available' ? backtests.items.map(({ backtestId, completedAtUtc, strategyId, strategyVersion, symbol, status, coverageDays, trades, outOfSampleReturn, maxDrawdown, sharpe }) => ({ backtestId, completedAtUtc: completedAtUtc!, strategyId, strategyVersion, symbol, status, coverageDays, trades, outOfSampleReturn, maxDrawdown, sharpe })) : [] } : unsupportedHistoryProjection.backtests,
     skillCalls: skillCalls ? { ...pageMetadata(skillCalls), items: skillCalls.state === 'available' ? skillCalls.items.map(({ id, occurredAtUtc, skill, status, durationMs, mode, remoteLlmUsed, tokens, costUsd }) => ({ id, occurredAtUtc, skill, status, durationMs, mode, remoteLlmUsed, tokens, costUsd })) : [] } : unsupportedHistoryProjection.skillCalls,
     auditEvents: auditEvents ? { ...pageMetadata(auditEvents), items: auditEvents.state === 'available' ? auditEvents.items.map(({ id, occurredAtUtc, category, source, status }) => ({ id, occurredAtUtc, category, source, status })) : [] } : unsupportedHistoryProjection.auditEvents,
+    executionReality: executionReality ? { ...pageMetadata(executionReality), items: executionReality.state === 'available' ? executionReality.items.map(({ observedAtUtc, strategyId, strategyVersion, costModelVersion, symbol, state, terminal, priceComparable, feeComparable, totalComparable, fillRatio, slippageDriftBps, feeDriftBps, totalExecutionDriftBps, observationLatencyMs, reasonCode }) => ({ observedAtUtc, strategyId, strategyVersion, costModelVersion, symbol, state, terminal, priceComparable, feeComparable, totalComparable, fillRatio, slippageDriftBps, feeDriftBps, totalExecutionDriftBps, observationLatencyMs, reasonCode })) : [] } : unsupportedHistoryProjection.executionReality,
   }
 }
 
