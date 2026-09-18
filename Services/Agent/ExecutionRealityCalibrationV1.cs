@@ -8,6 +8,7 @@ public sealed record ExecutionRealityCalibrationSnapshotV1(
     string Schema,
     string StrategyId,
     string StrategyVersion,
+    string CostModelVersion,
     int ObservationCount,
     int ComparableCount,
     int FeeComparableCount,
@@ -37,10 +38,12 @@ public static class ExecutionRealityCalibrationV1
     public static ExecutionRealityCalibrationSnapshotV1 Create(
         string strategyId,
         string strategyVersion,
+        string costModelVersion,
         IReadOnlyList<ExecutionRealityDriftFactV1> facts)
     {
         if (string.IsNullOrWhiteSpace(strategyId)) throw new ArgumentException("Strategy id is required.", nameof(strategyId));
         if (string.IsNullOrWhiteSpace(strategyVersion)) throw new ArgumentException("Strategy version is required.", nameof(strategyVersion));
+        if (string.IsNullOrWhiteSpace(costModelVersion)) throw new ArgumentException("Cost model version is required.", nameof(costModelVersion));
         ArgumentNullException.ThrowIfNull(facts);
         if (facts.Count == 0) throw new InvalidOperationException("Execution reality calibration requires observations.");
 
@@ -51,6 +54,8 @@ public static class ExecutionRealityCalibrationV1
             if (!string.Equals(fact.StrategyId, strategyId, StringComparison.Ordinal)
                 || !string.Equals(fact.StrategyVersion, strategyVersion, StringComparison.Ordinal))
                 throw new InvalidOperationException("Execution reality calibration rejected cross-strategy evidence.");
+            if (!string.Equals(fact.CostModelVersion, costModelVersion, StringComparison.Ordinal))
+                throw new InvalidOperationException("Execution reality calibration rejected cross-cost-model evidence.");
         }
 
         var comparable = facts.Where(x => x.Comparable).ToArray();
@@ -62,6 +67,7 @@ public static class ExecutionRealityCalibrationV1
             Schema,
             strategyId,
             strategyVersion,
+            costModelVersion,
             facts.Count,
             comparable.Length,
             feeComparable.Length,
@@ -137,6 +143,7 @@ public static class ExecutionRealityCalibrationV1
             writer.WriteStartObject();
             writer.WriteNumber("average_fill_ratio", value.AverageFillRatio);
             writer.WriteNumber("comparable_count", value.ComparableCount);
+            writer.WriteString("cost_model_version", value.CostModelVersion);
             writer.WriteNumber("fee_comparable_count", value.FeeComparableCount);
             writer.WriteNumber("filled_count", value.FilledCount);
             writer.WriteString("latest_observed_at_utc", value.LatestObservedAtUtc.ToUniversalTime());
