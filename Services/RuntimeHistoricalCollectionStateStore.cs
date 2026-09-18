@@ -68,7 +68,7 @@ public sealed class RuntimeHistoricalCollectionStateStore
                     feeComparable,
                     totalComparable,
                     Decimal(r,10),
-                    Decimal(r,11),
+                    priceComparable?Decimal(r,11):null,
                     feeComparable?Decimal(r,12):null,
                     totalComparable?Decimal(r,13):null,
                     Math.Max(0,r.GetInt64(14)),
