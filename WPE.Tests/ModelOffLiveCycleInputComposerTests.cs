@@ -137,6 +137,7 @@ public sealed class ModelOffLiveCycleInputComposerTests
     [InlineData("invalid-number")]
     [InlineData("stale-validation")]
     [InlineData("future-validation")]
+    [InlineData("strategy-id-mismatch")]
     public void ResearchAgentRequiresEligibleEvidenceForCurrentDecisionInstrument(string defect)
     {
         var request=Request();var btc=Research("BTCUSDT");var research=request.Research.ToDictionary(x=>x.Key,x=>x.Value);
@@ -146,13 +147,14 @@ public sealed class ModelOffLiveCycleInputComposerTests
         if(defect=="invalid-number")research["BTCUSDT"]=CopyResearch(btc,qualityScore:double.NaN);
         if(defect=="stale-validation")research["BTCUSDT"]=CopyResearch(btc,validatedAt:Now.AddHours(-25));
         if(defect=="future-validation")research["BTCUSDT"]=CopyResearch(btc,validatedAt:Now.AddSeconds(1));
+        if(defect=="strategy-id-mismatch")research["BTCUSDT"]=CopyResearch(btc,strategyId:"strategy-other");
         var output=ModelOffLiveCycleInputComposerV1.Compose(request with{Research=research}).Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(output));Assert.Contains(output.Decision.ReasonCodes,reason=>reason.StartsWith("live.research.target-",StringComparison.Ordinal));
     }
 
     [Fact]
     public void UnrelatedResearchCannotSubstituteForCurrentInstrument()
     {
-        var request=Request() with{Research=new Dictionary<string,ResearchValidationResult>{{"ETHUSDT",Research("ETHUSDT")}}};var output=ModelOffLiveCycleInputComposerV1.Compose(request).Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;Assert.Contains("live.research.target-missing",output.Decision.ReasonCodes);Assert.DoesNotContain(output.Sources,source=>source.SourceId=="strategy-validation-ETHUSDT");
+        var request=Request() with{Research=new Dictionary<string,ResearchValidationResult>{{"ETHUSDT",Research("ETHUSDT")}}};var output=ModelOffLiveCycleInputComposerV1.Compose(request).Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;Assert.Contains("live.research.target-missing",output.Decision.ReasonCodes);Assert.DoesNotContain(output.Sources,source=>source.Kind==ModelOffSourceKindV1.Strategy);
     }
 
     [Fact]
@@ -160,7 +162,7 @@ public sealed class ModelOffLiveCycleInputComposerTests
     {
         var request=Request();var expected=request.Research["BTCUSDT"].ValidatedAtUtc;
         var research=ModelOffLiveCycleInputComposerV1.Compose(request).Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;
-        var source=Assert.Single(research.Sources,x=>x.SourceId=="strategy-validation-BTCUSDT");Assert.Equal(expected,source.AsOfUtc);
+        var source=Assert.Single(research.Sources,x=>x.SourceId=="strategy-validation-strategy-alpha-strategy-v1");Assert.Equal(expected,source.AsOfUtc);
         Assert.Equal(expected,research.Facts.GetProperty("validations")[0].GetProperty("ValidatedAtUtc").GetDateTimeOffset());
     }
 
@@ -174,6 +176,7 @@ public sealed class ModelOffLiveCycleInputComposerTests
     [InlineData("bad-confidence")]
     [InlineData("bad-tier")]
     [InlineData("version-conflict")]
+    [InlineData("strategy-id-conflict")]
     [InlineData("lowercase-assessment")]
     [InlineData("bad-assessment-confidence")]
     public void StrategyAgentIndependentlyRejectsInvalidExecutablePlan(string defect)
@@ -188,6 +191,7 @@ public sealed class ModelOffLiveCycleInputComposerTests
         if(defect=="bad-confidence")review=Review(true,confidence:1.1);
         if(defect=="bad-tier")review=Review(true,targetTier:4);
         if(defect=="version-conflict")review=Review(true,strategyVersion:"strategy-v2");
+        if(defect=="strategy-id-conflict")review=Review(true,strategyId:"strategy-other");
         if(defect=="lowercase-assessment")assessments=[Assessment(symbol:"btcusdt")];
         if(defect=="bad-assessment-confidence")assessments=[Assessment(confidence:1.1)];
         var strategy=ModelOffLiveCycleInputComposerV1.Compose(request with{Assessments=assessments,DecisionReview=review}).Single(x=>x.Output.Agent==ModelOffAgentV1.Strategy).Output;Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(strategy));Assert.Contains(strategy.Decision.ReasonCodes,reason=>reason.StartsWith("live.strategy.",StringComparison.Ordinal));
@@ -487,13 +491,13 @@ public sealed class ModelOffLiveCycleInputComposerTests
     }
     private static NewsEvidence News()=>new("SEC","Official digital asset market update","https://www.sec.gov/news/press-release/test",Now.AddMinutes(-2).UtcDateTime,Now.AddMinutes(-1).UtcDateTime,"official",new string('a',64),["BTC"],"Private full article body must not enter canonical audit.",.9,1,"REGULATION",false,.1);
     private static ResearchValidationResult Research(string symbol) => new()
-    { ValidatedAtUtc=Now.AddMinutes(-1),Symbol = symbol, StrategyVersion = "strategy-v1", SampleSize = 200, Trades = 30, QualityScore = .8, Approved = true, Promoted = true, CoverageDays = 90 };
-    private static ResearchValidationResult CopyResearch(ResearchValidationResult value,bool? approved=null,bool? promoted=null,double? qualityScore=null,DateTimeOffset? validatedAt=null)=>new(){ValidatedAtUtc=validatedAt??value.ValidatedAtUtc,Symbol=value.Symbol,StrategyVersion=value.StrategyVersion,SampleSize=value.SampleSize,Trades=value.Trades,WinRate=value.WinRate,ProfitFactor=value.ProfitFactor,Expectancy=value.Expectancy,MaxDrawdown=value.MaxDrawdown,Sharpe=value.Sharpe,OutOfSampleReturn=value.OutOfSampleReturn,WalkForwardScore=value.WalkForwardScore,MonteCarloLossProbability=value.MonteCarloLossProbability,QualityScore=qualityScore??value.QualityScore,Approved=approved??value.Approved,Promoted=promoted??value.Promoted,CoverageDays=value.CoverageDays,OutOfSampleTrades=value.OutOfSampleTrades,StrategyReturn=value.StrategyReturn,BenchmarkReturn=value.BenchmarkReturn,RegimeReturns=value.RegimeReturns,Summary=value.Summary};
-    private static MarketDecisionAssessment Assessment(bool fresh=true,DecisionAction recommended=DecisionAction.OpenLong,string symbol="BTCUSDT",double confidence=.8)=>new(){Symbol=symbol,Fresh=fresh,EntryReady=true,RecommendedAction=recommended,Confidence=confidence,NetScore=.5,ConflictRatio=.1};
-    private static DecisionReview Review(bool accepted,decimal stop=98000m,decimal take=104000m,double riskReward=2,double confidence=.8,int targetTier=1,string strategyVersion="strategy-v1") => new()
+    { ValidatedAtUtc=Now.AddMinutes(-1),StrategyId=symbol=="BTCUSDT"?"strategy-alpha":"strategy-eth",Symbol = symbol, StrategyVersion = "strategy-v1", SampleSize = 200, Trades = 30, QualityScore = .8, Approved = true, Promoted = true, CoverageDays = 90 };
+    private static ResearchValidationResult CopyResearch(ResearchValidationResult value,bool? approved=null,bool? promoted=null,double? qualityScore=null,DateTimeOffset? validatedAt=null,string? strategyId=null)=>new(){ValidatedAtUtc=validatedAt??value.ValidatedAtUtc,StrategyId=strategyId??value.StrategyId,Symbol=value.Symbol,StrategyVersion=value.StrategyVersion,SampleSize=value.SampleSize,Trades=value.Trades,WinRate=value.WinRate,ProfitFactor=value.ProfitFactor,Expectancy=value.Expectancy,MaxDrawdown=value.MaxDrawdown,Sharpe=value.Sharpe,OutOfSampleReturn=value.OutOfSampleReturn,WalkForwardScore=value.WalkForwardScore,MonteCarloLossProbability=value.MonteCarloLossProbability,QualityScore=qualityScore??value.QualityScore,Approved=approved??value.Approved,Promoted=promoted??value.Promoted,CoverageDays=value.CoverageDays,OutOfSampleTrades=value.OutOfSampleTrades,StrategyReturn=value.StrategyReturn,BenchmarkReturn=value.BenchmarkReturn,RegimeReturns=value.RegimeReturns,Summary=value.Summary};
+    private static MarketDecisionAssessment Assessment(bool fresh=true,DecisionAction recommended=DecisionAction.OpenLong,string symbol="BTCUSDT",double confidence=.8)=>new(){Symbol=symbol,StrategyId=symbol=="BTCUSDT"?"strategy-alpha":"strategy-eth",StrategyVersion="strategy-v1",Fresh=fresh,EntryReady=true,RecommendedAction=recommended,Confidence=confidence,NetScore=.5,ConflictRatio=.1};
+    private static DecisionReview Review(bool accepted,decimal stop=98000m,decimal take=104000m,double riskReward=2,double confidence=.8,int targetTier=1,string strategyId="strategy-alpha",string strategyVersion="strategy-v1") => new()
     {
         Accepted = accepted,
-        Decision = new DecisionPlan { Action = DecisionAction.OpenLong, Instrument = "BTCUSDT", Confidence = confidence,TargetTier=targetTier,StrategyVersion=strategyVersion,
+        Decision = new DecisionPlan { Action = DecisionAction.OpenLong, Instrument = "BTCUSDT", Confidence = confidence,TargetTier=targetTier,StrategyId=strategyId,StrategyVersion=strategyVersion,
             EntryPrice = 100000m, StopLossPrice = stop, TakeProfitPrice = take, RiskRewardRatio = riskReward }
     };
     private static IndependentRiskReview Risk(bool approved) => new()

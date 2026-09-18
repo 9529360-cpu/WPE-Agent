@@ -114,13 +114,16 @@ public sealed class DecisionPlan
     public decimal EntryPrice { get; set; }
     public double RiskRewardRatio { get; set; }
     public ExecutionOrderType OrderType { get; set; } = ExecutionOrderType.Market;
-    public string StrategyVersion { get; set; } = "wpe-core-v2";
+    public string StrategyId { get; set; } = string.Empty;
+    public string StrategyVersion { get; set; } = string.Empty;
 }
 public enum MarketRegime { Trending, Ranging, Transition, Extreme, Unknown }
 public sealed record SignalContribution(string Name,string Horizon,double RawValue,double Weight,double WeightedScore,string Direction,string Explanation);
 public sealed class MarketDecisionAssessment
 {
     public string Symbol { get; init; } = string.Empty;
+    public string StrategyId { get; init; } = string.Empty;
+    public string StrategyVersion { get; init; } = string.Empty;
     [JsonConverter(typeof(JsonStringEnumConverter))] public MarketRegime Regime { get; init; }
     public double NetScore { get; init; }
     public double Confidence { get; init; }
@@ -154,6 +157,7 @@ public sealed class IndependentRiskReview
 public sealed class ResearchValidationResult
 {
     public DateTimeOffset ValidatedAtUtc { get; init; }
+    public string StrategyId { get; init; } = string.Empty;
     public string Symbol { get; init; } = string.Empty;
     public string StrategyVersion { get; init; } = string.Empty;
     public int SampleSize { get; init; }

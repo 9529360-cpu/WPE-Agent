@@ -78,6 +78,7 @@ public sealed class ModelOffResearchCapabilityTests
     [InlineData("schema")]
     [InlineData("symbol")]
     [InlineData("strategy")]
+    [InlineData("strategy-id")]
     [InlineData("future")]
     [InlineData("stale")]
     [InlineData("trades")]
@@ -104,6 +105,7 @@ public sealed class ModelOffResearchCapabilityTests
         Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(first));
         Assert.Equal(ModelOffCanonicalSerializerV1.Serialize(first).Sha256,ModelOffCanonicalSerializerV1.Serialize(second).Sha256);
         Assert.Equal("BTCUSDT",first.Facts.GetProperty("symbol").GetString());
+        Assert.Equal("trend-alpha",first.Facts.GetProperty("strategyId").GetString());
         Assert.Equal("trend-v1",first.Facts.GetProperty("strategyVersion").GetString());
     }
 
@@ -299,16 +301,17 @@ public sealed class ModelOffResearchCapabilityTests
     {
         var validatedAt=fixture switch{"future"=>Now.AddSeconds(1),"stale"=>Now.AddHours(-25),_=>Now.AddMinutes(-2)};
         var symbol=fixture=="symbol"?"btcusdt":"BTCUSDT";
+        var strategyId=fixture=="strategy-id"?" ":"trend-alpha";
         var strategy=fixture=="strategy"?" ":"trend-v1";
         var sampleSize=1000;
         var trades=fixture=="trades"?1001:80;
         var winRate=fixture=="metric"?1.1:.58;
         var approved=fixture!="lifecycle";
         var promoted=true;
-        var fact=BacktestValidationCanonicalizerV1.Create(symbol,strategy,validatedAt,sampleSize,trades,40,180,winRate,1.5,.002,.12,1.2,.08,.7,.2,.78,approved,promoted);
+        var fact=BacktestValidationCanonicalizerV1.Create(symbol,strategyId,strategy,validatedAt,sampleSize,trades,40,180,winRate,1.5,.002,.12,1.2,.08,.7,.2,.78,approved,promoted);
         var hash=fixture=="hash"?new string('f',64):fact.CanonicalSha256;
-        var facts=JsonSerializer.SerializeToElement(new{schema=fixture=="schema"?"wpe.backtest-validation/2.0":fact.Schema,symbol=fact.Symbol,strategyVersion=fact.StrategyVersion,validatedAtUtc=fact.ValidatedAtUtc,sampleSize=fact.SampleSize,trades=fact.Trades,outOfSampleTrades=fact.OutOfSampleTrades,coverageDays=fact.CoverageDays,winRate=fact.WinRate,profitFactor=fact.ProfitFactor,expectancy=fact.Expectancy,maxDrawdown=fact.MaxDrawdown,sharpe=fact.Sharpe,outOfSampleReturn=fact.OutOfSampleReturn,walkForwardScore=fact.WalkForwardScore,monteCarloLossProbability=fact.MonteCarloLossProbability,qualityScore=fact.QualityScore,approved=fact.Approved,promoted=fact.Promoted,canonicalSha256=hash});
-        var source=Source(ModelOffSourceKindV1.Strategy) with{SourceId=fixture=="source"?"backtest:ETHUSDT:trend-v1":$"backtest:{symbol}:{strategy}",AsOfUtc=validatedAt,ArtifactHash="sha256:"+hash};
+        var facts=JsonSerializer.SerializeToElement(new{schema=fixture=="schema"?"wpe.backtest-validation/2.0":fact.Schema,symbol=fact.Symbol,strategyId=fact.StrategyId,strategyVersion=fact.StrategyVersion,validatedAtUtc=fact.ValidatedAtUtc,sampleSize=fact.SampleSize,trades=fact.Trades,outOfSampleTrades=fact.OutOfSampleTrades,coverageDays=fact.CoverageDays,winRate=fact.WinRate,profitFactor=fact.ProfitFactor,expectancy=fact.Expectancy,maxDrawdown=fact.MaxDrawdown,sharpe=fact.Sharpe,outOfSampleReturn=fact.OutOfSampleReturn,walkForwardScore=fact.WalkForwardScore,monteCarloLossProbability=fact.MonteCarloLossProbability,qualityScore=fact.QualityScore,approved=fact.Approved,promoted=fact.Promoted,canonicalSha256=hash});
+        var source=Source(ModelOffSourceKindV1.Strategy) with{SourceId=fixture=="source"?"backtest:ETHUSDT:trend-alpha:trend-v1":$"backtest:{symbol}:{strategyId}:{strategy}",AsOfUtc=validatedAt,ArtifactHash="sha256:"+hash};
         return new(ModelOffResearchCapabilityV1.Backtest,"backtest-output","cycle-1",Now,"wpe.research-input/1.0","wpe.backtest-method","1.0",[source],facts,[]);
     }
 

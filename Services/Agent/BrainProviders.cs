@@ -102,7 +102,8 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
             EvidenceReferences = selected?.Signals.OrderByDescending(x => Math.Abs(x.WeightedScore)).Take(5).Select(x => x.Name).ToList() ?? [],
             MissingConditions = selected?.MissingConditions.ToList() ?? context.MarketAssessments.SelectMany(x => x.MissingConditions).Distinct().ToList(),
             ConflictSummary = selected is null ? "no executable local assessment" : $"conflict={selected.ConflictRatio:F3}; score={selected.NetScore:F3}",
-            StrategyVersion = "wpe-local-deterministic-v1"
+            StrategyId = selected?.StrategyId ?? string.Empty,
+            StrategyVersion = selected?.StrategyVersion ?? string.Empty
         };
         var audit = JsonSerializer.Serialize(new { provider = Name, decision.Action, decision.Instrument, decision.Confidence, decision.Reason });
         return Task.FromResult(new BrainDecisionResult(decision, audit, audit));

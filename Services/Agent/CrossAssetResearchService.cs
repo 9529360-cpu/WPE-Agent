@@ -12,7 +12,7 @@ public sealed class CrossAssetResearchService(Func<DateTimeOffset>? utcNow = nul
     {
         ArgumentNullException.ThrowIfNull(request);
         var observations = request.Observations.OrderBy(x => x.TimestampUtc).ToArray();
-        var bounds = OosBounds(Math.Max(0, observations.Length - 1), request.Policy);
+        var bounds = ResearchTemporalIsolationV1.OosWindow(Math.Max(0, observations.Length - 1), request.Policy);
         var startsAt = observations.Length < 2 || bounds.Count <= 0 ? DateTimeOffset.MinValue : observations[bounds.Start + 1].TimestampUtc;
         var endsAt = observations.Length < 2 || bounds.Count <= 0 ? DateTimeOffset.MinValue : observations[bounds.EndExclusive].TimestampUtc;
         var artifact = new ResearchEvidenceArtifact(
@@ -52,14 +52,8 @@ public sealed class CrossAssetResearchService(Func<DateTimeOffset>? utcNow = nul
     public static double CorrectedSignificanceThreshold(MultipleHypothesisEvidence evidence)
     {
         ArgumentNullException.ThrowIfNull(evidence);
-        if (evidence.TrialCount < 1 || evidence.NominalAlpha is <= 0 or >= 1 || evidence.TrialPValues.Count != evidence.TrialCount) return 0;
-        return evidence.CorrectionMethod switch
-        {
-            MultipleTestingCorrectionMethod.Bonferroni => evidence.NominalAlpha / evidence.TrialCount,
-            MultipleTestingCorrectionMethod.Conservative => evidence.NominalAlpha / (2 * evidence.TrialCount),
-            MultipleTestingCorrectionMethod.BenjaminiHochberg => BenjaminiHochbergCutoff(evidence.TrialPValues, evidence.NominalAlpha),
-            _ => 0
-        };
+        if(evidence.TrialCount<1||evidence.TrialPValues.Count!=evidence.TrialCount)return 0;
+        return ResearchMultipleTestingV1.CorrectedThreshold(evidence.CorrectionMethod,evidence.NominalAlpha,evidence.TrialPValues);
     }
 
     public CrossAssetResearchResult Evaluate(CrossAssetResearchRequest request)
@@ -74,7 +68,7 @@ public sealed class CrossAssetResearchService(Func<DateTimeOffset>? utcNow = nul
         {
             var observations = request.Observations.OrderBy(x => x.TimestampUtc).ToArray();
             var returns = NetReturns(observations, request.Costs!);
-            var bounds = OosBounds(returns.Length, request.Policy);
+            var bounds = ResearchTemporalIsolationV1.OosWindow(returns.Length, request.Policy);
             var outOfSample = returns.Skip(bounds.Start).Take(bounds.Count).ToArray();
             var all = Metrics(returns);
             var oos = Metrics(outOfSample);
@@ -109,10 +103,9 @@ public sealed class CrossAssetResearchService(Func<DateTimeOffset>? utcNow = nul
         if (request.Observations is null || request.Observations.Count < request.Policy.MinimumObservations) reasons.Add("data.observations-insufficient");
         if (request.Policy.TrainingFraction is <= 0 or >= 1 || request.Policy.WalkForwardFolds < 2 || request.Policy.MonteCarloRuns < 10 || request.Policy.OosPurgeObservations < 0 || request.Policy.OosEmbargoObservations < 0) reasons.Add("validation.policy-invalid");
         if (request.ParameterTrials < 1 || request.ParameterTrials > request.Policy.MaximumParameterTrials || request.Observations is not null && request.Observations.Count < request.ParameterTrials * request.Policy.MinimumObservationsPerParameterTrial) reasons.Add("research.parameter-search-overfit");
-        var oosBounds = OosBounds(Math.Max(0, (request.Observations?.Count ?? 0) - 1), request.Policy);
-        if (oosBounds.Count < request.Policy.MinimumOutOfSampleObservations) reasons.Add("research.temporal-isolation-insufficient");
+        var temporalObservations=(request.Observations??[]).Select(x=>new ResearchTemporalObservationV1(x.TimestampUtc,x.DataAvailableAtUtc,x.SignalGeneratedAtUtc));
+        reasons.AddRange(ResearchTemporalIsolationV1.Validate(temporalObservations,Math.Max(0,(request.Observations?.Count??0)-1),request.Policy));
         if (request.Observations is { Count: > 0 } && (request.Observations.Any(x => x.Close <= 0 || !double.IsFinite(x.TargetExposure) || Math.Abs(x.TargetExposure) > 1) || request.Observations.Select(x => x.TimestampUtc).Distinct().Count() != request.Observations.Count)) reasons.Add("data.observation-invalid");
-        if (request.Observations is { Count: > 0 } && request.Observations.Any(x => x.DataAvailableAtUtc is null || x.SignalGeneratedAtUtc is null || x.DataAvailableAtUtc > x.SignalGeneratedAtUtc || x.SignalGeneratedAtUtc > x.TimestampUtc)) reasons.Add("research.look-ahead-leakage");
         var maximumStaleness = request.Policy.MaximumDataStaleness ?? TimeSpan.FromDays(7);
         if (request.DataAsOfUtc is null || request.DataAsOfUtc > now || now - request.DataAsOfUtc > maximumStaleness) reasons.Add("data.stale");
         if (request.AssetClass == ResearchAssetClass.Equity && !request.CorporateActionCoverageConfirmed) reasons.Add("corporate-action.coverage-missing");
@@ -205,14 +198,6 @@ public sealed class CrossAssetResearchService(Func<DateTimeOffset>? utcNow = nul
         var threshold = CorrectedSignificanceThreshold(evidence);
         if (threshold <= 0 || evidence.TrialPValues[evidence.SelectedTrialIndex] > threshold)
             reasons.Add("research.multiple-testing-threshold-not-met");
-    }
-
-    private static double BenjaminiHochbergCutoff(IReadOnlyList<double> pValues, double alpha)
-    {
-        var ordered = pValues.Order().ToArray();
-        var cutoff = 0d;
-        for (var i = 0; i < ordered.Length; i++) if (ordered[i] <= alpha * (i + 1) / ordered.Length) cutoff = ordered[i];
-        return cutoff;
     }
 
     private static bool ObservationsMatchSession(IReadOnlyList<CrossAssetResearchObservation> observations, TradingSessionDefinition session)
@@ -315,15 +300,6 @@ public sealed class CrossAssetResearchService(Func<DateTimeOffset>? utcNow = nul
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
     private static bool IsSha256(string value) => value.Length == 64 && value.All(Uri.IsHexDigit);
     private static bool FixedEquals(string left, string right) => left.Length == right.Length && CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(left), Encoding.ASCII.GetBytes(right));
-
-    private static (int Start, int EndExclusive, int Count) OosBounds(int returnCount, CrossAssetValidationPolicy policy)
-    {
-        if (returnCount <= 1 || policy.TrainingFraction is <= 0 or >= 1) return (0, 0, 0);
-        var split = Math.Clamp((int)Math.Floor(returnCount * policy.TrainingFraction), 1, returnCount - 1);
-        var start = Math.Min(returnCount, split + Math.Max(0, policy.OosPurgeObservations));
-        var end = Math.Max(start, returnCount - Math.Max(0, policy.OosEmbargoObservations));
-        return (start, end, end - start);
-    }
 
     private static CrossAssetResearchResult Result(CrossAssetResearchRequest request, CrossAssetResearchStatus status, CrossAssetStrategyLifecycle lifecycle, bool passed, CrossAssetBacktestMetrics? metrics, IReadOnlyList<string> reasons, DateTimeOffset now)
         => new(request.ResearchId, request.StrategyId, status, lifecycle, passed, metrics, reasons, request.DataAuthorization is null ? [] : [request.DataAuthorization.ProviderId, request.DataAuthorization.DatasetId, request.DataAuthorization.LicenseReference], now);

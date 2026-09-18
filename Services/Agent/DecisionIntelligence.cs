@@ -22,11 +22,12 @@ public sealed class SignalAggregationSkill
         ArgumentNullException.ThrowIfNull(evidence);ArgumentNullException.ThrowIfNull(policy);
         if(evaluationTimeUtc==default||evaluationTimeUtc.Offset!=TimeSpan.Zero)throw new ArgumentException("Signal evaluation time must be an explicit UTC instant.",nameof(evaluationTimeUtc));
         if(evidence.Markets is null)throw new ArgumentException("Market evidence collection is required.",nameof(evidence));
-        return evidence.Markets.Values.Select(m=>m is null?InvalidMarket(null):AnalyzeMarket(m,evidence.Completeness,policy,evaluationTimeUtc,localSignals?.GetValueOrDefault(m.Symbol)))
+        var requireStrategyBinding=localSignals is not null;
+        return evidence.Markets.Values.Select(m=>m is null?InvalidMarket(null):AnalyzeMarket(m,evidence.Completeness,policy,evaluationTimeUtc,localSignals?.GetValueOrDefault(m.Symbol),requireStrategyBinding))
             .OrderByDescending(Quality).ThenBy(x=>x.Symbol,StringComparer.Ordinal).ToArray();
     }
 
-    private static MarketDecisionAssessment AnalyzeMarket(MarketEvidence market,int completeness,DecisionPolicy policy,DateTimeOffset evaluationTimeUtc,StrategySignal? localSignal)
+    private static MarketDecisionAssessment AnalyzeMarket(MarketEvidence market,int completeness,DecisionPolicy policy,DateTimeOffset evaluationTimeUtc,StrategySignal? localSignal,bool requireStrategyBinding)
     {
         if(!ValidMarket(market))return InvalidMarket(market?.Symbol);
         var signals=new List<SignalContribution>();
@@ -40,7 +41,9 @@ public sealed class SignalAggregationSkill
         Add("basis","derivatives",(double)market.Derivatives.Basis,.03,.003);
         Add("order_book","microstructure",market.Quality.OrderBookImbalance,.06,.35);
             Add("relative_volume","volume",Math.Sign(market.Trend15m)*Math.Max(0,market.Quality.RelativeVolume-1),.04,1);
-            if(localSignal is not null) Add("local_strategy","strategy",localSignal.Direction*localSignal.Confidence,.20,1);
+        var localIdentityValid=localSignal is not null&&localSignal.Direction is -1 or 1&&double.IsFinite(localSignal.Confidence)&&localSignal.Confidence is >=0 and <=1&&
+            string.Equals(localSignal.Symbol,market.Symbol,StringComparison.Ordinal)&&!string.IsNullOrWhiteSpace(localSignal.StrategyId)&&!string.IsNullOrWhiteSpace(localSignal.StrategyVersion);
+        if(localIdentityValid)Add("local_strategy","strategy",localSignal!.Direction*localSignal.Confidence,.20,1);
 
         var positive=signals.Where(x=>x.WeightedScore>0).Sum(x=>x.WeightedScore);
         var negative=-signals.Where(x=>x.WeightedScore<0).Sum(x=>x.WeightedScore);
@@ -53,6 +56,8 @@ public sealed class SignalAggregationSkill
         var confidence=Math.Clamp((Math.Abs(score)*.72+agreement*.28)*(completeness/100d)*(market.Quality.QualityScore/100d)*(fresh?1:.25),0,1);
         var regime=DetectRegime(market);
         var missing=new List<string>();
+        if(requireStrategyBinding&&!localIdentityValid)missing.Add("strategy.active-signal-required");
+        if(requireStrategyBinding&&localIdentityValid&&((score>0&&localSignal!.Direction<0)||(score<0&&localSignal!.Direction>0)))missing.Add("strategy.direction-conflict");
         if(!fresh)missing.Add(L("Decision.Stale",policy.MaximumEvidenceAgeMinutes));
         if(completeness<policy.MinimumEvidenceCompleteness)missing.Add(L("Decision.Completeness",policy.MinimumEvidenceCompleteness));
         if(Math.Abs(score)<policy.MinimumDirectionalScore)missing.Add(L("Decision.Score",policy.MinimumDirectionalScore,score));
@@ -62,7 +67,7 @@ public sealed class SignalAggregationSkill
         var entryReady=missing.Count==0;
         var action=entryReady?(score>0?DecisionAction.OpenLong:DecisionAction.OpenShort):DecisionAction.Hold;
         var summary=L("Decision.Summary",market.Symbol,regime,score,confidence,conflict,L(entryReady?"Decision.Ready":"Decision.Waiting"));
-        return new(){Symbol=market.Symbol,Regime=regime,NetScore=score,Confidence=confidence,ConflictRatio=conflict,Fresh=fresh,EntryReady=entryReady,RecommendedAction=action,Signals=signals,MissingConditions=missing,Summary=summary};
+        return new(){Symbol=market.Symbol,StrategyId=localIdentityValid?localSignal!.StrategyId:string.Empty,StrategyVersion=localIdentityValid?localSignal!.StrategyVersion:string.Empty,Regime=regime,NetScore=score,Confidence=confidence,ConflictRatio=conflict,Fresh=fresh,EntryReady=entryReady,RecommendedAction=action,Signals=signals,MissingConditions=missing,Summary=summary};
 
         void Add(string name,string horizon,double raw,double weight,double scale)
         {
@@ -110,6 +115,7 @@ public sealed class DecisionGovernanceSkill
         if(assessment is{EntryReady:false}&&riskIncreasing)blocks.AddRange(assessment.MissingConditions);
         if(assessment is not null&&riskIncreasing)
         {
+            if(!string.Equals(proposed.StrategyId,assessment.StrategyId,StringComparison.Ordinal)||!string.Equals(proposed.StrategyVersion,assessment.StrategyVersion,StringComparison.Ordinal))blocks.Add("strategy.assessment-identity-conflict");
             var wantsLong=proposed.Action is DecisionAction.OpenLong or DecisionAction.AddLong or DecisionAction.ReverseToLong;
             var wantsShort=proposed.Action is DecisionAction.OpenShort or DecisionAction.AddShort or DecisionAction.ReverseToShort;
             if((wantsLong&&assessment.NetScore<0)||(wantsShort&&assessment.NetScore>0))blocks.Add(L("Review.DirectionConflict"));
@@ -123,7 +129,8 @@ public sealed class DecisionGovernanceSkill
     private static DecisionPlan CopyAsHold(DecisionPlan p,IReadOnlyList<string> blocks)=>new()
     {
         Action=DecisionAction.Hold,Instrument=p.Instrument,TargetTier=0,Confidence=p.Confidence,Invalidation=p.Invalidation,Regime=p.Regime,Reason=p.Reason,
-        EvidenceReferences=p.EvidenceReferences,MissingConditions=blocks.Distinct().ToList(),ConflictSummary=p.ConflictSummary
+        EvidenceReferences=p.EvidenceReferences,MissingConditions=blocks.Distinct().ToList(),ConflictSummary=p.ConflictSummary,
+        StrategyId=p.StrategyId,StrategyVersion=p.StrategyVersion
     };
 
     private static string Explain(DecisionPlan decision,MarketDecisionAssessment? assessment,IReadOnlyList<string> blocks)
@@ -339,6 +346,7 @@ public static class DeterministicResearchCapabilityProducerV1
         var facts=input.Facts;
         if(!StringFact(facts,"schema",out var schema)||schema!=BacktestValidationCanonicalizerV1.Schema)yield return "research.invalid.backtest_schema";
         if(!StringFact(facts,"symbol",out var symbol)||!CanonicalSymbol(symbol))yield return "research.invalid.backtest_symbol";
+        if(!StringFact(facts,"strategyId",out var strategyId)||strategyId.Length>160||!strategyId.All(c=>char.IsLetterOrDigit(c)||c is '-' or '_' or '.'))yield return "research.invalid.backtest_strategy_id";
         if(!StringFact(facts,"strategyVersion",out var strategyVersion)||strategyVersion.Length>128||!strategyVersion.All(c=>char.IsLetterOrDigit(c)||c is '-' or '_' or '.'))yield return "research.invalid.backtest_strategy_version";
         var validated=UtcFact(facts,"validatedAtUtc",out var validatedAt);
         if(!validated)yield return "research.invalid.backtest_validation_time";
@@ -356,16 +364,16 @@ public static class DeterministicResearchCapabilityProducerV1
         if(!BoolFact(facts,"promoted",out var promoted))yield return "research.invalid.backtest_promoted";
         if(promoted&&!approved)yield return "research.invalid.backtest_lifecycle";
         if(!StringFact(facts,"canonicalSha256",out var canonicalHash)||!ValidSha(canonicalHash))yield return "research.invalid.backtest_hash";
-        if(validated&&CanonicalSymbol(symbol)&&!string.IsNullOrWhiteSpace(strategyVersion)&&ValidSha(canonicalHash)&&
+        if(validated&&CanonicalSymbol(symbol)&&!string.IsNullOrWhiteSpace(strategyId)&&!string.IsNullOrWhiteSpace(strategyVersion)&&ValidSha(canonicalHash)&&
            sampleSize>=1&&trades>=0&&trades<=sampleSize&&outOfSampleTrades>=0&&outOfSampleTrades<=trades&&coverageDays>=0&&
            FiniteFact(facts,"winRate",out var winRate)&&FiniteFact(facts,"profitFactor",out profitFactor)&&FiniteFact(facts,"expectancy",out var expectancy)&&
            FiniteFact(facts,"maxDrawdown",out var maxDrawdown)&&FiniteFact(facts,"sharpe",out var sharpe)&&FiniteFact(facts,"outOfSampleReturn",out var oosReturn)&&
            FiniteFact(facts,"walkForwardScore",out var walkForward)&&FiniteFact(facts,"monteCarloLossProbability",out var monteCarlo)&&FiniteFact(facts,"qualityScore",out var qualityScore)&&
            BoolFact(facts,"approved",out approved)&&BoolFact(facts,"promoted",out promoted))
         {
-            var expected=BacktestValidationCanonicalizerV1.Create(symbol,strategyVersion,validatedAt,sampleSize,trades,outOfSampleTrades,coverageDays,winRate,profitFactor,expectancy,maxDrawdown,sharpe,oosReturn,walkForward,monteCarlo,qualityScore,approved,promoted);
+            var expected=BacktestValidationCanonicalizerV1.Create(symbol,strategyId,strategyVersion,validatedAt,sampleSize,trades,outOfSampleTrades,coverageDays,winRate,profitFactor,expectancy,maxDrawdown,sharpe,oosReturn,walkForward,monteCarlo,qualityScore,approved,promoted);
             if(!string.Equals(expected.CanonicalSha256,canonicalHash,StringComparison.Ordinal))yield return "research.invalid.backtest_canonical_hash";
-            if(!input.Sources.Any(x=>x.Kind==ModelOffSourceKindV1.Strategy&&x.SourceId==$"backtest:{symbol}:{strategyVersion}"&&x.AsOfUtc>=validatedAt&&x.ArtifactHash=="sha256:"+canonicalHash))yield return "research.invalid.backtest_source";
+            if(!input.Sources.Any(x=>x.Kind==ModelOffSourceKindV1.Strategy&&x.SourceId==$"backtest:{symbol}:{strategyId}:{strategyVersion}"&&x.AsOfUtc>=validatedAt&&x.ArtifactHash=="sha256:"+canonicalHash))yield return "research.invalid.backtest_source";
         }
     }
 

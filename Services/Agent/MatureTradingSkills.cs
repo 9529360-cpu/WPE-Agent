@@ -11,6 +11,7 @@ public sealed class DeterministicPlanSkill
     public DecisionPlan Complete(DecisionPlan source, MarketEvidence? market, MarketDecisionAssessment? assessment, RiskLimits risk)
     {
         if (market is null || !IsRiskIncreasing(source.Action)) return source;
+        source.StrategyId=assessment?.StrategyId??string.Empty;source.StrategyVersion=assessment?.StrategyVersion??string.Empty;
         var longSide = source.Action is DecisionAction.OpenLong or DecisionAction.AddLong or DecisionAction.ReverseToLong;
         var shortSide = source.Action is DecisionAction.OpenShort or DecisionAction.AddShort or DecisionAction.ReverseToShort;
         if (!longSide && !shortSide) return source;
@@ -90,14 +91,18 @@ public sealed record RiskHistorySnapshot(decimal DailyRealizedPnl,int Consecutiv
 
 public sealed class IndependentRiskManagerSkill
 {
+    private readonly Func<DateTimeOffset> _utcNow;
+    public IndependentRiskManagerSkill():this(()=>DateTimeOffset.UtcNow){}
+    internal IndependentRiskManagerSkill(Func<DateTimeOffset> utcNow)=>_utcNow=utcNow??throw new ArgumentNullException(nameof(utcNow));
+
     public IndependentRiskReview Review(DecisionPlan decision, EvidencePack evidence, MarketDecisionAssessment? assessment,
         IReadOnlyList<ExecutionIntent> intents,RiskLimits limits,RiskHistorySnapshot history,ResearchValidationResult? research,PortfolioRiskAssessment? portfolio=null)
     {
         var checks=new List<string>();var blocks=new List<string>();var increasing=DeterministicPlanSkill.IsRiskIncreasing(decision.Action);
         if(!increasing)return new(){Approved=true,RiskLevel="LOW",PlannedQuantity=intents.Sum(x=>x.Quantity),Checks=["risk_reducing_action"],Summary=L("RiskReview.Reducing")};
-        var market=evidence.Markets.GetValueOrDefault(decision.Instrument);var equity=evidence.Account.Equity;
+        var now=_utcNow().ToUniversalTime();var market=evidence.Markets.GetValueOrDefault(decision.Instrument);var equity=evidence.Account.Equity;
         Check(evidence.Completeness>=70,"evidence_complete",L("RiskReview.Evidence"));
-        Check(market is not null&&DateTime.UtcNow-market.CollectedAt<=TimeSpan.FromMinutes(5),"market_fresh",L("RiskReview.Stale"));
+        Check(market is not null&&market.CollectedAt.Kind==DateTimeKind.Utc&&market.CollectedAt<=now.UtcDateTime&&now.UtcDateTime-market.CollectedAt<=TimeSpan.FromMinutes(5),"market_fresh",L("RiskReview.Stale"));
         Check(market is not null&&market.Quality.QualityScore>=65,"market_quality",L("RiskReview.Quality",market?.Quality.QualityScore??0));
         Check(market is not null&&market.Quality.LiquidityScore>=limits.MinimumLiquidityScore,"liquidity",L("RiskReview.Liquidity",market?.Quality.LiquidityScore??0));
         Check(market is not null&&market.Quality.SpreadBps<=limits.MaximumSpreadBps,"spread",L("RiskReview.Spread",market?.Quality.SpreadBps??999));
@@ -107,6 +112,10 @@ public sealed class IndependentRiskManagerSkill
         Check(equity<=0||history.DailyRealizedPnl>-equity*limits.MaxDailyLoss,"daily_loss",L("RiskReview.DailyLoss",history.DailyRealizedPnl));
         Check(history.ApiFailures<limits.ApiFailureThreshold,"api_health",L("RiskReview.ApiFailures",history.ApiFailures));
         Check(!history.OrderStateUncertain,"order_state",L("RiskReview.OrderUncertain"));
+        Check(!string.IsNullOrWhiteSpace(decision.StrategyId)&&!string.IsNullOrWhiteSpace(decision.StrategyVersion),"strategy_identity",L("RiskReview.Research",research?.QualityScore??0));
+        Check(assessment is not null&&string.Equals(assessment.StrategyId,decision.StrategyId,StringComparison.Ordinal)&&string.Equals(assessment.StrategyVersion,decision.StrategyVersion,StringComparison.Ordinal),"strategy_binding",L("RiskReview.Research",research?.QualityScore??0));
+        Check(research is not null&&string.Equals(research.StrategyId,decision.StrategyId,StringComparison.Ordinal)&&string.Equals(research.StrategyVersion,decision.StrategyVersion,StringComparison.Ordinal)&&string.Equals(research.Symbol,decision.Instrument,StringComparison.Ordinal),"research_identity",L("RiskReview.Research",research?.QualityScore??0));
+        Check(research is not null&&research.ValidatedAtUtc!=default&&research.ValidatedAtUtc.Offset==TimeSpan.Zero&&research.ValidatedAtUtc<=now&&now-research.ValidatedAtUtc<=TimeSpan.FromHours(24),"research_fresh",L("RiskReview.Research",research?.QualityScore??0));
         Check(research is not null&&research.CoverageDays>=limits.MinimumHistoricalDays,"historical_coverage",L("RiskReview.History",research?.CoverageDays??0,limits.MinimumHistoricalDays));
         Check(research is{Promoted:true,Approved:true},"research_gate",L("RiskReview.Research",research?.QualityScore??0));
         Check(portfolio is{Approved:true},"portfolio_risk",L("RiskReview.Portfolio",portfolio?.Summary??"unavailable"));

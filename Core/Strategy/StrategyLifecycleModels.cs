@@ -58,7 +58,7 @@ public sealed record LocalStrategyParameters(
     };
 }
 
-public sealed record StrategySignal(string StrategyId, string Symbol, int Direction, double Confidence, string Reason);
+public sealed record StrategySignal(string StrategyId, string Symbol, int Direction, double Confidence, string Reason, string StrategyVersion = "");
 
 public static class StrategyLineage
 {
@@ -92,6 +92,19 @@ public sealed class StrategyProfile
     public string LastReason { get; set; } = string.Empty;
 }
 
+public sealed record StrategyParameterSearchEvidence(
+    int TrialCount,
+    int SelectedTrialIndex,
+    string SearchSpaceHash,
+    string SelectionDatasetHash,
+    string HistoricalOosDatasetHash,
+    string TestMethod,
+    string CorrectionMethod,
+    double NominalAlpha,
+    double SelectedTrialPValue,
+    double CorrectedSignificanceThreshold,
+    string SelectionRule);
+
 public sealed record StrategyValidation(
     string StrategyId,
     int SampleSize,
@@ -110,7 +123,12 @@ public sealed record StrategyValidation(
     double WorstRegimeReturn = 0,
     double TrainTestExpectancyGap = 0,
     int PassingRegimes = 0,
-    int EvaluatedRegimes = 0);
+    int EvaluatedRegimes = 0,
+    string StrategyVersion = "",
+    int OutOfSampleTrades = 0,
+    double StrategyReturn = 0,
+    double BenchmarkReturn = 0,
+    StrategyParameterSearchEvidence? ParameterSearch = null);
 
 public sealed record StrategyResearchSnapshot(
     string Status,

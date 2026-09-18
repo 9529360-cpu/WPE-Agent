@@ -54,14 +54,14 @@ public sealed class ActiveTradingReviewRiskValidator : ITradingReviewRiskValidat
     private readonly AgentSettingsStore _settings;
     private readonly AgentSqliteStore _store;
     private readonly EvidenceCollector _collector;
-    private readonly IndependentRiskManagerSkill _risk=new();
-    private readonly LongHorizonResearchSkill _research=new();
+    private readonly IndependentRiskManagerSkill _risk;
+    private readonly StrategyResearchAuthority _research;
     private readonly PortfolioRiskSkill _portfolio=new();
     private readonly Func<DateTimeOffset> _utcNow;
 
     public ActiveTradingReviewRiskValidator(AgentSettingsStore settings,AgentSqliteStore store,EvidenceCollector collector,Func<DateTimeOffset>? utcNow=null)
     {
-        _settings=settings??throw new ArgumentNullException(nameof(settings));_store=store??throw new ArgumentNullException(nameof(store));_collector=collector??throw new ArgumentNullException(nameof(collector));_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);
+        _settings=settings??throw new ArgumentNullException(nameof(settings));_store=store??throw new ArgumentNullException(nameof(store));_collector=collector??throw new ArgumentNullException(nameof(collector));_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);_research=new StrategyResearchAuthority(_store,utcNow:_utcNow);_risk=new IndependentRiskManagerSkill(_utcNow);
     }
 
     public async Task<TradingReviewRiskValidation> ValidateAsync(TradingApprovalRequest request,DurableReviewExecutionArtifactV1 artifact,DurableReviewArtifactHashes hashes,CancellationToken ct)
@@ -74,12 +74,13 @@ public sealed class ActiveTradingReviewRiskValidator : ITradingReviewRiskValidat
         var evidence=await _collector.CollectAsync(ct);if(!evidence.Markets.TryGetValue(first.Symbol,out var market))return Deny("review.risk-market-unavailable");
         var histories=new Dictionary<string,IReadOnlyList<CandleEvidence>>(StringComparer.OrdinalIgnoreCase);
         foreach(var symbol in evidence.Markets.Keys)histories[symbol]=await _store.LoadHistoricalCandlesAsync(symbol,"1h",30000,ct);
-        var research=_research.Evaluate(first.Symbol,histories.GetValueOrDefault(first.Symbol)??[],settings.Risk);
+        var research=await _research.ReadAsync(artifact.StrategyId,artifact.StrategyVersion,first.Symbol,ct);
         var portfolio=_portfolio.Evaluate(evidence,histories,intents,settings.Risk);var history=await _store.GetRiskHistoryAsync(ct);
-        var decision=new DecisionPlan{Action=first.Action,Instrument=first.Symbol,EntryPrice=first.ExpectedPrice,StopLossPrice=first.StopLoss,TakeProfitPrice=first.TakeProfit,OrderType=first.OrderType,StrategyVersion=artifact.StrategyVersion,RiskRewardRatio=RiskReward(first)};
-        var assessment=new MarketDecisionAssessment{Symbol=first.Symbol,Fresh=DateTime.UtcNow-market.CollectedAt<=TimeSpan.FromMinutes(5),EntryReady=true,RecommendedAction=first.Action};
+        var decision=new DecisionPlan{Action=first.Action,Instrument=first.Symbol,EntryPrice=first.ExpectedPrice,StopLossPrice=first.StopLoss,TakeProfitPrice=first.TakeProfit,OrderType=first.OrderType,StrategyId=artifact.StrategyId,StrategyVersion=artifact.StrategyVersion,RiskRewardRatio=RiskReward(first)};
+        var now=_utcNow().ToUniversalTime();var marketFresh=market.CollectedAt.Kind==DateTimeKind.Utc&&market.CollectedAt<=now.UtcDateTime&&now.UtcDateTime-market.CollectedAt<=TimeSpan.FromMinutes(5);
+        var assessment=new MarketDecisionAssessment{Symbol=first.Symbol,StrategyId=artifact.StrategyId,StrategyVersion=artifact.StrategyVersion,Fresh=marketFresh,EntryReady=marketFresh,RecommendedAction=first.Action};
         var review=_risk.Review(decision,evidence,assessment,intents,settings.Risk,history,research,portfolio);if(!review.Approved)return Deny("review.risk-blocked");
-        var now=_utcNow().ToUniversalTime();var receipt=new DeterministicRiskReceipt("review-risk-"+Guid.NewGuid().ToString("N"),request.CorrelationId,hashes.IntentHash,true,now,now.AddMinutes(1),null,hashes.ArtifactHash);
+        now=_utcNow().ToUniversalTime();var receipt=new DeterministicRiskReceipt("review-risk-"+Guid.NewGuid().ToString("N"),request.CorrelationId,hashes.IntentHash,true,now,now.AddMinutes(1),null,hashes.ArtifactHash);
         return new(true,"review.risk-valid",receipt);
     }
 

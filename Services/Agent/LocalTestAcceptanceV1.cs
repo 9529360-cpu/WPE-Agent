@@ -54,7 +54,7 @@ public static class LocalTestAcceptanceCanonicalizerV1
         ["strategy.lifecycle-contract"]=
         [
             "WPE.Tests.StrategyFactoryLifecycleTests.DegradedStrategyIsArchivedAndCannotRemainSelectable",
-            "WPE.Tests.StrategyFactoryLifecycleTests.QualifiedParentProducesBoundedHashedDraftChildren",
+            "WPE.Tests.StrategyFactoryLifecycleTests.QualifiedParentCannotBiasFutureParameterTrials",
             "WPE.Tests.StrategyFactoryLifecycleTests.RetiredBuiltInStrategyCannotBeSelectedAsActiveFallback",
             "WPE.Tests.StrategyFactoryLifecycleTests.TamperedLineageHashIsRejectedBeforePersistence",
             "WPE.Tests.StrategyFactoryLifecycleTests.TamperedParameterHashIsRejectedBeforePersistence",

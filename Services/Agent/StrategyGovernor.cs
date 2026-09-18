@@ -24,15 +24,22 @@ public sealed class StrategyGovernor
            && validation.EvaluatedRegimes == RequiredEvaluatedRegimes
            && validation.PassingRegimes >= MinimumPassingRegimes
            && validation.WorstRegimeReturn >= MinimumWorstRegimeReturn
-           && validation.TrainTestExpectancyGap <= MaximumTrainTestExpectancyGap;
+           && validation.TrainTestExpectancyGap <= MaximumTrainTestExpectancyGap
+           && StrategyParameterSearchEvaluatorV1.IsQualified(validation.ParameterSearch);
+
+    public bool HasForwardQualification(StrategyObservationPerformance performance)
+        => performance.Observations >= MinimumShadowObservations
+           && performance.QualityScore >= MinimumQualityScore
+           && performance.Expectancy > 0
+           && performance.MaxDrawdown <= MaximumPromotedDrawdown
+           && performance.FailureStreak == 0;
+
+    public bool HasForwardQualification(StrategyProfile profile)
+        => HasForwardQualification(new StrategyObservationPerformance(profile.ShadowObservations,profile.Expectancy,profile.MaxDrawdown,profile.QualityScore,profile.FailureStreak,profile.LastReason));
 
     public bool CanActivateFromShadow(StrategyProfile profile)
         => profile.Lifecycle == StrategyLifecycle.Shadow
-           && profile.ShadowObservations >= MinimumShadowObservations
-           && profile.QualityScore >= MinimumQualityScore
-           && profile.Expectancy > 0
-           && profile.MaxDrawdown <= MaximumPromotedDrawdown
-           && profile.FailureStreak == 0;
+           && HasForwardQualification(profile);
 
     public bool ShouldDemote(StrategyProfile profile)
         => profile.Lifecycle == StrategyLifecycle.Active
