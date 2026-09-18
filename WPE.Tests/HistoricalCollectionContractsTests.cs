@@ -102,6 +102,27 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
         Assert.DoesNotContain("canonical_sha256",json,StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task ExecutionRealityWithholdsSlippageWhenPriceIsNotComparable()
+    {
+        await InitializeAsync();
+        await ExecuteAsync("""
+            INSERT INTO execution_reality_drift(
+                canonical_sha256,schema,correlation_id,client_order_id,strategy_id,strategy_version,cost_model_version,
+                symbol,state,terminal,comparable,fee_comparable,total_comparable,fill_ratio,slippage_drift_bps,
+                fee_drift_bps,total_execution_drift_bps,observation_latency_ms,observed_at,reason_code)
+            VALUES('hash-b','wpe.execution-reality-drift/1.0','cycle-b','order-b',
+                'trend-alpha','v7','research-cost-v1','BTCUSDT','NotFilled',1,0,0,0,'0','0','0','0',250,$t,'terminal-no-fill')
+            """,("$t",Now.ToString("O")));
+
+        var page=await new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now).ReadExecutionRealityAsync(new());
+        var item=Assert.Single(page.Items);
+        Assert.False(item.PriceComparable);
+        Assert.Null(item.SlippageDriftBps);
+        Assert.Null(item.FeeDriftBps);
+        Assert.Null(item.TotalExecutionDriftBps);
+    }
+
     private async Task InitializeAsync(){Directory.CreateDirectory(_directory);await ExecuteAsync("""
         CREATE TABLE execution_events(id INTEGER PRIMARY KEY AUTOINCREMENT,cycle_id TEXT,client_order_id TEXT,symbol TEXT,side TEXT,action TEXT,reduce_only INTEGER,quantity TEXT,avg_price TEXT,status TEXT,occurred_at TEXT);
         CREATE TABLE equity_snapshots(id INTEGER PRIMARY KEY AUTOINCREMENT,observed_at TEXT,equity TEXT,available_balance TEXT,environment TEXT,provider_id TEXT);
