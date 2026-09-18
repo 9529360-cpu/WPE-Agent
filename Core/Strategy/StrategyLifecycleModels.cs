@@ -111,7 +111,10 @@ public sealed record StrategyValidation(
     double TrainTestExpectancyGap = 0,
     int PassingRegimes = 0,
     int EvaluatedRegimes = 0,
-    string StrategyVersion = "");
+    string StrategyVersion = "",
+    int OutOfSampleTrades = 0,
+    double StrategyReturn = 0,
+    double BenchmarkReturn = 0);
 
 public sealed record StrategyResearchSnapshot(
     string Status,
