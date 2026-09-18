@@ -94,7 +94,7 @@ public sealed record HistoricalExecutionRealityV1(
     bool FeeComparable,
     bool TotalComparable,
     decimal FillRatio,
-    decimal SlippageDriftBps,
+    decimal? SlippageDriftBps,
     decimal? FeeDriftBps,
     decimal? TotalExecutionDriftBps,
     long ObservationLatencyMs,
