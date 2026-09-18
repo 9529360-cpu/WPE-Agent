@@ -7,6 +7,12 @@ namespace WPE.Tests;
 public sealed class StrategyParameterSearchEvaluatorTests
 {
     [Fact]
+    public void ProductionTrialBudgetMatchesCrossAssetPolicy()
+    {
+        Assert.Equal(new CrossAssetValidationPolicy().MaximumParameterTrials,StrategyParameterSearchEvaluatorV1.MaximumTrials);
+    }
+
+    [Fact]
     public void RetiredTrialsCountAndDuplicateParametersDoNotCreateFakeNewTrials()
     {
         var selected=Profile("selected",0,DateTime.UtcNow.AddMinutes(-3),StrategyLifecycle.Draft);
