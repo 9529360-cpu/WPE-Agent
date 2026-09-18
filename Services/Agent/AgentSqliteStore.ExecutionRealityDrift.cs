@@ -204,23 +204,23 @@ public sealed partial class AgentSqliteStore
         command.Parameters.AddWithValue("$side", fact.Side.ToString());
         command.Parameters.AddWithValue("$reduce", fact.ReduceOnly ? 1 : 0);
         command.Parameters.AddWithValue("$type", fact.OrderType.ToString());
-        command.Parameters.AddWithValue("$intended", Text(fact.IntendedQuantity));
-        command.Parameters.AddWithValue("$executed", Text(fact.ExecutedQuantity));
-        command.Parameters.AddWithValue("$expectedPrice", Text(fact.ExpectedPrice));
-        command.Parameters.AddWithValue("$averagePrice", Text(fact.AveragePrice));
+        command.Parameters.AddWithValue("$intended", RealityText(fact.IntendedQuantity));
+        command.Parameters.AddWithValue("$executed", RealityText(fact.ExecutedQuantity));
+        command.Parameters.AddWithValue("$expectedPrice", RealityText(fact.ExpectedPrice));
+        command.Parameters.AddWithValue("$averagePrice", RealityText(fact.AveragePrice));
         command.Parameters.AddWithValue("$status", fact.ExchangeStatus);
         command.Parameters.AddWithValue("$state", fact.State.ToString());
         command.Parameters.AddWithValue("$terminal", fact.Terminal ? 1 : 0);
         command.Parameters.AddWithValue("$comparable", fact.Comparable ? 1 : 0);
-        command.Parameters.AddWithValue("$fillRatio", Text(fact.FillRatio));
-        command.Parameters.AddWithValue("$adverse", Text(fact.AdverseSlippageBps));
-        command.Parameters.AddWithValue("$expectedSlippage", Text(fact.ExpectedSlippageBps));
-        command.Parameters.AddWithValue("$slippageDrift", Text(fact.SlippageDriftBps));
-        command.Parameters.AddWithValue("$fee", Text(fact.ObservedFee));
-        command.Parameters.AddWithValue("$feeRate", Text(fact.ObservedFeeRateBps));
-        command.Parameters.AddWithValue("$expectedCommission", Text(fact.ExpectedCommissionBps));
-        command.Parameters.AddWithValue("$feeDrift", Text(fact.FeeDriftBps));
-        command.Parameters.AddWithValue("$totalDrift", Text(fact.TotalExecutionDriftBps));
+        command.Parameters.AddWithValue("$fillRatio", RealityText(fact.FillRatio));
+        command.Parameters.AddWithValue("$adverse", RealityText(fact.AdverseSlippageBps));
+        command.Parameters.AddWithValue("$expectedSlippage", RealityText(fact.ExpectedSlippageBps));
+        command.Parameters.AddWithValue("$slippageDrift", RealityText(fact.SlippageDriftBps));
+        command.Parameters.AddWithValue("$fee", RealityText(fact.ObservedFee));
+        command.Parameters.AddWithValue("$feeRate", RealityText(fact.ObservedFeeRateBps));
+        command.Parameters.AddWithValue("$expectedCommission", RealityText(fact.ExpectedCommissionBps));
+        command.Parameters.AddWithValue("$feeDrift", RealityText(fact.FeeDriftBps));
+        command.Parameters.AddWithValue("$totalDrift", RealityText(fact.TotalExecutionDriftBps));
         command.Parameters.AddWithValue("$latency", fact.ObservationLatencyMs);
         command.Parameters.AddWithValue("$exchangeUpdated", fact.ExchangeUpdatedAtUtc.ToUniversalTime().ToString("O"));
         command.Parameters.AddWithValue("$observed", fact.ObservedAtUtc.ToUniversalTime().ToString("O"));
@@ -238,23 +238,23 @@ public sealed partial class AgentSqliteStore
         Enum.Parse<PositionSide>(reader.GetString(6), false),
         reader.GetInt32(7) == 1,
         Enum.Parse<ExecutionOrderType>(reader.GetString(8), false),
-        Decimal(reader.GetString(9)),
-        Decimal(reader.GetString(10)),
-        Decimal(reader.GetString(11)),
-        Decimal(reader.GetString(12)),
+        RealityDecimal(reader.GetString(9)),
+        RealityDecimal(reader.GetString(10)),
+        RealityDecimal(reader.GetString(11)),
+        RealityDecimal(reader.GetString(12)),
         reader.GetString(13),
         Enum.Parse<ExecutionRealityStateV1>(reader.GetString(14), false),
         reader.GetInt32(15) == 1,
         reader.GetInt32(16) == 1,
-        Decimal(reader.GetString(17)),
-        Decimal(reader.GetString(18)),
-        Decimal(reader.GetString(19)),
-        Decimal(reader.GetString(20)),
-        Decimal(reader.GetString(21)),
-        Decimal(reader.GetString(22)),
-        Decimal(reader.GetString(23)),
-        Decimal(reader.GetString(24)),
-        Decimal(reader.GetString(25)),
+        RealityDecimal(reader.GetString(17)),
+        RealityDecimal(reader.GetString(18)),
+        RealityDecimal(reader.GetString(19)),
+        RealityDecimal(reader.GetString(20)),
+        RealityDecimal(reader.GetString(21)),
+        RealityDecimal(reader.GetString(22)),
+        RealityDecimal(reader.GetString(23)),
+        RealityDecimal(reader.GetString(24)),
+        RealityDecimal(reader.GetString(25)),
         reader.GetInt64(26),
         DateTimeOffset.Parse(reader.GetString(27), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
         DateTimeOffset.Parse(reader.GetString(28), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
@@ -262,6 +262,6 @@ public sealed partial class AgentSqliteStore
         (byte[])reader[30],
         reader.GetString(31));
 
-    private static string Text(decimal value) => value.ToString(CultureInfo.InvariantCulture);
-    private static decimal Decimal(string value) => decimal.Parse(value, NumberStyles.Number, CultureInfo.InvariantCulture);
+    private static string RealityText(decimal value) => value.ToString(CultureInfo.InvariantCulture);
+    private static decimal RealityDecimal(string value) => decimal.Parse(value, NumberStyles.Number, CultureInfo.InvariantCulture);
 }
