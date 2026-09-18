@@ -189,7 +189,7 @@ internal sealed class MeanReversionStrategyModule : IDeterministicStrategyModule
         var p=profile.Parameters;
         var position=0;
         var held=0;
-        for(var i=Math.Max(p.SlowPeriod,42);i<candles.Count;i++)
+        for(var i=Math.Max(StrategyExposureTimelineV1.MinimumWarmupBars,p.SlowPeriod+1);i<candles.Count;i++)
         {
             var prefix=candles.Take(i).ToArray();
             var state=MeanReversionRegimeAnalyzer.Analyze(prefix,p);
@@ -225,7 +225,7 @@ internal static class StrategyModuleSimulation
         Func<MarketEvidence, DateTimeOffset, int> desiredPosition)
     {
         var result=new List<StrategyExposureDecisionV1>();
-        for(var i=profile.Parameters.SlowPeriod+1;i<candles.Count;i++)
+        for(var i=Math.Max(StrategyExposureTimelineV1.MinimumWarmupBars,profile.Parameters.SlowPeriod+1);i<candles.Count;i++)
         {
             var prefix=candles.Take(i).ToArray();
             var source=candles[i-1];
