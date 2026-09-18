@@ -12,9 +12,9 @@ public sealed class CrossAssetResearchService(Func<DateTimeOffset>? utcNow = nul
     {
         ArgumentNullException.ThrowIfNull(request);
         var observations = request.Observations.OrderBy(x => x.TimestampUtc).ToArray();
-        var bounds = OosBounds(Math.Max(0, observations.Length - 1), request.Policy);
-        var startsAt = observations.Length < 2 || bounds.Count <= 0 ? DateTimeOffset.MinValue : observations[bounds.Start + 1].TimestampUtc;
-        var endsAt = observations.Length < 2 || bounds.Count <= 0 ? DateTimeOffset.MinValue : observations[bounds.EndExclusive].TimestampUtc;
+        var bounds = ResearchTemporalValidationV1.Bounds(Math.Max(0, observations.Length - 1), TemporalPolicy(request.Policy));
+        var startsAt = observations.Length < 2 || bounds.OosCount <= 0 ? DateTimeOffset.MinValue : observations[bounds.OosStart + 1].TimestampUtc;
+        var endsAt = observations.Length < 2 || bounds.OosCount <= 0 ? DateTimeOffset.MinValue : observations[bounds.OosEndExclusive].TimestampUtc;
         var artifact = new ResearchEvidenceArtifact(
             Hash(CanonicalDataset(request, observations)),
             Hash(CanonicalParameters(request)),
@@ -74,8 +74,8 @@ public sealed class CrossAssetResearchService(Func<DateTimeOffset>? utcNow = nul
         {
             var observations = request.Observations.OrderBy(x => x.TimestampUtc).ToArray();
             var returns = NetReturns(observations, request.Costs!);
-            var bounds = OosBounds(returns.Length, request.Policy);
-            var outOfSample = returns.Skip(bounds.Start).Take(bounds.Count).ToArray();
+            var bounds = ResearchTemporalValidationV1.Bounds(returns.Length, TemporalPolicy(request.Policy));
+            var outOfSample = returns.Skip(bounds.OosStart).Take(bounds.OosCount).ToArray();
             var all = Metrics(returns);
             var oos = Metrics(outOfSample);
             var walkForward = WalkForward(returns, request.Policy.WalkForwardFolds);
@@ -107,12 +107,11 @@ public sealed class CrossAssetResearchService(Func<DateTimeOffset>? utcNow = nul
         if (request.AssetClass == ResearchAssetClass.Crypto && request.Session is { IsContinuous: false }) reasons.Add("session.crypto-must-be-continuous");
         if (request.Session is not null && request.Observations is { Count: > 0 } && !ObservationsMatchSession(request.Observations, request.Session)) reasons.Add("session.observation-mismatch");
         if (request.Observations is null || request.Observations.Count < request.Policy.MinimumObservations) reasons.Add("data.observations-insufficient");
-        if (request.Policy.TrainingFraction is <= 0 or >= 1 || request.Policy.WalkForwardFolds < 2 || request.Policy.MonteCarloRuns < 10 || request.Policy.OosPurgeObservations < 0 || request.Policy.OosEmbargoObservations < 0) reasons.Add("validation.policy-invalid");
+        if (request.Policy.WalkForwardFolds < 2 || request.Policy.MonteCarloRuns < 10) reasons.Add("validation.policy-invalid");
         if (request.ParameterTrials < 1 || request.ParameterTrials > request.Policy.MaximumParameterTrials || request.Observations is not null && request.Observations.Count < request.ParameterTrials * request.Policy.MinimumObservationsPerParameterTrial) reasons.Add("research.parameter-search-overfit");
-        var oosBounds = OosBounds(Math.Max(0, (request.Observations?.Count ?? 0) - 1), request.Policy);
-        if (oosBounds.Count < request.Policy.MinimumOutOfSampleObservations) reasons.Add("research.temporal-isolation-insufficient");
         if (request.Observations is { Count: > 0 } && (request.Observations.Any(x => x.Close <= 0 || !double.IsFinite(x.TargetExposure) || Math.Abs(x.TargetExposure) > 1) || request.Observations.Select(x => x.TimestampUtc).Distinct().Count() != request.Observations.Count)) reasons.Add("data.observation-invalid");
-        if (request.Observations is { Count: > 0 } && request.Observations.Any(x => x.DataAvailableAtUtc is null || x.SignalGeneratedAtUtc is null || x.DataAvailableAtUtc > x.SignalGeneratedAtUtc || x.SignalGeneratedAtUtc > x.TimestampUtc)) reasons.Add("research.look-ahead-leakage");
+        var temporalPoints=request.Observations?.Select(x=>new ResearchTemporalPoint(x.TimestampUtc,x.DataAvailableAtUtc,x.SignalGeneratedAtUtc)).ToArray();
+        reasons.AddRange(ResearchTemporalValidationV1.Validate(temporalPoints,Math.Max(0,(request.Observations?.Count??0)-1),TemporalPolicy(request.Policy)));
         var maximumStaleness = request.Policy.MaximumDataStaleness ?? TimeSpan.FromDays(7);
         if (request.DataAsOfUtc is null || request.DataAsOfUtc > now || now - request.DataAsOfUtc > maximumStaleness) reasons.Add("data.stale");
         if (request.AssetClass == ResearchAssetClass.Equity && !request.CorporateActionCoverageConfirmed) reasons.Add("corporate-action.coverage-missing");
@@ -316,14 +315,8 @@ public sealed class CrossAssetResearchService(Func<DateTimeOffset>? utcNow = nul
     private static bool IsSha256(string value) => value.Length == 64 && value.All(Uri.IsHexDigit);
     private static bool FixedEquals(string left, string right) => left.Length == right.Length && CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(left), Encoding.ASCII.GetBytes(right));
 
-    private static (int Start, int EndExclusive, int Count) OosBounds(int returnCount, CrossAssetValidationPolicy policy)
-    {
-        if (returnCount <= 1 || policy.TrainingFraction is <= 0 or >= 1) return (0, 0, 0);
-        var split = Math.Clamp((int)Math.Floor(returnCount * policy.TrainingFraction), 1, returnCount - 1);
-        var start = Math.Min(returnCount, split + Math.Max(0, policy.OosPurgeObservations));
-        var end = Math.Max(start, returnCount - Math.Max(0, policy.OosEmbargoObservations));
-        return (start, end, end - start);
-    }
+    private static ResearchTemporalIsolationPolicy TemporalPolicy(CrossAssetValidationPolicy policy)
+        =>new(policy.TrainingFraction,policy.MinimumOutOfSampleObservations,policy.OosPurgeObservations,policy.OosEmbargoObservations);
 
     private static CrossAssetResearchResult Result(CrossAssetResearchRequest request, CrossAssetResearchStatus status, CrossAssetStrategyLifecycle lifecycle, bool passed, CrossAssetBacktestMetrics? metrics, IReadOnlyList<string> reasons, DateTimeOffset now)
         => new(request.ResearchId, request.StrategyId, status, lifecycle, passed, metrics, reasons, request.DataAuthorization is null ? [] : [request.DataAuthorization.ProviderId, request.DataAuthorization.DatasetId, request.DataAuthorization.LicenseReference], now);

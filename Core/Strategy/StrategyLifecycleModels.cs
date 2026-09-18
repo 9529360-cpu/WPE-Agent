@@ -114,7 +114,9 @@ public sealed record StrategyValidation(
     string StrategyVersion = "",
     int OutOfSampleTrades = 0,
     double StrategyReturn = 0,
-    double BenchmarkReturn = 0);
+    double BenchmarkReturn = 0,
+    int OosPurgeObservations = 0,
+    int OosEmbargoObservations = 0);
 
 public sealed record StrategyResearchSnapshot(
     string Status,
