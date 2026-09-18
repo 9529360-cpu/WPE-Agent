@@ -93,7 +93,8 @@ public sealed class StrategyParameterSearchEvaluatorTests
         Assert.NotEmpty(a);
         Assert.NotEmpty(b);
         Assert.Equal(a[0].TradableAtUtc,b[0].TradableAtUtc);
-        Assert.Equal(StrategyExposureTimelineV1.MinimumWarmupBars,a[0].Sequence+StrategyExposureTimelineV1.MinimumWarmupBars);
+        Assert.Equal(new DateTimeOffset(candles[StrategyExposureTimelineV1.MinimumWarmupBars].OpenTime),a[0].TradableAtUtc);
+        Assert.Equal(0,a[0].Sequence);
     }
 
     private static StrategyProfile Profile(string id,int variant,DateTime created,StrategyLifecycle lifecycle)
