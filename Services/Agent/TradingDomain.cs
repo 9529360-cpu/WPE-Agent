@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using 币安量化机器人.Core.Strategy;
 
 namespace 币安量化机器人.Services.Agent;
 
