@@ -82,6 +82,14 @@ internal sealed class StrategyResearchAuthority
             Promoted=approved&&profile.Lifecycle==StrategyLifecycle.Active,
             StrategyReturn=validation.StrategyReturn,
             BenchmarkReturn=validation.BenchmarkReturn,
+            WorstRegimeReturn=validation.WorstRegimeReturn,
+            TrainTestExpectancyGap=validation.TrainTestExpectancyGap,
+            PassingRegimes=validation.PassingRegimes,
+            EvaluatedRegimes=validation.EvaluatedRegimes,
+            HistoricalPassed=validation.Passed,
+            ParameterSearch=validation.ParameterSearch,
+            ForwardObservations=profile.ShadowObservations,
+            ForwardQualified=_governor.HasForwardQualification(profile),
             RegimeReturns=new Dictionary<string,double>(),
             Summary=$"authority=exact-strategy-validation; strategy={profile.Id}; version={profile.Version}; fresh={fresh}; forward_observations={forward.Observations}; forward_expectancy={forward.Expectancy:F6}; qualified={qualified}; {validation.Summary}"
         };

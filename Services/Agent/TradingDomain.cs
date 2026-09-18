@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using 币安量化机器人.Core.Strategy;
 
 namespace 币安量化机器人.Services.Agent;
 
@@ -177,6 +178,14 @@ public sealed class ResearchValidationResult
     public int OutOfSampleTrades { get; init; }
     public double StrategyReturn { get; init; }
     public double BenchmarkReturn { get; init; }
+    public double WorstRegimeReturn { get; init; }
+    public double TrainTestExpectancyGap { get; init; }
+    public int PassingRegimes { get; init; }
+    public int EvaluatedRegimes { get; init; }
+    public bool HistoricalPassed { get; init; }
+    public StrategyParameterSearchEvidence? ParameterSearch { get; init; }
+    public int ForwardObservations { get; init; }
+    public bool ForwardQualified { get; init; }
     public IReadOnlyDictionary<string,double> RegimeReturns { get; init; } = new Dictionary<string,double>();
     public string Summary { get; init; } = string.Empty;
 }

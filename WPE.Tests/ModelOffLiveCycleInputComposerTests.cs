@@ -138,6 +138,9 @@ public sealed class ModelOffLiveCycleInputComposerTests
     [InlineData("stale-validation")]
     [InlineData("future-validation")]
     [InlineData("strategy-id-mismatch")]
+    [InlineData("missing-trial-evidence")]
+    [InlineData("forward-not-qualified")]
+    [InlineData("regime-insufficient")]
     public void ResearchAgentRequiresEligibleEvidenceForCurrentDecisionInstrument(string defect)
     {
         var request=Request();var btc=Research("BTCUSDT");var research=request.Research.ToDictionary(x=>x.Key,x=>x.Value);
@@ -148,6 +151,9 @@ public sealed class ModelOffLiveCycleInputComposerTests
         if(defect=="stale-validation")research["BTCUSDT"]=CopyResearch(btc,validatedAt:Now.AddHours(-25));
         if(defect=="future-validation")research["BTCUSDT"]=CopyResearch(btc,validatedAt:Now.AddSeconds(1));
         if(defect=="strategy-id-mismatch")research["BTCUSDT"]=CopyResearch(btc,strategyId:"strategy-other");
+        if(defect=="missing-trial-evidence")research["BTCUSDT"]=CopyResearch(btc,parameterSearch:null,replaceParameterSearch:true);
+        if(defect=="forward-not-qualified")research["BTCUSDT"]=CopyResearch(btc,forwardQualified:false);
+        if(defect=="regime-insufficient")research["BTCUSDT"]=CopyResearch(btc,passingRegimes:2);
         var output=ModelOffLiveCycleInputComposerV1.Compose(request with{Research=research}).Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(output));Assert.Contains(output.Decision.ReasonCodes,reason=>reason.StartsWith("live.research.target-",StringComparison.Ordinal));
     }
 
@@ -162,8 +168,12 @@ public sealed class ModelOffLiveCycleInputComposerTests
     {
         var request=Request();var expected=request.Research["BTCUSDT"].ValidatedAtUtc;
         var research=ModelOffLiveCycleInputComposerV1.Compose(request).Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;
-        var source=Assert.Single(research.Sources,x=>x.SourceId=="strategy-validation-strategy-alpha-strategy-v1");Assert.Equal(expected,source.AsOfUtc);
-        Assert.Equal(expected,research.Facts.GetProperty("validations")[0].GetProperty("ValidatedAtUtc").GetDateTimeOffset());
+        var source=Assert.Single(research.Sources,x=>x.SourceId=="backtest:BTCUSDT:strategy-alpha:strategy-v1");Assert.Equal(expected,source.AsOfUtc);
+        var validation=research.Facts.GetProperty("validations")[0];
+        Assert.Equal(expected,validation.GetProperty("ValidatedAtUtc").GetDateTimeOffset());
+        Assert.Equal("sha256:"+validation.GetProperty("canonical_backtest_sha256").GetString(),source.ArtifactHash);
+        Assert.Equal(1,validation.GetProperty("trial_count").GetInt32());
+        Assert.True(validation.GetProperty("ForwardQualified").GetBoolean());
     }
 
     [Theory]
@@ -490,9 +500,34 @@ public sealed class ModelOffLiveCycleInputComposerTests
         return market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,"test-provider","Testnet")};
     }
     private static NewsEvidence News()=>new("SEC","Official digital asset market update","https://www.sec.gov/news/press-release/test",Now.AddMinutes(-2).UtcDateTime,Now.AddMinutes(-1).UtcDateTime,"official",new string('a',64),["BTC"],"Private full article body must not enter canonical audit.",.9,1,"REGULATION",false,.1);
-    private static ResearchValidationResult Research(string symbol) => new()
-    { ValidatedAtUtc=Now.AddMinutes(-1),StrategyId=symbol=="BTCUSDT"?"strategy-alpha":"strategy-eth",Symbol = symbol, StrategyVersion = "strategy-v1", SampleSize = 200, Trades = 30, QualityScore = .8, Approved = true, Promoted = true, CoverageDays = 90 };
-    private static ResearchValidationResult CopyResearch(ResearchValidationResult value,bool? approved=null,bool? promoted=null,double? qualityScore=null,DateTimeOffset? validatedAt=null,string? strategyId=null)=>new(){ValidatedAtUtc=validatedAt??value.ValidatedAtUtc,StrategyId=strategyId??value.StrategyId,Symbol=value.Symbol,StrategyVersion=value.StrategyVersion,SampleSize=value.SampleSize,Trades=value.Trades,WinRate=value.WinRate,ProfitFactor=value.ProfitFactor,Expectancy=value.Expectancy,MaxDrawdown=value.MaxDrawdown,Sharpe=value.Sharpe,OutOfSampleReturn=value.OutOfSampleReturn,WalkForwardScore=value.WalkForwardScore,MonteCarloLossProbability=value.MonteCarloLossProbability,QualityScore=qualityScore??value.QualityScore,Approved=approved??value.Approved,Promoted=promoted??value.Promoted,CoverageDays=value.CoverageDays,OutOfSampleTrades=value.OutOfSampleTrades,StrategyReturn=value.StrategyReturn,BenchmarkReturn=value.BenchmarkReturn,RegimeReturns=value.RegimeReturns,Summary=value.Summary};
+    private static ResearchValidationResult Research(string symbol)
+    {
+        var search=new 币安量化机器人.Core.Strategy.StrategyParameterSearchEvidence(
+            1,0,new string('a',64),new string('b',64),new string('c',64),
+            StrategyParameterSearchEvaluatorV1.TestMethod,StrategyParameterSearchEvaluatorV1.CorrectionMethod,
+            StrategyParameterSearchEvaluatorV1.NominalAlpha,.01,.05,StrategyParameterSearchEvaluatorV1.SelectionRule);
+        return new()
+        {
+            ValidatedAtUtc=Now.AddMinutes(-1),StrategyId=symbol=="BTCUSDT"?"strategy-alpha":"strategy-eth",Symbol=symbol,StrategyVersion="strategy-v1",
+            SampleSize=200,Trades=30,OutOfSampleTrades=10,CoverageDays=90,WinRate=.58,ProfitFactor=1.5,Expectancy=.002,MaxDrawdown=.12,Sharpe=1.2,
+            OutOfSampleReturn=.08,WalkForwardScore=.7,MonteCarloLossProbability=.2,QualityScore=.8,StrategyReturn=.12,BenchmarkReturn=.05,
+            WorstRegimeReturn=-.02,TrainTestExpectancyGap=.0005,PassingRegimes=4,EvaluatedRegimes=4,HistoricalPassed=true,ParameterSearch=search,
+            ForwardObservations=StrategyGovernor.MinimumShadowObservations,ForwardQualified=true,Approved=true,Promoted=true
+        };
+    }
+    private static ResearchValidationResult CopyResearch(
+        ResearchValidationResult value,bool? approved=null,bool? promoted=null,double? qualityScore=null,DateTimeOffset? validatedAt=null,string? strategyId=null,
+        币安量化机器人.Core.Strategy.StrategyParameterSearchEvidence? parameterSearch=null,bool replaceParameterSearch=false,bool? forwardQualified=null,int? passingRegimes=null)=>new()
+    {
+        ValidatedAtUtc=validatedAt??value.ValidatedAtUtc,StrategyId=strategyId??value.StrategyId,Symbol=value.Symbol,StrategyVersion=value.StrategyVersion,
+        SampleSize=value.SampleSize,Trades=value.Trades,WinRate=value.WinRate,ProfitFactor=value.ProfitFactor,Expectancy=value.Expectancy,MaxDrawdown=value.MaxDrawdown,
+        Sharpe=value.Sharpe,OutOfSampleReturn=value.OutOfSampleReturn,WalkForwardScore=value.WalkForwardScore,MonteCarloLossProbability=value.MonteCarloLossProbability,
+        QualityScore=qualityScore??value.QualityScore,Approved=approved??value.Approved,Promoted=promoted??value.Promoted,CoverageDays=value.CoverageDays,
+        OutOfSampleTrades=value.OutOfSampleTrades,StrategyReturn=value.StrategyReturn,BenchmarkReturn=value.BenchmarkReturn,WorstRegimeReturn=value.WorstRegimeReturn,
+        TrainTestExpectancyGap=value.TrainTestExpectancyGap,PassingRegimes=passingRegimes??value.PassingRegimes,EvaluatedRegimes=value.EvaluatedRegimes,
+        HistoricalPassed=value.HistoricalPassed,ParameterSearch=replaceParameterSearch?parameterSearch:parameterSearch??value.ParameterSearch,
+        ForwardObservations=value.ForwardObservations,ForwardQualified=forwardQualified??value.ForwardQualified,RegimeReturns=value.RegimeReturns,Summary=value.Summary
+    };
     private static MarketDecisionAssessment Assessment(bool fresh=true,DecisionAction recommended=DecisionAction.OpenLong,string symbol="BTCUSDT",double confidence=.8)=>new(){Symbol=symbol,StrategyId=symbol=="BTCUSDT"?"strategy-alpha":"strategy-eth",StrategyVersion="strategy-v1",Fresh=fresh,EntryReady=true,RecommendedAction=recommended,Confidence=confidence,NetScore=.5,ConflictRatio=.1};
     private static DecisionReview Review(bool accepted,decimal stop=98000m,decimal take=104000m,double riskReward=2,double confidence=.8,int targetTier=1,string strategyId="strategy-alpha",string strategyVersion="strategy-v1") => new()
     {
