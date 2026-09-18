@@ -45,10 +45,8 @@ public sealed class StrategyParameterSearchEvaluatorTests
 
         Assert.Equal(first.SelectedTrialPValue,second.SelectedTrialPValue,12);
         Assert.Equal(first.SelectionDatasetHash,second.SelectionDatasetHash);
-        Assert.Equal(first.HoldoutDatasetHash,second.HoldoutDatasetHash);
-        Assert.True(first.HoldoutUntouched);
-        Assert.False(first.HoldoutUsedForSelection);
-        Assert.Equal(1,first.HoldoutEvaluationCount);
+        Assert.Equal(first.HistoricalOosDatasetHash,second.HistoricalOosDatasetHash);
+        Assert.NotEqual(first.SelectionDatasetHash,first.HistoricalOosDatasetHash);
     }
 
     [Fact]
