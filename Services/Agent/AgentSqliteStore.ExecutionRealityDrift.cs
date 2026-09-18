@@ -235,6 +235,44 @@ public sealed partial class AgentSqliteStore
         return new(true, evidence.FeeAmount, "exchange-reported-usdt");
     }
 
+    public async Task<IReadOnlyList<ExecutionRealityDriftFactV1>> GetTerminalExecutionRealityDriftByClientOrderIdAsync(
+        string clientOrderId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(clientOrderId))
+            throw new ArgumentException("Client order id is required.", nameof(clientOrderId));
+
+        await using var connection = new SqliteConnection(_cs);
+        await connection.OpenAsync(ct);
+        await EnsureExecutionRealityDriftStorageAsync(connection, ct);
+
+        await using var query = connection.CreateCommand();
+        query.CommandText = """
+            SELECT schema,correlation_id,client_order_id,strategy_id,strategy_version,cost_model_version,symbol,side,
+                   reduce_only,order_type,intended_quantity,executed_quantity,expected_price,average_price,
+                   exchange_status,state,terminal,comparable,fill_ratio,adverse_slippage_bps,expected_slippage_bps,
+                   slippage_drift_bps,observed_fee,fee_basis,fee_comparable,observed_fee_rate_bps,
+                   expected_commission_bps,fee_drift_bps,total_comparable,total_execution_drift_bps,
+                   observation_latency_ms,exchange_updated_at,observed_at,reason_code,canonical_bytes,canonical_sha256
+            FROM execution_reality_drift
+            WHERE client_order_id=$client AND terminal=1
+            ORDER BY observed_at DESC,rowid DESC
+            LIMIT 129;
+            """;
+        query.Parameters.AddWithValue("$client", clientOrderId);
+
+        var result = new List<ExecutionRealityDriftFactV1>();
+        await using var reader = await query.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var fact = ReadRealityFact(reader);
+            if (!ExecutionRealityDriftV1.IsCanonical(fact))
+                throw new InvalidOperationException("Persisted terminal execution reality drift fact failed canonical verification.");
+            result.Add(fact);
+        }
+        return result;
+    }
+
     private static async Task EnsureExecutionRealityDriftStorageAsync(SqliteConnection connection, CancellationToken ct)
     {
         await using var command = connection.CreateCommand();
