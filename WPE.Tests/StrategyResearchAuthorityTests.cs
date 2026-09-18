@@ -47,7 +47,7 @@ public sealed class StrategyResearchAuthorityTests : IDisposable
         await store.UpsertStrategyAsync(profile,CancellationToken.None);
         await store.SaveStrategyValidationAsync(Validation(profile,true),CancellationToken.None);
         await store.SaveBacktestRunAsync(Backtest(profile,now.AddMinutes(-1),"PASSED"),CancellationToken.None);
-        var old=profile withVersion(version+"-old");
+        var old=WithVersion(profile,version+"-old");
         await SeedForwardQualificationAsync(store,old);
 
         var currentPerformance=await store.GetStrategyObservationPerformanceAsync(profile.Id,profile.Version,CancellationToken.None);
@@ -155,7 +155,7 @@ public sealed class StrategyResearchAuthorityTests : IDisposable
             await store.RecordStrategyObservationAsync(profile.Id,profile.Version,profile.Symbol,1,100m+i,1,CancellationToken.None);
     }
 
-    private static StrategyProfile withVersion(this StrategyProfile profile,string version)=>new()
+    private static StrategyProfile WithVersion(StrategyProfile profile,string version)=>new()
     {
         Id=profile.Id,Version=version,Symbol=profile.Symbol,Family=profile.Family,Parameters=profile.Parameters,
         Lifecycle=profile.Lifecycle,BuiltIn=profile.BuiltIn,ParentStrategyId=profile.ParentStrategyId,ParentStrategyVersion=profile.ParentStrategyVersion,
