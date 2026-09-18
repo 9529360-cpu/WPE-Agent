@@ -31,17 +31,17 @@ public sealed class StrategyParameterSearchEvaluatorTests
     }
 
     [Fact]
-    public void HoldoutReturnsCannotImproveTrainingSignificance()
+    public void HistoricalOosReturnsCannotImproveTrainingSignificance()
     {
         var selected=Profile("selected",0,DateTime.UtcNow,StrategyLifecycle.Draft);
         var timeline=Timeline(selected,400);
         var window=ResearchTemporalIsolationV1.OosWindow(400,HistoricalResearchEngine.ProductionTemporalPolicy);
-        var goodHoldout=PositiveReturns(400).ToArray();
-        var badHoldout=PositiveReturns(400).ToArray();
-        for(var i=window.Start;i<window.EndExclusive;i++)badHoldout[i]=(-.50,false);
+        var goodOos=PositiveReturns(400).ToArray();
+        var badOos=PositiveReturns(400).ToArray();
+        for(var i=window.Start;i<window.EndExclusive;i++)badOos[i]=(-.50,false);
 
-        var first=StrategyParameterSearchEvaluatorV1.Evaluate(selected,[selected],timeline,goodHoldout,window);
-        var second=StrategyParameterSearchEvaluatorV1.Evaluate(selected,[selected],timeline,badHoldout,window);
+        var first=StrategyParameterSearchEvaluatorV1.Evaluate(selected,[selected],timeline,goodOos,window);
+        var second=StrategyParameterSearchEvaluatorV1.Evaluate(selected,[selected],timeline,badOos,window);
 
         Assert.Equal(first.SelectedTrialPValue,second.SelectedTrialPValue,12);
         Assert.Equal(first.SelectionDatasetHash,second.SelectionDatasetHash);
