@@ -148,6 +148,16 @@ public sealed partial class AgentSqliteStore
             values.Max(x => x.ObservedAtUtc));
     }
 
+    public async Task<ExecutionRealityCalibrationSnapshotV1?> GetExecutionRealityCalibrationAsync(
+        string strategyId,
+        string strategyVersion,
+        int limit,
+        CancellationToken ct)
+    {
+        var values = await GetRecentExecutionRealityDriftAsync(limit, ct, strategyId, strategyVersion);
+        return values.Count == 0 ? null : ExecutionRealityCalibrationV1.Create(strategyId, strategyVersion, values);
+    }
+
     private static async Task EnsureExecutionRealityDriftStorageAsync(SqliteConnection connection, CancellationToken ct)
     {
         await using var command = connection.CreateCommand();
