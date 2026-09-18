@@ -9,6 +9,7 @@ public sealed record ExecutionRealityDriftPersistenceResultV1(bool Succeeded, bo
 public sealed record ExecutionRealityDriftSummaryV1(
     string StrategyId,
     string StrategyVersion,
+    string CostModelVersion,
     int ObservationCount,
     int ComparableCount,
     int FeeComparableCount,
@@ -37,15 +38,15 @@ public sealed partial class AgentSqliteStore
         await using var insert = connection.CreateCommand();
         insert.CommandText = """
             INSERT INTO execution_reality_drift(
-                canonical_sha256,schema,correlation_id,client_order_id,strategy_id,strategy_version,symbol,side,
-                reduce_only,order_type,intended_quantity,executed_quantity,expected_price,average_price,
+                canonical_sha256,schema,correlation_id,client_order_id,strategy_id,strategy_version,cost_model_version,
+                symbol,side,reduce_only,order_type,intended_quantity,executed_quantity,expected_price,average_price,
                 exchange_status,state,terminal,comparable,fill_ratio,adverse_slippage_bps,expected_slippage_bps,
                 slippage_drift_bps,observed_fee,fee_basis,fee_comparable,observed_fee_rate_bps,expected_commission_bps,
                 fee_drift_bps,total_comparable,total_execution_drift_bps,observation_latency_ms,exchange_updated_at,
                 observed_at,reason_code,canonical_bytes)
             VALUES(
-                $hash,$schema,$correlation,$client,$strategy,$version,$symbol,$side,
-                $reduce,$type,$intended,$executed,$expectedPrice,$averagePrice,
+                $hash,$schema,$correlation,$client,$strategy,$version,$costModel,
+                $symbol,$side,$reduce,$type,$intended,$executed,$expectedPrice,$averagePrice,
                 $status,$state,$terminal,$comparable,$fillRatio,$adverse,$expectedSlippage,
                 $slippageDrift,$fee,$feeBasis,$feeComparable,$feeRate,$expectedCommission,
                 $feeDrift,$totalComparable,$totalDrift,$latency,$exchangeUpdated,
@@ -71,7 +72,8 @@ public sealed partial class AgentSqliteStore
         int limit,
         CancellationToken ct,
         string? strategyId = null,
-        string? strategyVersion = null)
+        string? strategyVersion = null,
+        string? costModelVersion = null)
     {
         limit = Math.Clamp(limit, 1, 1000);
         await using var connection = new SqliteConnection(_cs);
@@ -90,14 +92,19 @@ public sealed partial class AgentSqliteStore
             where.Add("strategy_version=$version");
             query.Parameters.AddWithValue("$version", strategyVersion);
         }
+        if (!string.IsNullOrWhiteSpace(costModelVersion))
+        {
+            where.Add("cost_model_version=$costModel");
+            query.Parameters.AddWithValue("$costModel", costModelVersion);
+        }
 
         query.CommandText = $"""
-            SELECT schema,correlation_id,client_order_id,strategy_id,strategy_version,symbol,side,reduce_only,order_type,
-                   intended_quantity,executed_quantity,expected_price,average_price,exchange_status,state,terminal,
-                   comparable,fill_ratio,adverse_slippage_bps,expected_slippage_bps,slippage_drift_bps,observed_fee,
-                   fee_basis,fee_comparable,observed_fee_rate_bps,expected_commission_bps,fee_drift_bps,total_comparable,
-                   total_execution_drift_bps,observation_latency_ms,exchange_updated_at,observed_at,reason_code,
-                   canonical_bytes,canonical_sha256
+            SELECT schema,correlation_id,client_order_id,strategy_id,strategy_version,cost_model_version,symbol,side,
+                   reduce_only,order_type,intended_quantity,executed_quantity,expected_price,average_price,
+                   exchange_status,state,terminal,comparable,fill_ratio,adverse_slippage_bps,expected_slippage_bps,
+                   slippage_drift_bps,observed_fee,fee_basis,fee_comparable,observed_fee_rate_bps,
+                   expected_commission_bps,fee_drift_bps,total_comparable,total_execution_drift_bps,
+                   observation_latency_ms,exchange_updated_at,observed_at,reason_code,canonical_bytes,canonical_sha256
             FROM execution_reality_drift
             {(where.Count == 0 ? string.Empty : "WHERE " + string.Join(" AND ", where))}
             ORDER BY observed_at DESC, rowid DESC
@@ -120,13 +127,15 @@ public sealed partial class AgentSqliteStore
     public async Task<ExecutionRealityDriftSummaryV1?> GetExecutionRealityDriftSummaryAsync(
         string strategyId,
         string strategyVersion,
+        string costModelVersion,
         int limit,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(strategyId)) throw new ArgumentException("Strategy id is required.", nameof(strategyId));
         if (string.IsNullOrWhiteSpace(strategyVersion)) throw new ArgumentException("Strategy version is required.", nameof(strategyVersion));
+        if (string.IsNullOrWhiteSpace(costModelVersion)) throw new ArgumentException("Cost model version is required.", nameof(costModelVersion));
 
-        var values = await GetRecentExecutionRealityDriftAsync(limit, ct, strategyId, strategyVersion);
+        var values = await GetRecentExecutionRealityDriftAsync(limit, ct, strategyId, strategyVersion, costModelVersion);
         if (values.Count == 0) return null;
 
         var comparable = values.Where(x => x.Comparable).ToArray();
@@ -135,6 +144,7 @@ public sealed partial class AgentSqliteStore
         return new(
             strategyId,
             strategyVersion,
+            costModelVersion,
             values.Count,
             comparable.Length,
             feeComparable.Length,
@@ -151,11 +161,14 @@ public sealed partial class AgentSqliteStore
     public async Task<ExecutionRealityCalibrationSnapshotV1?> GetExecutionRealityCalibrationAsync(
         string strategyId,
         string strategyVersion,
+        string costModelVersion,
         int limit,
         CancellationToken ct)
     {
-        var values = await GetRecentExecutionRealityDriftAsync(limit, ct, strategyId, strategyVersion);
-        return values.Count == 0 ? null : ExecutionRealityCalibrationV1.Create(strategyId, strategyVersion, values);
+        var values = await GetRecentExecutionRealityDriftAsync(limit, ct, strategyId, strategyVersion, costModelVersion);
+        return values.Count == 0
+            ? null
+            : ExecutionRealityCalibrationV1.Create(strategyId, strategyVersion, costModelVersion, values);
     }
 
     private static async Task EnsureExecutionRealityDriftStorageAsync(SqliteConnection connection, CancellationToken ct)
@@ -169,6 +182,7 @@ public sealed partial class AgentSqliteStore
                 client_order_id TEXT NOT NULL,
                 strategy_id TEXT NOT NULL,
                 strategy_version TEXT NOT NULL,
+                cost_model_version TEXT NOT NULL,
                 symbol TEXT NOT NULL,
                 side TEXT NOT NULL,
                 reduce_only INTEGER NOT NULL CHECK(reduce_only IN (0,1)),
@@ -201,7 +215,7 @@ public sealed partial class AgentSqliteStore
             CREATE INDEX IF NOT EXISTS ix_execution_reality_drift_observed
                 ON execution_reality_drift(observed_at DESC);
             CREATE INDEX IF NOT EXISTS ix_execution_reality_drift_strategy
-                ON execution_reality_drift(strategy_id,strategy_version,observed_at DESC);
+                ON execution_reality_drift(strategy_id,strategy_version,cost_model_version,observed_at DESC);
             CREATE INDEX IF NOT EXISTS ix_execution_reality_drift_client
                 ON execution_reality_drift(client_order_id,observed_at DESC);
             CREATE TRIGGER IF NOT EXISTS execution_reality_drift_no_update
@@ -222,6 +236,7 @@ public sealed partial class AgentSqliteStore
         command.Parameters.AddWithValue("$client", fact.ClientOrderId);
         command.Parameters.AddWithValue("$strategy", fact.StrategyId);
         command.Parameters.AddWithValue("$version", fact.StrategyVersion);
+        command.Parameters.AddWithValue("$costModel", fact.CostModelVersion);
         command.Parameters.AddWithValue("$symbol", fact.Symbol);
         command.Parameters.AddWithValue("$side", fact.Side.ToString());
         command.Parameters.AddWithValue("$reduce", fact.ReduceOnly ? 1 : 0);
@@ -260,35 +275,36 @@ public sealed partial class AgentSqliteStore
         reader.GetString(3),
         reader.GetString(4),
         reader.GetString(5),
-        Enum.Parse<PositionSide>(reader.GetString(6), false),
-        reader.GetInt32(7) == 1,
-        Enum.Parse<ExecutionOrderType>(reader.GetString(8), false),
-        RealityDecimal(reader.GetString(9)),
+        reader.GetString(6),
+        Enum.Parse<PositionSide>(reader.GetString(7), false),
+        reader.GetInt32(8) == 1,
+        Enum.Parse<ExecutionOrderType>(reader.GetString(9), false),
         RealityDecimal(reader.GetString(10)),
         RealityDecimal(reader.GetString(11)),
         RealityDecimal(reader.GetString(12)),
-        reader.GetString(13),
-        Enum.Parse<ExecutionRealityStateV1>(reader.GetString(14), false),
-        reader.GetInt32(15) == 1,
+        RealityDecimal(reader.GetString(13)),
+        reader.GetString(14),
+        Enum.Parse<ExecutionRealityStateV1>(reader.GetString(15), false),
         reader.GetInt32(16) == 1,
-        RealityDecimal(reader.GetString(17)),
+        reader.GetInt32(17) == 1,
         RealityDecimal(reader.GetString(18)),
         RealityDecimal(reader.GetString(19)),
         RealityDecimal(reader.GetString(20)),
         RealityDecimal(reader.GetString(21)),
-        reader.GetString(22),
-        reader.GetInt32(23) == 1,
-        RealityDecimal(reader.GetString(24)),
+        RealityDecimal(reader.GetString(22)),
+        reader.GetString(23),
+        reader.GetInt32(24) == 1,
         RealityDecimal(reader.GetString(25)),
         RealityDecimal(reader.GetString(26)),
-        reader.GetInt32(27) == 1,
-        RealityDecimal(reader.GetString(28)),
-        reader.GetInt64(29),
-        DateTimeOffset.Parse(reader.GetString(30), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+        RealityDecimal(reader.GetString(27)),
+        reader.GetInt32(28) == 1,
+        RealityDecimal(reader.GetString(29)),
+        reader.GetInt64(30),
         DateTimeOffset.Parse(reader.GetString(31), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
-        reader.GetString(32),
-        (byte[])reader[33],
-        reader.GetString(34));
+        DateTimeOffset.Parse(reader.GetString(32), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+        reader.GetString(33),
+        (byte[])reader[34],
+        reader.GetString(35));
 
     private static string RealityText(decimal value) => value.ToString(CultureInfo.InvariantCulture);
     private static decimal RealityDecimal(string value) => decimal.Parse(value, NumberStyles.Number, CultureInfo.InvariantCulture);
