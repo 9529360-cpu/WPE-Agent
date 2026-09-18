@@ -177,6 +177,9 @@ public sealed class ResearchValidationResult
     public int OutOfSampleTrades { get; init; }
     public double StrategyReturn { get; init; }
     public double BenchmarkReturn { get; init; }
+    public StrategyParameterSearchEvidence? ParameterSearch { get; init; }
+    public int ForwardObservations { get; init; }
+    public bool ForwardQualified { get; init; }
     public IReadOnlyDictionary<string,double> RegimeReturns { get; init; } = new Dictionary<string,double>();
     public string Summary { get; init; } = string.Empty;
 }
