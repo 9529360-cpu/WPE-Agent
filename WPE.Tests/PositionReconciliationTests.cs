@@ -43,6 +43,80 @@ public sealed class PositionReconciliationTests : IDisposable
     }
 
     [Fact]
+    public async Task PositionDriftLinkBindsExactLedgerSnapshotAndCompleteOrderTrace()
+    {
+        var store=new AgentSqliteStore(Database,()=>Now);
+        var open=Intent("trace-open",false,1m);var close=Intent("trace-close",true,.25m);
+        await store.RecordExecutionAsync("cycle-open",open,Order(open,"FILLED",1m),"v1",default);
+        await store.AppendExecutionDriftObservationAsync(new(
+            "cycle-open",open.ClientOrderId,ExecutionDriftPhaseV1.ExecutionRecorded,ExecutionDriftSourceV1.Exchange,
+            open.Symbol,open.Side,open.ReduceOnly,open.Quantity,1m,open.ExpectedPrice,100m,"FILLED",Now),default);
+        await store.RecordExecutionAsync("cycle-close",close,Order(close,"FILLED",.25m),"v1",default);
+        await store.AppendExecutionDriftObservationAsync(new(
+            "cycle-close",close.ClientOrderId,ExecutionDriftPhaseV1.ExecutionRecorded,ExecutionDriftSourceV1.Exchange,
+            close.Symbol,close.Side,close.ReduceOnly,close.Quantity,.25m,close.ExpectedPrice,100m,"FILLED",Now),default);
+
+        var snapshot=await store.GetExecutionPositionLedgerSnapshotAsync(default);
+        Assert.True(ExecutionPositionLedgerSnapshotCanonicalizerV1.IsCanonical(snapshot));
+        Assert.Equal(2,snapshot.ExecutionEventCount);
+        Assert.Equal(2,snapshot.DriftTrackedExecutionCount);
+        Assert.True(snapshot.DriftIntegrityValid);
+        Assert.True(snapshot.DriftCoverageComplete);
+        Assert.Equal(.75m,Assert.Single(snapshot.Legs).Quantity);
+
+        var report=PositionReconciliationServiceV1.Reconcile(snapshot.Legs,[Position("BTCUSDT",PositionSide.Long,.75m)],Now,Now);
+        var link=ExecutionPositionDriftReconciliationCanonicalizerV1.Create(snapshot,report,Now);
+        Assert.True(ExecutionPositionDriftReconciliationCanonicalizerV1.IsCanonical(link));
+        Assert.True(link.Calibratable);
+        Assert.Equal(0m,Assert.Single(link.Legs).QuantityDrift);
+        Assert.True(await store.SaveExecutionPositionLedgerSnapshotAsync(snapshot,default));
+        Assert.False(await store.SaveExecutionPositionLedgerSnapshotAsync(snapshot,default));
+        Assert.True(await store.SaveExecutionPositionDriftReconciliationAsync(link,default));
+        Assert.False(await store.SaveExecutionPositionDriftReconciliationAsync(link,default));
+        var loaded=await store.GetLatestExecutionPositionDriftReconciliationAsync(default);
+        Assert.NotNull(loaded);
+        Assert.Equal(link.CanonicalSha256,loaded!.CanonicalSha256);
+
+        await using var connection=new SqliteConnection($"Data Source={Database}");await connection.OpenAsync();
+        foreach(var sql in new[]{
+            "UPDATE execution_position_ledger_snapshots SET drift_coverage_complete=0",
+            "DELETE FROM execution_position_ledger_snapshots",
+            "UPDATE execution_position_drift_reconciliations SET calibratable=0",
+            "DELETE FROM execution_position_drift_reconciliations"})
+        {
+            await using var command=connection.CreateCommand();command.CommandText=sql;
+            await Assert.ThrowsAsync<SqliteException>(()=>command.ExecuteNonQueryAsync());
+        }
+    }
+
+    [Fact]
+    public async Task MissingDriftCoverageCannotChangeConfirmedPositionAuthority()
+    {
+        var store=new AgentSqliteStore(Database,()=>Now);var open=Intent("legacy-open",false,1m);
+        await store.RecordExecutionAsync("legacy-cycle",open,Order(open,"FILLED",1m),"v1",default);
+        var snapshot=await store.GetExecutionPositionLedgerSnapshotAsync(default);
+        Assert.True(snapshot.DriftIntegrityValid);
+        Assert.False(snapshot.DriftCoverageComplete);
+
+        var report=PositionReconciliationServiceV1.Reconcile(snapshot.Legs,[Position("BTCUSDT",PositionSide.Long,1m)],Now,Now);
+        Assert.True(report.AllowsRiskIncrease);
+        var link=ExecutionPositionDriftReconciliationCanonicalizerV1.Create(snapshot,report,Now);
+        Assert.False(link.Calibratable);
+        Assert.True(report.AllowsRiskIncrease);
+        Assert.True(await store.PersistExecutionPositionDriftEvidenceSafelyAsync(snapshot,report,default));
+    }
+
+    [Fact]
+    public async Task PositionDriftLinkRejectsAReconciliationFromAnotherLedgerSnapshot()
+    {
+        var store=new AgentSqliteStore(Database,()=>Now);var open=Intent("snapshot-open",false,1m);
+        await store.RecordExecutionAsync("snapshot-cycle",open,Order(open,"FILLED",1m),"v1",default);
+        var snapshot=await store.GetExecutionPositionLedgerSnapshotAsync(default);
+        var other=PositionReconciliationServiceV1.Reconcile([new ExecutionPositionLegV1("BTCUSDT",PositionSide.Long,.5m)],[Position("BTCUSDT",PositionSide.Long,.5m)],Now,Now);
+        Assert.Throws<ArgumentException>(()=>ExecutionPositionDriftReconciliationCanonicalizerV1.Create(snapshot,other,Now));
+    }
+
+    [Fact]
     public async Task PositionAndIsolationAuditRowsAreDatabaseAppendOnly()
     {
         var store=new AgentSqliteStore(Database);var position=PositionReconciliationServiceV1.Reconcile([],[],Now,Now);var isolation=ExternalPositionIsolationServiceV1.Evaluate([],[],Now,Now);Assert.True(await store.SavePositionReconciliationAsync(position,default));Assert.True(await store.SaveExternalPositionIsolationAsync(isolation,default));
@@ -59,7 +133,7 @@ public sealed class PositionReconciliationTests : IDisposable
     [Fact]
     public void ProductionRiskIncreaseGateConsumesPositionReconciliation()
     {
-        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("PositionReconciliationServiceV1.Reconcile",source,StringComparison.Ordinal);Assert.Contains("&&positionReconciliation.AllowsRiskIncrease",source,StringComparison.Ordinal);Assert.Contains("ExecutePositionManagementRecoveryAsync",source,StringComparison.Ordinal);Assert.Contains("ApplyPositionMutationInvalidation",source,StringComparison.Ordinal);Assert.Contains("position.reconciliation-invalidated-by-recovery",source,StringComparison.Ordinal);
+        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("GetExecutionPositionLedgerSnapshotAsync",source,StringComparison.Ordinal);Assert.Contains("PositionReconciliationServiceV1.Reconcile",source,StringComparison.Ordinal);Assert.Contains("PersistExecutionPositionDriftEvidenceSafelyAsync",source,StringComparison.Ordinal);Assert.Contains("&&positionReconciliation.AllowsRiskIncrease",source,StringComparison.Ordinal);Assert.Contains("ExecutePositionManagementRecoveryAsync",source,StringComparison.Ordinal);Assert.Contains("ApplyPositionMutationInvalidation",source,StringComparison.Ordinal);Assert.Contains("position.reconciliation-invalidated-by-recovery",source,StringComparison.Ordinal);
     }
 
     [Fact]
