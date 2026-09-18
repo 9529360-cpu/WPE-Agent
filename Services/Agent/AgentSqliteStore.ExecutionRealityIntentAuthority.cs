@@ -8,7 +8,8 @@ public sealed record ExecutionRealityIntentAuthorityV1(
     string? ArtifactHash,
     string? IntentHash,
     int? IntentSequence,
-    DateTimeOffset? ArtifactCreatedAtUtc);
+    DateTimeOffset? ArtifactCreatedAtUtc,
+    DateTimeOffset? ExecutionStartedAtUtc);
 
 public sealed partial class AgentSqliteStore
 {
@@ -51,6 +52,15 @@ public sealed partial class AgentSqliteStore
         if (!IntentMatches(snapshot, intent))
             return DenyIntent("automatic-intent-mismatch");
 
+        var events = await GetAutomaticExecutionEventsAsync(correlationId, 100, ct);
+        var executing = events.Where(x => x.ToStatus == AutomaticExecutionQueueStatus.Executing).ToArray();
+        if (executing.Length == 0)
+            return DenyIntent("automatic-executing-event-missing");
+        if (executing.Length != 1)
+            return DenyIntent("automatic-executing-event-conflict");
+        if (executing[0].OccurredAtUtc < artifact.CreatedAtUtc)
+            return DenyIntent("automatic-executing-event-time-invalid");
+
         return new(
             true,
             "automatic-intent-bound",
@@ -59,7 +69,8 @@ public sealed partial class AgentSqliteStore
             item.ArtifactHash,
             item.IntentHash,
             snapshot.Sequence,
-            artifact.CreatedAtUtc);
+            artifact.CreatedAtUtc,
+            executing[0].OccurredAtUtc);
     }
 
     private static bool IntentMatches(DurableExecutionIntentSnapshotV1 snapshot, ExecutionIntent intent) =>
@@ -76,5 +87,5 @@ public sealed partial class AgentSqliteStore
         && snapshot.ExpectedPrice == intent.ExpectedPrice;
 
     private static ExecutionRealityIntentAuthorityV1 DenyIntent(string code) =>
-        new(false, code, null, null, null, null, null, null);
+        new(false, code, null, null, null, null, null, null, null);
 }
