@@ -8,6 +8,7 @@ public sealed class StrategyResearchAgent
     internal const int MaximumVariantsPerFamily = 6;
     internal const int TargetConcurrentCandidatesPerFamily = 2;
     internal static readonly TimeSpan ExplorationCooldown=TimeSpan.FromHours(6);
+    internal static readonly TimeSpan ActiveRevalidationInterval=TimeSpan.FromHours(12);
     public static WpeAgent.ModelOff.ModelOffAgentOutputV1 ProduceTechnicalModelOff(ModelOffResearchInputV1 input)
         => input.Capability == ModelOffResearchCapabilityV1.Technical
             ? DeterministicResearchCapabilityProducerV1.Produce(input)
@@ -46,7 +47,19 @@ public sealed class StrategyResearchAgent
         }
         var newsBySymbol=new Dictionary<string,IReadOnlyList<NewsFeature>>(StringComparer.Ordinal);
         var validated = 0;
-        foreach (var profile in candidates.Where(x => x.Lifecycle == StrategyLifecycle.Draft || (x.BuiltIn && x.ValidationTrades == 0)).ToArray())
+        var validationCandidates=new List<StrategyProfile>();
+        var researchNow=_utcNow().ToUniversalTime();
+        foreach(var profile in candidates)
+        {
+            if(profile.Lifecycle==StrategyLifecycle.Draft||(profile.BuiltIn&&profile.ValidationTrades==0)){validationCandidates.Add(profile);continue;}
+            if(profile.Lifecycle!=StrategyLifecycle.Active)continue;
+            var exactValidation=await _database.GetLatestStrategyValidationAsync(profile.Id,profile.Version,ct);
+            var latestBacktest=await _database.GetLatestBacktestRunAsync(profile.Id,profile.Version,ct);
+            var completed=latestBacktest?.CompletedAtUtc.ToUniversalTime();
+            if(exactValidation is null||latestBacktest is null||completed is null||completed>researchNow||researchNow-completed.Value>=ActiveRevalidationInterval)
+                validationCandidates.Add(profile);
+        }
+        foreach (var profile in validationCandidates)
         {
             var candles = await _database.LoadHistoricalCandlesAsync(profile.Symbol, "1h", 5000, ct);
             if(!newsBySymbol.TryGetValue(profile.Symbol,out var news))
@@ -56,7 +69,7 @@ public sealed class StrategyResearchAgent
             }
             var validation = _engine.Validate(profile, candles, news, limits);
             await _database.SaveStrategyValidationAsync(validation, ct);
-            var validationCompletedAt = DateTime.UtcNow;
+            var validationCompletedAt = _utcNow().ToUniversalTime();
             var coverageDays = candles.Count < 2 ? 0 : Math.Max(0, (int)Math.Floor((candles[^1].OpenTime.ToUniversalTime() - candles[0].OpenTime.ToUniversalTime()).TotalDays));
             await _database.SaveBacktestRunAsync(new PersistedBacktestRun(Guid.NewGuid().ToString("N"),profile.Id,profile.Version,profile.Symbol,validation.Passed?"PASSED":"FAILED",validationCompletedAt,coverageDays,validation.Trades,validation.OutOfSampleReturn,validation.MaxDrawdown,validation.Sharpe),ct);
             var previous=profile.Lifecycle;
