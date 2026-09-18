@@ -155,8 +155,8 @@ internal static class ExecutionPositionDriftReconciliationCanonicalizerV1
                 var l=local.GetValueOrDefault(x);var e=exchange.GetValueOrDefault(x);
                 return new ExecutionPositionDriftLegV1(x.Symbol,x.Side,l,e,e-l);
             }).ToArray();
-        var calibratable=snapshot.DriftCoverageComplete&&snapshot.DriftIntegrityValid
-            &&report.State==PositionReconciliationStateV1.Confirmed&&snapshot.ExecutionEventCount>0;
+        var calibratable=snapshot.DriftIntegrityValid&&snapshot.DriftTrackedExecutionCount>0
+            &&report.State==PositionReconciliationStateV1.Confirmed;
         var bytes=JsonSerializer.SerializeToUtf8Bytes(new
         {
             schema=Schema,linkedAtUtc,
@@ -192,7 +192,7 @@ internal static class ExecutionPositionDriftReconciliationCanonicalizerV1
            ||value.ExecutionEventCount<0||value.DriftObservationCount<0||value.DriftTrackedExecutionCount<0
            ||value.DriftTrackedExecutionCount>value.ExecutionEventCount
            ||value.DriftCoverageComplete&&(!value.DriftIntegrityValid||value.ExecutionEventCount==0||value.DriftTrackedExecutionCount!=value.ExecutionEventCount)
-           ||value.Calibratable!=(value.DriftIntegrityValid&&value.DriftCoverageComplete&&value.PositionState==PositionReconciliationStateV1.Confirmed&&value.ExecutionEventCount>0)
+           ||value.Calibratable!=(value.DriftIntegrityValid&&value.DriftTrackedExecutionCount>0&&value.PositionState==PositionReconciliationStateV1.Confirmed)
            ||value.Legs.Any(x=>string.IsNullOrWhiteSpace(x.Symbol)||x.LocalQuantity<0||x.ExchangeQuantity<0||x.QuantityDrift!=x.ExchangeQuantity-x.LocalQuantity)
            ||value.CanonicalBytes is null)return false;
         try
@@ -316,9 +316,9 @@ public sealed partial class AgentSqliteStore
             await using var r=await q.ExecuteReaderAsync(ct);
             while(await r.ReadAsync(ct))
             {
-                var schema=r.GetString(0);var hash=r.GetString(4);var bytes=(byte[])r[5];
-                if(!string.Equals(schema,ExecutionDriftCanonicalizerV1.Schema,StringComparison.Ordinal)
-                   ||!ExecutionPositionLedgerSnapshotCanonicalizerV1.Sha(hash)
+                var schema=r.GetString(0);if(!string.Equals(schema,ExecutionDriftCanonicalizerV1.Schema,StringComparison.Ordinal))continue;
+                var hash=r.GetString(4);var bytes=(byte[])r[5];
+                if(!ExecutionPositionLedgerSnapshotCanonicalizerV1.Sha(hash)
                    ||!string.Equals(Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),hash,StringComparison.Ordinal))
                     driftIntegrity=false;
                 driftRows.Add((schema,r.GetString(1),r.GetInt32(2),r.GetString(3),hash,bytes));
