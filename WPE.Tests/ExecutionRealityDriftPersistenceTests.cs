@@ -68,11 +68,18 @@ public sealed class ExecutionRealityDriftPersistenceTests : IDisposable
         Assert.Equal(2, summary.TotalComparableCount);
         Assert.Equal(2, summary.TerminalCount);
         Assert.Equal((1m + .5m + .25m) / 3m, summary.AverageFillRatio);
-        Assert.Equal((-5m) / 3m, summary.AverageSlippageDriftBps);
+        Assert.Equal((-10m) / 3m, summary.AverageSlippageDriftBps);
         Assert.Equal(0m, summary.AverageFeeDriftBps);
         Assert.Equal(-5m, summary.AverageTotalExecutionDriftBps);
         Assert.Equal(3000, summary.MaximumObservationLatencyMs);
         Assert.Equal(IntendedAt.AddSeconds(3), summary.LatestObservedAtUtc);
+
+        var calibration = await store.GetExecutionRealityCalibrationAsync("strategy-a", "v1", 100, default);
+        Assert.NotNull(calibration);
+        Assert.True(ExecutionRealityCalibrationV1.IsCanonical(calibration!));
+        Assert.Equal(4, calibration!.ObservationCount);
+        Assert.Equal(3, calibration.ComparableCount);
+        Assert.Equal(2, calibration.TotalComparableCount);
 
         var rows = await store.GetRecentExecutionRealityDriftAsync(100, default, "strategy-a", "v1");
         Assert.Equal(4, rows.Count);
