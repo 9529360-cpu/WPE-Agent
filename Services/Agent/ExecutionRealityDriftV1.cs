@@ -38,6 +38,7 @@ public sealed record ExecutionRealityDriftFactV1(
     string ClientOrderId,
     string StrategyId,
     string StrategyVersion,
+    string CostModelVersion,
     string Symbol,
     PositionSide Side,
     bool ReduceOnly,
