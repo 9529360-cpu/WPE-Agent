@@ -161,7 +161,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         if(!intent.ReduceOnly)try
         {
             var quote=await PreflightAsync(intent,ct);
-            await ObserveExecutionDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.PreflightQuote,ExecutionDriftSourceV1.Local,"QUOTE",0,quote.Price,null,ct);
+            await ObserveExecutionDriftSafelyAsync(cycle,intent,ExecutionDriftPhaseV1.PreflightQuote,ExecutionDriftSourceV1.Local,"QUOTE",0,quote.Price,null,ct,quote);
         }
         catch(Exception ex)
         {
@@ -305,13 +305,16 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
 
     private async Task ObserveExecutionDriftSafelyAsync(
         string cycle,ExecutionIntent intent,ExecutionDriftPhaseV1 phase,ExecutionDriftSourceV1 source,string providerStatus,
-        decimal observedExecutedQuantity,decimal observedAveragePrice,DateTimeOffset? exchangeUpdatedAtUtc,CancellationToken ct)
+        decimal observedExecutedQuantity,decimal observedAveragePrice,DateTimeOffset? exchangeUpdatedAtUtc,CancellationToken ct,
+        MarketEvidence? market=null)
     {
         try
         {
             await _db.AppendExecutionDriftObservationAsync(new(
-                cycle,intent.ClientOrderId,phase,source,intent.Symbol,intent.Side,intent.ReduceOnly,
-                intent.Quantity,observedExecutedQuantity,intent.ExpectedPrice,observedAveragePrice,providerStatus,exchangeUpdatedAtUtc),ct);
+                cycle,intent.ClientOrderId,phase,source,ProviderName(),_ex.Environment.ToString(),
+                intent.Symbol,intent.Side,intent.ReduceOnly,intent.OrderType,intent.Quantity,intent.LimitPrice,
+                observedExecutedQuantity,intent.ExpectedPrice,observedAveragePrice,providerStatus,
+                market?.Quality.SpreadBps??0,market?.Quality.LiquidityScore??0,market?.Quality.AtrPercent??0,exchangeUpdatedAtUtc),ct);
         }
         catch
         {
