@@ -205,6 +205,7 @@ public sealed class PostTradeExecutionRealityLinkerV1
             null,
             null,
             null,
+            null,
             Array.Empty<byte>(),
             string.Empty);
 
