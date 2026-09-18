@@ -36,6 +36,27 @@ public sealed class StrategyResearchAuthorityTests : IDisposable
     }
 
     [Fact]
+    public async Task HistoricalResearchCannotAuthorizeWithoutForwardQualification()
+    {
+        var now=DateTimeOffset.UtcNow;
+        var store=new AgentSqliteStore(Database,()=>now);
+        var registry=new DeterministicStrategyRegistry();
+        var version=registry.BindProfileVersion(StrategyFamily.TrendBreakout,"candidate-forward-gate");
+        var profile=Profile("strategy-forward-gate",version,StrategyLifecycle.Active);
+        profile.ShadowObservations=0;
+        await store.UpsertStrategyAsync(profile,CancellationToken.None);
+        await store.SaveStrategyValidationAsync(Validation(profile,true),CancellationToken.None);
+        await store.SaveBacktestRunAsync(Backtest(profile,now.AddMinutes(-1),"PASSED"),CancellationToken.None);
+
+        var result=await new StrategyResearchAuthority(store,utcNow:()=>now)
+            .ReadAsync(profile.Id,profile.Version,profile.Symbol,CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.False(result!.Approved);
+        Assert.False(result.Promoted);
+    }
+
+    [Fact]
     public async Task SameSymbolCannotBorrowEvidenceFromDifferentStrategyVersion()
     {
         var now=DateTimeOffset.UtcNow;
