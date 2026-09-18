@@ -52,14 +52,8 @@ public sealed class CrossAssetResearchService(Func<DateTimeOffset>? utcNow = nul
     public static double CorrectedSignificanceThreshold(MultipleHypothesisEvidence evidence)
     {
         ArgumentNullException.ThrowIfNull(evidence);
-        if (evidence.TrialCount < 1 || evidence.NominalAlpha is <= 0 or >= 1 || evidence.TrialPValues.Count != evidence.TrialCount) return 0;
-        return evidence.CorrectionMethod switch
-        {
-            MultipleTestingCorrectionMethod.Bonferroni => evidence.NominalAlpha / evidence.TrialCount,
-            MultipleTestingCorrectionMethod.Conservative => evidence.NominalAlpha / (2 * evidence.TrialCount),
-            MultipleTestingCorrectionMethod.BenjaminiHochberg => BenjaminiHochbergCutoff(evidence.TrialPValues, evidence.NominalAlpha),
-            _ => 0
-        };
+        if(evidence.TrialCount<1||evidence.TrialPValues.Count!=evidence.TrialCount)return 0;
+        return ResearchMultipleTestingV1.CorrectedThreshold(evidence.CorrectionMethod,evidence.NominalAlpha,evidence.TrialPValues);
     }
 
     public CrossAssetResearchResult Evaluate(CrossAssetResearchRequest request)
@@ -204,14 +198,6 @@ public sealed class CrossAssetResearchService(Func<DateTimeOffset>? utcNow = nul
         var threshold = CorrectedSignificanceThreshold(evidence);
         if (threshold <= 0 || evidence.TrialPValues[evidence.SelectedTrialIndex] > threshold)
             reasons.Add("research.multiple-testing-threshold-not-met");
-    }
-
-    private static double BenjaminiHochbergCutoff(IReadOnlyList<double> pValues, double alpha)
-    {
-        var ordered = pValues.Order().ToArray();
-        var cutoff = 0d;
-        for (var i = 0; i < ordered.Length; i++) if (ordered[i] <= alpha * (i + 1) / ordered.Length) cutoff = ordered[i];
-        return cutoff;
     }
 
     private static bool ObservationsMatchSession(IReadOnlyList<CrossAssetResearchObservation> observations, TradingSessionDefinition session)
