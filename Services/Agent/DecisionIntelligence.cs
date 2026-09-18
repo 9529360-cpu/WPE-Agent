@@ -115,6 +115,7 @@ public sealed class DecisionGovernanceSkill
         if(assessment is{EntryReady:false}&&riskIncreasing)blocks.AddRange(assessment.MissingConditions);
         if(assessment is not null&&riskIncreasing)
         {
+            if(!string.Equals(proposed.StrategyId,assessment.StrategyId,StringComparison.Ordinal)||!string.Equals(proposed.StrategyVersion,assessment.StrategyVersion,StringComparison.Ordinal))blocks.Add("strategy.assessment-identity-conflict");
             var wantsLong=proposed.Action is DecisionAction.OpenLong or DecisionAction.AddLong or DecisionAction.ReverseToLong;
             var wantsShort=proposed.Action is DecisionAction.OpenShort or DecisionAction.AddShort or DecisionAction.ReverseToShort;
             if((wantsLong&&assessment.NetScore<0)||(wantsShort&&assessment.NetScore>0))blocks.Add(L("Review.DirectionConflict"));
