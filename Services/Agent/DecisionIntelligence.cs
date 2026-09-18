@@ -22,11 +22,12 @@ public sealed class SignalAggregationSkill
         ArgumentNullException.ThrowIfNull(evidence);ArgumentNullException.ThrowIfNull(policy);
         if(evaluationTimeUtc==default||evaluationTimeUtc.Offset!=TimeSpan.Zero)throw new ArgumentException("Signal evaluation time must be an explicit UTC instant.",nameof(evaluationTimeUtc));
         if(evidence.Markets is null)throw new ArgumentException("Market evidence collection is required.",nameof(evidence));
-        return evidence.Markets.Values.Select(m=>m is null?InvalidMarket(null):AnalyzeMarket(m,evidence.Completeness,policy,evaluationTimeUtc,localSignals?.GetValueOrDefault(m.Symbol)))
+        var requireStrategyBinding=localSignals is not null;
+        return evidence.Markets.Values.Select(m=>m is null?InvalidMarket(null):AnalyzeMarket(m,evidence.Completeness,policy,evaluationTimeUtc,localSignals?.GetValueOrDefault(m.Symbol),requireStrategyBinding))
             .OrderByDescending(Quality).ThenBy(x=>x.Symbol,StringComparer.Ordinal).ToArray();
     }
 
-    private static MarketDecisionAssessment AnalyzeMarket(MarketEvidence market,int completeness,DecisionPolicy policy,DateTimeOffset evaluationTimeUtc,StrategySignal? localSignal)
+    private static MarketDecisionAssessment AnalyzeMarket(MarketEvidence market,int completeness,DecisionPolicy policy,DateTimeOffset evaluationTimeUtc,StrategySignal? localSignal,bool requireStrategyBinding)
     {
         if(!ValidMarket(market))return InvalidMarket(market?.Symbol);
         var signals=new List<SignalContribution>();
@@ -40,7 +41,9 @@ public sealed class SignalAggregationSkill
         Add("basis","derivatives",(double)market.Derivatives.Basis,.03,.003);
         Add("order_book","microstructure",market.Quality.OrderBookImbalance,.06,.35);
             Add("relative_volume","volume",Math.Sign(market.Trend15m)*Math.Max(0,market.Quality.RelativeVolume-1),.04,1);
-            if(localSignal is not null) Add("local_strategy","strategy",localSignal.Direction*localSignal.Confidence,.20,1);
+        var localIdentityValid=localSignal is not null&&localSignal.Direction is -1 or 1&&double.IsFinite(localSignal.Confidence)&&localSignal.Confidence is >=0 and <=1&&
+            string.Equals(localSignal.Symbol,market.Symbol,StringComparison.Ordinal)&&!string.IsNullOrWhiteSpace(localSignal.StrategyId)&&!string.IsNullOrWhiteSpace(localSignal.StrategyVersion);
+        if(localIdentityValid)Add("local_strategy","strategy",localSignal!.Direction*localSignal.Confidence,.20,1);
 
         var positive=signals.Where(x=>x.WeightedScore>0).Sum(x=>x.WeightedScore);
         var negative=-signals.Where(x=>x.WeightedScore<0).Sum(x=>x.WeightedScore);
@@ -53,6 +56,8 @@ public sealed class SignalAggregationSkill
         var confidence=Math.Clamp((Math.Abs(score)*.72+agreement*.28)*(completeness/100d)*(market.Quality.QualityScore/100d)*(fresh?1:.25),0,1);
         var regime=DetectRegime(market);
         var missing=new List<string>();
+        if(requireStrategyBinding&&!localIdentityValid)missing.Add("strategy.active-signal-required");
+        if(requireStrategyBinding&&localIdentityValid&&((score>0&&localSignal!.Direction<0)||(score<0&&localSignal!.Direction>0)))missing.Add("strategy.direction-conflict");
         if(!fresh)missing.Add(L("Decision.Stale",policy.MaximumEvidenceAgeMinutes));
         if(completeness<policy.MinimumEvidenceCompleteness)missing.Add(L("Decision.Completeness",policy.MinimumEvidenceCompleteness));
         if(Math.Abs(score)<policy.MinimumDirectionalScore)missing.Add(L("Decision.Score",policy.MinimumDirectionalScore,score));
@@ -62,7 +67,7 @@ public sealed class SignalAggregationSkill
         var entryReady=missing.Count==0;
         var action=entryReady?(score>0?DecisionAction.OpenLong:DecisionAction.OpenShort):DecisionAction.Hold;
         var summary=L("Decision.Summary",market.Symbol,regime,score,confidence,conflict,L(entryReady?"Decision.Ready":"Decision.Waiting"));
-        return new(){Symbol=market.Symbol,Regime=regime,NetScore=score,Confidence=confidence,ConflictRatio=conflict,Fresh=fresh,EntryReady=entryReady,RecommendedAction=action,Signals=signals,MissingConditions=missing,Summary=summary};
+        return new(){Symbol=market.Symbol,StrategyId=localIdentityValid?localSignal!.StrategyId:string.Empty,StrategyVersion=localIdentityValid?localSignal!.StrategyVersion:string.Empty,Regime=regime,NetScore=score,Confidence=confidence,ConflictRatio=conflict,Fresh=fresh,EntryReady=entryReady,RecommendedAction=action,Signals=signals,MissingConditions=missing,Summary=summary};
 
         void Add(string name,string horizon,double raw,double weight,double scale)
         {
