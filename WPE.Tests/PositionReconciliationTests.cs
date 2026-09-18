@@ -50,11 +50,13 @@ public sealed class PositionReconciliationTests : IDisposable
         await store.RecordExecutionAsync("cycle-open",open,Order(open,"FILLED",1m),"v1",default);
         await store.AppendExecutionDriftObservationAsync(new(
             "cycle-open",open.ClientOrderId,ExecutionDriftPhaseV1.ExecutionRecorded,ExecutionDriftSourceV1.Exchange,
-            open.Symbol,open.Side,open.ReduceOnly,open.Quantity,1m,open.ExpectedPrice,100m,"FILLED",Now),default);
+            "local","Testnet",open.Symbol,open.Side,open.ReduceOnly,open.OrderType,open.Quantity,open.LimitPrice,
+            1m,open.ExpectedPrice,100m,"FILLED",0,0,0,Now),default);
         await store.RecordExecutionAsync("cycle-close",close,Order(close,"FILLED",.25m),"v1",default);
         await store.AppendExecutionDriftObservationAsync(new(
             "cycle-close",close.ClientOrderId,ExecutionDriftPhaseV1.ExecutionRecorded,ExecutionDriftSourceV1.Exchange,
-            close.Symbol,close.Side,close.ReduceOnly,close.Quantity,.25m,close.ExpectedPrice,100m,"FILLED",Now),default);
+            "local","Testnet",close.Symbol,close.Side,close.ReduceOnly,close.OrderType,close.Quantity,close.LimitPrice,
+            .25m,close.ExpectedPrice,100m,"FILLED",0,0,0,Now),default);
 
         var snapshot=await store.GetExecutionPositionLedgerSnapshotAsync(default);
         Assert.True(ExecutionPositionLedgerSnapshotCanonicalizerV1.IsCanonical(snapshot));
