@@ -92,6 +92,22 @@ public sealed class StrategyProfile
     public string LastReason { get; set; } = string.Empty;
 }
 
+public sealed record StrategyParameterSearchEvidence(
+    int TrialCount,
+    int SelectedTrialIndex,
+    string SearchSpaceHash,
+    string SelectionDatasetHash,
+    string HoldoutDatasetHash,
+    bool HoldoutUntouched,
+    bool HoldoutUsedForSelection,
+    int HoldoutEvaluationCount,
+    string TestMethod,
+    string CorrectionMethod,
+    double NominalAlpha,
+    double SelectedTrialPValue,
+    double CorrectedSignificanceThreshold,
+    string SelectionRule);
+
 public sealed record StrategyValidation(
     string StrategyId,
     int SampleSize,
@@ -114,7 +130,8 @@ public sealed record StrategyValidation(
     string StrategyVersion = "",
     int OutOfSampleTrades = 0,
     double StrategyReturn = 0,
-    double BenchmarkReturn = 0);
+    double BenchmarkReturn = 0,
+    StrategyParameterSearchEvidence? ParameterSearch = null);
 
 public sealed record StrategyResearchSnapshot(
     string Status,
