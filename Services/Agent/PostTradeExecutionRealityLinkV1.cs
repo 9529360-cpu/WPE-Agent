@@ -1,4 +1,5 @@
 using System.IO;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -137,8 +138,7 @@ public sealed class PostTradeExecutionRealityLinkerV1
         && fact.ExecutedQuantity == review.Quantity
         && fact.AveragePrice == review.ExitPrice;
 
-    private static string ExecutionKey(ExecutionRealityDriftFactV1 fact) => string.Join(
-        "\u001f",
+    private static string ExecutionKey(ExecutionRealityDriftFactV1 fact) => Key(
         fact.CorrelationId,
         fact.ClientOrderId,
         fact.StrategyId,
@@ -159,14 +159,23 @@ public sealed class PostTradeExecutionRealityLinkerV1
         fact.ExpectedSlippageBps,
         fact.SlippageDriftBps);
 
-    private static string FeeKey(ExecutionRealityDriftFactV1 fact) => string.Join(
-        "\u001f",
+    private static string FeeKey(ExecutionRealityDriftFactV1 fact) => Key(
         fact.ObservedFee,
         fact.FeeBasis,
         fact.ObservedFeeRateBps,
         fact.ExpectedCommissionBps,
         fact.FeeDriftBps,
         fact.TotalExecutionDriftBps);
+
+    private static string Key(params object?[] values) => string.Join(
+        "\u001f",
+        values.Select(value => value switch
+        {
+            null => string.Empty,
+            decimal number => number.ToString(CultureInfo.InvariantCulture),
+            bool flag => flag ? "1" : "0",
+            _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty
+        }));
 
     private static PostTradeExecutionRealityLinkV1 Draft(
         PostTradeReviewV1 review,
