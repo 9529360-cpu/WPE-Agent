@@ -186,6 +186,14 @@ internal static class ExecutionPositionDriftReconciliationCanonicalizerV1
            ||!ExecutionPositionLedgerSnapshotCanonicalizerV1.Sha(value.PositionReportSha256)
            ||!ExecutionPositionLedgerSnapshotCanonicalizerV1.Sha(value.ExecutionTraceSha256)
            ||!ExecutionPositionLedgerSnapshotCanonicalizerV1.Sha(value.DriftTraceSha256)
+           ||value.PositionReportId!="position-reconciliation:"+value.PositionReportSha256
+           ||value.LinkedAtUtc.Offset!=TimeSpan.Zero
+           ||value.AllowsRiskIncrease!=(value.PositionState==PositionReconciliationStateV1.Confirmed)
+           ||value.ExecutionEventCount<0||value.DriftObservationCount<0||value.DriftTrackedExecutionCount<0
+           ||value.DriftTrackedExecutionCount>value.ExecutionEventCount
+           ||value.DriftCoverageComplete&&(!value.DriftIntegrityValid||value.ExecutionEventCount==0||value.DriftTrackedExecutionCount!=value.ExecutionEventCount)
+           ||value.Calibratable!=(value.DriftIntegrityValid&&value.DriftCoverageComplete&&value.PositionState==PositionReconciliationStateV1.Confirmed&&value.ExecutionEventCount>0)
+           ||value.Legs.Any(x=>string.IsNullOrWhiteSpace(x.Symbol)||x.LocalQuantity<0||x.ExchangeQuantity<0||x.QuantityDrift!=x.ExchangeQuantity-x.LocalQuantity)
            ||value.CanonicalBytes is null)return false;
         try
         {
@@ -287,8 +295,10 @@ public sealed partial class AgentSqliteStore
                 if(!decimal.TryParse(r.GetString(5),NumberStyles.Number,CultureInfo.InvariantCulture,out var quantity)||quantity<0
                    ||!Enum.TryParse<PositionSide>(r.GetString(3),true,out var side))
                     throw new InvalidOperationException("Execution position ledger row is invalid.");
-                var row=new ExecutionPositionEventRow(r.GetInt64(0),r.GetString(1),r.GetString(2),side,r.GetInt32(4)==1,quantity,
-                    r.GetString(6),r.GetString(7),r.IsDBNull(8)?null:r.GetString(8));
+                var id=r.GetInt64(0);var clientOrderId=r.IsDBNull(1)?$"legacy-event:{id}":r.GetString(1);
+                if(r.IsDBNull(1))driftIntegrity=false;
+                var row=new ExecutionPositionEventRow(id,clientOrderId,r.GetString(2),side,r.GetInt32(4)==1,quantity,
+                    r.GetString(6),r.IsDBNull(7)?"unknown":r.GetString(7),r.IsDBNull(8)?null:r.GetString(8));
                 events.Add(row);
                 var key=(row.Symbol,row.Side);totals[key]=totals.GetValueOrDefault(key)+(row.ReduceOnly?-row.Quantity:row.Quantity);
             }
