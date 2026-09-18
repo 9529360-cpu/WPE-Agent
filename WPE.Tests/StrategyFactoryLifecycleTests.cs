@@ -56,6 +56,33 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
     }
 
     [Fact]
+    public async Task ActiveHistoricalRevalidationDoesNotOverwriteForwardPerformanceProjection()
+    {
+        var now=DateTime.UtcNow;
+        var store=new AgentSqliteStore(DatabasePath,()=>new DateTimeOffset(now));
+        var registry=new DeterministicStrategyRegistry();
+        var parameters=LocalStrategyParameters.For(StrategyFamily.TrendBreakout,0);
+        var profile=new StrategyProfile
+        {
+            Id="forward-owned-active",Version=registry.BindProfileVersion(StrategyFamily.TrendBreakout,"forward-owned"),
+            Symbol="BTCUSDT",Family=StrategyFamily.TrendBreakout,Parameters=parameters,ParametersHash=LocalStrategyParameters.Hash(parameters),
+            Lifecycle=StrategyLifecycle.Active,QualityScore=.83,Expectancy=.012,MaxDrawdown=.07,FailureStreak=0,
+            ShadowObservations=StrategyGovernor.MinimumShadowObservations,ValidationTrades=80
+        };
+        await store.UpsertStrategyAsync(profile,CancellationToken.None);
+
+        await new StrategyResearchAgent(store,utcNow:()=>now).RunOnceAsync(["BTCUSDT"],new RiskLimits(),CancellationToken.None);
+
+        var restored=Assert.Single(await store.GetStrategiesAsync(CancellationToken.None),x=>x.Id==profile.Id);
+        Assert.Equal(StrategyLifecycle.Active,restored.Lifecycle);
+        Assert.Equal(.83,restored.QualityScore,10);
+        Assert.Equal(.012,restored.Expectancy,10);
+        Assert.Equal(.07,restored.MaxDrawdown,10);
+        Assert.Equal(0,restored.FailureStreak);
+        Assert.Equal(StrategyGovernor.MinimumShadowObservations,restored.ShadowObservations);
+    }
+
+    [Fact]
     public void RetiredBuiltInStrategyCannotBeSelectedAsActiveFallback()
     {
         var retired=new StrategyProfile{Id="retired-built-in",Symbol="BTCUSDT",BuiltIn=true,Lifecycle=StrategyLifecycle.Retired,QualityScore=1,Expectancy=1};
