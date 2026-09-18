@@ -5,6 +5,8 @@ using System.Security.Cryptography;
 namespace 币安量化机器人.Services.Agent;
 
 public sealed record ExecutionRealityDriftPersistenceResultV1(bool Succeeded, bool Idempotent, string Code);
+public sealed record ExecutionRealityAttributionV1(string? StrategyId, string StrategyVersion, string Basis);
+public sealed record ExecutionRealityFeeObservationV1(bool Available, decimal FeeAmount, string Code);
 
 public sealed record ExecutionRealityDriftSummaryV1(
     string StrategyId,
@@ -169,6 +171,68 @@ public sealed partial class AgentSqliteStore
         return values.Count == 0
             ? null
             : ExecutionRealityCalibrationV1.Create(strategyId, strategyVersion, costModelVersion, values);
+    }
+
+    public async Task<ExecutionRealityAttributionV1> GetExecutionRealityAttributionAsync(
+        string correlationId,
+        string fallbackStrategyVersion,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(correlationId)) throw new ArgumentException("Correlation id is required.", nameof(correlationId));
+        if (string.IsNullOrWhiteSpace(fallbackStrategyVersion)) throw new ArgumentException("Fallback strategy version is required.", nameof(fallbackStrategyVersion));
+        var attribution = await ResolvePostTradeAttributionAsync(correlationId, fallbackStrategyVersion, ct);
+        return new(attribution.StrategyId, attribution.StrategyVersion, attribution.Basis);
+    }
+
+    public async Task<ExecutionRealityFeeObservationV1> GetExecutionRealityFeeObservationAsync(
+        string clientOrderId,
+        decimal executedQuantity,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(clientOrderId)) throw new ArgumentException("Client order id is required.", nameof(clientOrderId));
+        if (executedQuantity <= 0) return new(false, 0, "no-executed-quantity");
+
+        await using var connection = new SqliteConnection(_cs);
+        await connection.OpenAsync(ct);
+        await using var query = connection.CreateCommand();
+        query.CommandText = """
+            SELECT schema,provider_id,environment,symbol,order_id,client_order_id,fill_count,executed_quantity,
+                   fee_amount,fee_asset,observed_at,state,canonical_sha256,canonical_bytes
+            FROM exchange_order_fee_evidence
+            WHERE client_order_id=$client
+            ORDER BY observed_at DESC,rowid DESC
+            LIMIT 1;
+            """;
+        query.Parameters.AddWithValue("$client", clientOrderId);
+        await using var reader = await query.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return new(false, 0, "fee-evidence-unavailable");
+
+        var evidence = new ExchangeOrderFeeEvidenceV1(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.GetString(4),
+            reader.GetString(5),
+            reader.GetInt32(6),
+            RealityDecimal(reader.GetString(7)),
+            RealityDecimal(reader.GetString(8)),
+            reader.GetString(9),
+            DateTimeOffset.Parse(reader.GetString(10), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+            Enum.Parse<ExchangeOrderFeeEvidenceStateV1>(reader.GetString(11), false),
+            reader.GetString(12),
+            (byte[])reader[13]);
+
+        if (!ExchangeOrderFeeEvidenceCanonicalizerV1.IsCanonical(evidence))
+            throw new InvalidOperationException("Persisted exchange fee evidence failed canonical verification.");
+        if (evidence.State != ExchangeOrderFeeEvidenceStateV1.Confirmed)
+            return new(false, 0, "fee-evidence-" + evidence.State.ToString().ToLowerInvariant());
+        if (evidence.ExecutedQuantity != executedQuantity)
+            return new(false, 0, "fee-evidence-quantity-mismatch");
+        if (!string.Equals(evidence.FeeAsset, "USDT", StringComparison.OrdinalIgnoreCase))
+            return new(false, 0, "fee-evidence-non-usdt");
+
+        return new(true, evidence.FeeAmount, "exchange-reported-usdt");
     }
 
     private static async Task EnsureExecutionRealityDriftStorageAsync(SqliteConnection connection, CancellationToken ct)
