@@ -231,7 +231,7 @@ public static class ExecutionRealityDriftV1
             ExecutionRealityStateV1.NotFilled => "terminal-no-fill",
             _ => "unknown-status"
         };
-        return state is ExecutionRealityStateV1.Filled or ExecutionRealityStateV1.Partial && !feeComparable
+        return (state is ExecutionRealityStateV1.Filled or ExecutionRealityStateV1.Partial) && !feeComparable
             ? reason + "-fee-unavailable"
             : reason;
     }
