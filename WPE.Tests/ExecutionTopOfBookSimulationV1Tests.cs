@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using WpeAgent.TradingAuthorization;
 using 币安量化机器人.Services.Agent;
+using 币安量化机器人.Services.Exchange;
 
 namespace WPE.Tests;
 
