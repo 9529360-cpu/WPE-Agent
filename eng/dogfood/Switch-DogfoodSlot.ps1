@@ -60,46 +60,80 @@ if((Is-Inside $operator $CandidateRoot) -or (Is-Inside $operator $LastKnownGoodR
     throw 'operator.root-inside-immutable-candidate'
 }
 
-$test=Join-Path $PSScriptRoot 'Test-DogfoodRelease.ps1'
-$result=& $test -CandidateRoot $CandidateRoot -LastKnownGoodRoot $LastKnownGoodRoot -ProviderReadOnly -RequireTrustedRuntimeFresh -VerifyInstall -VerifyStartup -VerifyRestartRecovery -VerifyRollback -RejectMainnet -ExpectedCandidateManifestHash $ExpectedCandidateManifestHash -ExpectedLastKnownGoodManifestHash $ExpectedLastKnownGoodManifestHash -TrustedRuntimeProofPath $TrustedRuntimeProofPath -ExpectedTrustedRuntimeProofHash $ExpectedTrustedRuntimeProofHash -ExpectedRuntimeProofId $ExpectedRuntimeProofId -ExpectedRuntimeSourceIdentity $ExpectedRuntimeSourceIdentity -ExpectedEvidenceGateRefs $ExpectedEvidenceGateRefs -SoakEvidencePath $SoakEvidencePath -ExpectedSoakEvidenceHash $ExpectedSoakEvidenceHash -MinimumSoakDurationMinutes $MinimumSoakDurationMinutes
-if(-not $result.Valid){
-    throw 'candidate.validation-failed'
-}
-
 New-Item -ItemType Directory -Path $operator -Force | Out-Null
 $operator=Resolve-OperatorRoot $operator
 $current=Join-Path $operator 'current.json'
 $temporary=Join-Path $operator ('.current.'+[Guid]::NewGuid().ToString('N')+'.tmp')
+$lockPath=Join-Path $operator 'switch.lock'
 
-if(Test-Path -LiteralPath $current){
-    $currentItem=Get-Item -LiteralPath $current -Force
-    if(($currentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
-        throw 'operator.current-reparse-forbidden'
+if(Test-Path -LiteralPath $lockPath){
+    $lockItem=Get-Item -LiteralPath $lockPath -Force
+    if(($lockItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+        throw 'operator.lock-reparse-forbidden'
     }
 }
 
-$previous=$null
-if(Test-Path -LiteralPath $current){
-    $previous=Get-Content -Raw -LiteralPath $current | ConvertFrom-Json
-}
-if($previous -and $previous.root -ne [IO.Path]::GetFullPath($LastKnownGoodRoot)){
-    throw 'lkg.does-not-match-current'
-}
-
-$pointer=[ordered]@{
-    root=[IO.Path]::GetFullPath($CandidateRoot)
-    manifestSha256=$result.CandidateManifestHash
-    soakEvidenceSha256=$result.SoakEvidenceSha256
-    switchedUtc=[DateTimeOffset]::UtcNow.ToString('O')
-    previousRoot=[IO.Path]::GetFullPath($LastKnownGoodRoot)
-}
+$lockStream=$null
 try{
-    $pointer | ConvertTo-Json | Set-Content -LiteralPath $temporary -Encoding utf8
-    Move-Item -LiteralPath $temporary -Destination $current -Force
+    try{
+        $lockStream=[IO.FileStream]::new(
+            $lockPath,
+            [IO.FileMode]::OpenOrCreate,
+            [IO.FileAccess]::ReadWrite,
+            [IO.FileShare]::None)
+    }catch [IO.IOException]{
+        throw 'operator.switch-in-progress'
+    }
+
+    $test=Join-Path $PSScriptRoot 'Test-DogfoodRelease.ps1'
+    $result=& $test -CandidateRoot $CandidateRoot -LastKnownGoodRoot $LastKnownGoodRoot -ProviderReadOnly -RequireTrustedRuntimeFresh -VerifyInstall -VerifyStartup -VerifyRestartRecovery -VerifyRollback -RejectMainnet -ExpectedCandidateManifestHash $ExpectedCandidateManifestHash -ExpectedLastKnownGoodManifestHash $ExpectedLastKnownGoodManifestHash -TrustedRuntimeProofPath $TrustedRuntimeProofPath -ExpectedTrustedRuntimeProofHash $ExpectedTrustedRuntimeProofHash -ExpectedRuntimeProofId $ExpectedRuntimeProofId -ExpectedRuntimeSourceIdentity $ExpectedRuntimeSourceIdentity -ExpectedEvidenceGateRefs $ExpectedEvidenceGateRefs -SoakEvidencePath $SoakEvidencePath -ExpectedSoakEvidenceHash $ExpectedSoakEvidenceHash -MinimumSoakDurationMinutes $MinimumSoakDurationMinutes
+    if(-not $result.Valid){
+        throw 'candidate.validation-failed'
+    }
+
+    if(Test-Path -LiteralPath $current){
+        $currentItem=Get-Item -LiteralPath $current -Force
+        if(($currentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+            throw 'operator.current-reparse-forbidden'
+        }
+    }
+
+    $previous=$null
+    if(Test-Path -LiteralPath $current){
+        $previous=Get-Content -Raw -LiteralPath $current | ConvertFrom-Json
+    }
+    if($previous -and $previous.root -ne [IO.Path]::GetFullPath($LastKnownGoodRoot)){
+        throw 'lkg.does-not-match-current'
+    }
+
+    $pointer=[ordered]@{
+        root=[IO.Path]::GetFullPath($CandidateRoot)
+        manifestSha256=$result.CandidateManifestHash
+        soakEvidenceSha256=$result.SoakEvidenceSha256
+        switchedUtc=[DateTimeOffset]::UtcNow.ToString('O')
+        previousRoot=[IO.Path]::GetFullPath($LastKnownGoodRoot)
+    }
+
+    $pointerJson=$pointer | ConvertTo-Json
+    $pointerBytes=[Text.UTF8Encoding]::new($false).GetBytes($pointerJson)
+    $pointerStream=$null
+    try{
+        $pointerStream=[IO.FileStream]::new(
+            $temporary,
+            [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::Write,
+            [IO.FileShare]::None)
+        $pointerStream.Write($pointerBytes,0,$pointerBytes.Length)
+        $pointerStream.Flush($true)
+    }finally{
+        if($null -ne $pointerStream){$pointerStream.Dispose()}
+    }
+    [IO.File]::Move($temporary,$current,$true)
 }finally{
     if(Test-Path -LiteralPath $temporary){
         Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
     }
+    if($null -ne $lockStream){$lockStream.Dispose()}
 }
 
 $result
