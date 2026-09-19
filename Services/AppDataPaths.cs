@@ -74,6 +74,8 @@ public static class DataRootPathPolicy
             if (OperatingSystem.IsWindows() &&
                 new DriveInfo(root).DriveType != DriveType.Fixed)
                 return false;
+            if (ContainsExistingReparsePoint(full, root))
+                return false;
 
             normalized = string.Equals(
                 full,
@@ -94,6 +96,37 @@ public static class DataRootPathPolicy
         {
             return false;
         }
+    }
+
+    private static bool ContainsExistingReparsePoint(string full, string root)
+    {
+        var rootFull = Path.GetFullPath(root).TrimEnd(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar);
+        var current = Path.GetFullPath(full).TrimEnd(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar);
+
+        while (!string.IsNullOrWhiteSpace(current) &&
+               current.Length >= rootFull.Length)
+        {
+            if ((Directory.Exists(current) || File.Exists(current)) &&
+                (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                return true;
+
+            if (string.Equals(current, rootFull, StringComparison.OrdinalIgnoreCase))
+                break;
+
+            var parent = Path.GetDirectoryName(current);
+            if (string.IsNullOrWhiteSpace(parent) ||
+                string.Equals(parent, current, StringComparison.OrdinalIgnoreCase))
+                break;
+            current = parent.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+        }
+
+        return false;
     }
 }
 
