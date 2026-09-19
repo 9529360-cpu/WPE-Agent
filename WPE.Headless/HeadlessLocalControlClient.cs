@@ -67,6 +67,10 @@ public static class HeadlessLocalControlClient
         {
             return WriteFailure("control.unavailable", ControlUnavailableExitCode);
         }
+        catch (InvalidDataException)
+        {
+            return WriteFailure("control.response-invalid", ControlUnavailableExitCode);
+        }
         catch (JsonException)
         {
             return WriteFailure("control.response-invalid", ControlUnavailableExitCode);
