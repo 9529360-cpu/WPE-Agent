@@ -79,10 +79,40 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
         Assert.Equal(RuntimeCollectionState.Available,reviews.State);
         var review=Assert.Single(reviews.Items);
         Assert.Equal("wpe.post-trade-review/1.4",review.Schema);Assert.Equal("trend-alpha",review.StrategyId);Assert.Equal("2.1.0",review.StrategyVersion);Assert.Equal("automatic-artifact",review.AttributionBasis);
+        Assert.Matches("^trade#[A-F0-9]{12}$",review.TraceId);Assert.Equal("legacy",review.TraceState);Assert.Equal("Unavailable",review.RiskDecision);Assert.Equal("Unavailable",review.ExecutionStatus);Assert.Equal("trace.execution-unavailable",review.ExecutionCode);Assert.Null(review.ExecutionAttempts);
         Assert.Equal(.05m,review.Fees);Assert.Equal(1.25m,review.FundingAmount);Assert.Equal(.30m,review.TotalSlippageAmount);Assert.Equal(11.20m,review.NetPnl);Assert.Equal("win",review.Outcome);
+        var reviewJson=System.Text.Json.JsonSerializer.Serialize(reviews);Assert.DoesNotContain("close-1",reviewJson,StringComparison.Ordinal);Assert.DoesNotContain("cycle-1",reviewJson,StringComparison.Ordinal);
         Assert.Equal(RuntimeCollectionState.Available,reconciliations.State);Assert.Equal(3,reconciliations.Items.Count);Assert.All(reconciliations.Items,item=>Assert.True(item.AllowsRiskIncrease));
         Assert.Equal(new[]{"externalIsolation","position","protection"},reconciliations.Items.Select(item=>item.Kind).OrderBy(value=>value,StringComparer.Ordinal).ToArray());
         var json=System.Text.Json.JsonSerializer.Serialize(reconciliations);Assert.DoesNotContain("canonical_bytes",json,StringComparison.OrdinalIgnoreCase);Assert.DoesNotContain("AQ==",json,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PostTradeTraceCorrelatesRiskAndExecutionWithoutExposingRawIdentifiers()
+    {
+        await InitializeAsync();
+        const string cycle="cycle-trace-secret";const string execution="execution-trace-secret";
+        await ExecuteAsync("INSERT INTO trade_outcomes(client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,fees,fee_basis,fee_rate,entry_slippage_amount,exit_slippage_amount,total_slippage_amount,slippage_basis,funding_amount,funding_basis,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis) VALUES('close-trace',$cycle,'ETHUSDT','Short','200','190','2','.20','exchange-reported-usdt','0','-.10','.15','.05','intent-expected-vs-fill','-.40','exchange-reported-window','19.40','.0485',$t,'mean-reversion-eth','3.0.0','automatic-artifact')",("$cycle",cycle),("$t",Now.ToString("O")));
+        await ExecuteAsync("INSERT INTO automatic_execution_queue(execution_id,correlation_id,status,last_code,attempt_count,market_collected_at,market_data_version,updated_at) VALUES($id,$cycle,'Succeeded','automatic.succeeded',1,$market,'provider-market-v1',$now)",("$id",execution),("$cycle",cycle),("$market",Now.AddSeconds(-20).ToString("O")),("$now",Now.ToString("O")));
+        await ExecuteAsync("INSERT INTO automatic_execution_events(execution_id,sequence,occurred_at,from_status,to_status,event_code,actor_kind) VALUES($id,1,$t,'Proposed','RiskApproved','automatic.risk-approved','risk')",("$id",execution),("$t",Now.AddSeconds(-10).ToString("O")));
+
+        var review=Assert.Single((await new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now).ReadPostTradeReviewsAsync(new())).Items);
+
+        Assert.Matches("^trade#[A-F0-9]{12}$",review.TraceId);Assert.Equal("available",review.TraceState);Assert.Equal("Approved",review.RiskDecision);Assert.Equal("Succeeded",review.ExecutionStatus);Assert.Equal("automatic.succeeded",review.ExecutionCode);Assert.Equal(1,review.ExecutionAttempts);Assert.Equal("provider-market-v1",review.MarketDataVersion);Assert.NotNull(review.MarketCollectedAtUtc);
+        var json=System.Text.Json.JsonSerializer.Serialize(review);Assert.DoesNotContain(cycle,json,StringComparison.Ordinal);Assert.DoesNotContain(execution,json,StringComparison.Ordinal);Assert.DoesNotContain("close-trace",json,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AmbiguousExecutionCorrelationNeverGuessesATrace()
+    {
+        await InitializeAsync();
+        const string cycle="cycle-ambiguous";
+        await ExecuteAsync("INSERT INTO trade_outcomes(client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,fees,fee_basis,fee_rate,entry_slippage_amount,exit_slippage_amount,total_slippage_amount,slippage_basis,funding_amount,funding_basis,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis) VALUES('close-ambiguous',$cycle,'BTCUSDT','Long','100','101','1','.01','estimated-static-rate','.0004','0','0','0','unavailable','0','unavailable','.99','.0099',$t,NULL,'legacy-v1','conflicting-correlation')",("$cycle",cycle),("$t",Now.ToString("O")));
+        foreach(var execution in new[]{"execution-a","execution-b"})await ExecuteAsync("INSERT INTO automatic_execution_queue(execution_id,correlation_id,status,last_code,attempt_count,market_collected_at,market_data_version,updated_at) VALUES($id,$cycle,'Succeeded','automatic.succeeded',1,$t,'market-v1',$t)",("$id",execution),("$cycle",cycle),("$t",Now.ToString("O")));
+
+        var review=Assert.Single((await new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now).ReadPostTradeReviewsAsync(new())).Items);
+
+        Assert.Equal("ambiguous",review.TraceState);Assert.Equal("Ambiguous",review.RiskDecision);Assert.Equal("Ambiguous",review.ExecutionStatus);Assert.Equal("trace.multiple-executions",review.ExecutionCode);Assert.Null(review.ExecutionAttempts);Assert.Null(review.MarketCollectedAtUtc);Assert.Null(review.MarketDataVersion);
     }
 
     [Fact]
@@ -110,6 +140,8 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
         CREATE TABLE backtest_runs(id TEXT PRIMARY KEY,strategy_id TEXT,strategy_version TEXT,symbol TEXT,status TEXT,completed_at TEXT,coverage_days INTEGER,trades INTEGER,out_of_sample_return REAL,max_drawdown REAL,sharpe REAL);
         CREATE TABLE runtime_events(event_id TEXT,sequence INTEGER,correlation_id TEXT,event_type TEXT,source TEXT,payload_json TEXT,occurred_at TEXT);
         CREATE TABLE trade_outcomes(id INTEGER PRIMARY KEY AUTOINCREMENT,client_order_id TEXT,cycle_id TEXT,symbol TEXT,side TEXT,entry_price TEXT,exit_price TEXT,quantity TEXT,fees TEXT,fee_basis TEXT,fee_rate TEXT,entry_slippage_amount TEXT,exit_slippage_amount TEXT,total_slippage_amount TEXT,slippage_basis TEXT,funding_amount TEXT,funding_basis TEXT,net_pnl TEXT,return_pct TEXT,closed_at TEXT,strategy_id TEXT,strategy_version TEXT,attribution_basis TEXT);
+        CREATE TABLE automatic_execution_queue(execution_id TEXT PRIMARY KEY,correlation_id TEXT,status TEXT,last_code TEXT,attempt_count INTEGER,market_collected_at TEXT,market_data_version TEXT,updated_at TEXT);
+        CREATE TABLE automatic_execution_events(id INTEGER PRIMARY KEY AUTOINCREMENT,execution_id TEXT,sequence INTEGER,occurred_at TEXT,from_status TEXT,to_status TEXT,event_code TEXT,actor_kind TEXT);
         CREATE TABLE position_reconciliation_audits(report_id TEXT PRIMARY KEY,schema TEXT,observed_at TEXT,evaluated_at TEXT,state TEXT,allows_risk_increase INTEGER,canonical_sha256 TEXT,canonical_bytes BLOB);
         CREATE TABLE protection_reconciliation_audits(report_id TEXT PRIMARY KEY,schema TEXT,observed_at TEXT,evaluated_at TEXT,state TEXT,allows_risk_increase INTEGER,canonical_sha256 TEXT,canonical_bytes BLOB);
         CREATE TABLE external_position_isolation_audits(report_id TEXT PRIMARY KEY,schema TEXT,observed_at TEXT,evaluated_at TEXT,state TEXT,allows_risk_increase INTEGER,canonical_sha256 TEXT,canonical_bytes BLOB);
