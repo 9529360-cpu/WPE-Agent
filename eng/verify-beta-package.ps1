@@ -360,6 +360,7 @@ if (@($sbomComponents | Where-Object { $_.name -eq "@vercel/analytics" }).Count 
 if ($LASTEXITCODE -ne 0) { throw "Expanded package secret/source/preview scan failed." }
 
 $unknownLicenses = [int]$licenseReport.summary.noAssertion
+$packageTreeFacts = Get-ArtifactTreeFacts $packageRoot
 $verificationResult = [ordered]@{
     schemaVersion = "wpe.beta-package-verification.v1"
     status = "passed"
@@ -367,6 +368,8 @@ $verificationResult = [ordered]@{
     package = $zip
     sha256 = $zipHash
     zipBytes = [long](Get-Item -LiteralPath $zip).Length
+    packageTreeSha256 = $packageTreeFacts.TreeSha256
+    packageFileCount = $packageTreeFacts.FileCount
     payloadFiles = $manifest.Count
     sbomComponents = $sbomComponents.Count
     unknownLicenses = $unknownLicenses
