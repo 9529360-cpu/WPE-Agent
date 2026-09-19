@@ -34,9 +34,11 @@ public sealed class HeadlessWindowsServiceBoundaryTests
         Assert.Contains("candidate.StartsWith(@\"\\\\\"",appDataPaths,StringComparison.Ordinal);
 
         Assert.Contains("WindowsServiceHelpers.IsWindowsService()",worker,StringComparison.Ordinal);
-        Assert.Contains("Environment.ExitCode = exitCode;",worker,StringComparison.Ordinal);
-        Assert.Contains("Environment.Exit(exitCode);",worker,StringComparison.Ordinal);
-        Assert.Contains("applicationLifetime.StopApplication();",worker,StringComparison.Ordinal);
+        var exitCodeProjection=worker.IndexOf("Environment.ExitCode = exitCode;",StringComparison.Ordinal);
+        var stopApplication=worker.IndexOf("applicationLifetime.StopApplication();",StringComparison.Ordinal);
+        Assert.True(exitCodeProjection>=0&&stopApplication>exitCodeProjection);
+        Assert.DoesNotContain("Environment.Exit(",worker,StringComparison.Ordinal);
+        Assert.DoesNotContain("WindowsServiceHelpers",worker,StringComparison.Ordinal);
     }
 
     [Fact]
