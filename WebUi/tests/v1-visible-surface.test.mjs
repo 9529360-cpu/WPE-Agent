@@ -67,10 +67,11 @@ test('execution command center is read-only and backed by canonical host project
   const home = source('app/(dashboard)/page.tsx')
   const cockpit = source('components/dashboard/execution-cockpit.tsx')
   assert.match(home, /ExecutionCockpit/)
-  for (const field of ['positions', 'orders', 'historicalOrders', 'riskApprovalStatus', 'executionApprovalStatus', 'authorizationMode']) {
+  for (const field of ['positions', 'orders', 'historicalOrders', 'historicalPostTradeReviews', 'historicalReconciliations', 'riskApprovalStatus', 'executionApprovalStatus', 'authorizationMode']) {
     assert.match(cockpit, new RegExp(field), `missing canonical field ${field}`)
   }
   assert.match(cockpit, /READ ONLY/)
+  assert.match(cockpit, /strategy identity is attribution, not a causal performance claim/i)
   const forbiddenCockpitSurfaces = [
     /postHostCommand/,
     /\.postMessage\s*\(/,
