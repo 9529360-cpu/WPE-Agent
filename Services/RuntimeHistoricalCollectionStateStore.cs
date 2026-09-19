@@ -48,7 +48,85 @@ public sealed class RuntimeHistoricalCollectionStateStore
             "SELECT event_id,occurred_at,event_type,source,correlation_id FROM runtime_events ORDER BY occurred_at DESC,sequence DESC LIMIT $limit OFFSET $offset",
             r => new HistoricalAuditEventV1(Safe(r.GetString(0),120), Instant(r.GetString(1)), Safe(r.GetString(2),80), Safe(r.GetString(3),80), Text(r,4,120), "RECORDED"), ct);
 
-    private async Task<HistoricalCollectionPageV1<T>> ReadAsync<T>(HistoricalCollectionKindV1 kind, HistoricalCollectionRequestV1 request, string table, string timestampColumn, TimeSpan staleAfter, string sql, Func<SqliteDataReader,T> map, CancellationToken ct)
+
+    public Task<HistoricalCollectionPageV1<HistoricalPostTradeReviewV1>> ReadPostTradeReviewsAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default) =>
+        ReadAsync(HistoricalCollectionKindV1.PostTradeReviews, request, "trade_outcomes", "closed_at", null,
+            "SELECT client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,fees,fee_basis,fee_rate,entry_slippage_amount,exit_slippage_amount,total_slippage_amount,slippage_basis,funding_amount,funding_basis,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis FROM trade_outcomes WHERE client_order_id IS NOT NULL ORDER BY closed_at DESC,id DESC LIMIT $limit OFFSET $offset",
+            r => new HistoricalPostTradeReviewV1(
+                "wpe.post-trade-review/1.4",
+                Safe(r.GetString(0),120),
+                Safe(r.GetString(1),120),
+                Safe(r.GetString(2),80),
+                Safe(r.GetString(3),20),
+                Decimal(r,4),
+                Decimal(r,5),
+                Decimal(r,6),
+                Decimal(r,7),
+                Safe(r.GetString(8),80),
+                Decimal(r,9),
+                Decimal(r,10),
+                Decimal(r,11),
+                Decimal(r,12),
+                Safe(r.GetString(13),80),
+                Decimal(r,14),
+                Safe(r.GetString(15),80),
+                Decimal(r,16),
+                Decimal(r,17),
+                Decimal(r,16)>0?"win":Decimal(r,16)<0?"loss":"flat",
+                Instant(r.GetString(18)),
+                Text(r,19,120),
+                Safe(r.GetString(20),80),
+                Safe(r.GetString(21),80)), ct);
+
+    public async Task<HistoricalCollectionPageV1<HistoricalReconciliationV1>> ReadReconciliationsAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var kind=HistoricalCollectionKindV1.Reconciliations;
+        var limit=Math.Clamp(request.Limit,1,HistoricalCollectionPageV1<HistoricalReconciliationV1>.MaximumPageSize);
+        if(!TryOffset(kind,request.Cursor,out var offset))return Page<HistoricalReconciliationV1>(kind,RuntimeCollectionState.Error,[],null,null,"The collection cursor is invalid or expired.");
+        try
+        {
+            await using var connection=new SqliteConnection(_connectionString);await connection.OpenAsync(ct);
+            var sources=new List<(string Kind,string Table)>();
+            foreach(var source in new[]{("position","position_reconciliation_audits"),("protection","protection_reconciliation_audits"),("externalIsolation","external_position_isolation_audits")})
+                if(await TableExists(connection,source.Item2,ct))sources.Add(source);
+            if(sources.Count==0)return Page<HistoricalReconciliationV1>(kind,RuntimeCollectionState.Unsupported,[],null,null,"The SQLite reconciliation audit collections are not available.");
+
+            DateTimeOffset? updatedAt=null;
+            foreach(var source in sources)
+            {
+                var latest=await Latest(connection,source.Table,"evaluated_at",ct);
+                if(latest is not null&&(updatedAt is null||latest>updatedAt))updatedAt=latest;
+            }
+
+            var union=string.Join(" UNION ALL ",sources.Select(source=>$"SELECT '{source.Kind}' AS kind,report_id,schema,observed_at,evaluated_at,state,allows_risk_increase,canonical_sha256 FROM {source.Table}"));
+            var items=new List<HistoricalReconciliationV1>(limit+1);
+            await using var command=connection.CreateCommand();
+            command.CommandText=$"SELECT kind,report_id,schema,observed_at,evaluated_at,state,allows_risk_increase,canonical_sha256 FROM ({union}) ORDER BY evaluated_at DESC,report_id DESC LIMIT $limit OFFSET $offset";
+            command.Parameters.AddWithValue("$limit",limit+1);command.Parameters.AddWithValue("$offset",offset);
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var allows=reader.GetInt32(6);
+                if(allows is not 0 and not 1)throw new InvalidOperationException("Reconciliation risk flag is invalid.");
+                items.Add(new(
+                    Safe(reader.GetString(0),40),
+                    Safe(reader.GetString(1),120),
+                    Safe(reader.GetString(2),120),
+                    Instant(reader.GetString(3)),
+                    Instant(reader.GetString(4)),
+                    Safe(reader.GetString(5),40),
+                    allows==1,
+                    Hash(reader.GetString(7))));
+            }
+            var hasMore=items.Count>limit;if(hasMore)items.RemoveAt(items.Count-1);
+            return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count):null,updatedAt,null);
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch{return Page<HistoricalReconciliationV1>(kind,RuntimeCollectionState.Error,[],null,null,"The SQLite reconciliation audits could not be read.");}
+    }
+
+    private async Task<HistoricalCollectionPageV1<T>> ReadAsync<T>(HistoricalCollectionKindV1 kind, HistoricalCollectionRequestV1 request, string table, string timestampColumn, TimeSpan? staleAfter, string sql, Func<SqliteDataReader,T> map, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
         var limit=Math.Clamp(request.Limit,1,HistoricalCollectionPageV1<T>.MaximumPageSize);
@@ -58,7 +136,7 @@ public sealed class RuntimeHistoricalCollectionStateStore
             await using var connection=new SqliteConnection(_connectionString);await connection.OpenAsync(ct);
             if(!await TableExists(connection,table,ct)) return Page<T>(kind,RuntimeCollectionState.Unsupported,[],null,null,"The SQLite collection is not available.");
             var updatedAt=await Latest(connection,table,timestampColumn,ct);
-            if(updatedAt is not null&&_utcNow()-updatedAt>staleAfter) return Page<T>(kind,RuntimeCollectionState.Stale,[],null,updatedAt,"The persisted collection is stale.");
+            if(staleAfter is not null&&updatedAt is not null&&_utcNow()-updatedAt>staleAfter.Value) return Page<T>(kind,RuntimeCollectionState.Stale,[],null,updatedAt,"The persisted collection is stale.");
             var items=new List<T>(limit+1);await using var command=connection.CreateCommand();command.CommandText=sql;command.Parameters.AddWithValue("$limit",limit+1);command.Parameters.AddWithValue("$offset",offset);
             await using var reader=await command.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct))items.Add(map(reader));
             var hasMore=items.Count>limit;if(hasMore)items.RemoveAt(items.Count-1);
@@ -97,6 +175,7 @@ public sealed class RuntimeHistoricalCollectionStateStore
     private static DateTimeOffset Instant(string value)=>DateTimeOffset.Parse(value,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind).ToUniversalTime();
     private static decimal Decimal(SqliteDataReader r,int i)=>decimal.Parse(r.GetString(i),NumberStyles.Number,CultureInfo.InvariantCulture);
     private static decimal? NullableDecimal(SqliteDataReader r,int i)=>r.IsDBNull(i)?null:Decimal(r,i);
+    private static string Hash(string value)=>Regex.IsMatch(value,"^[A-Fa-f0-9]{64}$",RegexOptions.CultureInvariant)?value:throw new InvalidOperationException("Historical hash is invalid.");
     private static string? Text(SqliteDataReader r,int i,int max=120)=>r.IsDBNull(i)?null:Safe(r.GetString(i),max);
     private static string Safe(string value,int max)
     {
