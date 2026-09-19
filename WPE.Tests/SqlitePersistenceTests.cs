@@ -187,7 +187,7 @@ public sealed class SqlitePersistenceTests : IDisposable
     [Fact]
     public async Task RecoverableStatusMatrix_IncludesUncertainAndExcludesKnownTerminalStates()
     {
-        string[] recoverable = ["UNKNOWN", "EMERGENCY_UNKNOWN", "PROTECTION_FAILED", "EMERGENCY_SUBMITTED"];
+        string[] recoverable = ["UNKNOWN", "EMERGENCY_UNKNOWN", "PROTECTION_FAILED", "EMERGENCY_SUBMITTED", "PROTECTED_PARTIAL_PENDING", "PROTECTED_UNKNOWN", "COMPLETED_PARTIAL_PENDING"];
         string[] terminal = [
             "PROTECTED", "PROTECTED_PARTIAL", "PARTIALLY_FILLED_PROTECTED", "PREFLIGHT_BLOCKED",
             "COMPLETED", "COMPLETED_PARTIAL", "CANCELED", "REJECTED", "EXPIRED", "EMERGENCY_CLOSED"
