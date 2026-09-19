@@ -97,7 +97,8 @@ internal static class ExecutionRealitySensitivityCanonicalizerV1
         if(!Hash(source.CanonicalSha256)||source.GeneratedAtUtc.Offset!=TimeSpan.Zero||source.SourceLastExecutionEventId<1
            ||source.SourcePositionLinkId!="execution-position-drift:"+source.SourcePositionLinkSha256
            ||!Hash(source.SourceCalibrationSha256)||!Hash(source.SourcePositionLinkSha256)
-           ||!Hash(source.SourceExecutionTraceSha256)||!Hash(source.SourceDriftTraceSha256))
+           ||!Hash(source.SourceExecutionTraceSha256)||!Hash(source.SourceDriftTraceSha256)
+           ||source.Status==ExecutionRealityStabilityStatusV1.Observed&&source.SourceCalibrationStatus!=ExecutionRealityCalibrationStatusV1.Available)
             throw new ArgumentException("Execution sensitivity source is invalid.");
 
         var rows=buckets.OrderBy(x=>x.ProviderId,StringComparer.Ordinal).ThenBy(x=>x.Environment,StringComparer.Ordinal)
@@ -407,14 +408,20 @@ public sealed partial class AgentSqliteStore
                ||root.GetProperty("requiredFolds").GetInt32()!=ExecutionRealityStabilityCanonicalizerV1.RequiredFolds
                ||root.GetProperty("minimumCompleteSamplesPerFold").GetInt32()!=ExecutionRealityStabilityCanonicalizerV1.MinimumCompleteSamplesPerFold)
                 return null;
-            var keys=new List<ExecutionRealityStabilityBucketKeyV1>();
+            var keys=new List<ExecutionRealityStabilityBucketKeyV1>();var identities=new HashSet<string>(StringComparer.Ordinal);
             foreach(var bucket in root.GetProperty("buckets").EnumerateArray())
             {
                 if(!string.Equals(bucket.GetProperty("status").GetString(),"observed",StringComparison.OrdinalIgnoreCase))continue;
                 if(!Enum.TryParse<ExecutionOrderType>(bucket.GetProperty("orderType").GetString(),out var orderType))return null;
-                keys.Add(new(bucket.GetProperty("ProviderId").GetString()!,bucket.GetProperty("Environment").GetString()!,
-                    bucket.GetProperty("Symbol").GetString()!,orderType,bucket.GetProperty("ReduceOnly").GetBoolean()));
+                var provider=bucket.GetProperty("ProviderId").GetString();var environment=bucket.GetProperty("Environment").GetString();
+                var symbol=bucket.GetProperty("Symbol").GetString();var reduceOnly=bucket.GetProperty("ReduceOnly").GetBoolean();
+                if(string.IsNullOrWhiteSpace(provider)||string.IsNullOrWhiteSpace(environment)||string.IsNullOrWhiteSpace(symbol))return null;
+                var identity=$"{provider}|{environment}|{symbol}|{orderType}|{reduceOnly}";
+                if(!identities.Add(identity))return null;
+                keys.Add(new(provider,environment,symbol,orderType,reduceOnly));
             }
+            if(status==ExecutionRealityStabilityStatusV1.Observed&&(calibrationStatus!=ExecutionRealityCalibrationStatusV1.Available||keys.Count==0))return null;
+            if(status==ExecutionRealityStabilityStatusV1.Unsupported&&keys.Count!=0)return null;
             return new(hash,generated,status,calibrationHash,calibrationStatus,linkId,linkHash,executionHash,driftHash,cursor,keys);
         }
         catch{return null;}
