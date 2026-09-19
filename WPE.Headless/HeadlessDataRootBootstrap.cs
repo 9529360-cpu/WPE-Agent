@@ -66,12 +66,24 @@ public static class HeadlessDataRootBootstrap
             if (string.IsNullOrWhiteSpace(root) ||
                 root.StartsWith(@"\\", StringComparison.Ordinal))
                 return null;
-            return full.TrimEnd(Path.DirectorySeparatorChar);
+
+            if (OperatingSystem.IsWindows() &&
+                new DriveInfo(root).DriveType != DriveType.Fixed)
+                return null;
+
+            if (string.Equals(full, root, StringComparison.OrdinalIgnoreCase))
+                return root;
+
+            return full.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
         }
         catch (Exception ex) when (
             ex is ArgumentException or
             NotSupportedException or
-            PathTooLongException)
+            PathTooLongException or
+            IOException or
+            UnauthorizedAccessException)
         {
             return null;
         }
