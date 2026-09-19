@@ -1,4 +1,5 @@
 using System.Text.Json;
+using WpeAgent.CrossAssetResearch;
 using 币安量化机器人.Core.Strategy;
 
 namespace 币安量化机器人.Services.Agent;
@@ -56,7 +57,10 @@ public sealed class StrategyResearchAgent
             var exactValidation=await _database.GetLatestStrategyValidationAsync(profile.Id,profile.Version,ct);
             var latestBacktest=await _database.GetLatestBacktestRunAsync(profile.Id,profile.Version,ct);
             var backtestCompletedAt=latestBacktest?.CompletedAtUtc.ToUniversalTime();
-            if(exactValidation is null||latestBacktest is null||backtestCompletedAt is null||backtestCompletedAt>researchNow||researchNow-backtestCompletedAt.Value>=ActiveRevalidationInterval)
+            var temporalUpgradeRequired=exactValidation is null
+                ||exactValidation.Validation.OosPurgeObservations!=HistoricalResearchEngine.ProductionTemporalPolicy.OosPurgeObservations
+                ||exactValidation.Validation.OosEmbargoObservations!=HistoricalResearchEngine.ProductionTemporalPolicy.OosEmbargoObservations;
+            if(temporalUpgradeRequired||latestBacktest is null||backtestCompletedAt is null||backtestCompletedAt>researchNow||researchNow-backtestCompletedAt.Value>=ActiveRevalidationInterval)
                 validationCandidates.Add(profile);
         }
         foreach (var profile in validationCandidates)
@@ -336,6 +340,11 @@ public sealed class StrategyResearchAgent
 
 internal sealed class HistoricalResearchEngine
 {
+    internal static readonly CrossAssetValidationPolicy ProductionTemporalPolicy=new(
+        TrainingFraction:.65,
+        MinimumOutOfSampleObservations:30,
+        OosPurgeObservations:5,
+        OosEmbargoObservations:5);
     private readonly ResearchRealityModel _reality;
     private readonly DeterministicStrategyRegistry _strategies;
 
@@ -356,17 +365,34 @@ internal sealed class HistoricalResearchEngine
         if (candles.Count < 500) return new(profile.Id, candles.Count, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, false, "insufficient hourly history",StrategyVersion:profile.Version);
         var timeline=strategy.BuildResearchTimeline(profile,candles,news);
         var timelineArtifact=StrategyExposureTimelineV1.CreateArtifact(timeline);
-        var returns=timelineArtifact is null?[]:_reality.Simulate(timelineArtifact.Decisions);
-        if(returns.Count<2)return new(
+        if(timelineArtifact is null)return new(
             profile.Id,candles.Count,0,0,0,0,1,0,0,0,1,0,false,
-            timelineArtifact is null?"canonical research timeline unavailable or invalid":$"canonical research timeline too short; timeline_sha256={timelineArtifact.CanonicalSha256}",
+            "canonical research timeline unavailable or invalid",
+            StrategyVersion:profile.Version);
+        var temporalReasons=ResearchTemporalIsolationV1.Validate(
+            timelineArtifact.Decisions.Select(x=>new ResearchTemporalObservationV1(
+                x.TradableAtUtc,
+                x.EvidenceAvailableAtUtc,
+                x.SignalGeneratedAtUtc)),
+            timelineArtifact.DecisionCount,
+            ProductionTemporalPolicy);
+        var returns=_reality.Simulate(timelineArtifact.Decisions);
+        if(returns.Count<2||temporalReasons.Count>0)return new(
+            profile.Id,candles.Count,0,0,0,0,1,0,0,0,1,0,false,
+            temporalReasons.Count>0
+                ?$"temporal research gate failed: {string.Join(',',temporalReasons)}; timeline_sha256={timelineArtifact.CanonicalSha256}"
+                :$"canonical research timeline too short; timeline_sha256={timelineArtifact.CanonicalSha256}",
             StrategyVersion:profile.Version,
-            TimelineSha256:timelineArtifact?.CanonicalSha256??string.Empty);
-        var split = Math.Clamp((int)(returns.Count * .65), 1, returns.Count-1); var train = returns.Take(split).ToArray(); var test = returns.Skip(split).ToArray();
+            TimelineSha256:timelineArtifact.CanonicalSha256,
+            OosPurgeObservations:ProductionTemporalPolicy.OosPurgeObservations,
+            OosEmbargoObservations:ProductionTemporalPolicy.OosEmbargoObservations);
+        var oosWindow=ResearchTemporalIsolationV1.OosWindow(returns.Count,ProductionTemporalPolicy);
+        var train=returns.Take(oosWindow.TrainingEndExclusive).ToArray();
+        var test=returns.Skip(oosWindow.Start).Take(oosWindow.Count).ToArray();
         var all = Metrics(returns); var trainMetrics=Metrics(train);var oos = Metrics(test); var walk = WalkForward(profile, candles, news); var mc = MonteCarlo(returns);var robustness=EvaluateRobustness(returns,trainMetrics.Expectancy,oos.Expectancy);var benchmark=candles[0].Close>0?(double)(candles[^1].Close/candles[0].Close-1):0;
         var score = Math.Clamp(.16 * Math.Min(1, all.ProfitFactor / 1.5) + .16 * Math.Max(0, (oos.TotalReturn + .10) / .30) + .16 * (1 - Math.Min(1, all.MaxDrawdown / .25)) + .16 * walk + .16 * (1 - mc)+.20*robustness.Score, 0, 1);
         var passed = returns.Count(x => x.Trade) >= Math.Max(StrategyGovernor.MinimumValidationTrades, limits.MinimumBacktestTrades) && oos.Expectancy > 0 && all.ProfitFactor >= 1.1 && all.MaxDrawdown <= .25 && walk >= .5 && mc <= .45&&robustness.Passed;
-        return new(profile.Id, candles.Count, returns.Count(x => x.Trade), all.WinRate, all.ProfitFactor, all.Expectancy, all.MaxDrawdown, all.Sharpe, oos.TotalReturn, walk, mc, score, passed, $"{profile.Id} strategy_impl={strategy.ImplementationVersion} trades={returns.Count(x => x.Trade)} OOS={oos.TotalReturn:P1} PF={all.ProfitFactor:F2} DD={all.MaxDrawdown:P1} WF={walk:F2} MC={mc:P0} regimes={robustness.PassingRegimes}/{robustness.EvaluatedRegimes} worst={robustness.WorstRegimeReturn:P1} gap={robustness.TrainTestExpectancyGap:P3} timeline_sha256={timelineArtifact!.CanonicalSha256} cost_rt={_reality.Costs.RoundTripVariableRate:P4} passed={passed}",robustness.WorstRegimeReturn,robustness.TrainTestExpectancyGap,robustness.PassingRegimes,robustness.EvaluatedRegimes,profile.Version,test.Count(x=>x.Trade),all.TotalReturn,benchmark,TimelineSha256:timelineArtifact!.CanonicalSha256);
+        return new(profile.Id, candles.Count, returns.Count(x => x.Trade), all.WinRate, all.ProfitFactor, all.Expectancy, all.MaxDrawdown, all.Sharpe, oos.TotalReturn, walk, mc, score, passed, $"{profile.Id} strategy_impl={strategy.ImplementationVersion} trades={returns.Count(x => x.Trade)} OOS={oos.TotalReturn:P1} PF={all.ProfitFactor:F2} DD={all.MaxDrawdown:P1} WF={walk:F2} MC={mc:P0} regimes={robustness.PassingRegimes}/{robustness.EvaluatedRegimes} worst={robustness.WorstRegimeReturn:P1} gap={robustness.TrainTestExpectancyGap:P3} timeline_sha256={timelineArtifact.CanonicalSha256} oos_purge={ProductionTemporalPolicy.OosPurgeObservations} oos_embargo={ProductionTemporalPolicy.OosEmbargoObservations} cost_rt={_reality.Costs.RoundTripVariableRate:P4} passed={passed}",robustness.WorstRegimeReturn,robustness.TrainTestExpectancyGap,robustness.PassingRegimes,robustness.EvaluatedRegimes,profile.Version,test.Count(x=>x.Trade),all.TotalReturn,benchmark,TimelineSha256:timelineArtifact.CanonicalSha256,OosPurgeObservations:ProductionTemporalPolicy.OosPurgeObservations,OosEmbargoObservations:ProductionTemporalPolicy.OosEmbargoObservations);
     }
 
     internal static StrategyRobustness EvaluateRobustness(IReadOnlyList<(double Return,bool Trade)> values,double? trainExpectancy=null,double? testExpectancy=null)
