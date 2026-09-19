@@ -68,7 +68,7 @@ public static class ExecutionTopOfBookSimulationV1
 {
     public const string SourceSchema = "wpe.execution-simulation-source/1.0";
     public const string SimulationModelVersion = "wpe.top-of-book-market/1.0";
-    public const string DefaultCostModelVersion = "research-cost-v1";
+    public const string DefaultCostModelVersion = TradingRealityCostAuthorityV1.Version;
     public static readonly TimeSpan MaximumSnapshotAge = TimeSpan.FromSeconds(15);
 
     public static ExecutionSimulationBundleV1 Create(
