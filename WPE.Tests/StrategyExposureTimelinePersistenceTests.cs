@@ -47,12 +47,14 @@ public sealed class StrategyExposureTimelinePersistenceTests : IDisposable
     {
         var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
         var source=File.ReadAllText(Path.Combine(root,"Services","Agent","StrategyResearchAgent.cs"));
-        var create=source.IndexOf("var timelineArtifact=_engine.TimelineArtifact",StringComparison.Ordinal);
-        var verify=source.IndexOf("validation.TimelineSha256",create,StringComparison.Ordinal);
+        var validation=source.IndexOf("var validation = _engine.Validate",StringComparison.Ordinal);
+        var guard=source.IndexOf("if(!string.IsNullOrEmpty(validation.TimelineSha256))",validation,StringComparison.Ordinal);
+        var create=source.IndexOf("var timelineArtifact=_engine.TimelineArtifact",guard,StringComparison.Ordinal);
+        var verify=source.IndexOf("string.Equals(validation.TimelineSha256",create,StringComparison.Ordinal);
         var saveTimeline=source.IndexOf("SaveStrategyExposureTimelineAsync",verify,StringComparison.Ordinal);
         var saveValidation=source.IndexOf("SaveStrategyValidationAsync",saveTimeline,StringComparison.Ordinal);
 
-        Assert.True(create>=0&&verify>create);
+        Assert.True(validation>=0&&guard>validation&&create>guard&&verify>create);
         Assert.True(saveTimeline>verify);
         Assert.True(saveValidation>saveTimeline);
     }
