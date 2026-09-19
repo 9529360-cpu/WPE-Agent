@@ -102,8 +102,13 @@ try{
     if(Test-Path -LiteralPath $current){
         $previous=Get-Content -Raw -LiteralPath $current | ConvertFrom-Json
     }
-    if($previous -and $previous.root -ne [IO.Path]::GetFullPath($LastKnownGoodRoot)){
-        throw 'lkg.does-not-match-current'
+    if($previous){
+        if($previous.root -ne [IO.Path]::GetFullPath($LastKnownGoodRoot)){
+            throw 'lkg.does-not-match-current'
+        }
+        if([string]$previous.manifestSha256 -ne [string]$result.LastKnownGoodManifestHash){
+            throw 'lkg.manifest-does-not-match-current'
+        }
     }
 
     $pointer=[ordered]@{
