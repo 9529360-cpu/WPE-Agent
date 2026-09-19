@@ -210,4 +210,4 @@ if($VerifyStartup){Invoke-Probe $candidate 'startup';$transcript.Add('startup:pa
 if($VerifyRestartRecovery){Invoke-Probe $candidate 'restart';$transcript.Add('restart:pass')}
 if($VerifyRollback){Invoke-Probe $lkg 'rollback';$transcript.Add('rollback-preflight:pass')}
 if($TestnetMutationSmoke){$transcript.Add("testnet-mutation:authorized:$VerifiedGateEvidenceRef")}else{$transcript.Add('testnet-mutation:not-run')}
-[pscustomobject]@{Valid=$true;CandidateVersion=$candidate.Manifest.version;LastKnownGoodVersion=$lkg.Manifest.version;CandidateManifestHash=$candidate.ManifestHash;LastKnownGoodManifestHash=$lkg.ManifestHash;TrustedRuntimeProofId=$runtimeProof.proofId;Transcript=$transcript;UserDataRollback='not-performed'}
+[pscustomobject]@{Valid=$true;CandidateVersion=$candidate.Manifest.version;LastKnownGoodVersion=$lkg.Manifest.version;CandidateManifestHash=$candidate.ManifestHash;LastKnownGoodManifestHash=$lkg.ManifestHash;TrustedRuntimeProofId=$runtimeProof.proofId;SoakEvidenceSha256=$ExpectedSoakEvidenceHash.ToLowerInvariant();SoakDurationSeconds=$soakEvidence.DurationSeconds;Transcript=$transcript;UserDataRollback='not-performed'}
