@@ -34,7 +34,7 @@ public sealed class HeadlessRuntimeBoundaryTests
         var bootstrap=source.IndexOf("RuntimeProcessBootstrap.Initialize",StringComparison.Ordinal);
         var license=source.IndexOf("new DeviceLicenseService().TryLoad()",StringComparison.Ordinal);
         var setup=source.IndexOf("!settings.SetupCompleted",StringComparison.Ordinal);
-        var host=source.IndexOf("new TradingRuntimeHost(identity)",StringComparison.Ordinal);
+        var host=source.IndexOf("new TradingRuntimeHost(settings.ActiveUser)",StringComparison.Ordinal);
         var start=source.IndexOf("InitializeAsync(startAgentWhenReady: true)",StringComparison.Ordinal);
 
         Assert.True(platform>=0&&bootstrap>platform&&license>bootstrap&&setup>license&&host>setup&&start>host);
