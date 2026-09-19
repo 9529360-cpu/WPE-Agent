@@ -1,4 +1,6 @@
 using Microsoft.Data.Sqlite;
+using System.Reflection;
+using System.Security.Cryptography;
 using 币安量化机器人.Core.Strategy;
 using 币安量化机器人.Services.Agent;
 
@@ -35,6 +37,91 @@ public sealed class StrategyShadowObservationProvenanceTests : IDisposable
             value with{MarketProvenanceCanonicalBytes=[..value.MarketProvenanceCanonicalBytes,0]}));
         Assert.False(StrategyShadowObservationCanonicalizerV1.IsCanonical(
             value with{BacktestValidationCanonicalBytes=[..value.BacktestValidationCanonicalBytes,0]}));
+    }
+
+    [Fact]
+    public void SelfConsistentOuterHashCannotHideDifferentCanonicalMarketSource()
+    {
+        var profile=Profile();
+        var value=StrategyShadowObservationCanonicalizerV1.Create(
+            profile,
+            new StrategySignal(profile.Id,profile.Symbol,1,.75,"test",profile.Version),
+            Market(Now.AddMinutes(-1)),
+            ValidationFact(profile,Now.AddMinutes(-10)),
+            Timeline(profile),
+            Now);
+        var otherMarket=Market(Now.AddMinutes(-1)) with{Price=123m,Provenance=null};
+        otherMarket=otherMarket with
+        {
+            Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(
+                otherMarket,"binance-futures","Testnet")
+        };
+        var forged=Rehash(value with
+        {
+            MarketProvenanceSha256=otherMarket.Provenance!.CanonicalSha256,
+            MarketProvenanceCanonicalBytes=otherMarket.Provenance.CanonicalBytes
+        });
+
+        Assert.False(StrategyShadowObservationCanonicalizerV1.IsCanonical(forged));
+    }
+
+    [Fact]
+    public async Task PersistedShadowReadReplaysValidationAgainstDurableAuthority()
+    {
+        var profile=Profile();
+        var validationAt=Now.AddMinutes(-10);
+        var store=await SeedAuthority(validationAt,profile,includeTimeline:true);
+        var validation=ValidationFact(profile,validationAt);
+        var value=StrategyShadowObservationCanonicalizerV1.Create(
+            profile,
+            new StrategySignal(profile.Id,profile.Symbol,1,.75,"test",profile.Version),
+            Market(Now.AddMinutes(-1)),
+            validation,
+            Timeline(profile),
+            Now);
+        Assert.True(await store.SaveStrategyShadowObservationAsync(value,default));
+
+        var other=BacktestValidationCanonicalizerV1.Create(
+            validation.Symbol,validation.StrategyId,validation.StrategyVersion,validation.ValidatedAtUtc,
+            validation.SampleSize,validation.Trades,validation.OutOfSampleTrades,validation.CoverageDays,
+            validation.WinRate,validation.ProfitFactor,validation.Expectancy+.001,validation.MaxDrawdown,
+            validation.Sharpe,validation.OutOfSampleReturn,validation.WalkForwardScore,
+            validation.MonteCarloLossProbability,validation.QualityScore,validation.Approved,validation.Promoted);
+        var forged=Rehash(value with
+        {
+            BacktestValidationSha256=other.CanonicalSha256,
+            BacktestValidationCanonicalBytes=other.CanonicalBytes
+        });
+        Assert.True(StrategyShadowObservationCanonicalizerV1.IsCanonical(forged));
+
+        await using(var connection=new SqliteConnection($"Data Source={Database}"))
+        {
+            await connection.OpenAsync();
+            await using(var drop=connection.CreateCommand())
+            {
+                drop.CommandText="DROP TRIGGER strategy_shadow_observation_no_update";
+                await drop.ExecuteNonQueryAsync();
+            }
+            await using var update=connection.CreateCommand();
+            update.CommandText="""
+                UPDATE strategy_shadow_observation_artifacts
+                SET canonical_sha256=$hash,
+                    backtest_validation_sha256=$validationHash,
+                    backtest_validation_bytes=$validationBytes,
+                    canonical_bytes=$bytes
+                WHERE strategy_id=$strategy AND strategy_version=$version;
+                """;
+            update.Parameters.AddWithValue("$hash",forged.CanonicalSha256);
+            update.Parameters.AddWithValue("$validationHash",forged.BacktestValidationSha256);
+            update.Parameters.Add("$validationBytes",SqliteType.Blob).Value=forged.BacktestValidationCanonicalBytes;
+            update.Parameters.Add("$bytes",SqliteType.Blob).Value=forged.CanonicalBytes;
+            update.Parameters.AddWithValue("$strategy",profile.Id);
+            update.Parameters.AddWithValue("$version",profile.Version);
+            Assert.Equal(1,await update.ExecuteNonQueryAsync());
+        }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>
+            store.GetStrategyShadowObservationPerformanceAsync(profile.Id,profile.Version,default));
     }
 
     [Fact]
@@ -370,6 +457,20 @@ public sealed class StrategyShadowObservationProvenanceTests : IDisposable
         {
             Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(
                 market,"binance-futures",environment)
+        };
+    }
+
+    private static StrategyShadowObservationV1 Rehash(StrategyShadowObservationV1 value)
+    {
+        var method=typeof(StrategyShadowObservationCanonicalizerV1)
+            .GetMethod("Serialize",BindingFlags.NonPublic|BindingFlags.Static)
+            ??throw new InvalidOperationException("Shadow observation serializer is unavailable.");
+        var bytes=(byte[]?)method.Invoke(null,new object?[]{value})
+            ??throw new InvalidOperationException("Shadow observation serialization failed.");
+        return value with
+        {
+            CanonicalBytes=bytes,
+            CanonicalSha256=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()
         };
     }
 
