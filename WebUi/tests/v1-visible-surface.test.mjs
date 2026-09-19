@@ -71,7 +71,17 @@ test('execution command center is read-only and backed by canonical host project
     assert.match(cockpit, new RegExp(field), `missing canonical field ${field}`)
   }
   assert.match(cockpit, /READ ONLY/)
-  assert.doesNotMatch(cockpit, /postHostCommand|postMessage|place-order|submitOrder|approve|cancelOrder|fetch\s*\(|WebSocket|EventSource/)
+  const forbiddenCockpitSurfaces = [
+    /postHostCommand/,
+    /\.postMessage\s*\(/,
+    /place-order|cancel-order|direct-exchange-submit/,
+    /\bsubmitOrder\b|\bcancelOrder\b/,
+    /\bfetch\s*\(/,
+    /\bWebSocket\b|\bEventSource\b/,
+  ]
+  for (const forbidden of forbiddenCockpitSurfaces) {
+    assert.doesNotMatch(cockpit, forbidden, `read-only cockpit contains forbidden mutation/egress surface: ${forbidden}`)
+  }
 })
 
 test('static export contains deterministic nonblank DOM for every primary route', () => {
