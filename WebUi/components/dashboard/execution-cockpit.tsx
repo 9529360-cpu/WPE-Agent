@@ -72,12 +72,12 @@ export function ExecutionCockpit() {
       <PanelHeader
         icon={<Activity className="size-4" />}
         title={t('orders.title')}
-        action={<StatusBadge token="muted" label="READ ONLY" />}
+        action={<StatusBadge token="muted" label={t('settings.readOnly')} />}
       />
       <PanelBody className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <SummaryMetric label="Environment" value={runtime.environment || t('common.unknown')} detail={provider || t('common.notProvided')} />
-          <SummaryMetric label="Authorization" value={authorizationMode || t('common.unavailable')} detail={authorizationState} />
+          <SummaryMetric label={t('settings.environment')} value={runtime.environment || t('common.unknown')} detail={provider || t('common.notProvided')} />
+          <SummaryMetric label={t('settings.authorization')} value={authorizationMode || t('common.unavailable')} detail={authorizationState} />
           <SummaryMetric
             label={t('dashboard.riskGate')}
             value={<StatusBadge token={riskState === 'available' ? gateTone(runtime.riskApprovalStatus) : 'warning'} label={riskState === 'available' ? runtime.riskApprovalStatus || t('common.unknown') : riskState} />}
@@ -156,18 +156,18 @@ export function ExecutionCockpit() {
 
         <section className="min-w-0 overflow-hidden rounded-lg border border-border">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2.5">
-            <div className="flex items-center gap-2 text-xs font-medium"><History className="size-4 text-muted-foreground" aria-hidden="true" />Execution ledger</div>
+            <div className="flex items-center gap-2 text-xs font-medium"><History className="size-4 text-muted-foreground" aria-hidden="true" />{t('dashboard.executionLedger')}</div>
             <div className="flex items-center gap-3"><SectionLink href="/history">{t('dashboard.viewAll')}</SectionLink><SectionLink href="/risk"><span className="inline-flex items-center gap-1"><ShieldAlert className="size-3.5" aria-hidden="true" />{t('dashboard.riskSummary')}</span></SectionLink></div>
           </div>
           {ledgerState !== 'available' ? (
             <CollectionNotice state={ledgerState} message={runtime.historicalOrders?.message} />
           ) : ledger.length === 0 ? (
-            <div className="flex min-h-24 items-center justify-center p-4 text-xs text-muted-foreground">No persisted execution events.</div>
+            <div className="flex min-h-24 items-center justify-center p-4 text-xs text-muted-foreground">{t('dashboard.noExecutionEvents')}</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-left text-xs">
                 <thead className="border-b border-border text-muted-foreground">
-                  <tr><th className="px-3 py-2 font-medium">{t('common.time')}</th><th className="px-3 py-2 font-medium">{t('common.symbol')}</th><th className="px-3 py-2 font-medium">Side / action</th><th className="px-3 py-2 text-right font-medium">{t('common.quantity')}</th><th className="px-3 py-2 text-right font-medium">Average price</th><th className="px-3 py-2 font-medium">{t('common.status')}</th></tr>
+                  <tr><th className="px-3 py-2 font-medium">{t('common.time')}</th><th className="px-3 py-2 font-medium">{t('common.symbol')}</th><th className="px-3 py-2 font-medium">{t('dashboard.sideAction')}</th><th className="px-3 py-2 text-right font-medium">{t('common.quantity')}</th><th className="px-3 py-2 text-right font-medium">{t('dashboard.averagePrice')}</th><th className="px-3 py-2 font-medium">{t('common.status')}</th></tr>
                 </thead>
                 <tbody>
                   {ledger.map(row => (
