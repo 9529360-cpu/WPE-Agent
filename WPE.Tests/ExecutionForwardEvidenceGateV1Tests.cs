@@ -28,6 +28,7 @@ public sealed class ExecutionForwardEvidenceGateV1Tests
         Assert.Equal(4, decision.TotalComparableCount);
         Assert.True(decision.ObservationWindowSeconds >= TimeSpan.FromHours(3).TotalSeconds);
         Assert.NotNull(decision.CalibrationSha256);
+        Assert.Equal(64, decision.EvidenceSetSha256.Length);
         Assert.True(ExecutionForwardEvidenceGateV1.IsCanonical(decision));
     }
 
@@ -159,6 +160,53 @@ public sealed class ExecutionForwardEvidenceGateV1Tests
     }
 
     [Fact]
+    public void DuplicateCanonicalObservationIsIntegrityFailureAndCannotInflateSample()
+    {
+        var duplicate = Filled("a", Now.AddHours(-4));
+        var facts = new[]
+        {
+            duplicate,
+            duplicate,
+            Filled("b", Now.AddHours(-3)),
+            Filled("c", Now.AddHours(-2)),
+            Filled("d", Now.AddMinutes(-5))
+        };
+
+        var decision = ExecutionForwardEvidenceGateV1.Evaluate(
+            "strategy-a", "v7", "research-cost-v1", facts, Policy(), Now);
+
+        Assert.Equal(ExecutionForwardEvidenceStateV1.Invalid, decision.State);
+        Assert.False(decision.EvidenceReady);
+        Assert.Equal(4, decision.ObservationCount);
+        Assert.Contains("evidence.duplicate", decision.ReasonCodes);
+    }
+
+    [Fact]
+    public void EvidenceSetHashDistinguishesDifferentFactsWithIdenticalAggregateMetrics()
+    {
+        var times = new[]
+        {
+            Now.AddHours(-4),
+            Now.AddHours(-3),
+            Now.AddHours(-2),
+            Now.AddMinutes(-5)
+        };
+        var firstFacts = times.Select((time, index) => Filled("a" + index, time)).ToArray();
+        var secondFacts = times.Select((time, index) => Filled("b" + index, time)).ToArray();
+
+        var first = ExecutionForwardEvidenceGateV1.Evaluate(
+            "strategy-a", "v7", "research-cost-v1", firstFacts, Policy(), Now);
+        var second = ExecutionForwardEvidenceGateV1.Evaluate(
+            "strategy-a", "v7", "research-cost-v1", secondFacts, Policy(), Now);
+
+        Assert.Equal(ExecutionForwardEvidenceStateV1.Ready, first.State);
+        Assert.Equal(ExecutionForwardEvidenceStateV1.Ready, second.State);
+        Assert.Equal(first.CalibrationSha256, second.CalibrationSha256);
+        Assert.NotEqual(first.EvidenceSetSha256, second.EvidenceSetSha256);
+        Assert.NotEqual(first.CanonicalSha256, second.CanonicalSha256);
+    }
+
+    [Fact]
     public void PolicyIsCryptographicallyBoundToDecision()
     {
         var facts = new[]
@@ -177,6 +225,7 @@ public sealed class ExecutionForwardEvidenceGateV1Tests
         Assert.NotEqual(first.PolicySha256, second.PolicySha256);
         Assert.NotEqual(first.CanonicalSha256, second.CanonicalSha256);
         Assert.False(ExecutionForwardEvidenceGateV1.IsCanonical(first with { EvidenceReady = false }));
+        Assert.False(ExecutionForwardEvidenceGateV1.IsCanonical(first with { EvidenceSetSha256 = "bad" }));
     }
 
     [Fact]
