@@ -25,6 +25,7 @@ public sealed class RuntimeStateBackupServiceTests : IDisposable
     {
         await CreateDatabase(_layout.DataFile("agent.db"));
         File.WriteAllText(_layout.DataFile("agent-settings.json"), "{\"setup\":true}");
+        File.WriteAllText(_layout.DataFile("agent-memory.json"), "{\"MemoryVersion\":7}");
         File.WriteAllText(_layout.DataFile("appsettings.json"), "{\"TradingMode\":\"Testnet\"}");
         File.WriteAllText(_layout.DataFile("local-accounts.json"), "[]");
         File.WriteAllText(_layout.DataFile("local-session.dat"), "transient-session");
@@ -37,6 +38,7 @@ public sealed class RuntimeStateBackupServiceTests : IDisposable
         var logical = result.Descriptor.Items.Select(x => x.LogicalName).ToHashSet(StringComparer.Ordinal);
         Assert.Contains("agent.db", logical);
         Assert.Contains("agent-settings.json", logical);
+        Assert.Contains("agent-memory.json", logical);
         Assert.Contains("appsettings.json", logical);
         Assert.Contains("local-accounts.json", logical);
         Assert.DoesNotContain("local-session.dat", logical);
