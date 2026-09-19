@@ -660,12 +660,6 @@ internal sealed class AutomaticExecutionRealityPipelineV1
         if (!ValidateDurableIdentity(item, requireCurrentValidity:true, out var artifact, out _))
             return new(0,0,0,0,0,"execution-reality.artifact-invalid");
 
-        var qualification = await _store.GetAutomaticStrategyQualificationEvidenceAsync(
-            artifact.StrategyId,
-            artifact.StrategyVersion,
-            artifact.Intents.FirstOrDefault()?.Symbol ?? string.Empty,
-            artifact.CreatedAtUtc,
-            ct);
         var simulated = 0;
         var skipped = 0;
         foreach (var intent in artifact.Intents.OrderBy(x => x.Sequence))
@@ -683,6 +677,12 @@ internal sealed class AutomaticExecutionRealityPipelineV1
             }
             else
             {
+                var qualification = await _store.GetAutomaticStrategyQualificationEvidenceAsync(
+                    artifact.StrategyId,
+                    artifact.StrategyVersion,
+                    intent.Symbol,
+                    artifact.CreatedAtUtc,
+                    ct);
                 AutomaticExecutionSimulationObservationV1 observation;
                 var now = _utcNow().ToUniversalTime();
                 if (_reader is null)
