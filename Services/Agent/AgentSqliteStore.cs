@@ -550,7 +550,10 @@ public sealed partial class AgentSqliteStore
 
     internal async Task<IReadOnlyList<AutomaticExecutionObservationCandidate>> GetAutomaticExecutionEvidenceRetryPageAsync(long afterEventId,int limit,CancellationToken ct)
     {
-        if(afterEventId<0)throw new ArgumentOutOfRangeException(nameof(afterEventId));var result=new List<AutomaticExecutionObservationCandidate>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
+        if(afterEventId<0)throw new ArgumentOutOfRangeException(nameof(afterEventId));var result=new List<AutomaticExecutionObservationCandidate>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);
+        await EnsureExecutionSimulationSourceStorageAsync(c,ct);
+        await EnsureExecutionSimulationStorageAsync(c,ct);
+        await using var q=c.CreateCommand();q.CommandText="""
             SELECT q.execution_id,q.correlation_id,q.contract_version,q.artifact_bytes,q.artifact_hash,q.intent_hash,
                    q.risk_receipt_bytes,q.risk_receipt_hash,q.provider_id,q.environment,q.strategy_id,q.strategy_version,
                    q.market_collected_at,q.market_data_version,q.created_at,q.expires_at,q.status,q.attempt_count,
@@ -560,9 +563,24 @@ public sealed partial class AgentSqliteStore
               ON e.execution_id=q.execution_id
             WHERE q.status='Succeeded'
               AND e.event_cursor>$after
-              AND NOT EXISTS(
-                  SELECT 1 FROM model_off_canonical_audits a
-                  WHERE a.output_id=q.execution_id||'-observation-'||e.event_sequence||'-succeeded-confirmed-execution')
+              AND (
+                  NOT EXISTS(
+                      SELECT 1
+                      FROM model_off_canonical_audits a
+                      WHERE a.output_id=q.execution_id||'-observation-'||e.event_sequence||'-succeeded-confirmed-execution')
+                  OR EXISTS(
+                      SELECT 1
+                      FROM execution_simulated_fills f
+                      JOIN execution_simulation_sources s
+                        ON s.correlation_id=f.correlation_id
+                       AND s.client_order_id=f.client_order_id
+                      WHERE f.correlation_id=q.correlation_id
+                        AND NOT EXISTS(
+                            SELECT 1
+                            FROM execution_simulation_comparisons comparison
+                            WHERE comparison.correlation_id=f.correlation_id
+                              AND comparison.client_order_id=f.client_order_id
+                              AND comparison.simulated_sha256=f.canonical_sha256)))
             ORDER BY e.event_cursor,q.execution_id
             LIMIT $limit
             """;q.Parameters.AddWithValue("$after",afterEventId);q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,100));

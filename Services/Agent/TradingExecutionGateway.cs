@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using WpeAgent.TradingAuthorization;
+using 币安量化机器人.Services.Exchange;
 
 namespace 币安量化机器人.Services.Agent;
 
@@ -192,7 +193,7 @@ internal sealed class PersistedAutomaticPreMutationAuthority(AgentSqliteStore st
     }
 }
 
-public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGateway,IAutomaticExecutionOrderEvidenceReader
+public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGateway,IAutomaticExecutionOrderEvidenceReader,IAutomaticExecutionRealityEvidenceReader
 {
     private readonly TradingExecutionGateway _gateway;
     private readonly IExchangeAdapter _exchange;
@@ -213,6 +214,9 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
     public async Task<AutomaticGatewayExecutionResult> ExecuteAsync(DurableExecutionArtifactV2 artifact,DeterministicRiskReceipt receipt,CancellationToken ct)
     {
         if(!IsTestnet)return new(AutomaticGatewayExecutionState.Rejected,"automatic.testnet-required");
+        if(_exchange is IExchangeProvider liveProvider
+           &&!string.Equals(liveProvider.ProviderId,artifact.ProviderId,StringComparison.Ordinal))
+            return new(AutomaticGatewayExecutionState.Rejected,"automatic.provider-mismatch");
         IReadOnlyList<ExecutionIntent> intents;
         DurableExecutionArtifactHashesV2 hashes;
         try{intents=Restore(artifact);hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);}
@@ -224,7 +228,9 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
         catch{return new(AutomaticGatewayExecutionState.Rejected,"automatic.authority-unknown");}
         var authorityCode=AutomaticPreMutationAuthorityContractV1.Evaluate(authority,artifact,hashes,receipt,_utcNow());
         if(authorityCode!="automatic.authority-allowed")return new(AutomaticGatewayExecutionState.Rejected,authorityCode);
-        var authorization=new TradingAuthorizationRequest(TradingAuthorizationMode.Auto,true,artifact.CorrelationId,hashes.IntentHash,"automatic","automatic","automatic",receipt,null);
+        var gatewayIntentHash=TradingExecutionGateway.ComputeIntentHash(intents,artifact.Leverage,artifact.Isolated);
+        var gatewayReceipt=receipt with{IntentHash=gatewayIntentHash};
+        var authorization=new TradingAuthorizationRequest(TradingAuthorizationMode.Auto,true,artifact.CorrelationId,gatewayIntentHash,"automatic","automatic","automatic",gatewayReceipt,null);
         var result=await _gateway.ExecutePlanAsync(new(null,authorization,intents,artifact.Leverage,artifact.Isolated),ct);
         return result.Executed?new(AutomaticGatewayExecutionState.Succeeded,result.Code):new(AutomaticGatewayExecutionState.Rejected,result.Code);
     }
@@ -232,6 +238,9 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
     public async Task<AutomaticGatewayReconciliationResult> ReconcileAsync(DurableExecutionArtifactV2 artifact,CancellationToken ct)
     {
         if(!IsTestnet)return new(AutomaticGatewayReconciliationState.Failed,"automatic.testnet-required");
+        if(_exchange is IExchangeProvider liveProvider
+           &&!string.Equals(liveProvider.ProviderId,artifact.ProviderId,StringComparison.Ordinal))
+            return new(AutomaticGatewayReconciliationState.Failed,"automatic.provider-mismatch");
         if(!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid)return new(AutomaticGatewayReconciliationState.Failed,"automatic.reconcile-artifact-invalid");
         var found=0;var journaled=0;
         foreach(var intent in artifact.Intents)
@@ -243,6 +252,59 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
         if(found==artifact.Intents.Count)return new(AutomaticGatewayReconciliationState.Succeeded,"automatic.reconcile-succeeded");
         if(found==0&&journaled==0)return new(AutomaticGatewayReconciliationState.NotSubmitted,"automatic.reconcile-not-submitted");
         return new(AutomaticGatewayReconciliationState.Unknown,"automatic.reconcile-unknown");
+    }
+
+    public async Task<AutomaticExecutionSimulationObservationV1> ObserveSimulationInputAsync(
+        DurableExecutionArtifactV2 artifact,
+        DurableExecutionIntentSnapshotV1 intent,
+        CancellationToken ct)
+    {
+        var observedAt=_utcNow().ToUniversalTime();
+        if(!IsTestnet
+           ||!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid
+           ||artifact.Environment!="Testnet")
+            return new(false,"simulation.testnet-or-artifact-invalid",artifact?.ProviderId??"unknown",artifact?.Environment??"unknown",null,null,observedAt);
+
+        var providerId=_exchange is IExchangeProvider provider?provider.ProviderId:artifact.ProviderId;
+        if(!string.Equals(providerId,artifact.ProviderId,StringComparison.Ordinal))
+            return new(false,"simulation.provider-mismatch",providerId,"Testnet",null,null,observedAt);
+
+        try
+        {
+            var market=await _exchange.GetMarketAsync(intent.Symbol,ct);
+            var rule=await _exchange.GetRulesAsync(intent.Symbol,ct);
+            if(!string.Equals(market.Symbol,intent.Symbol,StringComparison.Ordinal)
+               ||!string.Equals(rule.Symbol,intent.Symbol,StringComparison.Ordinal))
+                return new(false,"simulation.symbol-mismatch",providerId,"Testnet",null,null,observedAt);
+
+            if(market.Provenance is null)
+                market=market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,providerId,"Testnet")};
+            else if(!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)
+                    ||!string.Equals(market.Provenance.ProviderId,providerId,StringComparison.Ordinal)
+                    ||!string.Equals(market.Provenance.Environment,"Testnet",StringComparison.Ordinal))
+                return new(false,"simulation.market-provenance-invalid",providerId,"Testnet",null,null,observedAt);
+
+            return new(true,"simulation.source-available",providerId,"Testnet",market,rule,observedAt);
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch{return new(false,"simulation.source-query-failed",providerId,"Testnet",null,null,observedAt);}
+    }
+
+    public async Task<ExchangeOrder?> ObserveOrderAsync(
+        DurableExecutionArtifactV2 artifact,
+        DurableExecutionIntentSnapshotV1 intent,
+        CancellationToken ct)
+    {
+        if(!IsTestnet
+           ||!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid
+           ||artifact.Environment!="Testnet")
+            return null;
+        var providerId=_exchange is IExchangeProvider provider?provider.ProviderId:artifact.ProviderId;
+        if(!string.Equals(providerId,artifact.ProviderId,StringComparison.Ordinal))
+            return null;
+        try{return await _exchange.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);}
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch{return null;}
     }
 
     public async Task<ModelOffExchangeOrderEvidenceV1> ObserveOrdersAsync(DurableExecutionArtifactV2 artifact,CancellationToken ct)
