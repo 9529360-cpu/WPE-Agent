@@ -4,13 +4,14 @@ namespace WpeAgent.RuntimeServices;
 
 public sealed class RuntimeHistoricalCollectionsSnapshotStore
 {
-    public static readonly TimeSpan MinimumRefreshInterval = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan FullRevalidationInterval = TimeSpan.FromMinutes(1);
     private readonly object _gate = new();
     private readonly SemaphoreSlim _refreshGate = new(1,1);
     private readonly RuntimeHistoricalCollectionStateStore _store;
     private readonly Func<DateTimeOffset> _utcNow;
     private RuntimeHistoricalCollectionsSnapshot _current = RuntimeHistoricalCollectionsSnapshot.Unsupported();
-    private DateTimeOffset? _lastRefreshAtUtc;
+    private HistoricalCollectionChangeVector? _lastChangeVector;
+    private DateTimeOffset? _lastFullRefreshAtUtc;
 
     public RuntimeHistoricalCollectionsSnapshotStore(string databasePath):this(databasePath,null){}
 
@@ -27,33 +28,36 @@ public sealed class RuntimeHistoricalCollectionsSnapshotStore
 
     public async Task RefreshAsync(CancellationToken ct)
     {
-        var now=_utcNow().ToUniversalTime();
-        lock(_gate)if(ShouldSkip(now))return;
         await _refreshGate.WaitAsync(ct);
         try
         {
-            now=_utcNow().ToUniversalTime();
-            lock(_gate)if(ShouldSkip(now))return;
-            var request = new HistoricalCollectionRequestV1(HistoricalCollectionPageV1<HistoricalOrderV1>.MaximumPageSize);
-            var orders = await _store.ReadOrdersAsync(request, ct);
-            var equity = await _store.ReadEquityAsync(request, ct);
-            var backtests = await _store.ReadBacktestsAsync(request, ct);
-            var skillCalls = await _store.ReadSkillCallsAsync(request, ct);
-            var auditEvents = await _store.ReadAuditEventsAsync(request, ct);
-            var postTradeReviews = await _store.ReadPostTradeReviewsAsync(request, ct);
-            var reconciliations = await _store.ReadReconciliationsAsync(request, ct);
-            var snapshot=new RuntimeHistoricalCollectionsSnapshot(orders, equity, backtests, skillCalls, auditEvents, postTradeReviews, reconciliations);
-            var hasError=new[]{orders.State,equity.State,backtests.State,skillCalls.State,auditEvents.State,postTradeReviews.State,reconciliations.State}.Any(state=>state==RuntimeCollectionState.Error);
-            lock (_gate)
+            var now=_utcNow().ToUniversalTime();
+            var changes=await _store.ReadChangeVectorAsync(ct);
+            RuntimeHistoricalCollectionsSnapshot current;
+            HistoricalCollectionChangeVector? previous;
+            DateTimeOffset? lastFull;
+            lock(_gate){current=_current;previous=_lastChangeVector;lastFull=_lastFullRefreshAtUtc;}
+
+            var full=previous is null||lastFull is null||now<lastFull.Value||now-lastFull.Value>=FullRevalidationInterval;
+            var request=new HistoricalCollectionRequestV1(HistoricalCollectionPageV1<HistoricalOrderV1>.MaximumPageSize);
+            var orders=full||current.Orders.State==RuntimeCollectionState.Error||previous!.Orders!=changes.Orders?await _store.ReadOrdersAsync(request,ct):current.Orders;
+            var equity=full||current.Equity.State==RuntimeCollectionState.Error||previous!.Equity!=changes.Equity?await _store.ReadEquityAsync(request,ct):current.Equity;
+            var backtests=full||current.Backtests.State==RuntimeCollectionState.Error||previous!.Backtests!=changes.Backtests?await _store.ReadBacktestsAsync(request,ct):current.Backtests;
+            var skillCalls=full||current.SkillCalls.State==RuntimeCollectionState.Error||previous!.SkillCalls!=changes.SkillCalls?await _store.ReadSkillCallsAsync(request,ct):current.SkillCalls;
+            var auditEvents=full||current.AuditEvents.State==RuntimeCollectionState.Error||previous!.AuditEvents!=changes.AuditEvents?await _store.ReadAuditEventsAsync(request,ct):current.AuditEvents;
+            var postTradeReviews=full||current.PostTradeReviews.State==RuntimeCollectionState.Error||previous!.PostTradeReviews!=changes.PostTradeReviews?await _store.ReadPostTradeReviewsAsync(request,ct):current.PostTradeReviews;
+            var reconciliations=full||current.Reconciliations.State==RuntimeCollectionState.Error||previous!.Reconciliations!=changes.Reconciliations?await _store.ReadReconciliationsAsync(request,ct):current.Reconciliations;
+            var snapshot=new RuntimeHistoricalCollectionsSnapshot(orders,equity,backtests,skillCalls,auditEvents,postTradeReviews,reconciliations);
+
+            lock(_gate)
             {
-                _current = snapshot;
-                _lastRefreshAtUtc=hasError?null:_utcNow().ToUniversalTime();
+                _current=snapshot;
+                _lastChangeVector=changes;
+                if(full)_lastFullRefreshAtUtc=now;
             }
         }
         finally{_refreshGate.Release();}
     }
-
-    private bool ShouldSkip(DateTimeOffset now)=>_lastRefreshAtUtc is { } last&&now>=last&&now-last<MinimumRefreshInterval;
 }
 
 public sealed record RuntimeHistoricalCollectionsSnapshot(
