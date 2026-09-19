@@ -1,4 +1,6 @@
-using 币安量化机器人.Services;\n\nnamespace WpeAgent.Headless;
+using 币安量化机器人.Services;
+
+namespace WpeAgent.Headless;
 
 public sealed record HeadlessDataRootResolution(
     bool Success,
