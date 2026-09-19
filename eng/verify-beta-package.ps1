@@ -104,7 +104,11 @@ $zip = Resolve-InRoot ([string]$result.package)
 $zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 $sumsPath = Join-Path (Split-Path -Parent $resultFile) "SHA256SUMS"
 $sumLine = (Get-Content -Raw -LiteralPath $sumsPath).Trim()
-if ($zipHash -ne $result.sha256 -or -not $sumLine.StartsWith($zipHash, [System.StringComparison]::OrdinalIgnoreCase)) { throw "Outer ZIP SHA-256 mismatch." }
+$expectedSumLine = "$zipHash  $([System.IO.Path]::GetFileName($zip))"
+if ($zipHash -ne [string]$result.sha256 -or
+    -not $sumLine.Equals($expectedSumLine, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Outer ZIP SHA-256 mismatch."
+}
 
 if (Test-Path -LiteralPath $verify) { Remove-Item -LiteralPath $verify -Recurse -Force }
 Assert-ZipEntriesSafe $zip $verify
@@ -150,11 +154,24 @@ foreach ($entry in $manifest) {
     $path = [System.IO.Path]::GetFullPath((Join-Path $packageRoot $relative))
     if (-not $path.StartsWith($packagePrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
         -not (Test-Path -LiteralPath $path -PathType Leaf) -or
+        (Get-Item -LiteralPath $path).Length -ne [long]$entry.length -or
         (Get-Sha256 $path) -ne [string]$entry.sha256) {
         $manifestFailures.Add([string]$entry.path)
     }
 }
 if ($manifestFailures.Count -gt 0) { throw "Payload manifest verification failed for $($manifestFailures.Count) file(s)." }
+
+$payloadSumsPath = Join-Path $packageRoot "PAYLOAD-SHA256SUMS"
+if (-not (Test-Path -LiteralPath $payloadSumsPath -PathType Leaf)) {
+    throw "PAYLOAD-SHA256SUMS is missing."
+}
+$actualPayloadSums = @(Get-Content -LiteralPath $payloadSumsPath)
+$expectedPayloadSums = @($manifest | ForEach-Object {
+    "$([string]$_.sha256)  $([string]$_.path)"
+})
+if ((Compare-Object $expectedPayloadSums $actualPayloadSums -SyncWindow 0).Count -ne 0) {
+    throw "PAYLOAD-SHA256SUMS does not match FILE-MANIFEST.json."
+}
 
 $actualPayloadFiles = @(
     @(Get-ChildItem -LiteralPath $payloadRoot -Recurse -Force -File) +
