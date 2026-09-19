@@ -48,6 +48,11 @@ public sealed class ReleaseRuntimeBundlePackageBoundaryTests
         Assert.Contains("[string]$ExpectedSignerSubject",source,StringComparison.Ordinal);
         Assert.Contains("[string]$ExpectedSignerThumbprint",source,StringComparison.Ordinal);
         Assert.Contains("Payload manifest does not exactly cover the runtime bundle files.",source,StringComparison.Ordinal);
+        Assert.Contains("Assert-ZipEntriesSafe",source,StringComparison.Ordinal);
+        Assert.Contains("Archive entry escapes verification root.",source,StringComparison.Ordinal);
+        Assert.Contains("Archive contains duplicate normalized entry paths.",source,StringComparison.Ordinal);
+        Assert.Contains("Resolve-InPackageRoot",source,StringComparison.Ordinal);
+        Assert.Contains("Package metadata path escapes package root.",source,StringComparison.Ordinal);
         Assert.Contains("Runtime package signature states are mixed.",source,StringComparison.Ordinal);
         Assert.Contains("Runtime package executable timestamp is missing",source,StringComparison.Ordinal);
         Assert.Contains("TimeStamperCertificate",source,StringComparison.Ordinal);
