@@ -64,6 +64,7 @@ internal sealed record ExecutionPreTradeSimulationProvenanceV1(
     string ClientOrderId,
     string StrategyId,
     string StrategyVersion,
+    string Symbol,
     string ProviderId,
     string Environment,
     string ArtifactSha256,
@@ -151,6 +152,7 @@ internal static class ExecutionPreTradeSimulationProvenanceCanonicalizerV1
             intent.ClientOrderId,
             artifact.StrategyId,
             artifact.StrategyVersion,
+            intent.Symbol,
             artifact.ProviderId,
             artifact.Environment,
             hashes.ArtifactHash,
@@ -182,6 +184,7 @@ internal static class ExecutionPreTradeSimulationProvenanceCanonicalizerV1
            ||value.Schema!=Schema
            ||value.Environment!="Testnet"
            ||value.CreatedAtUtc.Offset!=TimeSpan.Zero
+           ||string.IsNullOrWhiteSpace(value.Symbol)
            ||!Sha(value.ArtifactSha256)
            ||!Sha(value.IntentSha256)
            ||!Sha(value.BacktestValidationSha256)
@@ -257,6 +260,7 @@ internal static class ExecutionPreTradeSimulationProvenanceCanonicalizerV1
             writer.WriteString("simulated_fill_sha256",value.SimulatedFillSha256);
             writer.WriteString("strategy_id",value.StrategyId);
             writer.WriteString("strategy_version",value.StrategyVersion);
+            writer.WriteString("symbol",value.Symbol);
             writer.WriteString("timeline_sha256",value.TimelineSha256);
             writer.WriteString("venue_rule_sha256",value.VenueRuleSha256);
             writer.WriteString("venue_rule_version",value.VenueRuleVersion);
