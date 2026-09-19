@@ -1,3 +1,5 @@
+using 币安量化机器人.Services.Security;
+
 namespace 币安量化机器人.Services.Backup;
 
 public enum RuntimeStateRestorePhase
@@ -23,7 +25,7 @@ public sealed record RuntimeStateRestoreJournalV1(
 public sealed record RuntimeStateRestoreJournalEnvelopeV1(
     string Schema,
     string RestoreId,
-    Services.Security.EncryptedEnvelope Envelope)
+    EncryptedEnvelope Envelope)
 {
     public const string CurrentSchema = "wpe.runtime-state-restore-journal-envelope/1.0";
 }
