@@ -91,6 +91,34 @@ public sealed class StrategyAdaptiveIntelligenceTests : IDisposable
     }
 
     [Fact]
+    public void StrategyDisagreementCanOnlyReduceOrWithholdLocalBacking()
+    {
+        var longProfile=new StrategyProfile{Id="long",Symbol="BTCUSDT",Lifecycle=StrategyLifecycle.Active,QualityScore=.8,Expectancy=.01};
+        var shortProfile=new StrategyProfile{Id="short",Symbol="BTCUSDT",Lifecycle=StrategyLifecycle.Active,QualityScore=.8,Expectancy=.01};
+        var longSignal=new StrategyCycleSelection(longProfile,new("long","BTCUSDT",1,.75,"long"),MarketRegime.Trending,.60);
+        var shortSignal=new StrategyCycleSelection(shortProfile,new("short","BTCUSDT",-1,.75,"short"),MarketRegime.Trending,.40);
+
+        var consensus=AdaptiveStrategySelector.SelectConsensus([longSignal,shortSignal]);
+
+        Assert.NotNull(consensus);
+        Assert.Equal("long",consensus!.Profile.Id);
+        Assert.Equal(.60,consensus.StrategyAgreement,6);
+        Assert.True(consensus.Signal.Confidence<.75);
+        Assert.Contains("strategy_consensus=0.60",consensus.Signal.Reason,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BalancedOpposingStrategiesWithholdRiskIncreasingBacking()
+    {
+        var longProfile=new StrategyProfile{Id="long",Symbol="BTCUSDT",Lifecycle=StrategyLifecycle.Active,QualityScore=.8};
+        var shortProfile=new StrategyProfile{Id="short",Symbol="BTCUSDT",Lifecycle=StrategyLifecycle.Active,QualityScore=.8};
+        var longSignal=new StrategyCycleSelection(longProfile,new("long","BTCUSDT",1,.75,"long"),MarketRegime.Transition,.50);
+        var shortSignal=new StrategyCycleSelection(shortProfile,new("short","BTCUSDT",-1,.75,"short"),MarketRegime.Transition,.50);
+
+        Assert.Null(AdaptiveStrategySelector.SelectConsensus([longSignal,shortSignal]));
+    }
+
+    [Fact]
     public async Task BadRegimeCalibrationCanOnlyReduceLiveSignalConfidence()
     {
         var store=new AgentSqliteStore(DatabasePath);
