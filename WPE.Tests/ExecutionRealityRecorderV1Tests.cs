@@ -15,7 +15,7 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
     {
         var store = Store();
         await SaveArtifact(store, "execution-a", Artifact("cycle-a", "strategy-a", "v7", "order-a"));
-        await store.SaveExchangeOrderFeeEvidenceAsync(Fee("order-a", .04008m), default);
+        await store.SaveExchangeOrderFeeEvidenceAsync(Fee("order-a", 0.04008m), default);
 
         var recorder = new ExecutionRealityRecorderV1(store, () => Now);
         var result = await recorder.RecordAsync(
@@ -123,7 +123,7 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
     private AgentSqliteStore Store() => new(Database, () => Now);
 
     private static ExecutionRealityCostAssumptionV1 Costs() =>
-        new("research-cost-v1", .0004m, .001m);
+        new("research-cost-v1", 0.0004m, 0.001m);
 
     private static ExecutionIntent Intent(string clientOrderId) =>
         new("BTCUSDT", PositionSide.Long, 1m, false, 90m, 120m, clientOrderId, "test",
