@@ -88,6 +88,9 @@ foreach ($requiredNotice in @("Microsoft.Web.WebView2 1.0.2903.40", "OpenTK 4.3.
 
 $manifestFailures = [System.Collections.Generic.List[string]]::new()
 $packagePrefix = $packageRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+$manifestPaths = @($manifest | ForEach-Object { [string]$_.path })
+if (@($manifestPaths | Select-Object -Unique).Count -ne $manifestPaths.Count) { throw "Payload manifest contains duplicate paths." }
+if (@($manifestPaths | Where-Object { $_ -notmatch '^(app|headless|maintenance)/' }).Count -gt 0) { throw "Payload manifest contains a path outside the runtime bundle roots." }
 foreach ($entry in $manifest) {
     $relative = ([string]$entry.path).Replace('/', [System.IO.Path]::DirectorySeparatorChar)
     $path = [System.IO.Path]::GetFullPath((Join-Path $packageRoot $relative))
@@ -105,6 +108,13 @@ $actualPayloadFiles = @(
     @(Get-ChildItem -LiteralPath $maintenanceRoot -Recurse -Force -File)
 )
 if ($actualPayloadFiles.Count -ne $manifest.Count) { throw "Runtime bundle file count does not match the manifest." }
+$actualRelativePaths = @($actualPayloadFiles | ForEach-Object {
+    $_.FullName.Substring($packagePrefix.Length).Replace('\', '/')
+} | Sort-Object)
+$declaredRelativePaths = @($manifestPaths | Sort-Object)
+if ((Compare-Object $actualRelativePaths $declaredRelativePaths -SyncWindow 0).Count -ne 0) {
+    throw "Payload manifest does not exactly cover the runtime bundle files."
+}
 $forbiddenExtensions = @(".pdb", ".cs", ".csproj", ".sln", ".ps1", ".db", ".sqlite", ".sqlite3", ".log", ".pem", ".key", ".p12", ".pfx", ".env")
 $forbiddenSuffixes = @(".db-wal", ".db-shm", ".sqlite-wal", ".sqlite-shm", ".sqlite3-wal", ".sqlite3-shm")
 $forbidden = @($actualPayloadFiles | Where-Object {
@@ -159,6 +169,8 @@ if ([string]$metadata.signing.readinessReportSha256 -ne $embeddedReadinessHash) 
 
 if ($allSigned) {
     if ([string]$metadata.signing.status -ne "valid" -or -not [bool]$metadata.signing.distributable) { throw "Signed runtime bundle metadata is not distributable." }
+    if ([bool]$metadata.source.dirty -or [bool]$readiness.source.dirty) { throw "Signed runtime bundle cannot come from dirty source." }
+    if ([string]$metadata.signing.transitionResultPath -ne "SIGNING-RESULT.json") { throw "Signed runtime bundle transition path is invalid." }
     $signingPath = Join-Path $packageRoot "SIGNING-RESULT.json"
     if (-not (Test-Path -LiteralPath $signingPath -PathType Leaf)) { throw "Signed runtime bundle is missing SIGNING-RESULT.json." }
     if ((Get-Sha256 $signingPath) -ne [string]$metadata.signing.transitionResultSha256) { throw "Signing transition result hash mismatch." }
@@ -166,7 +178,9 @@ if ($allSigned) {
     if ($signingResult.schemaVersion -ne "wpe.runtime-bundle-signing/1.0" -or
         [string]$signingResult.readinessReportSha256 -ne $embeddedReadinessHash -or
         [string]$signingResult.sourceCommit -ne [string]$metadata.source.commit -or
-        [string]$signingResult.productVersion -ne [string]$metadata.productVersion) {
+        [string]$signingResult.productVersion -ne [string]$metadata.productVersion -or
+        [string]$signingResult.publisherSubject -ne [string]$metadata.signing.subject -or
+        ([string]$signingResult.certificateThumbprint).ToUpperInvariant() -ne ([string]$metadata.signing.thumbprint).ToUpperInvariant()) {
         throw "Signing transition result is not bound to the package."
     }
     if (@($signingResult.artifacts).Count -ne 3) { throw "Signing transition result must contain three artifacts." }
@@ -235,7 +249,9 @@ $verificationResult = [ordered]@{
     licenseUnknownCustom = [int]$licenseReport.summary.unknownCustom
     licenseGateStatus = [string]$licenseReport.status
     thirdPartyNoticeSha256 = $noticeHash
-    signingStatus = [string]$signature.Status
+    signingStatus = if ($allSigned) { "Valid" } else { "NotSigned" }
+    bundleSigningStatus = [string]$metadata.signing.status
+    runtimeArtifacts = $artifactStates.Count
     distributable = [bool]$metadata.signing.distributable
     releaseReadiness = [string]$readiness.status
     manifestFailures = $manifestFailures.Count
