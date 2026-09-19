@@ -125,10 +125,26 @@ public sealed class StrategyResearchAgent
             profile.ShadowObservations = performance.Observations; profile.Expectancy = performance.Expectancy;
             profile.MaxDrawdown = performance.MaxDrawdown; profile.FailureStreak = performance.FailureStreak; profile.QualityScore = performance.QualityScore;
             var previous=profile.Lifecycle;var next = _governor.NextLifecycle(profile);
+            if(previous==StrategyLifecycle.Shadow&&next==StrategyLifecycle.Active)
+            {
+                var qualification=await CreateShadowQualificationAsync(profile,ct);
+                if(qualification is null)
+                {
+                    next=StrategyLifecycle.Shadow;
+                    profile.LastReason="canonical shadow qualification unavailable";
+                }
+                else
+                    await _database.SaveStrategyShadowQualificationAsync(qualification,ct);
+            }
             if(next==profile.Lifecycle&&_governor.ShouldRetireShadow(profile,_utcNow()))next=StrategyLifecycle.Retired;
             if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = _utcNow(); profile.LastReason = next==StrategyLifecycle.Retired?$"shadow evaluation exhausted without qualification: {performance.Summary}":$"local performance: {performance.Summary}"; }
-            await _database.UpsertStrategyAsync(profile, ct);
-            if(next!=previous)await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
+            if(next!=previous&&previous==StrategyLifecycle.Shadow&&next==StrategyLifecycle.Active)
+                await _database.CommitStrategyLifecycleTransitionAsync(profile,previous,profile.LastReason,ct);
+            else
+            {
+                await _database.UpsertStrategyAsync(profile,ct);
+                if(next!=previous)await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
+            }
         }
         // Deterministic failover: a degraded strategy never remains the selected
         // strategy when a validated Shadow challenger has passed the same gates.
@@ -142,17 +158,56 @@ public sealed class StrategyResearchAgent
                 .ThenByDescending(x => x.Expectancy)
                 .FirstOrDefault();
             if (challenger is null) continue;
+            var qualification=await CreateShadowQualificationAsync(challenger,ct);
+            if(qualification is null)continue;
+            await _database.SaveStrategyShadowQualificationAsync(qualification,ct);
             challenger.Lifecycle = StrategyLifecycle.Active;
             challenger.StateChangedAtUtc = _utcNow();
-            challenger.LastReason = "deterministic failover from degraded strategy";
-            await _database.UpsertStrategyAsync(challenger, ct);
-            await _database.RecordStrategyLifecycleAsync(challenger,StrategyLifecycle.Shadow,challenger.LastReason,ct);
+            challenger.LastReason = "deterministic failover from canonically qualified shadow strategy";
+            await _database.CommitStrategyLifecycleTransitionAsync(
+                challenger,StrategyLifecycle.Shadow,challenger.LastReason,ct);
         }
         return await _database.GetStrategySnapshotAsync(ct);
     }
 
     public StrategySignal GetSignal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
         => _schedulerHealthy ? _engine.Signal(profile, market, news) : new StrategySignal(profile.Id, profile.Symbol, 0, 0, "strategy research heartbeat is stale; hold", profile.Version);
+
+    private async Task<StrategyShadowQualificationDecisionV1?> CreateShadowQualificationAsync(
+        StrategyProfile profile,
+        CancellationToken ct)
+    {
+        if(profile.Lifecycle!=StrategyLifecycle.Shadow)return null;
+        var now=_utcNow().ToUniversalTime();
+        var evaluatedAt=new DateTimeOffset(DateTime.SpecifyKind(now,DateTimeKind.Utc));
+        var evidence=await _database.GetStrategyShadowObservationsAsync(profile.Id,profile.Version,ct);
+        var decision=StrategyShadowQualificationV1.Evaluate(
+            profile.Id,
+            profile.Version,
+            profile.Symbol,
+            evidence,
+            evaluatedAt);
+        if(!StrategyShadowQualificationV1.IsCanonical(decision)||!decision.Qualified)
+            return null;
+
+        // A crash may persist the durable receipt before the profile lifecycle becomes Active.
+        // Re-evaluate freshness first, then reuse the exact persisted receipt instead of creating
+        // a conflicting canonical decision for the same evidence set at a later evaluation time.
+        var persisted=await _database.GetLatestStrategyShadowQualificationAsync(profile.Id,profile.Version,ct);
+        if(persisted is not null
+           &&persisted.Qualified
+           &&StrategyShadowQualificationV1.IsCanonical(persisted)
+           &&string.Equals(persisted.Symbol,decision.Symbol,StringComparison.Ordinal)
+           &&string.Equals(persisted.MarketProviderId,decision.MarketProviderId,StringComparison.Ordinal)
+           &&string.Equals(persisted.Environment,decision.Environment,StringComparison.Ordinal)
+           &&string.Equals(persisted.BacktestValidationSha256,decision.BacktestValidationSha256,StringComparison.Ordinal)
+           &&string.Equals(persisted.TimelineSha256,decision.TimelineSha256,StringComparison.Ordinal)
+           &&string.Equals(persisted.PolicySha256,decision.PolicySha256,StringComparison.Ordinal)
+           &&string.Equals(persisted.EvidenceSetSha256,decision.EvidenceSetSha256,StringComparison.Ordinal))
+            return persisted;
+
+        return decision;
+    }
 
     private async Task<StrategyShadowObservationV1?> CreateShadowObservationAsync(
         StrategyProfile profile,

@@ -103,13 +103,13 @@ public sealed partial class AgentSqliteStore
         return false;
     }
 
-    internal async Task<StrategyObservationPerformance> GetStrategyShadowObservationPerformanceAsync(
+    internal async Task<IReadOnlyList<StrategyShadowObservationV1>> GetStrategyShadowObservationsAsync(
         string strategyId,
         string strategyVersion,
         CancellationToken ct)
     {
         if(string.IsNullOrWhiteSpace(strategyId)||string.IsNullOrWhiteSpace(strategyVersion))
-            return new(0,0,0,0,0,"canonical shadow observations unavailable");
+            return [];
 
         await using var connection=new SqliteConnection(_cs);
         await connection.OpenAsync(ct);
@@ -123,10 +123,12 @@ public sealed partial class AgentSqliteStore
                    backtest_validation_sha256,backtest_validation_bytes,timeline_sha256,canonical_bytes
             FROM strategy_shadow_observation_artifacts
             WHERE strategy_id=$strategy AND strategy_version=$version
-            ORDER BY market_collected_at,canonical_sha256;
+            ORDER BY market_collected_at,canonical_sha256
+            LIMIT $limit;
             """;
         query.Parameters.AddWithValue("$strategy",strategyId);
         query.Parameters.AddWithValue("$version",strategyVersion);
+        query.Parameters.AddWithValue("$limit",StrategyGovernor.MaximumUnqualifiedShadowObservations+1);
 
         var rows=new List<StrategyShadowObservationV1>();
         string? validationHash=null;
@@ -172,35 +174,15 @@ public sealed partial class AgentSqliteStore
             environment??=row.Environment;
             rows.Add(row);
         }
-
-        if(rows.Count<2)
-            return new(rows.Count,0,0,0,0,"canonical shadow observations pending");
-
-        var returns=new List<double>(rows.Count-1);
-        foreach(var (current,next) in rows.Zip(rows.Skip(1)))
-            returns.Add((double)current.Direction*(double)(next.MarketPrice/current.MarketPrice-1));
-
-        var expectancy=returns.Average();
-        var equity=1d;
-        var high=1d;
-        var drawdown=0d;
-        var failures=0;
-        foreach(var value in returns)
-        {
-            equity*=Math.Max(.01,1+value);
-            high=Math.Max(high,equity);
-            drawdown=Math.Max(drawdown,(high-equity)/high);
-            if(value<0)failures++;else failures=0;
-        }
-        var quality=Math.Clamp(.5+expectancy*50-drawdown,0,1);
-        return new(
-            rows.Count,
-            expectancy,
-            drawdown,
-            quality,
-            failures,
-            $"canonical_shadow_observations={rows.Count} expectancy={expectancy:P2} drawdown={drawdown:P1}");
+        return rows;
     }
+
+    internal async Task<StrategyObservationPerformance> GetStrategyShadowObservationPerformanceAsync(
+        string strategyId,
+        string strategyVersion,
+        CancellationToken ct)
+        =>StrategyShadowObservationAnalyticsV1.Evaluate(
+            await GetStrategyShadowObservationsAsync(strategyId,strategyVersion,ct));
 
     private async Task VerifyStrategyShadowSourcesAsync(
         StrategyShadowObservationV1 value,
