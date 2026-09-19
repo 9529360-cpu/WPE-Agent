@@ -41,6 +41,7 @@ internal sealed record ExecutionRealityCalibrationReportV1(
     string SourcePositionLinkSha256,
     string SourceExecutionLedgerSha256,
     string SourceExecutionTraceSha256,
+    string SourceDriftTraceSha256,
     long SourceLastExecutionEventId,
     string SourceDriftSchema,
     int MinimumSamplesPerBucket,
@@ -55,6 +56,7 @@ internal sealed record ExecutionRealityCalibrationSourceV1(
     string PositionLinkSha256,
     string ExecutionLedgerSha256,
     string ExecutionTraceSha256,
+    string DriftTraceSha256,
     long LastExecutionEventId,
     DateTimeOffset LinkedAtUtc);
 
@@ -72,7 +74,7 @@ internal static class ExecutionRealityCalibrationCanonicalizerV1
         ArgumentNullException.ThrowIfNull(source);ArgumentNullException.ThrowIfNull(buckets);ArgumentNullException.ThrowIfNull(reasonCodes);
         if(minimumSamplesPerBucket<1||source.LastExecutionEventId<1
            ||source.PositionLinkId!="execution-position-drift:"+source.PositionLinkSha256
-           ||!Sha(source.PositionLinkSha256)||!Sha(source.ExecutionLedgerSha256)||!Sha(source.ExecutionTraceSha256))
+           ||!Sha(source.PositionLinkSha256)||!Sha(source.ExecutionLedgerSha256)||!Sha(source.ExecutionTraceSha256)||!Sha(source.DriftTraceSha256))
             throw new ArgumentException("Execution calibration source is invalid.");
         generatedAtUtc=generatedAtUtc.ToUniversalTime();
         var rows=buckets.OrderBy(x=>x.ProviderId,StringComparer.Ordinal).ThenBy(x=>x.Environment,StringComparer.Ordinal)
@@ -87,13 +89,14 @@ internal static class ExecutionRealityCalibrationCanonicalizerV1
             schema=Schema,generatedAtUtc,
             sourcePositionLinkId=source.PositionLinkId,sourcePositionLinkSha256=source.PositionLinkSha256,
             sourceExecutionLedgerSha256=source.ExecutionLedgerSha256,sourceExecutionTraceSha256=source.ExecutionTraceSha256,
-            sourceLastExecutionEventId=source.LastExecutionEventId,sourceDriftSchema=ExecutionDriftCanonicalizerV1.Schema,
+            sourceDriftTraceSha256=source.DriftTraceSha256,sourceLastExecutionEventId=source.LastExecutionEventId,
+            sourceDriftSchema=ExecutionDriftCanonicalizerV1.Schema,
             minimumSamplesPerBucket,status=status.ToString().ToLowerInvariant(),reasonCodes=reasons,
             buckets=rows.Select(Row)
         });
         var hash=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
         return new(Schema,generatedAtUtc,source.PositionLinkId,source.PositionLinkSha256,source.ExecutionLedgerSha256,
-            source.ExecutionTraceSha256,source.LastExecutionEventId,ExecutionDriftCanonicalizerV1.Schema,minimumSamplesPerBucket,
+            source.ExecutionTraceSha256,source.DriftTraceSha256,source.LastExecutionEventId,ExecutionDriftCanonicalizerV1.Schema,minimumSamplesPerBucket,
             status,reasons,rows,hash,bytes);
     }
 
@@ -103,11 +106,13 @@ internal static class ExecutionRealityCalibrationCanonicalizerV1
            ||value.SourceLastExecutionEventId<1||value.SourceDriftSchema!=ExecutionDriftCanonicalizerV1.Schema
            ||value.SourcePositionLinkId!="execution-position-drift:"+value.SourcePositionLinkSha256
            ||!Sha(value.SourcePositionLinkSha256)||!Sha(value.SourceExecutionLedgerSha256)
-           ||!Sha(value.SourceExecutionTraceSha256)||!Sha(value.CanonicalSha256)||value.CanonicalBytes is null)return false;
+           ||!Sha(value.SourceExecutionTraceSha256)||!Sha(value.SourceDriftTraceSha256)
+           ||!Sha(value.CanonicalSha256)||value.CanonicalBytes is null)return false;
         try
         {
             var source=new ExecutionRealityCalibrationSourceV1(value.SourcePositionLinkId,value.SourcePositionLinkSha256,
-                value.SourceExecutionLedgerSha256,value.SourceExecutionTraceSha256,value.SourceLastExecutionEventId,value.GeneratedAtUtc);
+                value.SourceExecutionLedgerSha256,value.SourceExecutionTraceSha256,value.SourceDriftTraceSha256,
+                value.SourceLastExecutionEventId,value.GeneratedAtUtc);
             var expected=Create(source,value.GeneratedAtUtc,value.MinimumSamplesPerBucket,value.Buckets,value.ReasonCodes);
             return expected.Status==value.Status
                    &&string.Equals(expected.CanonicalSha256,value.CanonicalSha256,StringComparison.Ordinal)
@@ -148,26 +153,32 @@ internal static class ExecutionRealityCalibrationCanonicalizerV1
     private static bool Sha(string value)=>value is{Length:64}&&value.All(Uri.IsHexDigit);
 }
 
-internal sealed class ExecutionRealityCalibrationServiceV1(AgentSqliteStore store,Func<DateTimeOffset>? utcNow=null)
+internal sealed record ExecutionRealityCalibrationObservationSetV1(
+    bool SourceTraceMatches,
+    string CurrentExecutionTraceSha256,
+    string CurrentDriftTraceSha256,
+    IReadOnlyList<ExecutionDriftSummaryV1> Summaries);
+
+internal sealed class ExecutionRealityCalibrationServiceV1(AgentSqliteStore store)
 {
     internal const int MinimumSamplesPerBucket=30;
     private readonly AgentSqliteStore _store=store??throw new ArgumentNullException(nameof(store));
-    private readonly Func<DateTimeOffset> _utcNow=utcNow??(()=>DateTimeOffset.UtcNow);
 
     internal async Task<ExecutionRealityCalibrationReportV1?> BuildAsync(CancellationToken ct)
     {
         var source=await _store.GetExecutionRealityCalibrationSourceAsync(ct);
         if(source is null)return null;
-        var summaries=await _store.GetExecutionDriftSummariesThroughEventAsync(source.LastExecutionEventId,ct);
-        var eligible=summaries.Where(Eligible).ToArray();
+        var observed=await _store.GetExecutionRealityCalibrationObservationSetAsync(source,ct);
+        var eligible=observed.SourceTraceMatches?observed.Summaries.Where(Eligible).ToArray():[];
         var buckets=eligible.GroupBy(x=>new{x.ProviderId,x.Environment,x.Symbol,x.OrderType,x.ReduceOnly})
             .Select(g=>Bucket(g.Key.ProviderId,g.Key.Environment,g.Key.Symbol,g.Key.OrderType,g.Key.ReduceOnly,g.ToArray()))
             .OrderBy(x=>x.ProviderId,StringComparer.Ordinal).ThenBy(x=>x.Environment,StringComparer.Ordinal)
             .ThenBy(x=>x.Symbol,StringComparer.Ordinal).ThenBy(x=>x.OrderType).ThenBy(x=>x.ReduceOnly).ToArray();
         var reasons=new List<string>();
-        if(eligible.Length==0)reasons.Add("execution-calibration.no-current-schema-samples");
+        if(!observed.SourceTraceMatches)reasons.Add("execution-calibration.source-trace-mismatch");
+        if(observed.SourceTraceMatches&&eligible.Length==0)reasons.Add("execution-calibration.no-current-schema-samples");
         if(buckets.All(x=>!x.Qualified))reasons.Add("execution-calibration.samples-insufficient");
-        return ExecutionRealityCalibrationCanonicalizerV1.Create(source,_utcNow().ToUniversalTime(),MinimumSamplesPerBucket,buckets,reasons);
+        return ExecutionRealityCalibrationCanonicalizerV1.Create(source,source.LinkedAtUtc,MinimumSamplesPerBucket,buckets,reasons);
     }
 
     private static bool Eligible(ExecutionDriftSummaryV1 x)
@@ -217,12 +228,13 @@ public sealed partial class AgentSqliteStore
                 source_position_link_sha256 TEXT NOT NULL,
                 source_execution_ledger_sha256 TEXT NOT NULL,
                 source_execution_trace_sha256 TEXT NOT NULL,
+                source_drift_trace_sha256 TEXT NOT NULL,
                 source_last_execution_event_id INTEGER NOT NULL,
                 source_drift_schema TEXT NOT NULL,
                 minimum_samples_per_bucket INTEGER NOT NULL,
                 status TEXT NOT NULL,
                 canonical_bytes BLOB NOT NULL,
-                UNIQUE(source_execution_trace_sha256,source_drift_schema,minimum_samples_per_bucket));
+                UNIQUE(source_execution_trace_sha256,source_drift_trace_sha256,source_drift_schema,minimum_samples_per_bucket));
             CREATE INDEX IF NOT EXISTS ix_execution_reality_calibration_time ON execution_reality_calibrations(generated_at DESC);
             CREATE TRIGGER IF NOT EXISTS execution_reality_calibrations_no_update BEFORE UPDATE ON execution_reality_calibrations BEGIN SELECT RAISE(ABORT,'execution reality calibrations are append-only'); END;
             CREATE TRIGGER IF NOT EXISTS execution_reality_calibrations_no_delete BEFORE DELETE ON execution_reality_calibrations BEGIN SELECT RAISE(ABORT,'execution reality calibrations are append-only'); END;
@@ -233,33 +245,90 @@ public sealed partial class AgentSqliteStore
     internal async Task<ExecutionRealityCalibrationSourceV1?> GetExecutionRealityCalibrationSourceAsync(CancellationToken ct)
     {
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
-            SELECT l.link_id,l.canonical_sha256,l.execution_ledger_sha256,s.execution_trace_sha256,s.last_execution_event_id,l.linked_at
+            SELECT l.link_id,l.canonical_sha256,l.execution_ledger_sha256,s.execution_trace_sha256,s.drift_trace_sha256,s.last_execution_event_id,l.linked_at
             FROM execution_position_drift_reconciliations l
             JOIN execution_position_ledger_snapshots s ON s.canonical_sha256=l.execution_ledger_sha256
             WHERE l.position_state='Confirmed' AND l.allows_risk_increase=1 AND l.calibratable=1
             ORDER BY l.linked_at DESC,l.rowid DESC LIMIT 1
             """;
         await using var r=await q.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct))return null;
-        return new(r.GetString(0),r.GetString(1),r.GetString(2),r.GetString(3),r.GetInt64(4),
-            DateTimeOffset.Parse(r.GetString(5),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind).ToUniversalTime());
+        return new(r.GetString(0),r.GetString(1),r.GetString(2),r.GetString(3),r.GetString(4),r.GetInt64(5),
+            DateTimeOffset.Parse(r.GetString(6),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind).ToUniversalTime());
     }
 
-    internal async Task<IReadOnlyList<ExecutionDriftSummaryV1>> GetExecutionDriftSummariesThroughEventAsync(long lastExecutionEventId,CancellationToken ct)
+    internal async Task<ExecutionRealityCalibrationObservationSetV1> GetExecutionRealityCalibrationObservationSetAsync(
+        ExecutionRealityCalibrationSourceV1 source,CancellationToken ct)
     {
-        if(lastExecutionEventId<1)return [];
-        var ids=new List<string>();await using(var c=new SqliteConnection(_cs)){await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
-            SELECT client_order_id FROM execution_events
-            WHERE id<=$cursor AND client_order_id IS NOT NULL AND status IN ('FILLED','PARTIALLY_FILLED')
-            ORDER BY id LIMIT 5000
-            """;q.Parameters.AddWithValue("$cursor",lastExecutionEventId);await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))ids.Add(r.GetString(0));}
-        var result=new List<ExecutionDriftSummaryV1>(ids.Count);
-        foreach(var id in ids)
+        ArgumentNullException.ThrowIfNull(source);
+        if(source.LastExecutionEventId<1)return new(false,new string('0',64),new string('0',64),[]);
+
+        var events=new List<(long Id,string ClientOrderId,string Symbol,PositionSide Side,bool ReduceOnly,decimal Quantity,string Status,string OccurredAt,string? ExchangeUpdatedAt)>();
+        var driftRows=new List<(string Schema,string ClientOrderId,int Sequence,string Phase,string CanonicalSha256)>();
+        await using(var c=new SqliteConnection(_cs))
+        {
+            await c.OpenAsync(ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+            await using(var q=c.CreateCommand())
+            {
+                q.Transaction=tx;q.CommandText="""
+                    SELECT id,client_order_id,symbol,side,reduce_only,quantity,status,occurred_at,exchange_updated_at
+                    FROM execution_events
+                    WHERE id<=$cursor AND status IN ('FILLED','PARTIALLY_FILLED')
+                    ORDER BY id
+                    """;
+                q.Parameters.AddWithValue("$cursor",source.LastExecutionEventId);
+                await using var r=await q.ExecuteReaderAsync(ct);
+                while(await r.ReadAsync(ct))
+                {
+                    if(r.IsDBNull(1)||!Enum.TryParse<PositionSide>(r.GetString(3),true,out var side)
+                       ||!decimal.TryParse(r.GetString(5),NumberStyles.Number,CultureInfo.InvariantCulture,out var quantity)||quantity<0)
+                        continue;
+                    events.Add((r.GetInt64(0),r.GetString(1),r.GetString(2),side,r.GetInt32(4)==1,quantity,r.GetString(6),
+                        r.IsDBNull(7)?"unknown":r.GetString(7),r.IsDBNull(8)?null:r.GetString(8)));
+                }
+            }
+            await using(var q=c.CreateCommand())
+            {
+                q.Transaction=tx;q.CommandText="""
+                    SELECT d.schema,d.client_order_id,d.sequence,d.phase,d.canonical_sha256,d.canonical_bytes
+                    FROM execution_drift_observations d
+                    JOIN execution_events e ON e.client_order_id=d.client_order_id
+                    WHERE e.id<=$cursor AND e.status IN ('FILLED','PARTIALLY_FILLED')
+                    ORDER BY d.client_order_id,d.sequence
+                    """;
+                q.Parameters.AddWithValue("$cursor",source.LastExecutionEventId);
+                await using var r=await q.ExecuteReaderAsync(ct);
+                while(await r.ReadAsync(ct))
+                {
+                    var schema=r.GetString(0);if(!string.Equals(schema,ExecutionDriftCanonicalizerV1.Schema,StringComparison.Ordinal))continue;
+                    var hash=r.GetString(4);var bytes=(byte[])r[5];
+                    if(hash.Length!=64||!string.Equals(Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),hash,StringComparison.Ordinal))
+                        return new(false,new string('0',64),new string('0',64),[]);
+                    driftRows.Add((schema,r.GetString(1),r.GetInt32(2),r.GetString(3),hash));
+                }
+            }
+            await tx.CommitAsync(ct);
+        }
+
+        var eventTraceBytes=JsonSerializer.SerializeToUtf8Bytes(events.Select(x=>new
+        {
+            x.Id,x.ClientOrderId,x.Symbol,side=x.Side.ToString(),x.ReduceOnly,
+            quantity=x.Quantity.ToString("G29",CultureInfo.InvariantCulture),x.Status,x.OccurredAt,x.ExchangeUpdatedAt
+        }));
+        var driftTraceBytes=JsonSerializer.SerializeToUtf8Bytes(driftRows.Select(x=>new{x.Schema,x.ClientOrderId,x.Sequence,x.Phase,x.CanonicalSha256}));
+        var eventHash=Convert.ToHexString(SHA256.HashData(eventTraceBytes)).ToLowerInvariant();
+        var driftHash=Convert.ToHexString(SHA256.HashData(driftTraceBytes)).ToLowerInvariant();
+        var matches=string.Equals(eventHash,source.ExecutionTraceSha256,StringComparison.Ordinal)
+                    &&string.Equals(driftHash,source.DriftTraceSha256,StringComparison.Ordinal);
+        if(!matches)return new(false,eventHash,driftHash,[]);
+
+        var result=new List<ExecutionDriftSummaryV1>();
+        foreach(var id in events.Select(x=>x.ClientOrderId).Distinct(StringComparer.Ordinal))
         {
             ct.ThrowIfCancellationRequested();
             var summary=await GetExecutionDriftSummaryAsync(id,ct);
             if(summary is not null)result.Add(summary);
         }
-        return result;
+        return new(true,eventHash,driftHash,result);
     }
 
     internal async Task<bool> SaveExecutionRealityCalibrationAsync(ExecutionRealityCalibrationReportV1 value,CancellationToken ct)
@@ -269,16 +338,16 @@ public sealed partial class AgentSqliteStore
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
             INSERT OR IGNORE INTO execution_reality_calibrations(
                 canonical_sha256,schema,generated_at,source_position_link_id,source_position_link_sha256,
-                source_execution_ledger_sha256,source_execution_trace_sha256,source_last_execution_event_id,
+                source_execution_ledger_sha256,source_execution_trace_sha256,source_drift_trace_sha256,source_last_execution_event_id,
                 source_drift_schema,minimum_samples_per_bucket,status,canonical_bytes)
-            VALUES($hash,$schema,$generated,$link,$linkHash,$ledger,$trace,$cursor,$driftSchema,$minimum,$status,$bytes);
+            VALUES($hash,$schema,$generated,$link,$linkHash,$ledger,$trace,$driftTrace,$cursor,$driftSchema,$minimum,$status,$bytes);
             SELECT changes();
             """;
         q.Parameters.AddWithValue("$hash",value.CanonicalSha256);q.Parameters.AddWithValue("$schema",value.Schema);
         q.Parameters.AddWithValue("$generated",value.GeneratedAtUtc.ToString("O",CultureInfo.InvariantCulture));
         q.Parameters.AddWithValue("$link",value.SourcePositionLinkId);q.Parameters.AddWithValue("$linkHash",value.SourcePositionLinkSha256);
         q.Parameters.AddWithValue("$ledger",value.SourceExecutionLedgerSha256);q.Parameters.AddWithValue("$trace",value.SourceExecutionTraceSha256);
-        q.Parameters.AddWithValue("$cursor",value.SourceLastExecutionEventId);q.Parameters.AddWithValue("$driftSchema",value.SourceDriftSchema);
+        q.Parameters.AddWithValue("$driftTrace",value.SourceDriftTraceSha256);q.Parameters.AddWithValue("$cursor",value.SourceLastExecutionEventId);q.Parameters.AddWithValue("$driftSchema",value.SourceDriftSchema);
         q.Parameters.AddWithValue("$minimum",value.MinimumSamplesPerBucket);q.Parameters.AddWithValue("$status",value.Status.ToString());
         q.Parameters.Add("$bytes",SqliteType.Blob).Value=value.CanonicalBytes;
         return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1;
