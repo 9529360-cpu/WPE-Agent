@@ -21,6 +21,7 @@ public sealed class ExecutionSimulationComparisonPersistenceTests : IDisposable
 
         var fillFirst = await store.SaveExecutionSimulationFillAsync(simulated, default);
         var fillSecond = await store.SaveExecutionSimulationFillAsync(simulated, default);
+        Assert.True((await store.SaveExecutionSimulationResearchProvenanceAsync(Provenance(simulated), default)).Succeeded);
         Assert.True((await store.SaveExecutionRealityDriftAsync(observed, default)).Succeeded);
         var comparisonFirst = await store.SaveExecutionSimulationComparisonAsync(comparison, default);
         var comparisonSecond = await store.SaveExecutionSimulationComparisonAsync(comparison, default);
@@ -54,6 +55,7 @@ public sealed class ExecutionSimulationComparisonPersistenceTests : IDisposable
         var observed = Observed("strategy-a", "v7", "research-cost-v1", "order-a", 100m);
         var comparison = ExecutionSimulationComparisonCanonicalizerV1.Create(simulated, observed, ObservedAt.AddSeconds(1));
         await store.SaveExecutionSimulationFillAsync(simulated, default);
+        await store.SaveExecutionSimulationResearchProvenanceAsync(Provenance(simulated), default);
         await store.SaveExecutionRealityDriftAsync(observed, default);
         await store.SaveExecutionSimulationComparisonAsync(comparison, default);
 
@@ -163,6 +165,7 @@ public sealed class ExecutionSimulationComparisonPersistenceTests : IDisposable
         var observed = Observed(strategyId, strategyVersion, costModelVersion, "order-" + suffix, observedPrice);
         var comparison = ExecutionSimulationComparisonCanonicalizerV1.Create(simulated, observed, ObservedAt.AddSeconds(1));
         await store.SaveExecutionSimulationFillAsync(simulated, default);
+        await store.SaveExecutionSimulationResearchProvenanceAsync(Provenance(simulated), default);
         await store.SaveExecutionRealityDriftAsync(observed, default);
         await store.SaveExecutionSimulationComparisonAsync(comparison, default);
     }
@@ -185,10 +188,27 @@ public sealed class ExecutionSimulationComparisonPersistenceTests : IDisposable
         Assert.Contains("observed execution source is missing", noObserved.Message, StringComparison.OrdinalIgnoreCase);
 
         await store.SaveExecutionRealityDriftAsync(observed, default);
+        var noProvenance = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            store.SaveExecutionSimulationComparisonAsync(comparison, default));
+        Assert.Contains("missing research provenance", noProvenance.Message, StringComparison.OrdinalIgnoreCase);
+
+        await store.SaveExecutionSimulationResearchProvenanceAsync(Provenance(simulated), default);
         var stored = await store.SaveExecutionSimulationComparisonAsync(comparison, default);
         Assert.True(stored.Succeeded);
         Assert.False(stored.Idempotent);
     }
+
+    private static ExecutionSimulationResearchProvenanceV1 Provenance(ExecutionSimulationFillV1 simulated) =>
+        ExecutionSimulationResearchProvenanceCanonicalizerV1.Create(
+            simulated,
+            new string('a', 64),
+            new string('b', 64),
+            new string('c', 64),
+            new string('d', 64),
+            MarketAt.AddHours(-2),
+            MarketAt.AddHours(-1),
+            MarketAt.AddMinutes(-1),
+            SimulatedAt.AddSeconds(1));
 
     private static ExecutionSimulationFillV1 Simulated(
         string strategyId,
