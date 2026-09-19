@@ -19,15 +19,15 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
         var source = Layout("source");
         var target = Layout("target");
         await CreateDatabase(source.DataFile("agent.db"), "new");
-        File.WriteAllText(source.DataFile("agent-settings.json"), "{"generation":"new"}");
+        File.WriteAllText(source.DataFile("agent-settings.json"), "{\"generation\":\"new\"}");
         await CreateDatabase(target.DataFile("agent.db"), "old");
-        File.WriteAllText(target.DataFile("agent-settings.json"), "{"generation":"old"}");
+        File.WriteAllText(target.DataFile("agent-settings.json"), "{\"generation\":\"old\"}");
 
         var backup = await Backup(source).CreateAsync(Path.Combine(_root, "source-backups"));
         var result = await Restore(target).RestoreAsync(backup.Directory);
 
         Assert.Equal("new", await ReadDatabase(target.DataFile("agent.db")));
-        Assert.Contains(""new"", File.ReadAllText(target.DataFile("agent-settings.json")), StringComparison.Ordinal);
+        Assert.Contains("\"new\"", File.ReadAllText(target.DataFile("agent-settings.json")), StringComparison.Ordinal);
         Assert.NotNull(result.SafetyBackupDirectory);
         Assert.True(Directory.Exists(result.SafetyBackupDirectory));
         Assert.False(File.Exists(target.RuntimeFile(RuntimeStateRestoreRecovery.JournalFileName)));
@@ -37,7 +37,7 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
         var safety = await Verifier().VerifyToStagingAsync(result.SafetyBackupDirectory!, safetyStage);
         Assert.Equal("old", await ReadDatabase(Path.Combine(safety.StagingDataDirectory, "agent.db")));
         Assert.Contains(
-            ""old"",
+            "\"old\"",
             File.ReadAllText(Path.Combine(safety.StagingDataDirectory, "agent-settings.json")),
             StringComparison.Ordinal);
     }
@@ -66,9 +66,10 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
         Assert.Contains("fault-after-activation", error.Message, StringComparison.Ordinal);
         Assert.Equal("old", await ReadDatabase(target.DataFile("agent.db")));
         Assert.False(File.Exists(target.RuntimeFile(RuntimeStateRestoreRecovery.JournalFileName)));
-        Assert.DoesNotContain(
-            Directory.EnumerateDirectories(target.RuntimeDirectory).Select(Path.GetFileName),
-            x => x is not null && x.StartsWith("restore-", StringComparison.Ordinal));
+        Assert.Empty(
+            Directory.EnumerateDirectories(target.RuntimeDirectory)
+                .Select(Path.GetFileName)
+                .Where(x => x is not null && x.StartsWith("restore-", StringComparison.Ordinal)));
         Assert.Single(Directory.EnumerateDirectories(target.BackupsDirectory));
     }
 
