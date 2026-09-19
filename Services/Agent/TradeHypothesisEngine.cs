@@ -49,6 +49,7 @@ public sealed record TradeHypothesis(
     IReadOnlyList<string> Evidence)
 {
     public const string CurrentVersion = "hypothesis-v1";
+    public bool LastOrderBookAvailable { get; init; }
     public bool Actionable => Stage is TradeHypothesisStage.ScoutReady or TradeHypothesisStage.Confirmed;
     public bool IsLive => Kind != TradeHypothesisKind.None && Stage != TradeHypothesisStage.Invalidated;
     public bool DirectionMatches(DecisionAction action) => action switch
@@ -176,10 +177,10 @@ public sealed class TradeHypothesisEngine
             : market.Trend15m < previous.LastTrend15m - .08 || market.Rsi < previous.LastRsi - 4;
 
         var bookAvailable = !market.Quality.Anomalies.Contains("order_book_missing",StringComparer.OrdinalIgnoreCase);
-        var bookImproved = bookAvailable && (longSide
+        var bookImproved = bookAvailable && previous.LastOrderBookAvailable && (longSide
             ? market.Quality.OrderBookImbalance > previous.LastOrderBookImbalance + .20
             : market.Quality.OrderBookImbalance < previous.LastOrderBookImbalance - .20);
-        var bookPersistentlySupportive = bookAvailable && (longSide
+        var bookPersistentlySupportive = bookAvailable && previous.LastOrderBookAvailable && (longSide
             ? previous.LastOrderBookImbalance >= .35 && market.Quality.OrderBookImbalance >= .35
             : previous.LastOrderBookImbalance <= -.35 && market.Quality.OrderBookImbalance <= -.35);
 
@@ -348,7 +349,10 @@ public sealed class TradeHypothesisEngine
             thesis,
             trigger,
             invalidationText,
-            Evidence(market));
+            Evidence(market))
+        {
+            LastOrderBookAvailable = BookAvailable(market)
+        };
     }
 
     private static TradeHypothesis Snapshot(
@@ -380,7 +384,8 @@ public sealed class TradeHypothesisEngine
             Thesis = thesis,
             Trigger = trigger,
             Invalidation = invalidation,
-            Evidence = Evidence(market)
+            Evidence = Evidence(market),
+            LastOrderBookAvailable = BookAvailable(market)
         };
 
     private static TradeHypothesis Observing(MarketEvidence market, DateTimeOffset now, string thesis) =>
@@ -410,7 +415,13 @@ public sealed class TradeHypothesisEngine
             thesis,
             "Wait for a coherent market structure before considering risk.",
             "No active trade thesis exists.",
-            Evidence(market));
+            Evidence(market))
+        {
+            LastOrderBookAvailable = BookAvailable(market)
+        };
+
+    private static bool BookAvailable(MarketEvidence market) =>
+        !market.Quality.Anomalies.Contains("order_book_missing",StringComparer.OrdinalIgnoreCase);
 
     private static decimal InvalidationPrice(MarketEvidence market, bool longSide)
     {

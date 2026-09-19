@@ -75,6 +75,37 @@ public sealed class TradeHypothesisEngineTests
     }
 
     [Fact]
+    public void LegacyPersistedHypothesisWithoutBookAvailabilityDefaultsConservatively()
+    {
+        var current=TradeHypothesisEngine.EvaluateMarket(
+            Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,.40),
+            null,[],Now);
+        Assert.True(current.LastOrderBookAvailable);
+
+        var node=System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(current))!.AsObject();
+        Assert.True(node.Remove(nameof(TradeHypothesis.LastOrderBookAvailable)));
+        var restored=System.Text.Json.JsonSerializer.Deserialize<TradeHypothesis>(node.ToJsonString());
+
+        Assert.NotNull(restored);
+        Assert.False(restored!.LastOrderBookAvailable);
+    }
+
+    [Fact]
+    public void RecoveredDepthDoesNotPretendUnknownBaselineImproved()
+    {
+        var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,0,bookAvailable:false);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var depthRecovered=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,.25);
+
+        var stillWatching=TradeHypothesisEngine.EvaluateMarket(depthRecovered,watching,[],Now.AddMinutes(1));
+
+        Assert.False(watching.LastOrderBookAvailable);
+        Assert.Equal(TradeHypothesisStage.Watching,stillWatching.Stage);
+        Assert.True(stillWatching.LastOrderBookAvailable);
+        Assert.False(stillWatching.Actionable);
+    }
+
+    [Fact]
     public void PersistentlySupportiveOrderBookCanConfirmScoutWithoutNeedingImpossibleFurtherImprovement()
     {
         var first=Market(81117.2m,80906m,81715.8m,26.5,-.34,-.23,5.13,.99);
