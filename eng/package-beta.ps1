@@ -201,23 +201,109 @@ if ($projectVersionNodes.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$p
 $projectVersion = ([string]$projectVersionNodes[0]).Trim()
 
 $releaseReport = Get-Content -Raw -LiteralPath $releaseReportPath | ConvertFrom-Json
-if ($releaseReport.status -ne "passed" -or $releaseReport.runtime -ne $Runtime) {
+if ($releaseReport.schemaVersion -ne "wpe.release-readiness.v1" -or $releaseReport.status -ne "passed" -or $releaseReport.runtime -ne $Runtime) {
     throw "A passed release-readiness report for $Runtime is required."
 }
-& (Join-Path $root "publish.ps1") -Configuration Release -Runtime $Runtime -Output $publish -ValidateOnly
-if ($LASTEXITCODE -ne 0) { throw "Publish artifact validation failed." }
+if (-not $releaseReport.artifacts -or -not $releaseReport.artifacts.desktop -or -not $releaseReport.artifacts.headless -or -not $releaseReport.artifacts.maintenance) {
+    throw "Release-readiness runtime bundle facts are incomplete."
+}
+if ([string]$releaseReport.productVersion -ne $projectVersion) { throw "Release-readiness product version does not match the project." }
 
-$exe = @(Get-ChildItem -LiteralPath $publish -File -Filter "*.exe")
-if ($exe.Count -ne 1) { throw "Expected exactly one application executable; found $($exe.Count)." }
-$fileInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exe[0].FullName)
-$binaryVersion = if ($fileInfo.FileVersion) { $fileInfo.FileVersion } else { "0.0.0.0" }
-$parsedBinaryVersion = [Version]$binaryVersion
-$binaryPackageVersion = "$($parsedBinaryVersion.Major).$($parsedBinaryVersion.Minor).$($parsedBinaryVersion.Build)"
-if ($binaryPackageVersion -ne $projectVersion) { throw "Published binary version $binaryPackageVersion does not match project Version $projectVersion." }
 $commit = (& git -C $root rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') { throw "Unable to resolve the source commit." }
-$shortCommit = $commit.Substring(0, 12)
 $dirty = (@(& git -C $root status --porcelain=v1 --untracked-files=normal)).Count -gt 0
+if ([string]$releaseReport.source.commit -ne $commit) { throw "Release-readiness source commit does not match the packaging source." }
+if ([bool]$releaseReport.source.dirty -ne $dirty) { throw "Release-readiness dirty-state does not match the packaging source." }
+$shortCommit = $commit.Substring(0, 12)
+
+& (Join-Path $root "publish.ps1") -Configuration Release -Runtime $Runtime -Output $publish -ValidateOnly
+if ($LASTEXITCODE -ne 0) { throw "Desktop publish artifact validation failed." }
+
+$runtimeArtifacts = @(
+    [pscustomobject]@{ Label = "desktop"; Root = $publish; Executable = "WPE-Agent.exe"; Readiness = $releaseReport.artifacts.desktop },
+    [pscustomobject]@{ Label = "headless"; Root = $headlessPublish; Executable = "WPE-Headless.exe"; Readiness = $releaseReport.artifacts.headless },
+    [pscustomobject]@{ Label = "maintenance"; Root = $maintenancePublish; Executable = "WPE.Maintenance.exe"; Readiness = $releaseReport.artifacts.maintenance }
+)
+$artifactStates = [System.Collections.Generic.List[object]]::new()
+foreach ($artifact in $runtimeArtifacts) {
+    $executables = @(Get-ChildItem -LiteralPath $artifact.Root -File -Filter "*.exe")
+    if ($executables.Count -ne 1 -or $executables[0].Name -ne $artifact.Executable) {
+        throw "Runtime artifact $($artifact.Label) must contain exactly the expected top-level executable $($artifact.Executable)."
+    }
+    $fileInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($executables[0].FullName)
+    $binaryVersion = if ($fileInfo.FileVersion) { $fileInfo.FileVersion } else { "0.0.0.0" }
+    $parsedBinaryVersion = [Version]$binaryVersion
+    $binaryPackageVersion = "$($parsedBinaryVersion.Major).$($parsedBinaryVersion.Minor).$($parsedBinaryVersion.Build)"
+    if ($binaryPackageVersion -ne $projectVersion) { throw "Runtime artifact version mismatch: $($artifact.Label)." }
+    $facts = Get-ArtifactTreeFacts $artifact.Root
+    $signature = Get-AuthenticodeSignature -LiteralPath $executables[0].FullName
+    if ($signature.Status -notin @([System.Management.Automation.SignatureStatus]::Valid, [System.Management.Automation.SignatureStatus]::NotSigned)) {
+        throw "Runtime artifact has an invalid Authenticode state: $($artifact.Label):$($signature.Status)"
+    }
+    $artifactStates.Add([pscustomobject]@{
+        Label = $artifact.Label
+        Root = $artifact.Root
+        Executable = $executables[0]
+        Readiness = $artifact.Readiness
+        Facts = $facts
+        Signature = $signature
+    })
+}
+
+$allSigned = @($artifactStates | Where-Object { $_.Signature.Status -eq [System.Management.Automation.SignatureStatus]::Valid }).Count -eq 3
+$allUnsigned = @($artifactStates | Where-Object { $_.Signature.Status -eq [System.Management.Automation.SignatureStatus]::NotSigned }).Count -eq 3
+if (-not ($allSigned -or $allUnsigned)) { throw "Runtime bundle signature states must be all Valid or all NotSigned." }
+
+$readinessReportHash = Get-Sha256 $releaseReportPath
+$signingResult = $null
+$signingResultHash = $null
+$signatureSubject = $null
+$signatureThumbprint = $null
+if ($allSigned) {
+    if ($null -eq $signingResultInput -or -not (Test-Path -LiteralPath $signingResultInput -PathType Leaf)) {
+        throw "A signed runtime bundle requires SigningResultPath."
+    }
+    $signingResultHash = Get-Sha256 $signingResultInput
+    try { $signingResult = Get-Content -Raw -LiteralPath $signingResultInput | ConvertFrom-Json } catch { throw "Runtime bundle signing result is malformed." }
+    if ($signingResult.schemaVersion -ne "wpe.runtime-bundle-signing/1.0") { throw "Runtime bundle signing result schema is unsupported." }
+    if ([string]$signingResult.readinessReportSha256 -ne $readinessReportHash -or
+        [string]$signingResult.sourceCommit -ne $commit -or
+        [string]$signingResult.productVersion -ne $projectVersion) {
+        throw "Runtime bundle signing result is not bound to this readiness candidate."
+    }
+    $signatureSubject = [string]$signingResult.publisherSubject
+    $signatureThumbprint = ([string]$signingResult.certificateThumbprint).ToUpperInvariant()
+    if ([string]::IsNullOrWhiteSpace($signatureSubject) -or $signatureThumbprint -notmatch '^[A-F0-9]{40}$') {
+        throw "Runtime bundle signing identity is invalid."
+    }
+    if (@($signingResult.artifacts).Count -ne 3) { throw "Runtime bundle signing result must contain exactly three artifacts." }
+    foreach ($state in $artifactStates) {
+        $entries = @($signingResult.artifacts | Where-Object { $_.label -eq $state.Label })
+        if ($entries.Count -ne 1) { throw "Runtime bundle signing result artifact identity is invalid: $($state.Label)" }
+        $entry = $entries[0]
+        if ([string]$entry.executable -ne $state.Executable.Name -or
+            [string]$entry.inputTreeSha256 -ne [string]$state.Readiness.treeSha256 -or
+            [string]$entry.outputTreeSha256 -ne $state.Facts.TreeSha256 -or
+            [int]$entry.outputFileCount -ne $state.Facts.FileCount -or
+            [string]$entry.executableSha256 -ne (Get-Sha256 $state.Executable.FullName) -or
+            [string]$entry.signatureStatus -ne "Valid") {
+            throw "Runtime bundle signing result artifact facts do not match: $($state.Label)"
+        }
+        if ($state.Signature.SignerCertificate.Subject -ne $signatureSubject -or
+            $state.Signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $signatureThumbprint) {
+            throw "Runtime bundle executable signer identity does not match the signing result: $($state.Label)"
+        }
+    }
+} else {
+    if ($null -ne $signingResultInput) { throw "Unsigned runtime bundle must not consume a signing result." }
+    foreach ($state in $artifactStates) {
+        if ($state.Facts.TreeSha256 -ne [string]$state.Readiness.treeSha256 -or
+            $state.Facts.FileCount -ne [int]$state.Readiness.fileCount) {
+            throw "Unsigned runtime artifact does not match release-readiness bytes: $($state.Label)"
+        }
+    }
+}
+$signatureStatus = if ($allSigned) { "valid" } else { "unsigned" }
 if (-not $PackageVersion) { $PackageVersion = "$projectVersion-$Channel.1+$shortCommit" }
 $safeVersion = $PackageVersion.Replace('+', '-').Replace('/', '-').Replace('\', '-')
 $packageName = "WPE-Agent-$safeVersion-$Runtime-portable"
