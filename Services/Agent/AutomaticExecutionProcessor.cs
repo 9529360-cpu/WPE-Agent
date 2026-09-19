@@ -104,11 +104,18 @@ public sealed class AutomaticExecutionProcessor
     private readonly IAutomaticExecutionReadOnlyValidator _validator;
     private readonly IAutomaticExecutionGateway _gateway;
     private readonly Func<DateTimeOffset> _utcNow;
+    private readonly AutomaticExecutionRealityPipelineV1 _realityPipeline;
 
     public AutomaticExecutionProcessor(AgentSqliteStore store,IAutomaticExecutionReadOnlyValidator validator,IAutomaticExecutionGateway gateway)
         :this(store,validator,gateway,null){}
     internal AutomaticExecutionProcessor(AgentSqliteStore store,IAutomaticExecutionReadOnlyValidator validator,IAutomaticExecutionGateway gateway,Func<DateTimeOffset>? utcNow)
-    { _store=store??throw new ArgumentNullException(nameof(store));_validator=validator??throw new ArgumentNullException(nameof(validator));_gateway=gateway??throw new ArgumentNullException(nameof(gateway));_utcNow=utcNow??(()=>DateTimeOffset.UtcNow); }
+    {
+        _store=store??throw new ArgumentNullException(nameof(store));
+        _validator=validator??throw new ArgumentNullException(nameof(validator));
+        _gateway=gateway??throw new ArgumentNullException(nameof(gateway));
+        _utcNow=utcNow??(()=>DateTimeOffset.UtcNow);
+        _realityPipeline=new AutomaticExecutionRealityPipelineV1(_store,_gateway,_utcNow);
+    }
 
     public async Task<AutomaticExecutionProcessorResult> ProcessNextAsync(string workerId,CancellationToken ct)
     {
@@ -128,6 +135,9 @@ public sealed class AutomaticExecutionProcessor
         if(facts.RuntimeReady!=AutomaticFactState.True)return await Block(claimed.ExecutionId,workerId,AutomaticExecutionQueueStatus.PolicyBlocked,"automatic.runtime-unavailable",ct);
         if(facts.CapabilityAvailable!=AutomaticFactState.True)return await Block(claimed.ExecutionId,workerId,AutomaticExecutionQueueStatus.CapabilityUnavailable,"automatic.capability-unavailable",ct);
         if(facts.MarketFresh!=AutomaticFactState.True)return await Block(claimed.ExecutionId,workerId,AutomaticExecutionQueueStatus.MarketStale,"automatic.market-stale",ct);
+        try{await _realityPipeline.CaptureBeforeMutationAsync(claimed,ct);}
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch(Exception ex){try{await _store.RecordErrorAsync("AutomaticExecutionSimulationCapture",ex,CancellationToken.None);}catch{}}
         var executing=await _store.TryTransitionAutomaticExecutionAsync(claimed.ExecutionId,AutomaticExecutionQueueStatus.Claimed,AutomaticExecutionQueueStatus.Executing,workerId,"automatic.executing",ct);if(!executing.Succeeded)return Result(false,executing.Code);
         AutomaticGatewayExecutionResult execution;
         try{execution=await _gateway.ExecuteAsync(artifact,claimed.RiskReceipt!,ct);}catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}catch{execution=new(AutomaticGatewayExecutionState.Unknown,"automatic.gateway-unknown");}
@@ -202,6 +212,9 @@ public sealed class AutomaticExecutionProcessor
             if(events.Count==0||events[^1].ToStatus!=item.Status)return BackfillCandidateResult.Failed;
             var writer=new ModelOffExecutionObservationWriterV1(_store);ModelOffExchangeOrderEvidenceV1? evidence=null;
             if(item.Status==AutomaticExecutionQueueStatus.Succeeded)evidence=await ReadExchangeEvidenceAsync(item,ct);
+            try{await _realityPipeline.CompareTerminalAsync(item,events,ct);}
+            catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+            catch(Exception ex){try{await _store.RecordErrorAsync("AutomaticExecutionRealityBackfill",ex,CancellationToken.None);}catch{}}
             var identity=ModelOffExecutionObservationWriterV1.ObservationIdentity(item,events,evidence);
             if(await writer.ObservationCompleteAsync(identity,ct))return BackfillCandidateResult.Skipped;
             return (await writer.WriteAsync(item,events,evidence,_utcNow().ToUniversalTime(),ct)).Persisted
@@ -232,6 +245,12 @@ public sealed class AutomaticExecutionProcessor
             catch(Exception ex)
             {
                 try{await _store.RecordErrorAsync("ModelOffExecutionObservation",ex,CancellationToken.None);}catch{/* Observation failure must not change the persisted execution result. */}
+            }
+            try{await _realityPipeline.CompareTerminalAsync(item,events,ct);}
+            catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+            catch(Exception ex)
+            {
+                try{await _store.RecordErrorAsync("AutomaticExecutionRealityComparison",ex,CancellationToken.None);}catch{/* Evidence failure must not change the persisted execution result. */}
             }
         }
         return new(handled,code,ModelOffExecutionRecoveryContractV1.Timeline(id,events),handoff);

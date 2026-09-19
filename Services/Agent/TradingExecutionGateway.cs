@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using WpeAgent.TradingAuthorization;
+using 币安量化机器人.Services.Exchange;
 
 namespace 币安量化机器人.Services.Agent;
 
@@ -192,7 +193,7 @@ internal sealed class PersistedAutomaticPreMutationAuthority(AgentSqliteStore st
     }
 }
 
-public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGateway,IAutomaticExecutionOrderEvidenceReader
+public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGateway,IAutomaticExecutionOrderEvidenceReader,IAutomaticExecutionRealityEvidenceReader
 {
     private readonly TradingExecutionGateway _gateway;
     private readonly IExchangeAdapter _exchange;
@@ -243,6 +244,56 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
         if(found==artifact.Intents.Count)return new(AutomaticGatewayReconciliationState.Succeeded,"automatic.reconcile-succeeded");
         if(found==0&&journaled==0)return new(AutomaticGatewayReconciliationState.NotSubmitted,"automatic.reconcile-not-submitted");
         return new(AutomaticGatewayReconciliationState.Unknown,"automatic.reconcile-unknown");
+    }
+
+    public async Task<AutomaticExecutionSimulationObservationV1> ObserveSimulationInputAsync(
+        DurableExecutionArtifactV2 artifact,
+        DurableExecutionIntentSnapshotV1 intent,
+        CancellationToken ct)
+    {
+        var observedAt=_utcNow().ToUniversalTime();
+        if(!IsTestnet
+           ||!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid
+           ||artifact.Environment!="Testnet")
+            return new(false,"simulation.testnet-or-artifact-invalid",artifact?.ProviderId??"unknown",artifact?.Environment??"unknown",null,null,observedAt);
+
+        var providerId=_exchange is IExchangeProvider provider?provider.ProviderId:artifact.ProviderId;
+        if(!string.Equals(providerId,artifact.ProviderId,StringComparison.Ordinal))
+            return new(false,"simulation.provider-mismatch",providerId,"Testnet",null,null,observedAt);
+
+        try
+        {
+            var market=await _exchange.GetMarketAsync(intent.Symbol,ct);
+            var rule=await _exchange.GetRulesAsync(intent.Symbol,ct);
+            if(!string.Equals(market.Symbol,intent.Symbol,StringComparison.Ordinal)
+               ||!string.Equals(rule.Symbol,intent.Symbol,StringComparison.Ordinal))
+                return new(false,"simulation.symbol-mismatch",providerId,"Testnet",null,null,observedAt);
+
+            if(market.Provenance is null)
+                market=market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,providerId,"Testnet")};
+            else if(!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)
+                    ||!string.Equals(market.Provenance.ProviderId,providerId,StringComparison.Ordinal)
+                    ||!string.Equals(market.Provenance.Environment,"Testnet",StringComparison.Ordinal))
+                return new(false,"simulation.market-provenance-invalid",providerId,"Testnet",null,null,observedAt);
+
+            return new(true,"simulation.source-available",providerId,"Testnet",market,rule,observedAt);
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch{return new(false,"simulation.source-query-failed",providerId,"Testnet",null,null,observedAt);}
+    }
+
+    public async Task<ExchangeOrder?> ObserveOrderAsync(
+        DurableExecutionArtifactV2 artifact,
+        DurableExecutionIntentSnapshotV1 intent,
+        CancellationToken ct)
+    {
+        if(!IsTestnet
+           ||!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid
+           ||artifact.Environment!="Testnet")
+            return null;
+        try{return await _exchange.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);}
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch{return null;}
     }
 
     public async Task<ModelOffExchangeOrderEvidenceV1> ObserveOrdersAsync(DurableExecutionArtifactV2 artifact,CancellationToken ct)
