@@ -135,7 +135,8 @@ public sealed class DesktopRuntimeHost : IAsyncDisposable
             ServiceLocator.RuntimeCrossAssetResearch.Read(),
             ServiceLocator.RuntimeDistribution.Read(),
             ServiceLocator.PublicMarket.Read(),
-            ServiceLocator.SecurityStorage.Read());
+            ServiceLocator.SecurityStorage.Read(),
+            brokerState: ServiceLocator.RuntimeEquityBroker.Read());
 
         Volatile.Write(ref _runtimeJson, SerializeSnapshot(snapshot));
     }

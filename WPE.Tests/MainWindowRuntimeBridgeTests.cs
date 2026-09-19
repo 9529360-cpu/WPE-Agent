@@ -89,7 +89,17 @@ public sealed class DesktopRuntimeHostTests
         var method = RefreshRuntimeSnapshotMethod();
         Assert.Equal(1, Count(method, "ServiceLocator.RuntimeDistribution.Read()"));
         var normalized = string.Join(" ", method.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-        Assert.Contains("ServiceLocator.RuntimeCrossAssetResearch.Read(), ServiceLocator.RuntimeDistribution.Read(), ServiceLocator.PublicMarket.Read(), ServiceLocator.SecurityStorage.Read());", normalized, StringComparison.Ordinal);
+        Assert.Contains("ServiceLocator.RuntimeCrossAssetResearch.Read(), ServiceLocator.RuntimeDistribution.Read(), ServiceLocator.PublicMarket.Read(), ServiceLocator.SecurityStorage.Read(), brokerState: ServiceLocator.RuntimeEquityBroker.Read());", normalized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SnapshotPump_PassesReadOnlyEquityBrokerCapabilityWithoutProbing()
+    {
+        var method = RefreshRuntimeSnapshotMethod();
+        Assert.Equal(1, Count(method, "ServiceLocator.RuntimeEquityBroker.Read()"));
+        Assert.DoesNotContain("ProbeCapabilitiesAsync", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("SubmitOrderAsync", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("CancelOrderAsync", method, StringComparison.Ordinal);
     }
 
     [Fact]
