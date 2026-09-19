@@ -1,12 +1,12 @@
 # TODO
 
 - [x] Close the 2026-07-28 runtime/UI gaps: hide historical handoffs without a fresh matching RunId lease, project automatic execution results, auto-start only after Testnet readiness, route Telegram configuration to the notification tab, and implement encrypted local Telegram subscriber intake, approval, scoped batch delivery, audit, runtime projection, and UI status.
-- [ ] Make the existing background runtime snapshot pump incremental so unchanged stores do not perform full refresh work every two seconds. UI-thread refresh has already been removed, and Telegram poll/dispatch health plus bounded exponential backoff are already projected and tested.
+- [x] Make the background runtime snapshot pump incremental for historical collections: a lightweight per-collection change vector refreshes only changed/error collections, unchanged collections are fully revalidated at least once per minute for time-based stale/tamper detection, and Telegram poll/dispatch health plus bounded exponential backoff remain projected and tested.
 - [x] Converge Chinese and non-Chinese routes onto one component tree and complete the bounded closed-trade explanation timeline: masked trade identity → canonical Market/Research/Strategy/Risk evidence hashes → historical risk decision → execution terminal state → post-trade accounting. The UI keeps current authorization separate from historical evidence and exposes no canonical payload bytes or raw cycle/order/report IDs.
 
 ## P0
-- [ ] Restore a real GitHub Actions gate. Current private-repository pushes end in `startup_failure` before any job starts even though Actions is enabled; diagnose account/runner billing or platform eligibility, then require a successful remote build/test/publish-boundary run before treating CI as authoritative.
-- [ ] Enable protected-main enforcement when the repository plan supports private-repository branch protection, or make an explicit repository-visibility/plan decision. The GitHub API currently returns HTTP 403 stating that Pro or a public repository is required.
+- [x] Restore a real GitHub Actions gate. Product CI runner execution resumed and run #1105 completed the full Web lint/typecheck/contracts/build/export/egress sequence plus .NET restore/build/tests/publish-boundary successfully. Continue requiring a successful run bound to the newest PR head before merge/release-candidate claims.
+- [ ] Enable and verify protected-main enforcement. The repository is now public, but the current GitHub integration still returns HTTP 403 (`Resource not accessible by integration`) for the branch-protection endpoint, so enforcement cannot yet be verified or changed from this session.
 - [x] Add focused Setup Bridge message tests.
 - Keep the active safety suites in the release gate; add new collection-contract tests only together with the corresponding orders, equity, backtest, skill-call, or audit backend protocol.
 - [x] Re-enable Agent settings resilience and Brain endpoint validation suites with the stage 2A configuration migration.
