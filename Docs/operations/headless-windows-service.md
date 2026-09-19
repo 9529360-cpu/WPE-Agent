@@ -10,7 +10,7 @@ For service mode, provide one explicit absolute path on a fixed local drive. The
 
     "C:\Program Files\WPE\<version>\headless\WPE-Headless.exe" --data-root "D:\WPE-State"
 
-`WPE_AGENT_DATA_ROOT` remains supported. If both the command-line argument and environment variable are present, both must resolve to the same full path. A conflict fails closed before Host construction. Relative paths, UNC paths, mapped/network or non-fixed drives, duplicate `--data-root`, missing argument values, and invalid environment roots are rejected. A drive root such as `D:\` remains a fully qualified root and is not normalized to the drive-relative form `D:`.
+`WPE_AGENT_DATA_ROOT` remains supported. If both the command-line argument and environment variable are present, both must resolve to the same full path. A conflict fails closed before Host construction. Relative paths, UNC paths, mapped/network or non-fixed drives, duplicate `--data-root`, missing argument values, and invalid environment roots are rejected. Existing symbolic-link, junction, or other reparse-point components in the data-root path are also rejected so a fixed-drive path cannot silently redirect authoritative state elsewhere. Use a dedicated real directory on the fixed local volume. A drive root such as `D:\` remains a fully qualified root and is not normalized to the drive-relative form `D:`.
 
 Do not put account passwords, API keys, certificate secrets, or exchange credentials in the service command line or environment.
 
