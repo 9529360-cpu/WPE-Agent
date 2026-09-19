@@ -103,9 +103,23 @@ jobs:
             $verification = [System.Security.Cryptography.Pkcs.SignedCms]::new(
               [System.Security.Cryptography.Pkcs.ContentInfo]::new($content),
               $true)
-            $verification.Decode($cms.Encode())
+            $encodedAttestation = $cms.Encode()
+            $verification.Decode($encodedAttestation)
             $verification.CheckSignature($true)
             if ($verification.SignerInfos.Count -ne 1) { throw "Detached CMS signer count mismatch." }
+
+            $tamperedContent = [System.Text.Encoding]::UTF8.GetBytes("wpe-runtime-tree-attestation-tampered")
+            $tampered = [System.Security.Cryptography.Pkcs.SignedCms]::new(
+              [System.Security.Cryptography.Pkcs.ContentInfo]::new($tamperedContent),
+              $true)
+            $tampered.Decode($encodedAttestation)
+            $tamperRejected = $false
+            try {
+              $tampered.CheckSignature($true)
+            } catch {
+              $tamperRejected = $true
+            }
+            if (-not $tamperRejected) { throw "Detached CMS accepted tampered content." }
           } finally {
             $certificate.Dispose()
           }
