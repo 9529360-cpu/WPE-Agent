@@ -34,8 +34,22 @@ $started=Parse-Utc $evidence.startedAtUtc 'soak.started-at-invalid'
 $completed=Parse-Utc $evidence.completedAtUtc 'soak.completed-at-invalid'
 if($completed -le $started){throw 'soak.time-order-invalid'}
 $minimum=[TimeSpan]::FromMinutes($MinimumDurationMinutes)
-if(($completed-$started) -lt $minimum){throw 'soak.duration-insufficient'}
-if([int]$evidence.sampleCount -lt [int]$evidence.expectedMinimumSamples){throw 'soak.sample-coverage-insufficient'}
+$actualDuration=($completed-$started)
+if($actualDuration -lt $minimum){throw 'soak.duration-insufficient'}
+$requestedDuration=[int]$evidence.requestedDurationSeconds
+$pollSeconds=[int]$evidence.pollSeconds
+$startupGraceSeconds=[int]$evidence.startupGraceSeconds
+$maximumHealthAgeSeconds=[int]$evidence.maximumHealthAgeSeconds
+if($requestedDuration -lt 60 -or $requestedDuration -gt 172800){throw 'soak.requested-duration-invalid'}
+if($pollSeconds -lt 2 -or $pollSeconds -gt 60){throw 'soak.poll-interval-invalid'}
+if($startupGraceSeconds -lt 0 -or $startupGraceSeconds -gt 600){throw 'soak.startup-grace-invalid'}
+if($maximumHealthAgeSeconds -lt 5 -or $maximumHealthAgeSeconds -gt 120){throw 'soak.maximum-health-age-invalid'}
+if($actualDuration.TotalSeconds + 1 -lt $requestedDuration){throw 'soak.requested-duration-not-observed'}
+$reportedObserved=[double]$evidence.observedDurationSeconds
+if([Math]::Abs($reportedObserved-$actualDuration.TotalSeconds) -gt [Math]::Max(2,$pollSeconds)){throw 'soak.observed-duration-mismatch'}
+$computedExpected=[Math]::Max(1,[int][Math]::Floor(($requestedDuration/$pollSeconds)*0.90))
+if([int]$evidence.expectedMinimumSamples -ne $computedExpected){throw 'soak.expected-sample-count-invalid'}
+if([int]$evidence.sampleCount -lt $computedExpected){throw 'soak.sample-coverage-insufficient'}
 if([int]$evidence.unhealthySamples -gt $MaximumUnhealthySamples){throw 'soak.unhealthy-samples-exceeded'}
 if([int]$evidence.invalidSamples -ne 0){throw 'soak.invalid-samples-present'}
 if([double]$evidence.maximumObservedHealthAgeSeconds -gt [double]$evidence.maximumHealthAgeSeconds){throw 'soak.health-age-exceeded'}
