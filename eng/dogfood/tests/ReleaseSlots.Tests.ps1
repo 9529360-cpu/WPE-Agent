@@ -3,12 +3,13 @@ function Assert($condition,[string]$message){if(-not $condition){throw "ASSERT: 
 function Throws([scriptblock]$action,[string]$contains){try{& $action|Out-Null;throw "expected:$contains"}catch{if($_.Exception.Message -notlike "*$contains*"){throw}}}
 function Hash([string]$path){(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
 function New-TestCandidate {
-    param([string]$SourceRoot,[string]$SlotsRoot,[string]$Version,[string]$SourceIdentity,[string]$ConfigurationSchema,[string]$MigrationVersion,[string[]]$Gates,[string]$ProbeScript='dogfood-probe.ps1',[switch]$Dirty,[switch]$Unsigned,[switch]$ReviewRequired,[switch]$NotDistributable,[switch]$BadVerificationHash,[switch]$BadManifestHash)
+    param([string]$SourceRoot,[string]$SlotsRoot,[string]$Version,[string]$SourceIdentity,[string]$ConfigurationSchema,[string]$MigrationVersion,[string[]]$Gates,[string]$ProbeScript='dogfood-probe.ps1',[switch]$Dirty,[switch]$Unsigned,[switch]$ReviewRequired,[switch]$NotDistributable,[switch]$BadVerificationHash,[switch]$BadManifestHash,[switch]$AddUnmanifestedPayload)
     $signedStatus=if($Unsigned){'unsigned'}else{'Valid'};$licenseStatus=if($ReviewRequired){'review_required'}else{'passed'};$licenseReview=if($ReviewRequired){1}else{0}
     $metadata=[ordered]@{source=[ordered]@{dirty=[bool]$Dirty};signing=[ordered]@{status=$signedStatus;distributable=(-not $NotDistributable)};contents=[ordered]@{licenseGateStatus=$licenseStatus;licenseReviewCount=$licenseReview}}
     $metadata|ConvertTo-Json -Depth 6|Set-Content (Join-Path $SourceRoot 'RELEASE-METADATA.json') -Encoding utf8
-    $manifest=@(Get-ChildItem $SourceRoot -Recurse -File|Where-Object {$_.Name -ne 'FILE-MANIFEST.json'}|Sort-Object FullName|ForEach-Object {[ordered]@{path=$_.FullName.Substring($SourceRoot.Length+1).Replace('\\','/');bytes=$_.Length;sha256=Hash $_.FullName}})
+    $manifest=@(Get-ChildItem $SourceRoot -Recurse -File|Where-Object {$_.Name -ne 'FILE-MANIFEST.json'}|Sort-Object FullName|ForEach-Object {[ordered]@{path=$_.FullName.Substring($SourceRoot.Length+1).Replace('\\','/');size=$_.Length;sha256=Hash $_.FullName}})
     $manifest|ConvertTo-Json -Depth 4|Set-Content (Join-Path $SourceRoot 'FILE-MANIFEST.json') -Encoding utf8
+    if($AddUnmanifestedPayload){'late-payload'|Set-Content -LiteralPath (Join-Path $SourceRoot 'late-extra.bin') -Encoding ascii}
     $verification=Join-Path (Split-Path $SlotsRoot -Parent) ("verification-$Version.json")
     [ordered]@{schemaVersion='wpe.beta-package-verification.v1';status='passed';distributable=(-not $NotDistributable);signingStatus=$signedStatus;licenseGateStatus=$licenseStatus;licenseReview=$licenseReview;manifestFailures=0;forbiddenFiles=0}|ConvertTo-Json|Set-Content $verification -Encoding utf8
     $manifestHash=if($BadManifestHash){'0'*64}else{Hash (Join-Path $SourceRoot 'FILE-MANIFEST.json')};$verificationHash=if($BadVerificationHash){'0'*64}else{Hash $verification}
@@ -108,6 +109,8 @@ exit 0
     Throws {New-TestCandidate -SourceRoot $source -SlotsRoot (Join-Path $root 'reject-slots') -Version '0.9.4' -SourceIdentity 'commit/nondistributable' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build' -NotDistributable} 'package.verification-not-distributable'
     Throws {New-TestCandidate -SourceRoot $source -SlotsRoot (Join-Path $root 'reject-slots') -Version '0.9.5' -SourceIdentity 'commit/unanchored' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build' -BadVerificationHash} 'package.verification-hash-mismatch'
     Throws {New-TestCandidate -SourceRoot $source -SlotsRoot (Join-Path $root 'reject-slots') -Version '0.9.6' -SourceIdentity 'commit/hash-mismatch' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build' -BadManifestHash} 'package.manifest-hash-mismatch'
+    $lateSource=Join-Path $root 'late-package';Copy-Item $source $lateSource -Recurse
+    Throws {New-TestCandidate -SourceRoot $lateSource -SlotsRoot (Join-Path $root 'late-slots') -Version '0.9.7' -SourceIdentity 'commit/late' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build' -AddUnmanifestedPayload} 'package.manifest-inventory-drift'
     $slots=Join-Path $root 'slots';$lkg=New-TestCandidate -SourceRoot $source -SlotsRoot $slots -Version '1.0.0' -SourceIdentity 'commit/aaa' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests'
     $candidate=New-TestCandidate -SourceRoot $source -SlotsRoot $slots -Version '1.0.1' -SourceIdentity 'commit/bbb' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests'
     Assert (@(Get-ChildItem -LiteralPath $candidate.CandidateRoot,$lkg.CandidateRoot -Recurse -File|Where-Object {-not $_.IsReadOnly}).Count -eq 0) 'candidate or LKG contains mutable staged files'
@@ -116,6 +119,9 @@ exit 0
     $soakPath=Join-Path $root 'headless-soak-evidence.json';$soakHash=Write-SoakEvidence $soakPath $candidate @{}
     $acceptance=@{CandidateRoot=$candidate.CandidateRoot;LastKnownGoodRoot=$lkg.CandidateRoot;ProviderReadOnly=$true;RequireTrustedRuntimeFresh=$true;VerifyInstall=$true;VerifyStartup=$true;VerifyRestartRecovery=$true;VerifyRollback=$true;RejectMainnet=$true;ExpectedCandidateManifestHash=$candidate.ManifestSha256;ExpectedLastKnownGoodManifestHash=$lkg.ManifestSha256;TrustedRuntimeProofPath=$proofPath;ExpectedTrustedRuntimeProofHash=$proofHash;ExpectedRuntimeProofId='proof/current-001';ExpectedRuntimeSourceIdentity='runtime/snapshot-authority-v1';ExpectedEvidenceGateRefs=@('gate/build','gate/tests');SoakEvidencePath=$soakPath;ExpectedSoakEvidenceHash=$soakHash;MinimumSoakDurationMinutes=1440}
     $result=& $test @acceptance;Assert $result.Valid 'full acceptance failed';Assert ($result.Transcript -contains 'testnet-mutation:not-run') 'mutation default changed';Assert ($result.UserDataRollback -eq 'not-performed') 'user data rollback changed';Assert ($result.SoakEvidenceSha256 -eq $soakHash) 'soak evidence identity missing'
+    $lateCandidateFile=Join-Path $candidate.CandidateRoot 'late-extra.bin';'late-payload'|Set-Content -LiteralPath $lateCandidateFile -Encoding ascii
+    Throws {& $test @acceptance} 'candidate.inventory-drift'
+    Remove-Item -LiteralPath $lateCandidateFile -Force
     Assert (($result.Transcript[2..5] -join ',') -eq 'install:pass,startup:pass,restart:pass,rollback-preflight:pass') 'verification order changed'
     Throws {& $test @acceptance -Mainnet} 'mainnet.always-forbidden';Throws {& $test @acceptance -TestnetMutationSmoke} 'mutation.gate-evidence-required'
 
