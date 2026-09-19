@@ -1,6 +1,9 @@
 param(
     [string]$ResultPath = "artifacts/beta-packages/package-result.json",
-    [string]$VerificationDirectory = "artifacts/beta-packages/verification"
+    [string]$VerificationDirectory = "artifacts/beta-packages/verification",
+    [string]$ExpectedSignerSubject,
+    [ValidatePattern('^[A-Fa-f0-9]{40}$')]
+    [string]$ExpectedSignerThumbprint
 )
 
 $ErrorActionPreference = "Stop"
@@ -168,6 +171,9 @@ $embeddedReadinessHash = Get-Sha256 $embeddedReadinessPath
 if ([string]$metadata.signing.readinessReportSha256 -ne $embeddedReadinessHash) { throw "Package metadata readiness hash mismatch." }
 
 if ($allSigned) {
+    if ([string]::IsNullOrWhiteSpace($ExpectedSignerSubject) -or [string]::IsNullOrWhiteSpace($ExpectedSignerThumbprint)) {
+        throw "Signed runtime bundle verification requires the approved signer subject and thumbprint."
+    }
     if ([string]$metadata.signing.status -ne "valid" -or -not [bool]$metadata.signing.distributable) { throw "Signed runtime bundle metadata is not distributable." }
     if ([bool]$metadata.source.dirty -or [bool]$readiness.source.dirty) { throw "Signed runtime bundle cannot come from dirty source." }
     if ([string]$metadata.signing.transitionResultPath -ne "SIGNING-RESULT.json") { throw "Signed runtime bundle transition path is invalid." }
@@ -180,7 +186,9 @@ if ($allSigned) {
         [string]$signingResult.sourceCommit -ne [string]$metadata.source.commit -or
         [string]$signingResult.productVersion -ne [string]$metadata.productVersion -or
         [string]$signingResult.publisherSubject -ne [string]$metadata.signing.subject -or
-        ([string]$signingResult.certificateThumbprint).ToUpperInvariant() -ne ([string]$metadata.signing.thumbprint).ToUpperInvariant()) {
+        ([string]$signingResult.certificateThumbprint).ToUpperInvariant() -ne ([string]$metadata.signing.thumbprint).ToUpperInvariant() -or
+        [string]$metadata.signing.subject -ne $ExpectedSignerSubject -or
+        ([string]$metadata.signing.thumbprint).ToUpperInvariant() -ne $ExpectedSignerThumbprint.ToUpperInvariant()) {
         throw "Signing transition result is not bound to the package."
     }
     if (@($signingResult.artifacts).Count -ne 3) { throw "Signing transition result must contain three artifacts." }
@@ -202,6 +210,9 @@ if ($allSigned) {
         }
     }
 } else {
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSignerSubject) -or -not [string]::IsNullOrWhiteSpace($ExpectedSignerThumbprint)) {
+        throw "Unsigned runtime bundle verification must not declare an approved signer."
+    }
     if ([string]$metadata.signing.status -ne "unsigned" -or [bool]$metadata.signing.distributable) { throw "Unsigned runtime bundle metadata is invalid." }
     if (Test-Path -LiteralPath (Join-Path $packageRoot "SIGNING-RESULT.json")) { throw "Unsigned runtime bundle must not contain a signing transition result." }
     foreach ($state in $artifactStates) {
