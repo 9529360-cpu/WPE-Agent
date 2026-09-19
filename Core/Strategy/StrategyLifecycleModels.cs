@@ -123,7 +123,7 @@ public sealed record StrategyResearchSnapshot(
 
 public sealed record NewsFeature(string Asset, double Sentiment, double Confidence, int CorroboratingSources, string EventType, DateTime PublishedAtUtc);
 public sealed record StrategyRegimePerformance(
-    MarketRegime Regime,
+    string Regime,
     int Observations,
     double Expectancy,
     double HitRate,
