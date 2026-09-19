@@ -57,6 +57,7 @@ public sealed class HeadlessLocalControlTests
     [InlineData("""{"schema":"wpe.headless-local-control/1.0","command":"restart"}""", "control.command-unsupported")]
     [InlineData("""{"schema":"wrong","command":"health"}""", "control.schema-unsupported")]
     [InlineData("""{"schema":"wpe.headless-local-control/1.0","command":"health","extra":"x"}""", "control.request-field-unsupported")]
+    [InlineData("""{"schema":"wpe.headless-local-control/1.0","command":"health","command":"shutdown","confirmation":"shutdown-wpe-headless"}""", "control.request-field-duplicate")]
     public void UnsupportedOrUnconfirmedCommandsFailClosed(string request, string code)
     {
         var response = HeadlessLocalControlProtocol.Handle(request, () => null);
