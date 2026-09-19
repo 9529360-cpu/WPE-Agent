@@ -105,6 +105,8 @@ public sealed class HeadlessLocalControlWorker(IHostApplicationLifetime applicat
     public const string PipeName = "wpe-agent-headless-control-v1";
     public const int MaximumRequestBytes = 4096;
     private const int MaximumHealthBytes = 64 * 1024;
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan MaximumHealthAge = TimeSpan.FromSeconds(15);
     private static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -128,14 +130,16 @@ public sealed class HeadlessLocalControlWorker(IHostApplicationLifetime applicat
             try
             {
                 await pipe.WaitForConnectionAsync(stoppingToken).ConfigureAwait(false);
-                var request = await ReadBoundedRequestAsync(pipe, stoppingToken).ConfigureAwait(false);
+                using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                requestTimeout.CancelAfter(RequestTimeout);
+                var request = await ReadBoundedRequestAsync(pipe, requestTimeout.Token).ConfigureAwait(false);
                 var response = HeadlessLocalControlProtocol.Handle(request, ReadHealth);
                 var shutdownRequested = response.Success &&
                     string.Equals(response.Code, "control.shutdown-requested", StringComparison.Ordinal);
                 var bytes = JsonSerializer.SerializeToUtf8Bytes(response, Json);
-                await pipe.WriteAsync(bytes, stoppingToken).ConfigureAwait(false);
-                await pipe.WriteAsync(new byte[] { (byte)'\n' }, stoppingToken).ConfigureAwait(false);
-                await pipe.FlushAsync(stoppingToken).ConfigureAwait(false);
+                await pipe.WriteAsync(bytes, requestTimeout.Token).ConfigureAwait(false);
+                await pipe.WriteAsync(new byte[] { (byte)'\n' }, requestTimeout.Token).ConfigureAwait(false);
+                await pipe.FlushAsync(requestTimeout.Token).ConfigureAwait(false);
                 if (shutdownRequested)
                     applicationLifetime.StopApplication();
             }
@@ -178,10 +182,13 @@ public sealed class HeadlessLocalControlWorker(IHostApplicationLifetime applicat
             var value = JsonSerializer.Deserialize<HeadlessProcessHealthV1>(
                 File.ReadAllBytes(path),
                 Json);
-            return value is not null &&
-                   string.Equals(value.Schema, HeadlessProcessHealthV1.CurrentSchema, StringComparison.Ordinal)
-                ? value
-                : null;
+            if (value is null ||
+                !string.Equals(value.Schema, HeadlessProcessHealthV1.CurrentSchema, StringComparison.Ordinal))
+                return null;
+            var now = DateTimeOffset.UtcNow;
+            if (value.ObservedAtUtc > now || now - value.ObservedAtUtc > MaximumHealthAge)
+                return null;
+            return value;
         }
         catch
         {
