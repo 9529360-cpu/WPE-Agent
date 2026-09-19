@@ -51,6 +51,23 @@ public sealed class StrategyShadowObservationProvenanceTests : IDisposable
     }
 
     [Fact]
+    public void HistoricalTimelineMustPredateValidation()
+    {
+        var profile=Profile();
+        var signal=new StrategySignal(profile.Id,profile.Symbol,0,.5,"hold",profile.Version);
+        var validation=ValidationFact(profile,Now.AddMinutes(-40));
+
+        Assert.Throws<InvalidOperationException>(()=>
+            StrategyShadowObservationCanonicalizerV1.Create(
+                profile,
+                signal,
+                Market(Now.AddMinutes(-1)),
+                validation,
+                Timeline(profile),
+                Now));
+    }
+
+    [Fact]
     public void MainnetMarketCannotCreateShadowEvidence()
     {
         var profile=Profile();
