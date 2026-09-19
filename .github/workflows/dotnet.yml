@@ -109,49 +109,14 @@ jobs:
           }
         }
         $forbidden = Get-ChildItem artifacts/headless -Recurse -File | Where-Object {
-          $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
-          $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)
-      shell: pwsh
-      run: ./eng/test.ps1 -Configuration Release
-
-    - name: Publish candidate
-      run: dotnet publish "币安量化机器人.csproj" --configuration Release --framework net8.0-windows --no-restore --output artifacts/publish
-
-    - name: Verify publish boundary
-      shell: pwsh
-      run: |
-        if (-not (Get-ChildItem artifacts/publish -Filter *.exe)) { throw "Published executable is missing." }
-        if (-not (Test-Path -LiteralPath "artifacts/publish/WebUi/out/index.html" -PathType Leaf)) {
-          throw "Published Reference UI export is missing."
-        }
-        $forbidden = Get-ChildItem artifacts/publish -Recurse -File | Where-Object {
-          $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
-          $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)$' -or
-          $_.Name -match '(?i)\.(db|sqlite|sqlite3)-(wal|shm)$'
-        }
-        if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
- -or
-          $_.Name -match '(?i)\.(db|sqlite|sqlite3)-(wal|shm)
-      shell: pwsh
-      run: ./eng/test.ps1 -Configuration Release
-
-    - name: Publish candidate
-      run: dotnet publish "币安量化机器人.csproj" --configuration Release --framework net8.0-windows --no-restore --output artifacts/publish
-
-    - name: Verify publish boundary
-      shell: pwsh
-      run: |
-        if (-not (Get-ChildItem artifacts/publish -Filter *.exe)) { throw "Published executable is missing." }
-        if (-not (Test-Path -LiteralPath "artifacts/publish/WebUi/out/index.html" -PathType Leaf)) {
-          throw "Published Reference UI export is missing."
-        }
-        $forbidden = Get-ChildItem artifacts/publish -Recurse -File | Where-Object {
-          $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
-          $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)$' -or
-          $_.Name -match '(?i)\.(db|sqlite|sqlite3)-(wal|shm)$'
-        }
-        if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
-
+          $name = $_.Name.ToLowerInvariant()
+          $extension = $_.Extension.ToLowerInvariant()
+          $name.Contains("agent-settings") -or $name.Contains("appsettings") -or
+          $name.Contains("order-state") -or $name.Contains("secrets") -or $name.Contains("credentials") -or
+          @(".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12", ".pfx") -contains $extension -or
+          $name.EndsWith(".db-wal") -or $name.EndsWith(".db-shm") -or
+          $name.EndsWith(".sqlite-wal") -or $name.EndsWith(".sqlite-shm") -or
+          $name.EndsWith(".sqlite3-wal") -or $name.EndsWith(".sqlite3-shm")
         }
         if ($forbidden) { throw "Forbidden runtime or secret files entered headless output: $($forbidden.FullName -join ', ')" }
 
