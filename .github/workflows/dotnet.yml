@@ -111,8 +111,12 @@ jobs:
       run: |
         & ./eng/test-release-readiness-preview-gate.ps1
         & ./eng/test-license-gate.ps1
-        & ./eng/dogfood/tests/V1CandidateGate.Tests.ps1
-        & ./eng/dogfood/tests/ReleaseSlots.Tests.ps1
+        $dogfoodTests = @(Get-ChildItem "./eng/dogfood/tests" -File -Filter "*.Tests.ps1" | Sort-Object Name)
+        if ($dogfoodTests.Count -eq 0) { throw "No dogfood contract tests were discovered." }
+        foreach ($test in $dogfoodTests) {
+          Write-Host "Running dogfood contract: $($test.Name)"
+          & $test.FullName
+        }
         & ./eng/test-publish-runtime-restore.ps1
 
     - name: Publish candidate
