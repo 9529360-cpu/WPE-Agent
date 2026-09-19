@@ -71,6 +71,37 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
     }
 
     [Fact]
+    public async Task HistoricalChangeVectorRoutesOnlyItsOwningCollectionGroups()
+    {
+        await InitializeAsync();
+        var store=new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now);
+        var baseline=await store.ReadChangeVectorAsync();
+
+        await ExecuteAsync("INSERT INTO execution_events(cycle_id,client_order_id,symbol,side,action,reduce_only,quantity,status,occurred_at) VALUES('cycle-vector','order-vector','BTCUSDT','Long','OPEN',0,'1','FILLED',$t)",("$t",Now.ToString("O")));
+        var orderChange=await store.ReadChangeVectorAsync();
+        Assert.NotEqual(baseline.Orders,orderChange.Orders);
+        Assert.Equal(baseline.Equity,orderChange.Equity);
+        Assert.Equal(baseline.PostTradeReviews,orderChange.PostTradeReviews);
+        Assert.Equal(baseline.Reconciliations,orderChange.Reconciliations);
+
+        await ExecuteAsync("INSERT INTO automatic_execution_queue(execution_id,correlation_id,status,last_code,attempt_count,market_collected_at,market_data_version,updated_at) VALUES('execution-vector','cycle-vector','Succeeded','automatic.succeeded',1,$t,'market-v1',$t)",("$t",Now.AddSeconds(1).ToString("O")));
+        var executionChange=await store.ReadChangeVectorAsync();
+        Assert.Equal(orderChange.Orders,executionChange.Orders);
+        Assert.NotEqual(orderChange.PostTradeReviews,executionChange.PostTradeReviews);
+        Assert.Equal(orderChange.Reconciliations,executionChange.Reconciliations);
+
+        await ExecuteAsync("INSERT INTO position_reconciliation_audits(report_id,schema,observed_at,evaluated_at,state,allows_risk_increase,canonical_sha256,canonical_bytes) VALUES('recon-vector','schema/1.0',$t,$t,'Confirmed',1,$hash,X'01')",("$t",Now.AddSeconds(2).ToString("O")),("$hash",new string('a',64)));
+        var reconciliationChange=await store.ReadChangeVectorAsync();
+        Assert.Equal(executionChange.PostTradeReviews,reconciliationChange.PostTradeReviews);
+        Assert.NotEqual(executionChange.Reconciliations,reconciliationChange.Reconciliations);
+
+        await ExecuteAsync("CREATE TABLE model_off_canonical_audits(output_id TEXT PRIMARY KEY,cycle_id TEXT,schema TEXT,template_version TEXT,canonical_sha256 TEXT,status TEXT,output_kind TEXT,sources_json TEXT,as_of_utc TEXT,recorded_at_utc TEXT,canonical_bytes BLOB); INSERT INTO model_off_canonical_audits VALUES('output-vector','cycle-vector','schema','template',$hash,'succeeded','strategy','[]',$t,$t,X'01')",("$hash",new string('b',64)),("$t",Now.AddSeconds(3).ToString("O")));
+        var evidenceChange=await store.ReadChangeVectorAsync();
+        Assert.NotEqual(reconciliationChange.PostTradeReviews,evidenceChange.PostTradeReviews);
+        Assert.Equal(reconciliationChange.Reconciliations,evidenceChange.Reconciliations);
+    }
+
+    [Fact]
     public async Task PageSizeIsCappedAtOneHundred()
     {
         await InitializeAsync();
