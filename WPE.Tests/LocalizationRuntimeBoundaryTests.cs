@@ -22,15 +22,17 @@ public sealed class LocalizationRuntimeBoundaryTests
     }
 
     [Fact]
-    public void WpfAppInitializesAndDisposesOnlyTheWpfProjection()
+    public void WpfAppOwnsOnlyTheWpfLocalizationProjection()
     {
-        var app=File.ReadAllText(Path.Combine(Root(),"App.xaml.cs"));
-        var initialize=app.IndexOf("LocalizationService.Current.Initialize();",StringComparison.Ordinal);
-        var bridge=app.IndexOf("_localizationBridge = new WpfLocalizationBridge(LocalizationService.Current);",StringComparison.Ordinal);
+        var root=Root();
+        var app=File.ReadAllText(Path.Combine(root,"App.xaml.cs"));
+        var bootstrap=File.ReadAllText(Path.Combine(root,"Services","RuntimeProcessBootstrap.cs"));
 
-        Assert.True(initialize>=0&&bridge>initialize);
+        Assert.Contains("_localizationBridge = new WpfLocalizationBridge(LocalizationService.Current);",app,StringComparison.Ordinal);
         Assert.Contains("_localizationBridge?.Dispose();",app,StringComparison.Ordinal);
         Assert.Contains("private WpfLocalizationBridge? _localizationBridge;",app,StringComparison.Ordinal);
+        Assert.DoesNotContain("LocalizationService.Current.Initialize();",app,StringComparison.Ordinal);
+        Assert.Contains("LocalizationService.Current.Initialize();",bootstrap,StringComparison.Ordinal);
     }
 
     private static string Root()=>Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
