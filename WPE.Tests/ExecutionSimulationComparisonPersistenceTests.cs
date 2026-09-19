@@ -21,6 +21,7 @@ public sealed class ExecutionSimulationComparisonPersistenceTests : IDisposable
 
         var fillFirst = await store.SaveExecutionSimulationFillAsync(simulated, default);
         var fillSecond = await store.SaveExecutionSimulationFillAsync(simulated, default);
+        Assert.True((await store.SaveExecutionRealityDriftAsync(observed, default)).Succeeded);
         var comparisonFirst = await store.SaveExecutionSimulationComparisonAsync(comparison, default);
         var comparisonSecond = await store.SaveExecutionSimulationComparisonAsync(comparison, default);
 
@@ -53,6 +54,7 @@ public sealed class ExecutionSimulationComparisonPersistenceTests : IDisposable
         var observed = Observed("strategy-a", "v7", "research-cost-v1", "order-a", 100m);
         var comparison = ExecutionSimulationComparisonCanonicalizerV1.Create(simulated, observed, ObservedAt.AddSeconds(1));
         await store.SaveExecutionSimulationFillAsync(simulated, default);
+        await store.SaveExecutionRealityDriftAsync(observed, default);
         await store.SaveExecutionSimulationComparisonAsync(comparison, default);
 
         await using var connection = new SqliteConnection($"Data Source={Database}");
@@ -161,7 +163,48 @@ public sealed class ExecutionSimulationComparisonPersistenceTests : IDisposable
         var observed = Observed(strategyId, strategyVersion, costModelVersion, "order-" + suffix, observedPrice);
         var comparison = ExecutionSimulationComparisonCanonicalizerV1.Create(simulated, observed, ObservedAt.AddSeconds(1));
         await store.SaveExecutionSimulationFillAsync(simulated, default);
+        await store.SaveExecutionRealityDriftAsync(observed, default);
         await store.SaveExecutionSimulationComparisonAsync(comparison, default);
+    }
+
+    [Fact]
+    public async Task ComparisonPersistenceRequiresBothCanonicalSourceArtifacts()
+    {
+        var store = new AgentSqliteStore(Database);
+        var simulated = Simulated("strategy-a", "v7", "research-cost-v1", "sim-v1", "order-a", 100m);
+        var observed = Observed("strategy-a", "v7", "research-cost-v1", "order-a", 101m);
+        var comparison = ExecutionSimulationComparisonCanonicalizerV1.Create(simulated, observed, ObservedAt.AddSeconds(1));
+
+        var noSources = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            store.SaveExecutionSimulationComparisonAsync(comparison, default));
+        Assert.Contains("simulated fill source is missing", noSources.Message, StringComparison.OrdinalIgnoreCase);
+
+        await store.SaveExecutionSimulationFillAsync(simulated, default);
+        var noObserved = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            store.SaveExecutionSimulationComparisonAsync(comparison, default));
+        Assert.Contains("observed execution source is missing", noObserved.Message, StringComparison.OrdinalIgnoreCase);
+
+        await store.SaveExecutionRealityDriftAsync(observed, default);
+        var stored = await store.SaveExecutionSimulationComparisonAsync(comparison, default);
+        Assert.True(stored.Succeeded);
+        Assert.False(stored.Idempotent);
+    }
+
+    [Fact]
+    public async Task ComparisonPersistenceRejectsComparisonThatDoesNotReplayFromPersistedSources()
+    {
+        var store = new AgentSqliteStore(Database);
+        var simulated = Simulated("strategy-a", "v7", "research-cost-v1", "sim-v1", "order-a", 100m);
+        var observed = Observed("strategy-a", "v7", "research-cost-v1", "order-a", 101m);
+        await store.SaveExecutionSimulationFillAsync(simulated, default);
+        await store.SaveExecutionRealityDriftAsync(observed, default);
+
+        var alternateObserved = Observed("strategy-a", "v7", "research-cost-v1", "order-a", 102m);
+        var forged = ExecutionSimulationComparisonCanonicalizerV1.Create(simulated, alternateObserved, ObservedAt.AddSeconds(1))
+            with { ObservedCanonicalSha256 = observed.CanonicalSha256 };
+        var canonicalBytesField = typeof(ExecutionSimulationComparisonV1).GetProperty(nameof(ExecutionSimulationComparisonV1.CanonicalBytes));
+        Assert.NotNull(canonicalBytesField);
+        Assert.False(ExecutionSimulationComparisonCanonicalizerV1.IsCanonical(forged));
     }
 
     private static ExecutionSimulationFillV1 Simulated(
