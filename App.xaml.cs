@@ -13,7 +13,7 @@ namespace 币安量化机器人;
 public partial class App : global::System.Windows.Application
 {
     private static IServiceProvider? _serviceProvider;
-    private DesktopRuntimeHost? _runtimeHost;
+    private TradingRuntimeHost? _runtimeHost;
 
     public static IServiceProvider ServiceProvider
     {
@@ -376,7 +376,6 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
-        _ = StartPublicMarketAsync();
 
         // 激活窗关闭后还要继续打开初始化向导或主控制台，不能让 WPF
         // 在两个窗口切换的间隙按“最后窗口关闭”自动终止应用。
@@ -390,28 +389,15 @@ public partial class App : global::System.Windows.Application
             license = new DeviceLicenseResult(true,"Activation.Valid",activation.ActivatedLicense);
         }
         var localIdentity = "DEVICE-" + license.License!.LicenseId;
-        var settingsStore = new AgentSettingsStore();
-        var settings = settingsStore.Load();
-        settings.ActiveUser = localIdentity;
-        settingsStore.Save(settings);
-        var runtimeMode = RuntimeModePolicy.Resolve(settings);
-        var state = ServiceLocator.SystemState;
-        state.BrainMode = runtimeMode.RequestedMode;
-        state.BrainEffectiveMode = runtimeMode.EffectiveMode;
-        state.BrainRemoteAllowed = runtimeMode.AllowRemoteBrain;
-        state.BrainFallbackReason = runtimeMode.FallbackReason;
-        state.ActiveBrainProvider = runtimeMode.ProviderName;
-        state.ActiveBrainModel = runtimeMode.ModelName;
-        state.BrainName = runtimeMode.EffectiveMode == Core.Models.AiRuntimeMode.LocalOnly ? "WPE Local Brain" : runtimeMode.ProviderName;
-        state.LastUpdated = DateTime.UtcNow;
+        var runtimeHost = new TradingRuntimeHost(localIdentity);
+        _runtimeHost = runtimeHost;
+        var settings = new AgentSettingsStore().Load();
         if (!settings.SetupCompleted)
         {
             var setup = new SetupWindow(localIdentity);
             if (setup.ShowDialog() != true || !setup.SetupCompleted) { Shutdown(); return; }
         }
-        var runtimeHost = new DesktopRuntimeHost(localIdentity);
-        _runtimeHost = runtimeHost;
-        var accessReady = await runtimeHost.RefreshAccessAsync();
+        var accessReady = await runtimeHost.InitializeAsync();
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         var reference = new WpeAgent.ReferenceUiWindow(runtimeHost.BuildRuntimeJson, () =>
         {
@@ -426,20 +412,22 @@ public partial class App : global::System.Windows.Application
         }, runtimeHost.StartAgentAsync);
         MainWindow = reference;
         reference.Show();
-        if (accessReady) AutoTradingAgent.StartDefault();
+        if (accessReady) await runtimeHost.StartAgentAsync();
     }
 
     protected override async void OnExit(ExitEventArgs e)
     {
         try
         {
-            await AutoTradingAgent.StopAsync();
             if (_runtimeHost is not null)
             {
                 await _runtimeHost.DisposeAsync();
                 _runtimeHost = null;
             }
-            await ServiceLocator.DisposeAsync();
+            else
+            {
+                await ServiceLocator.DisposeAsync();
+            }
             if (ServiceProvider is IAsyncDisposable asyncDisposable)
             {
                 await asyncDisposable.DisposeAsync();
@@ -456,15 +444,4 @@ public partial class App : global::System.Windows.Application
         }
     }
 
-    private static async Task StartPublicMarketAsync()
-    {
-        try
-        {
-            await ServiceLocator.PublicMarket.StartAsync().ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Public market runtime failed to start and remains unavailable.");
-        }
-    }
 }

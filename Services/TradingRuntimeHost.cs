@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Serilog;
 using WpeAgent.RuntimeServices;
 using 币安量化机器人.Core.Models;
 using 币安量化机器人.Services.Access;
@@ -7,7 +8,11 @@ using 币安量化机器人.Services.Agent;
 
 namespace 币安量化机器人.Services;
 
-public sealed class DesktopRuntimeHost : IAsyncDisposable
+/// <summary>
+/// UI-neutral owner for the WPE process runtime. Presentation shells may create this host,
+/// but trading lifecycle, access readiness and runtime projection do not depend on WPF.
+/// </summary>
+public sealed class TradingRuntimeHost : IAsyncDisposable
 {
     private static readonly TimeSpan SnapshotRefreshInterval = TimeSpan.FromSeconds(2);
     private static readonly JsonSerializerOptions SnapshotJsonOptions = new()
@@ -19,24 +24,54 @@ public sealed class DesktopRuntimeHost : IAsyncDisposable
     private readonly AgentSettingsStore _settingsStore = new();
     private readonly AccessReadinessService _readiness = new();
     private readonly CancellationTokenSource _snapshotPumpCancellation = new();
+    private readonly SemaphoreSlim _initializeGate = new(1, 1);
     private readonly Task _snapshotPumpTask;
     private string _runtimeJson;
+    private bool _publicMarketStarted;
     private int _disposed;
 
-    public DesktopRuntimeHost(string userName)
+    public TradingRuntimeHost(string userName)
     {
+        if (string.IsNullOrWhiteSpace(userName))
+            throw new ArgumentException("Runtime user identity is required.", nameof(userName));
+
         UserName = userName;
-        ServiceLocator.SystemState.LoggedInUser = userName;
+        BindIdentity(userName);
         _runtimeJson = SerializeSnapshot(RuntimeSnapshotFactory.Create(ServiceLocator.SystemState, DateTime.UtcNow));
         _snapshotPumpTask = Task.Run(() => RunRuntimeSnapshotPumpAsync(_snapshotPumpCancellation.Token));
     }
 
     public string UserName { get; }
 
+    /// <summary>
+    /// Starts non-UI runtime infrastructure, refreshes access truth and optionally starts
+    /// the trading agent only when the fresh access report is ready.
+    /// </summary>
+    public async Task<bool> InitializeAsync(bool startAgentWhenReady = false)
+    {
+        ThrowIfDisposed();
+        await _initializeGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (!_publicMarketStarted)
+                _publicMarketStarted = await StartPublicMarketAsync().ConfigureAwait(false);
+
+            var ready = await RefreshAccessAsync().ConfigureAwait(false);
+            if (ready && startAgentWhenReady)
+                AutoTradingAgent.StartDefault();
+            return ready;
+        }
+        finally
+        {
+            _initializeGate.Release();
+        }
+    }
+
     public async Task<bool> RefreshAccessAsync()
     {
+        ThrowIfDisposed();
         var settings = _settingsStore.Load();
-        var report = await _readiness.CheckAsync(settings);
+        var report = await _readiness.CheckAsync(settings).ConfigureAwait(false);
         PublishAccess(report, settings);
         settings.LastAccessCheckAtUtc = report.CheckedAtUtc;
         _settingsStore.Save(settings);
@@ -45,28 +80,76 @@ public sealed class DesktopRuntimeHost : IAsyncDisposable
 
     public async Task<bool> StartAgentAsync()
     {
-        if (!await RefreshAccessAsync()) return false;
+        ThrowIfDisposed();
+        if (!await RefreshAccessAsync().ConfigureAwait(false)) return false;
         AutoTradingAgent.StartDefault();
         return true;
     }
 
-    public string BuildRuntimeJson() => Volatile.Read(ref _runtimeJson);
+    public string BuildRuntimeJson()
+    {
+        ThrowIfDisposed();
+        return Volatile.Read(ref _runtimeJson);
+    }
 
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
-        _snapshotPumpCancellation.Cancel();
         try
         {
-            await _snapshotPumpTask.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (_snapshotPumpCancellation.IsCancellationRequested)
-        {
+            await AutoTradingAgent.StopAsync().ConfigureAwait(false);
         }
         finally
         {
-            _snapshotPumpCancellation.Dispose();
+            _snapshotPumpCancellation.Cancel();
+            try
+            {
+                await _snapshotPumpTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_snapshotPumpCancellation.IsCancellationRequested)
+            {
+            }
+            finally
+            {
+                _snapshotPumpCancellation.Dispose();
+                _initializeGate.Dispose();
+            }
+
+            await ServiceLocator.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private void BindIdentity(string userName)
+    {
+        var settings = _settingsStore.Load();
+        settings.ActiveUser = userName;
+        _settingsStore.Save(settings);
+
+        var runtimeMode = RuntimeModePolicy.Resolve(settings);
+        var state = ServiceLocator.SystemState;
+        state.BrainMode = runtimeMode.RequestedMode;
+        state.BrainEffectiveMode = runtimeMode.EffectiveMode;
+        state.BrainRemoteAllowed = runtimeMode.AllowRemoteBrain;
+        state.BrainFallbackReason = runtimeMode.FallbackReason;
+        state.ActiveBrainProvider = runtimeMode.ProviderName;
+        state.ActiveBrainModel = runtimeMode.ModelName;
+        state.BrainName = runtimeMode.EffectiveMode == AiRuntimeMode.LocalOnly ? "WPE Local Brain" : runtimeMode.ProviderName;
+        state.LoggedInUser = userName;
+        state.LastUpdated = DateTime.UtcNow;
+    }
+
+    private async Task<bool> StartPublicMarketAsync()
+    {
+        try
+        {
+            await ServiceLocator.PublicMarket.StartAsync().ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Public market runtime failed to start and remains unavailable.");
+            return false;
         }
     }
 
@@ -76,7 +159,7 @@ public sealed class DesktopRuntimeHost : IAsyncDisposable
         {
             try
             {
-                await RefreshRuntimeSnapshotAsync(ct);
+                await RefreshRuntimeSnapshotAsync(ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -84,12 +167,12 @@ public sealed class DesktopRuntimeHost : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"WPE runtime snapshot refresh failed: {ex.GetType().Name}");
+                Log.Warning(ex, "WPE runtime snapshot refresh failed.");
             }
 
             try
             {
-                await Task.Delay(SnapshotRefreshInterval, ct);
+                await Task.Delay(SnapshotRefreshInterval, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -160,5 +243,11 @@ public sealed class DesktopRuntimeHost : IAsyncDisposable
         state.BrainName = runtimeMode.EffectiveMode == AiRuntimeMode.LocalOnly ? "WPE Local Brain" : runtimeMode.ProviderName;
         state.LastAccessCheckAtUtc = report.CheckedAtUtc;
         state.LoggedInUser = settings.ActiveUser;
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(TradingRuntimeHost));
     }
 }
