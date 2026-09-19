@@ -221,9 +221,27 @@ public sealed class OkxBybitCertificationContractTests
     {
         using var json=JsonDocument.Parse("""[{"symbol":"BTCUSDT","side":"Buy","positionIdx":"1","size":"1","stopLoss":"49000","takeProfit":"52000"},{"symbol":"ETHUSDT","side":"Sell","positionIdx":"2","size":"2","stopLoss":"3100","takeProfit":"0"},{"symbol":"SOLUSDT","side":"","positionIdx":"0","size":"3","stopLoss":"100","takeProfit":"0"},{"symbol":"XRPUSDT","side":"Buy","positionIdx":"1","size":"0","stopLoss":"1","takeProfit":"2"}]""");var observed=new DateTime(2026,7,27,9,0,0,DateTimeKind.Utc);
         var rows=BybitExchangeProvider.ParsePositionProtectionOrders(json.RootElement,observed,value=>value);
-        var btc=Assert.Single(rows,x=>x.Symbol=="BTCUSDT");Assert.Equal("POSITION_TPSL",btc.Type);Assert.Equal(PositionSide.Long,btc.PositionSide);Assert.True(btc.IsProtection);Assert.Equal(observed,btc.UpdatedAt);
-        var eth=Assert.Single(rows,x=>x.Symbol=="ETHUSDT");Assert.Equal("STOP_POSITION",eth.Type);Assert.Equal(PositionSide.Short,eth.PositionSide);
+        var btc=Assert.Single(rows,x=>x.Symbol=="BTCUSDT");Assert.Equal("POSITION_TPSL",btc.Type);Assert.Equal(PositionSide.Long,btc.PositionSide);Assert.True(btc.IsProtection);Assert.Equal(ProtectionCoverageKind.PositionWide,btc.ProtectionCoverage);Assert.Equal(0m,btc.ProtectionQuantity);Assert.Equal(observed,btc.UpdatedAt);
+        var eth=Assert.Single(rows,x=>x.Symbol=="ETHUSDT");Assert.Equal("STOP_POSITION",eth.Type);Assert.Equal(PositionSide.Short,eth.PositionSide);Assert.Equal(ProtectionCoverageKind.PositionWide,eth.ProtectionCoverage);
         Assert.Null(Assert.Single(rows,x=>x.Symbol=="SOLUSDT").PositionSide);Assert.DoesNotContain(rows,x=>x.Symbol=="XRPUSDT");
+    }
+
+    [Fact]
+    public async Task Okx_AlgoProtectionProjectsFixedQuantityCoverage()
+    {
+        var profile=new ExchangeConnectionProfile{ProviderId="okx",IsTestnet=true,ExecutionEnabled=false,Endpoint="https://www.okx.com"};
+        await using var provider=new OkxExchangeProvider(profile,"key","secret","passphrase");
+        var contractValues=Assert.IsType<System.Collections.Concurrent.ConcurrentDictionary<string,decimal>>(
+            typeof(OkxExchangeProvider).GetField("_contractValues",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(provider));
+        contractValues["BTC-USDT-SWAP"]=0.01m;
+        using var json=JsonDocument.Parse("""{"algoId":"42","algoClOrdId":"wpe-protection","instId":"BTC-USDT-SWAP","posSide":"long","ordType":"oco","state":"live","sz":"25","accFillSz":"0","avgPx":"0","cTime":"1700000000000"}""");
+        var method=typeof(OkxExchangeProvider).GetMethod("MapOrder",BindingFlags.NonPublic|BindingFlags.Instance)!;
+
+        var order=await Assert.IsType<Task<ExchangeOrder>>(method.Invoke(provider,[json.RootElement,true,CancellationToken.None]));
+
+        Assert.True(order.IsProtection);
+        Assert.Equal(ProtectionCoverageKind.FixedQuantity,order.ProtectionCoverage);
+        Assert.Equal(0.25m,order.ProtectionQuantity);
     }
 
     [Fact]
