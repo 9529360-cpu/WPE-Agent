@@ -48,6 +48,16 @@ if($SourceIdentity -notmatch '^[0-9A-Za-z][0-9A-Za-z._/-]{0,127}$'){throw 'sourc
 if($Gates.Count -eq 0 -or $Gates | Where-Object {[string]::IsNullOrWhiteSpace($_)}){throw 'gates.invalid'}
 
 function Hash([string]$path){(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+function Get-TreeSnapshot([string]$basePath){
+    $base=Full $basePath
+    $prefix=$base+[IO.Path]::DirectorySeparatorChar
+    @(
+        Get-ChildItem -LiteralPath $base -Recurse -Force -File | Sort-Object FullName | ForEach-Object {
+            $relative=$_.FullName.Substring($prefix.Length).Replace('\\','/')
+            "$relative|$($_.Length)|$(Hash $_.FullName)"
+        }
+    )
+}
 $verificationPath=[IO.Path]::GetFullPath($PackageVerificationPath)
 if(-not(Test-Path -LiteralPath $verificationPath -PathType Leaf)){throw 'package.verification-missing'}
 if((Hash $verificationPath) -ne $ExpectedPackageVerificationHash.ToLowerInvariant()){throw 'package.verification-hash-mismatch'}
@@ -105,12 +115,53 @@ if($actualPayloadPaths.Count -ne $manifestPaths.Count -or
 }
 $destination=Join-Path $slots (Join-Path 'versions' $Version)
 if(Test-Path -LiteralPath $destination){throw 'candidate.version-exists'}
-New-Item -ItemType Directory -Path $destination -Force | Out-Null
-Copy-Item -Path (Join-Path $source '*') -Destination $destination -Recurse -Force
-$files=@(Get-ChildItem -LiteralPath $destination -Recurse -File | Sort-Object FullName | ForEach-Object {
-    [ordered]@{path=$_.FullName.Substring($destination.Length+1).Replace('\\','/');sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant();length=$_.Length}
-})
-$manifest=[ordered]@{schemaVersion='wpe.dogfood-release-manifest/1.1';version=$Version;sourceIdentity=$SourceIdentity;environment=$Environment;configurationSchema=$ConfigurationSchema;migrationVersion=$MigrationVersion;createdUtc=[DateTimeOffset]::UtcNow.ToString('O');files=$files;gates=@($Gates)}
-$manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $destination 'release-manifest.json') -Encoding utf8
-Get-ChildItem -LiteralPath $destination -Recurse -File | ForEach-Object {$_.IsReadOnly=$true}
-[pscustomobject]@{CandidateRoot=$destination;ManifestSha256=(Get-FileHash -LiteralPath (Join-Path $destination 'release-manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant()}
+$versionsRoot=Split-Path -Parent $destination
+New-Item -ItemType Directory -Path $versionsRoot -Force | Out-Null
+Assert-NoReparsePath $versionsRoot 'slots.reparse-forbidden'
+$staging=Join-Path $versionsRoot ('.'+$Version+'.'+[Guid]::NewGuid().ToString('N')+'.tmp')
+$sourceSnapshot=@(Get-TreeSnapshot $source)
+
+try{
+    New-Item -ItemType Directory -Path $staging -ErrorAction Stop | Out-Null
+    Get-ChildItem -LiteralPath $source -Force | Copy-Item -Destination $staging -Recurse -Force -ErrorAction Stop
+
+    $stagedSnapshot=@(Get-TreeSnapshot $staging)
+    if($sourceSnapshot.Count -ne $stagedSnapshot.Count -or
+       (Compare-Object $sourceSnapshot $stagedSnapshot -SyncWindow 0).Count -ne 0){
+        throw 'candidate.copy-drift'
+    }
+
+    $files=@(Get-ChildItem -LiteralPath $staging -Recurse -Force -File | Sort-Object FullName | ForEach-Object {
+        [ordered]@{
+            path=$_.FullName.Substring($staging.Length+1).Replace('\\','/')
+            sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            length=$_.Length
+        }
+    })
+    $manifest=[ordered]@{
+        schemaVersion='wpe.dogfood-release-manifest/1.1'
+        version=$Version
+        sourceIdentity=$SourceIdentity
+        environment=$Environment
+        configurationSchema=$ConfigurationSchema
+        migrationVersion=$MigrationVersion
+        createdUtc=[DateTimeOffset]::UtcNow.ToString('O')
+        files=$files
+        gates=@($Gates)
+    }
+    $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $staging 'release-manifest.json') -Encoding utf8
+
+    Get-ChildItem -LiteralPath $staging -Recurse -Force -File | ForEach-Object {$_.IsReadOnly=$true}
+    Move-Item -LiteralPath $staging -Destination $destination -ErrorAction Stop
+}catch{
+    if(Test-Path -LiteralPath $staging){
+        Get-ChildItem -LiteralPath $staging -Recurse -Force -File -ErrorAction SilentlyContinue | ForEach-Object {$_.IsReadOnly=$false}
+        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    throw
+}
+
+[pscustomobject]@{
+    CandidateRoot=$destination
+    ManifestSha256=(Get-FileHash -LiteralPath (Join-Path $destination 'release-manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+}
