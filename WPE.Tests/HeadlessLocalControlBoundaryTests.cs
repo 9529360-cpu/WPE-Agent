@@ -49,6 +49,7 @@ public sealed class HeadlessLocalControlBoundaryTests
         Assert.Contains("\"shutdown\"", source, StringComparison.Ordinal);
         Assert.Contains("ShutdownConfirmation = \"shutdown-wpe-headless\"", source, StringComparison.Ordinal);
         Assert.Contains("control.command-unsupported", source, StringComparison.Ordinal);
+        Assert.Contains("control.request-field-duplicate", source, StringComparison.Ordinal);
 
         foreach (var forbidden in new[]
         {
