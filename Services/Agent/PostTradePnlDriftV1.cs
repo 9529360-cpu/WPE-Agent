@@ -111,6 +111,10 @@ public static class PostTradePnlDriftCanonicalizerV1
 
         ArgumentNullException.ThrowIfNull(entrySimulationSources);
         var sources = entrySimulationSources.OrderBy(x => x.Sequence).ToArray();
+        if (sources.Length == 0)
+            throw new InvalidOperationException("Post-trade PnL drift requires at least one entry simulation source.");
+        if (!simulatedFeeEvidenceComplete && simulatedFees != 0)
+            throw new InvalidOperationException("Unavailable simulated fee evidence cannot carry a fee amount.");
         for (var i = 0; i < sources.Length; i++)
         {
             var source = sources[i];
