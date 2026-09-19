@@ -138,8 +138,13 @@ public sealed class StrategyResearchAgent
             }
             if(next==profile.Lifecycle&&_governor.ShouldRetireShadow(profile,_utcNow()))next=StrategyLifecycle.Retired;
             if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = _utcNow(); profile.LastReason = next==StrategyLifecycle.Retired?$"shadow evaluation exhausted without qualification: {performance.Summary}":$"local performance: {performance.Summary}"; }
-            await _database.UpsertStrategyAsync(profile, ct);
-            if(next!=previous)await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
+            if(next!=previous&&previous==StrategyLifecycle.Shadow&&next==StrategyLifecycle.Active)
+                await _database.CommitStrategyLifecycleTransitionAsync(profile,previous,profile.LastReason,ct);
+            else
+            {
+                await _database.UpsertStrategyAsync(profile,ct);
+                if(next!=previous)await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
+            }
         }
         // Deterministic failover: a degraded strategy never remains the selected
         // strategy when a validated Shadow challenger has passed the same gates.
@@ -159,8 +164,8 @@ public sealed class StrategyResearchAgent
             challenger.Lifecycle = StrategyLifecycle.Active;
             challenger.StateChangedAtUtc = _utcNow();
             challenger.LastReason = "deterministic failover from canonically qualified shadow strategy";
-            await _database.UpsertStrategyAsync(challenger, ct);
-            await _database.RecordStrategyLifecycleAsync(challenger,StrategyLifecycle.Shadow,challenger.LastReason,ct);
+            await _database.CommitStrategyLifecycleTransitionAsync(
+                challenger,StrategyLifecycle.Shadow,challenger.LastReason,ct);
         }
         return await _database.GetStrategySnapshotAsync(ct);
     }

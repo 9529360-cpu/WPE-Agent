@@ -147,6 +147,41 @@ public sealed class StrategyShadowQualificationTests : IDisposable
         var restored=await restarted.GetLatestStrategyShadowQualificationAsync(profile.Id,profile.Version,default);
         Assert.NotNull(restored);
         Assert.Equal(receipt.CanonicalSha256,restored!.CanonicalSha256);
+        var lifecycle=await restarted.GetRecentStrategyLifecycleEventsAsync(20,default);
+        Assert.Single(lifecycle,x=>x.StrategyId==profile.Id
+            &&x.FromState==StrategyLifecycle.Shadow.ToString()
+            &&x.ToState==StrategyLifecycle.Active.ToString());
+    }
+
+    [Fact]
+    public async Task ActivationProfileUpdateRollsBackWhenLifecycleEventCannotPersist()
+    {
+        var profile=Profile();
+        var store=await SeedAuthority(profile);
+        await using(var connection=new SqliteConnection($"Data Source={Database}"))
+        {
+            await connection.OpenAsync();
+            await using var command=connection.CreateCommand();
+            command.CommandText="""
+                CREATE TRIGGER fail_strategy_lifecycle_insert
+                BEFORE INSERT ON strategy_lifecycle_events
+                BEGIN SELECT RAISE(ABORT,'forced lifecycle failure'); END;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        profile.Lifecycle=StrategyLifecycle.Active;
+        profile.StateChangedAtUtc=Now.UtcDateTime;
+        profile.LastReason="forced atomic activation";
+        await Assert.ThrowsAsync<SqliteException>(()=>
+            store.CommitStrategyLifecycleTransitionAsync(
+                profile,StrategyLifecycle.Shadow,profile.LastReason,default));
+
+        var restored=(await store.GetStrategiesAsync(default)).Single(x=>x.Id==profile.Id);
+        Assert.Equal(StrategyLifecycle.Shadow,restored.Lifecycle);
+        Assert.DoesNotContain(
+            await store.GetRecentStrategyLifecycleEventsAsync(20,default),
+            x=>x.StrategyId==profile.Id&&x.ToState==StrategyLifecycle.Active.ToString());
     }
 
     [Fact]
