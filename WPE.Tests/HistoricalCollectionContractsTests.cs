@@ -81,7 +81,7 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
         Assert.Equal("wpe.post-trade-review/1.4",review.Schema);Assert.Equal("trend-alpha",review.StrategyId);Assert.Equal("2.1.0",review.StrategyVersion);Assert.Equal("automatic-artifact",review.AttributionBasis);
         Assert.Equal(.05m,review.Fees);Assert.Equal(1.25m,review.FundingAmount);Assert.Equal(.30m,review.TotalSlippageAmount);Assert.Equal(11.20m,review.NetPnl);Assert.Equal("win",review.Outcome);
         Assert.Equal(RuntimeCollectionState.Available,reconciliations.State);Assert.Equal(3,reconciliations.Items.Count);Assert.All(reconciliations.Items,item=>Assert.True(item.AllowsRiskIncrease));
-        Assert.Equal(new[]{"externalIsolation","position","protection"},reconciliations.Items.Select(item=>item.Kind).Order().ToArray());
+        Assert.Equal(new[]{"externalIsolation","position","protection"},reconciliations.Items.Select(item=>item.Kind).OrderBy(value=>value,StringComparer.Ordinal).ToArray());
         var json=System.Text.Json.JsonSerializer.Serialize(reconciliations);Assert.DoesNotContain("canonical_bytes",json,StringComparison.OrdinalIgnoreCase);Assert.DoesNotContain("AQ==",json,StringComparison.Ordinal);
     }
 
