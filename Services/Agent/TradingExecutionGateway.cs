@@ -214,6 +214,9 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
     public async Task<AutomaticGatewayExecutionResult> ExecuteAsync(DurableExecutionArtifactV2 artifact,DeterministicRiskReceipt receipt,CancellationToken ct)
     {
         if(!IsTestnet)return new(AutomaticGatewayExecutionState.Rejected,"automatic.testnet-required");
+        if(_exchange is IExchangeProvider liveProvider
+           &&!string.Equals(liveProvider.ProviderId,artifact.ProviderId,StringComparison.Ordinal))
+            return new(AutomaticGatewayExecutionState.Rejected,"automatic.provider-mismatch");
         IReadOnlyList<ExecutionIntent> intents;
         DurableExecutionArtifactHashesV2 hashes;
         try{intents=Restore(artifact);hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);}
@@ -225,7 +228,9 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
         catch{return new(AutomaticGatewayExecutionState.Rejected,"automatic.authority-unknown");}
         var authorityCode=AutomaticPreMutationAuthorityContractV1.Evaluate(authority,artifact,hashes,receipt,_utcNow());
         if(authorityCode!="automatic.authority-allowed")return new(AutomaticGatewayExecutionState.Rejected,authorityCode);
-        var authorization=new TradingAuthorizationRequest(TradingAuthorizationMode.Auto,true,artifact.CorrelationId,hashes.IntentHash,"automatic","automatic","automatic",receipt,null);
+        var gatewayIntentHash=TradingExecutionGateway.ComputeIntentHash(intents,artifact.Leverage,artifact.Isolated);
+        var gatewayReceipt=receipt with{IntentHash=gatewayIntentHash};
+        var authorization=new TradingAuthorizationRequest(TradingAuthorizationMode.Auto,true,artifact.CorrelationId,gatewayIntentHash,"automatic","automatic","automatic",gatewayReceipt,null);
         var result=await _gateway.ExecutePlanAsync(new(null,authorization,intents,artifact.Leverage,artifact.Isolated),ct);
         return result.Executed?new(AutomaticGatewayExecutionState.Succeeded,result.Code):new(AutomaticGatewayExecutionState.Rejected,result.Code);
     }
@@ -233,6 +238,9 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
     public async Task<AutomaticGatewayReconciliationResult> ReconcileAsync(DurableExecutionArtifactV2 artifact,CancellationToken ct)
     {
         if(!IsTestnet)return new(AutomaticGatewayReconciliationState.Failed,"automatic.testnet-required");
+        if(_exchange is IExchangeProvider liveProvider
+           &&!string.Equals(liveProvider.ProviderId,artifact.ProviderId,StringComparison.Ordinal))
+            return new(AutomaticGatewayReconciliationState.Failed,"automatic.provider-mismatch");
         if(!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid)return new(AutomaticGatewayReconciliationState.Failed,"automatic.reconcile-artifact-invalid");
         var found=0;var journaled=0;
         foreach(var intent in artifact.Intents)

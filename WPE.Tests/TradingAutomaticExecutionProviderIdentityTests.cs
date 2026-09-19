@@ -31,6 +31,57 @@ public sealed class TradingAutomaticExecutionProviderIdentityTests : IDisposable
         Assert.Null(observed);
     }
 
+    [Fact]
+    public async Task AutomaticExecutionAllowsArtifactBoundToSameProvider()
+    {
+        var store=new AgentSqliteStore(Database,()=>Now);
+        var provider=new RecordingProvider("provider-a");
+        var executor=new RecordingExecutor();
+        var gateway=new TradingExecutionGateway(executor,store,()=>Now);
+        var automatic=new TradingAutomaticExecutionGateway(
+            gateway,provider,store,new AllowedAuthority(),()=>Now);
+        var artifact=Artifact();
+        var receipt=Receipt(artifact);
+
+        var result=await automatic.ExecuteAsync(artifact,receipt,default);
+
+        Assert.True(result.State==AutomaticGatewayExecutionState.Succeeded,result.Code);
+        Assert.Equal(1,executor.MutationCount);
+    }
+
+    [Fact]
+    public async Task AutomaticExecutionRejectsArtifactBoundToDifferentProvider()
+    {
+        var store=new AgentSqliteStore(Database,()=>Now);
+        var provider=new RecordingProvider("provider-b");
+        var executor=new RecordingExecutor();
+        var gateway=new TradingExecutionGateway(executor,store,()=>Now);
+        var automatic=new TradingAutomaticExecutionGateway(
+            gateway,provider,store,new AllowedAuthority(),()=>Now);
+        var artifact=Artifact();
+        var receipt=Receipt(artifact);
+
+        var result=await automatic.ExecuteAsync(artifact,receipt,default);
+
+        Assert.Equal(AutomaticGatewayExecutionState.Rejected,result.State);
+        Assert.Equal("automatic.provider-mismatch",result.Code);
+        Assert.Equal(0,executor.MutationCount);
+    }
+
+    [Fact]
+    public async Task AutomaticReconciliationRejectsArtifactBoundToDifferentProvider()
+    {
+        var store=new AgentSqliteStore(Database,()=>Now);
+        var provider=new RecordingProvider("provider-b");
+        var gateway=new TradingExecutionGateway(new NoopExecutor(),store,()=>Now);
+        var automatic=new TradingAutomaticExecutionGateway(gateway,provider,store);
+
+        var result=await automatic.ReconcileAsync(Artifact(),default);
+
+        Assert.Equal(AutomaticGatewayReconciliationState.Failed,result.State);
+        Assert.Equal("automatic.provider-mismatch",result.Code);
+    }
+
     private static DurableExecutionArtifactV2 Artifact()=>new(
         DurableExecutionArtifactV2.Version,
         "provider-mismatch",
@@ -38,6 +89,38 @@ public sealed class TradingAutomaticExecutionProviderIdentityTests : IDisposable
             "WPE-PROVIDER-MISMATCH","strategy.entry","OpenLong","Market",0,50_000m)],
         5,true,"provider-a","Testnet","strategy","v1",
         Now.AddSeconds(-20),"market-v1",Now.AddSeconds(-10),Now.AddMinutes(2));
+
+    private static DeterministicRiskReceipt Receipt(DurableExecutionArtifactV2 artifact)
+    {
+        var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);
+        return new("risk-provider-mismatch",artifact.CorrelationId,hashes.IntentHash,true,
+            Now.AddSeconds(-1),Now.AddMinutes(1),null,hashes.ArtifactHash);
+    }
+
+    private sealed class AllowedAuthority:IAutomaticPreMutationAuthority
+    {
+        public Task<AutomaticPreMutationAuthorityDecisionV1> RecheckAsync(
+            DurableExecutionArtifactV2 artifact,DeterministicRiskReceipt receipt,string policyHash,CancellationToken ct)
+        {
+            var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);
+            return Task.FromResult(new AutomaticPreMutationAuthorityDecisionV1(
+                AutomaticMutationPolicyV1.Version,AutomaticPreMutationAuthorityState.Allowed,
+                hashes.ArtifactHash,hashes.IntentHash,receipt.ReceiptId,policyHash,
+                Now,Now.AddMinutes(1)));
+        }
+    }
+
+    private sealed class RecordingExecutor:ITradingMutationExecutor
+    {
+        public bool IsTestnet=>true;
+        public int MutationCount{get;private set;}
+        public Task<string> ExecutePlanAsync(
+            string correlationId,IReadOnlyList<ExecutionIntent> intents,int leverage,bool isolated,CancellationToken ct)
+        {
+            MutationCount++;
+            return Task.FromResult("submitted");
+        }
+    }
 
     private sealed class NoopExecutor:ITradingMutationExecutor
     {
