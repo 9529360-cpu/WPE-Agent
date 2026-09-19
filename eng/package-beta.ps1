@@ -248,6 +248,9 @@ foreach ($artifact in $runtimeArtifacts) {
     if ($signature.Status -notin @([System.Management.Automation.SignatureStatus]::Valid, [System.Management.Automation.SignatureStatus]::NotSigned)) {
         throw "Runtime artifact has an invalid Authenticode state: $($artifact.Label):$($signature.Status)"
     }
+    if ($signature.Status -eq [System.Management.Automation.SignatureStatus]::Valid -and $null -eq $signature.TimeStamperCertificate) {
+        throw "Runtime bundle executable timestamp is missing: $($artifact.Label)"
+    }
     $artifactStates.Add([pscustomobject]@{
         Label = $artifact.Label
         Root = $artifact.Root
