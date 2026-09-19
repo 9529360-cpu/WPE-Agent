@@ -15,6 +15,7 @@ if (runningAsService)
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(options => options.ServiceName = "WPE Agent Headless");
 builder.Services.AddHostedService<HeadlessRuntimeWorker>();
+builder.Services.AddHostedService<HeadlessLocalControlWorker>();
 
 using var host = builder.Build();
 await host.RunAsync();
