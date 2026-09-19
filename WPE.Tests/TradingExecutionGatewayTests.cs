@@ -62,6 +62,58 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     }
 
     [Fact]
+    public async Task AutomaticSimulationEvidenceFailureRejectsBeforeVenueMutation()
+    {
+        var setup=Setup(TradingAuthorizationMode.Auto);
+        var artifact=AutomaticArtifact();
+        var producer=new StubSimulationProducer(
+            new(false,0,0,"simulation-store-failed",[]));
+        var gateway=new TradingAutomaticExecutionGateway(
+            setup.Gateway,
+            setup.Exchange,
+            setup.Store,
+            new StubAutomaticAuthority(AutomaticPreMutationAuthorityState.Allowed),
+            ()=>Now,
+            producer);
+
+        var result=await gateway.ExecuteAsync(
+            artifact,
+            AutomaticRiskReceipt(artifact),
+            CancellationToken.None);
+
+        Assert.Equal(AutomaticGatewayExecutionState.Rejected,result.State);
+        Assert.Equal("automatic.simulation-evidence-unavailable",result.Code);
+        Assert.Equal(1,producer.Calls);
+        Assert.Equal(0,setup.Exchange.MutationCount);
+    }
+
+    [Fact]
+    public async Task AutomaticAuthorityRejectionDoesNotProduceSimulationEvidence()
+    {
+        var setup=Setup(TradingAuthorizationMode.Auto);
+        var artifact=AutomaticArtifact();
+        var producer=new StubSimulationProducer(
+            new(true,1,1,"simulation-evidence-stored",["fill"]));
+        var gateway=new TradingAutomaticExecutionGateway(
+            setup.Gateway,
+            setup.Exchange,
+            setup.Store,
+            new StubAutomaticAuthority(AutomaticPreMutationAuthorityState.Revoked),
+            ()=>Now,
+            producer);
+
+        var result=await gateway.ExecuteAsync(
+            artifact,
+            AutomaticRiskReceipt(artifact),
+            CancellationToken.None);
+
+        Assert.Equal(AutomaticGatewayExecutionState.Rejected,result.State);
+        Assert.Equal("automatic.authority-revoked",result.Code);
+        Assert.Equal(0,producer.Calls);
+        Assert.Equal(0,setup.Exchange.MutationCount);
+    }
+
+    [Fact]
     public async Task AutomaticOrderObserverConfirmsMatchingExchangeOrderWithoutMutation()
     {
         var setup=Setup(TradingAuthorizationMode.Auto);var artifact=AutomaticArtifact();
@@ -371,6 +423,11 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     private static DurableExecutionArtifactV2 AutomaticArtifact()=>new(2,"correlation-1",
         [new(0,"BTCUSDT","Long",.001m,false,49_000m,51_000m,"client-1","strategy.entry","OpenLong","Market",0,50_000m)],
         5,true,"binance","Testnet","strategy","v1",Now.AddSeconds(-20),"market-v1",Now.AddSeconds(-10),Now.AddMinutes(2));
+    private static DeterministicRiskReceipt AutomaticRiskReceipt(DurableExecutionArtifactV2 artifact)
+    {
+        var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);
+        return new("risk-simulation",artifact.CorrelationId,hashes.IntentHash,true,Now.AddMinutes(-1),Now.AddMinutes(1),null,hashes.ArtifactHash);
+    }
     private static string IntentHash()=>TradingExecutionGateway.ComputeIntentHash([Intent()],5,true);
     private static ManualEmergencyConfirmation Confirmation(DateTimeOffset? confirmedAt=null)=>new("confirmation-1","emergency-correlation","user-1","device-1","session-1",confirmedAt??Now.AddMinutes(-1));
     private static EmergencyReductionCommand EmergencyCommand()=>new(Confirmation(),new("BTCUSDT",PositionSide.Long,.01m,49_000m,50_000m,10m,5m,true,20_000m),new("BTCUSDT",PositionSide.Long,.01m,true,0,0,"emergency-client-1","manual emergency close",DecisionAction.CloseLong,ExpectedPrice:50_000m),5,true);
@@ -381,6 +438,37 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     private async Task<int> ApprovalCount(string table,string condition){await using var connection=new SqliteConnection($"Data Source={DatabasePath}");await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText=$"SELECT COUNT(*) FROM {table} WHERE {condition}";return Convert.ToInt32(await command.ExecuteScalarAsync());}
     public void Dispose(){ServiceLocator.SystemState.Status=_originalStatus;SqliteConnection.ClearAllPools();if(Directory.Exists(_directory))Directory.Delete(_directory,true);}
     private sealed record SetupResult(AgentSqliteStore Store,RecordingExchange Exchange,ReliableOrderExecutor Executor,TradingExecutionGateway Gateway);
+
+    private sealed class StubSimulationProducer(ExecutionSimulationProducerResultV1 result):IAutomaticExecutionSimulationProducerV1
+    {
+        public int Calls{get;private set;}
+        public Task<ExecutionSimulationProducerResultV1> CaptureAsync(DurableExecutionArtifactV2 artifact,CancellationToken ct)
+        {
+            Calls++;
+            return Task.FromResult(result);
+        }
+    }
+
+    private sealed class StubAutomaticAuthority(AutomaticPreMutationAuthorityState state):IAutomaticPreMutationAuthority
+    {
+        public Task<AutomaticPreMutationAuthorityDecisionV1> RecheckAsync(
+            DurableExecutionArtifactV2 artifact,
+            DeterministicRiskReceipt receipt,
+            string policyHash,
+            CancellationToken ct)
+        {
+            var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);
+            return Task.FromResult(new AutomaticPreMutationAuthorityDecisionV1(
+                AutomaticMutationPolicyV1.Version,
+                state,
+                hashes.ArtifactHash,
+                hashes.IntentHash,
+                receipt.ReceiptId,
+                AutomaticMutationPolicyV1.Hash,
+                Now,
+                Now.AddMinutes(1)));
+        }
+    }
 
     private sealed class RecordingExchange(ExchangeEnvironment environment):IExchangeAdapter
     {
