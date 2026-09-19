@@ -125,6 +125,37 @@ public sealed class StrategyShadowObservationProvenanceTests : IDisposable
     }
 
     [Fact]
+    public async Task ShadowPerformanceRejectsMixedProviderCohort()
+    {
+        var profile=Profile();
+        var validationAt=Now.AddMinutes(-10);
+        var store=await SeedAuthority(validationAt,profile,includeTimeline:true);
+        var validation=ValidationFact(profile,validationAt);
+        var timeline=Timeline(profile);
+
+        foreach(var (provider,minute,price,direction) in new[]
+        {
+            ("provider-a",-2,100m,1),
+            ("provider-b",-1,101m,1)
+        })
+        {
+            var market=Market(Now.AddMinutes(minute),"Testnet",provider) with{Price=price,Provenance=null};
+            market=market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,provider,"Testnet")};
+            var value=StrategyShadowObservationCanonicalizerV1.Create(
+                profile,
+                new StrategySignal(profile.Id,profile.Symbol,direction,.75,"mixed-provider",profile.Version),
+                market,
+                validation,
+                timeline,
+                Now);
+            Assert.True(await store.SaveStrategyShadowObservationAsync(value,default));
+        }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>
+            store.GetStrategyShadowObservationPerformanceAsync(profile.Id,profile.Version,default));
+    }
+
+    [Fact]
     public void ValidationMustPredateTheForwardMarketObservation()
     {
         var profile=Profile();
@@ -437,7 +468,10 @@ public sealed class StrategyShadowObservationProvenanceTests : IDisposable
         };
     }
 
-    private static MarketEvidence Market(DateTimeOffset collectedAt,string environment="Testnet")
+    private static MarketEvidence Market(
+        DateTimeOffset collectedAt,
+        string environment="Testnet",
+        string providerId="binance-futures")
     {
         var market=new MarketEvidence(
             "BTCUSDT",
@@ -456,7 +490,7 @@ public sealed class StrategyShadowObservationProvenanceTests : IDisposable
         return market with
         {
             Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(
-                market,"binance-futures",environment)
+                market,providerId,environment)
         };
     }
 

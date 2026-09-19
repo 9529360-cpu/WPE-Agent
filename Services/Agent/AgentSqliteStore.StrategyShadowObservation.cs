@@ -131,6 +131,8 @@ public sealed partial class AgentSqliteStore
         var rows=new List<StrategyShadowObservationV1>();
         string? validationHash=null;
         string? timelineHash=null;
+        string? providerId=null;
+        string? environment=null;
         await using var reader=await query.ExecuteReaderAsync(ct);
         while(await reader.ReadAsync(ct))
         {
@@ -160,10 +162,14 @@ public sealed partial class AgentSqliteStore
             if(validationHash is null)
                 await VerifyStrategyShadowSourcesAsync(row,ct);
             else if(!string.Equals(validationHash,row.BacktestValidationSha256,StringComparison.Ordinal)
-                    ||!string.Equals(timelineHash,row.TimelineSha256,StringComparison.Ordinal))
-                throw new InvalidOperationException("Strategy shadow qualification mixes validation or timeline authority.");
+                    ||!string.Equals(timelineHash,row.TimelineSha256,StringComparison.Ordinal)
+                    ||!string.Equals(providerId,row.MarketProviderId,StringComparison.Ordinal)
+                    ||!string.Equals(environment,row.Environment,StringComparison.Ordinal))
+                throw new InvalidOperationException("Strategy shadow qualification mixes durable authority.");
             validationHash??=row.BacktestValidationSha256;
             timelineHash??=row.TimelineSha256;
+            providerId??=row.MarketProviderId;
+            environment??=row.Environment;
             rows.Add(row);
         }
 
