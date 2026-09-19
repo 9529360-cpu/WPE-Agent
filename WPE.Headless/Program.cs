@@ -7,13 +7,20 @@ using 币安量化机器人.Services;
 if (args.Length > 0 && string.Equals(args[0], "control", StringComparison.Ordinal))
     return await HeadlessLocalControlClient.RunAsync(args[1..]);
 
+var dataRoot = HeadlessDataRootBootstrap.Resolve(
+    args,
+    Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable));
+if (!dataRoot.Success)
+    return HeadlessRuntimeProcess.ServiceDataRootInvalidExitCode;
+if (dataRoot.Root is not null)
+    Environment.SetEnvironmentVariable(
+        AppDataPaths.DataRootEnvironmentVariable,
+        dataRoot.Root,
+        EnvironmentVariableTarget.Process);
+
 var runningAsService = WindowsServiceHelpers.IsWindowsService();
-if (runningAsService)
-{
-    var dataRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
-    if (string.IsNullOrWhiteSpace(dataRoot) || !Path.IsPathRooted(dataRoot))
-        return HeadlessRuntimeProcess.ServiceDataRootRequiredExitCode;
-}
+if (runningAsService && dataRoot.Root is null)
+    return HeadlessRuntimeProcess.ServiceDataRootRequiredExitCode;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(options => options.ServiceName = "WPE Agent Headless");
