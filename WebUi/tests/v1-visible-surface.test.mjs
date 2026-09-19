@@ -71,7 +71,7 @@ test('execution command center is read-only and backed by canonical host project
     assert.match(cockpit, new RegExp(field), `missing canonical field ${field}`)
   }
   assert.match(cockpit, /READ ONLY/)
-  assert.match(cockpit, /strategy identity is attribution, not a causal performance claim/i)
+  assert.match(cockpit, /dashboard\.closedTradeHelp/)
   const forbiddenCockpitSurfaces = [
     /postHostCommand/,
     /\.postMessage\s*\(/,
