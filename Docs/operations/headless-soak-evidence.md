@@ -16,6 +16,8 @@ For a 24-hour qualification:
     pwsh -NoProfile -File .\eng\ops\Watch-HeadlessSoak.ps1 `
       -DataRoot "D:\WPE-State" `
       -OutputDirectory "D:\WPE-Evidence\soak-24h" `
+      -SourceIdentity "commit/<exact-source-sha>" `
+      -CandidateManifestSha256 "<64-hex-release-manifest-sha256>" `
       -DurationSeconds 86400 `
       -PollSeconds 5 `
       -StartupGraceSeconds 60 `
@@ -31,7 +33,11 @@ A sample is ready only when the process reports `ready`, runtime readiness is tr
 
     pwsh -NoProfile -File .\eng\ops\Test-HeadlessSoakEvidence.ps1 `
       -EvidencePath "D:\WPE-Evidence\soak-24h\headless-soak-evidence.json" `
+      -ExpectedSourceIdentity "commit/<exact-source-sha>" `
+      -ExpectedCandidateManifestSha256 "<64-hex-release-manifest-sha256>" `
       -MinimumDurationMinutes 1440
+
+The evidence summary is bound to the exact source identity and candidate release-manifest SHA-256 supplied at capture time. Reusing an older soak for different candidate bytes is rejected.
 
 The verifier checks:
 
