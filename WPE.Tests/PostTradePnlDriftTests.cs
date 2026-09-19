@@ -116,6 +116,26 @@ public sealed class PostTradePnlDriftTests : IDisposable
     }
 
     [Fact]
+    public async Task CanonicalFillWithoutSimulationSourceCannotProducePnlFact()
+    {
+        var store=Store();
+        var open=Intent("open-unbound",false,1m,100m);
+        var close=Intent("close-unbound",true,1m,110m);
+        await Bind(store,"cycle-open-unbound",open);
+        await Bind(store,"cycle-close-unbound",close);
+        await SaveUnboundFill(store,"cycle-open-unbound",open,100m);
+        await SaveUnboundFill(store,"cycle-close-unbound",close,110m);
+
+        await store.RecordExecutionAsync(
+            "cycle-open-unbound",open,Order(open,"FILLED",1m,100m,Now.AddMinutes(-5)),"fallback",default);
+        await store.RecordExecutionAsync(
+            "cycle-close-unbound",close,Order(close,"FILLED",1m,110m,Now.AddSeconds(-1)),"fallback",default);
+
+        Assert.Empty(await store.GetRecentPostTradePnlDriftAsync(10,default));
+        Assert.Null(await store.TryBuildAndSavePostTradePnlDriftAsync("close-unbound",default));
+    }
+
+    [Fact]
     public async Task PersistedPnlDriftIsAppendOnlyAndSourceTamperingFailsRestartReplay()
     {
         var store=Store();
@@ -325,6 +345,40 @@ public sealed class PostTradePnlDriftTests : IDisposable
             writer.WriteEndObject();
         }
         return stream.ToArray();
+    }
+
+    private static async Task SaveUnboundFill(
+        AgentSqliteStore store,
+        string cycle,
+        ExecutionIntent intent,
+        decimal averagePrice)
+    {
+        var costs=ExecutionRealityCostAuthorityV1.Current;
+        var fee=averagePrice*intent.Quantity*costs.CommissionRate;
+        var fill=ExecutionSimulationFillCanonicalizerV1.Create(
+            cycle,
+            intent.ClientOrderId,
+            StrategyId,
+            StrategyVersion,
+            costs.Version,
+            AutomaticExecutionSimulationModelV1.Version,
+            "wpe.venue-rule/1.0:"+new string('c',64),
+            intent.Symbol,
+            intent.Side,
+            intent.ReduceOnly,
+            intent.OrderType,
+            intent.Quantity,
+            ExecutionSimulationFillStateV1.Filled,
+            intent.Quantity,
+            averagePrice,
+            fee,
+            ExecutionSimulationFeeRoleV1.Taker,
+            false,
+            0,
+            Now.AddSeconds(-3),
+            Now.AddSeconds(-2),
+            "unbound-test-fill");
+        Assert.True((await store.SaveExecutionSimulationFillAsync(fill,default)).Succeeded);
     }
 
     private async Task SeedFee(string clientOrderId,decimal fee,DateTimeOffset observedAt)
