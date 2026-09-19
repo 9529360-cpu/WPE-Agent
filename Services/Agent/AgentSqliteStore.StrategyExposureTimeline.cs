@@ -6,7 +6,7 @@ namespace 币安量化机器人.Services.Agent;
 
 public sealed partial class AgentSqliteStore
 {
-    public async Task<bool> SaveStrategyExposureTimelineAsync(
+    internal async Task<bool> SaveStrategyExposureTimelineAsync(
         StrategyExposureTimelineArtifactV1 artifact,
         CancellationToken ct)
     {
