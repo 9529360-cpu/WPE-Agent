@@ -79,6 +79,10 @@ public sealed class RuntimeStateBackupService
             throw new InvalidOperationException("The platform backup key protector is unavailable.");
 
         var destination = Path.GetFullPath(destinationRoot);
+        var dataRoot = Path.GetFullPath(_layout.DataDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var destinationWithSeparator = destination.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (destinationWithSeparator.StartsWith(dataRoot, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Backup destination must be outside the active WPE data directory.");
         Directory.CreateDirectory(destination);
         var now = _utcNow().ToUniversalTime();
         var backupId = $"wpe-state-{now:yyyyMMddTHHmmssZ}-{Guid.NewGuid():N}";
