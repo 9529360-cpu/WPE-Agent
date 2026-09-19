@@ -18,20 +18,45 @@ using 币安量化机器人.Services.Access;
 
 namespace 币安量化机器人.Services;
 
+internal static class ProductionAutomaticCapabilityGate
+{
+    internal static bool IsAvailable(DurableExecutionArtifactV2 artifact,IReadOnlyDictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability> capabilities,DateTimeOffset now)
+        =>artifact.Intents.Count>0&&artifact.Intents.All(intent=>capabilities.TryGetValue(intent.Symbol,out var value)&&
+            value.Status==WpeAgent.RuntimeContracts.CapabilityStatus.Available&&value.CanTrade&&value.TestnetAvailable&&Fresh(value.CheckedAt,now));
+
+    internal static async Task<bool> EnsureAvailableAsync(DurableExecutionArtifactV2 artifact,IReadOnlyDictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability> capabilities,Func<CancellationToken,Task>? refresh,Func<DateTimeOffset> utcNow,CancellationToken ct)
+    {
+        if(IsAvailable(artifact,capabilities,utcNow()))return true;
+        if(refresh is null)return false;
+        try{await refresh(ct);}
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch{return false;}
+        return IsAvailable(artifact,capabilities,utcNow());
+    }
+
+    private static bool Fresh(DateTimeOffset checkedAt,DateTimeOffset now)
+    {
+        if(checkedAt==default)return false;
+        var age=now.ToUniversalTime()-checkedAt.ToUniversalTime();
+        return age<=WpeAgent.RuntimeContracts.ProviderCapabilityPrecondition.MaximumAge&&age>=-WpeAgent.RuntimeContracts.ProviderCapabilityPrecondition.MaximumAge;
+    }
+}
+
 internal sealed class ProductionAutomaticExecutionValidator : IAutomaticExecutionReadOnlyValidator
 {
     private static readonly TimeSpan MaximumMarketAge=TimeSpan.FromSeconds(30);
-    private readonly AgentSettingsStore _settings;private readonly ExchangeConnectionProfile _profile;private readonly IExchangeAdapter _exchange;private readonly IReadOnlyDictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability> _capabilities;private readonly Func<bool> _runtimeReady;
-    public ProductionAutomaticExecutionValidator(AgentSettingsStore settings,ExchangeConnectionProfile profile,IExchangeAdapter exchange,IReadOnlyDictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability> capabilities,Func<bool> runtimeReady)
-    {_settings=settings;_profile=profile;_exchange=exchange;_capabilities=capabilities;_runtimeReady=runtimeReady;}
-    public Task<AutomaticExecutionRuntimeFacts> ValidateAsync(DurableExecutionArtifactV2 artifact,CancellationToken ct)
+    private readonly AgentSettingsStore _settings;private readonly ExchangeConnectionProfile _profile;private readonly IExchangeAdapter _exchange;private readonly IReadOnlyDictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability> _capabilities;private readonly Func<bool> _runtimeReady;private readonly Func<CancellationToken,Task>? _capabilityRefresh;
+    public ProductionAutomaticExecutionValidator(AgentSettingsStore settings,ExchangeConnectionProfile profile,IExchangeAdapter exchange,IReadOnlyDictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability> capabilities,Func<bool> runtimeReady,Func<CancellationToken,Task>? capabilityRefresh=null)
+    {_settings=settings;_profile=profile;_exchange=exchange;_capabilities=capabilities;_runtimeReady=runtimeReady;_capabilityRefresh=capabilityRefresh;}
+    public async Task<AutomaticExecutionRuntimeFacts> ValidateAsync(DurableExecutionArtifactV2 artifact,CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();var now=DateTimeOffset.UtcNow;var current=_settings.Load();
         var testnet=current.Environment==ExchangeEnvironment.Testnet&&current.AuthorizationMode==TradingAuthorizationMode.Auto&&_profile.IsTestnet&&_exchange.Environment==ExchangeEnvironment.Testnet&&artifact.Environment=="Testnet";
         var runtime=_settings.LastLoadDiagnostic is null&&_runtimeReady()&&current.SetupCompleted&&current.LastAccessCheckAtUtc is not null&&now-new DateTimeOffset(DateTime.SpecifyKind(current.LastAccessCheckAtUtc.Value,DateTimeKind.Utc))<=TimeSpan.FromMinutes(30);
-        var capability=artifact.Intents.Count>0&&artifact.Intents.All(intent=>_capabilities.TryGetValue(intent.Symbol,out var value)&&value.Status==WpeAgent.RuntimeContracts.CapabilityStatus.Available&&value.CanTrade&&value.TestnetAvailable&&now-value.CheckedAt<=WpeAgent.RuntimeContracts.ProviderCapabilityPrecondition.MaximumAge);
+        var capability=await ProductionAutomaticCapabilityGate.EnsureAvailableAsync(artifact,_capabilities,_capabilityRefresh,()=>DateTimeOffset.UtcNow,ct);
+        now=DateTimeOffset.UtcNow;
         var market=artifact.MarketCollectedAtUtc<=now&&now-artifact.MarketCollectedAtUtc<=MaximumMarketAge;
-        return Task.FromResult(new AutomaticExecutionRuntimeFacts(testnet?AutomaticFactState.True:AutomaticFactState.False,runtime?AutomaticFactState.True:AutomaticFactState.False,capability?AutomaticFactState.True:AutomaticFactState.False,market?AutomaticFactState.True:AutomaticFactState.False,"automatic.production-facts"));
+        return new AutomaticExecutionRuntimeFacts(testnet?AutomaticFactState.True:AutomaticFactState.False,runtime?AutomaticFactState.True:AutomaticFactState.False,capability?AutomaticFactState.True:AutomaticFactState.False,market?AutomaticFactState.True:AutomaticFactState.False,"automatic.production-facts");
     }
 }
 
@@ -225,7 +250,7 @@ public static class AutoTradingAgent
         var recoveryServices=await ProductionRecoveryComposition.CreateAsync(exchange,executor,Db,ProductionRecoveryComposition.DefaultKeyPath(),ct:ct);var executionGateway=recoveryServices.Gateway;var planner=new RiskAndPositionPlanner();var aggregator=new SignalAggregationSkill();var hypothesisEngine=new TradeHypothesisEngine(Db);var governance=new DecisionGovernanceSkill();var deterministic=new DeterministicPlanSkill();var independentRisk=new IndependentRiskManagerSkill();var longResearch=new LongHorizonResearchSkill();var portfolioRiskSkill=new PortfolioRiskSkill();var historicalData=new HistoricalDataService(exchange,Db);var positionManager=new PositionManagementSkill();var strategyResearch=new StrategyResearchAgent(Db,runtimeBacktests:ServiceLocator.RuntimeBacktests);var strategyScheduler=new StrategyResearchScheduler(strategyResearch,Db);var strategySchedulerTask=strategyScheduler.StartAsync(settings.Symbols,settings.Risk,ct);bool TeacherNotificationAllowed(NotificationEventKind kind){var current=SettingsStore.Load();return current.Notification.Enabled&&current.Notification.EventKinds.Contains(kind.ToString(),StringComparer.OrdinalIgnoreCase);}using var teacherCryptoScheduler=new TeacherCryptoEvidenceSchedulerV2(Db,notifications.Observer,TeacherNotificationAllowed);var teacherCryptoSchedulerTask=teacherCryptoScheduler.StartAsync(settings.Symbols,ct);var teacherLessonPublisher=new TeacherLessonNotificationPublisherV2(Db,notifications.Observer,TeacherNotificationAllowed);var macroHttp=new HttpClient{Timeout=TimeSpan.FromSeconds(20)};macroHttp.DefaultRequestHeaders.UserAgent.ParseAdd("WPE-Agent/3.6 (local macro research)");var macroScheduler=new WpeAgent.AgentServices.MacroResearchScheduler(new(new WpeAgent.AgentServices.HttpBlsMacroDataTransport(macroHttp)),Db,calendar:new(new WpeAgent.AgentServices.HttpBlsReleaseCalendarTransport(macroHttp)));var macroSchedulerTask=macroScheduler.StartAsync(ct);
         _activeExecutionGateway=executionGateway;_activeRuntimeSessionId=runtime.RunId;
         var automaticGateway=new TradingAutomaticExecutionGateway(executionGateway,exchange,Db);
-        var automaticValidator=new ProductionAutomaticExecutionValidator(SettingsStore,exchangeProfile,exchange,capabilitySnapshot,()=>ReferenceEquals(_activeExchange,exchange)&&string.Equals(_activeRuntimeSessionId,runtime.RunId,StringComparison.Ordinal));
+        var automaticValidator=new ProductionAutomaticExecutionValidator(SettingsStore,exchangeProfile,exchange,capabilitySnapshot,()=>ReferenceEquals(_activeExchange,exchange)&&string.Equals(_activeRuntimeSessionId,runtime.RunId,StringComparison.Ordinal),RefreshCapabilitySnapshot);
         var automaticWorker=new AutomaticExecutionWorker(new AutomaticExecutionProcessor(Db,automaticValidator,automaticGateway));Task? automaticWorkerTask=null;Task? tradingObservationTask=null;
         var interruptedWorkflows=await Db.GetInterruptedWorkflowsAsync(ct);var startupRecovery=executionGateway.AssessUnverifiedAutomaticMutation(AutomaticMutationPath.StartupRecovery,interruptedWorkflows.Count);if(!startupRecovery.SafeToIncreaseRisk)await Db.SetStateAsync("authorization.startup-recovery",startupRecovery.Code,ct);
         var runtimeMode=RuntimeModePolicy.Resolve(settings);var selectedBrain=RuntimeModePolicy.GetActiveBrain(settings);var localBrain=AssistantProviderFactory.CreateLocal();IAssistantProvider brain=CreateConfiguredBrain(runtimeMode,selectedBrain)??localBrain;
