@@ -41,6 +41,62 @@ public sealed class ProtectionReconciliationTests : IDisposable
     }
 
     [Fact]
+    public void UnknownOrUnderCoveredProtectionFailsClosed()
+    {
+        var unknown=Protection("unknown","OCO") with{ProtectionCoverage=ProtectionCoverageKind.Unknown};
+        var unknownReport=ProtectionReconciliationServiceV1.Reconcile([Position()],[unknown],Now,Now);
+        Assert.Equal(ProtectionReconciliationStateV1.Incomplete,unknownReport.State);
+        Assert.False(unknownReport.AllowsRiskIncrease);
+        Assert.Contains("protection.stop-coverage-unproven:BTCUSDT:long",unknownReport.ReasonCodes);
+        Assert.Contains("protection.take-profit-coverage-unproven:BTCUSDT:long",unknownReport.ReasonCodes);
+        Assert.False(Assert.Single(unknownReport.Legs).CoverageConfirmed);
+
+        var under=Protection("under","OCO") with
+        {
+            ProtectionCoverage=ProtectionCoverageKind.FixedQuantity,
+            ProtectionQuantity=0.5m
+        };
+        var underReport=ProtectionReconciliationServiceV1.Reconcile([Position()],[under],Now,Now);
+        Assert.Equal(ProtectionReconciliationStateV1.Incomplete,underReport.State);
+        Assert.False(underReport.AllowsRiskIncrease);
+    }
+
+    [Fact]
+    public void FixedQuantityCoverageMustMeetCurrentPositionQuantity()
+    {
+        var exact=Protection("exact","OCO") with
+        {
+            ProtectionCoverage=ProtectionCoverageKind.FixedQuantity,
+            ProtectionQuantity=1m
+        };
+        var exactReport=ProtectionReconciliationServiceV1.Reconcile([Position()],[exact],Now,Now);
+        Assert.True(exactReport.AllowsRiskIncrease);
+        var exactLeg=Assert.Single(exactReport.Legs);
+        Assert.True(exactLeg.CoverageConfirmed);
+        Assert.Equal("fixed-quantity",exactLeg.CoverageProof);
+        Assert.Equal(1m,exactLeg.PositionQuantity);
+
+        var over=exact with{OrderId="over",ClientOrderId="client-over",ProtectionQuantity=1.1m};
+        Assert.True(ProtectionReconciliationServiceV1.Reconcile([Position()],[over],Now,Now).AllowsRiskIncrease);
+    }
+
+    [Fact]
+    public void SeparateStopAndTakeEachRequireCoverage()
+    {
+        var stop=Protection("sl","STOP_MARKET");
+        var take=Protection("tp","TAKE_PROFIT_MARKET") with
+        {
+            ProtectionCoverage=ProtectionCoverageKind.FixedQuantity,
+            ProtectionQuantity=0.25m
+        };
+        var report=ProtectionReconciliationServiceV1.Reconcile([Position()],[stop,take],Now,Now);
+
+        Assert.Equal(ProtectionReconciliationStateV1.Incomplete,report.State);
+        Assert.Contains("protection.take-profit-coverage-unproven:BTCUSDT:long",report.ReasonCodes);
+        Assert.DoesNotContain("protection.stop-coverage-unproven:BTCUSDT:long",report.ReasonCodes);
+    }
+
+    [Fact]
     public void MissingLegOrOrphanProtectionFailsClosed()
     {
         var missing=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("sl","STOP_MARKET")],Now,Now);Assert.Equal(ProtectionReconciliationStateV1.Incomplete,missing.State);Assert.Contains("protection.missing-take-profit:BTCUSDT:long",missing.ReasonCodes);Assert.False(missing.AllowsRiskIncrease);
@@ -58,7 +114,9 @@ public sealed class ProtectionReconciliationTests : IDisposable
     public async Task CanonicalAuditIsRestartSafeAndRejectsFieldOrByteTampering()
     {
         var report=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("p1","OCO")],Now,Now);var store=new AgentSqliteStore(Database);Assert.True(await store.SaveProtectionReconciliationAsync(report,default));Assert.False(await new AgentSqliteStore(Database).SaveProtectionReconciliationAsync(report,default));
-        await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveProtectionReconciliationAsync(report with{CanonicalBytes=[..report.CanonicalBytes,0]},default));await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveProtectionReconciliationAsync(report with{State=ProtectionReconciliationStateV1.Incomplete,AllowsRiskIncrease=false},default));
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveProtectionReconciliationAsync(report with{CanonicalBytes=[..report.CanonicalBytes,0]},default));
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveProtectionReconciliationAsync(report with{State=ProtectionReconciliationStateV1.Incomplete,AllowsRiskIncrease=false},default));
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveProtectionReconciliationAsync(report with{Legs=[report.Legs[0] with{CoverageConfirmed=false}]},default));
     }
 
     [Fact]
@@ -75,7 +133,7 @@ public sealed class ProtectionReconciliationTests : IDisposable
     }
 
     private static ManagedPosition Position()=>new("BTCUSDT",PositionSide.Long,1m,100m,101m,1m,2m,true,50m);
-    private static ExchangeOrder Protection(string id,string type)=>new("BTCUSDT",id,"client-"+id,"NEW",0,0,type,PositionSide.Long,true,Now.UtcDateTime);
+    private static ExchangeOrder Protection(string id,string type)=>new("BTCUSDT",id,"client-"+id,"NEW",0,0,type,PositionSide.Long,true,Now.UtcDateTime){ProtectionCoverage=ProtectionCoverageKind.PositionWide};
     private static string ProjectRoot()=>Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
     public void Dispose(){SqliteConnection.ClearAllPools();if(Directory.Exists(_directory))Directory.Delete(_directory,true);}
 }

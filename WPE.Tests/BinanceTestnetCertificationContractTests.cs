@@ -1,6 +1,8 @@
 using WpeAgent.RuntimeContracts;
 using System.Net;
 using System.Globalization;
+using System.Reflection;
+using System.Text.Json;
 using 币安量化机器人.Models;
 using 币安量化机器人.Services;
 using 币安量化机器人.Services.Agent;
@@ -243,6 +245,32 @@ public sealed class BinanceTestnetCertificationContractTests
         Assert.Equal("Unavailable", failure.State);
         Assert.Equal(1, handler.CallCount);
         Assert.Equal(0, handler.MutationCount);
+    }
+
+    [Fact]
+    public async Task ClosePositionAlgoProjectsPositionWideProtectionCoverage()
+    {
+        await using var adapter=new BinanceFuturesAdapter(Profile("https://testnet.binancefuture.com"),"offline-key","offline-secret");
+        using var json=JsonDocument.Parse("""{"symbol":"BTCUSDT","algoId":42,"clientAlgoId":"wpe-sl","algoStatus":"NEW","actualQty":"0","actualPrice":"0","orderType":"STOP_MARKET","positionSide":"LONG","closePosition":true,"updateTime":1700000000000}""");
+        var method=typeof(BinanceFuturesAdapter).GetMethod("MapAlgo",BindingFlags.NonPublic|BindingFlags.Instance)!;
+
+        var order=Assert.IsType<ExchangeOrder>(method.Invoke(adapter,[json.RootElement]));
+
+        Assert.True(order.IsProtection);
+        Assert.Equal(ProtectionCoverageKind.PositionWide,order.ProtectionCoverage);
+        Assert.Equal(0m,order.ProtectionQuantity);
+    }
+
+    [Fact]
+    public async Task AlgoWithoutClosePositionCannotClaimCoverage()
+    {
+        await using var adapter=new BinanceFuturesAdapter(Profile("https://testnet.binancefuture.com"),"offline-key","offline-secret");
+        using var json=JsonDocument.Parse("""{"symbol":"BTCUSDT","algoId":43,"clientAlgoId":"external","algoStatus":"NEW","actualQty":"0","actualPrice":"0","orderType":"STOP_MARKET","positionSide":"LONG","closePosition":false,"updateTime":1700000000000}""");
+        var method=typeof(BinanceFuturesAdapter).GetMethod("MapAlgo",BindingFlags.NonPublic|BindingFlags.Instance)!;
+
+        var order=Assert.IsType<ExchangeOrder>(method.Invoke(adapter,[json.RootElement]));
+
+        Assert.Equal(ProtectionCoverageKind.Unknown,order.ProtectionCoverage);
     }
 
     [Fact]
