@@ -137,8 +137,17 @@ jobs:
           throw "Published Reference UI export is missing."
         }
         $forbidden = Get-ChildItem artifacts/publish -Recurse -File | Where-Object {
-          $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
-          $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)$' -or
-          $_.Name -match '(?i)\.(db|sqlite|sqlite3)-(wal|shm)$'
+          $name = $_.Name.ToLowerInvariant()
+          $extension = $_.Extension.ToLowerInvariant()
+          $knownState = $name -match '^(agent-settings|appsettings|order-state|local-accounts|local-session|device-license|llm-calls|llm-cache)'
+          $secretData = ($name.Contains("secrets") -or $name.Contains("credentials")) -and
+            @(".json", ".dat", ".txt", ".xml", ".yaml", ".yml") -contains $extension
+          $knownState -or $secretData -or
+          $extension -match '^\.(db|sqlite|sqlite3|pem|key|p12|pfx)
+        if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
+ -or
+          $name -match '\.(db|sqlite|sqlite3)-(wal|shm)
+        if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
+
         }
         if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
