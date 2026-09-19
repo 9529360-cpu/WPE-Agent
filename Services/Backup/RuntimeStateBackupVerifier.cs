@@ -161,6 +161,43 @@ public sealed class RuntimeStateBackupVerifier
         }
     }
 
+    internal async Task VerifyPlaintextDataDirectoryAsync(
+        RuntimeStateBackupDescriptorV1 descriptor,
+        string dataDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        if (string.IsNullOrWhiteSpace(dataDirectory) || !Directory.Exists(dataDirectory))
+            throw new InvalidDataException("Restored runtime-state data directory is missing.");
+
+        var root = Path.GetFullPath(dataDirectory);
+        var expected = descriptor.Items
+            .Select(x => x.LogicalName)
+            .ToHashSet(StringComparer.Ordinal);
+        var observed = Directory
+            .EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly)
+            .Select(Path.GetFileName)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Cast<string>()
+            .ToHashSet(StringComparer.Ordinal);
+        if (!expected.SetEquals(observed))
+            throw new InvalidDataException("Restored runtime-state data file inventory does not match the backup.");
+
+        foreach (var item in descriptor.Items)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var path = ResolveInside(root, item.LogicalName);
+            var info = new FileInfo(path);
+            if (!info.Exists || info.Length != item.PlaintextLength)
+                throw new InvalidDataException("Restored runtime-state item length does not match the backup.");
+            var hash = await HashFileAsync(path, cancellationToken).ConfigureAwait(false);
+            if (!FixedHexEquals(hash, item.PlaintextSha256))
+                throw new InvalidDataException("Restored runtime-state item hash does not match the backup.");
+            if (item.Kind == RuntimeStateBackupItemKind.SqliteDatabase)
+                await VerifySqliteAsync(path, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private static void ValidateDescriptor(RuntimeStateBackupDescriptorV1 descriptor)
     {
         if (!string.Equals(descriptor.Schema, RuntimeStateBackupDescriptorV1.CurrentSchema, StringComparison.Ordinal))
