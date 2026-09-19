@@ -8,6 +8,27 @@ using 币安量化机器人.Services.Agent;
 
 namespace 币安量化机器人.Services;
 
+public sealed record TradingRuntimeHealthV1(
+    string Schema,
+    DateTimeOffset ObservedAtUtc,
+    bool AccessReady,
+    DateTimeOffset? AccessCheckedAtUtc,
+    bool AgentRunning,
+    string AgentStatus,
+    string RunId,
+    DateTimeOffset? RuntimeHeartbeatAtUtc,
+    string RecoveryStatus,
+    long EventSequence,
+    bool LeaseLost)
+{
+    public const string CurrentSchema = "wpe.trading-runtime-health/1.0";
+    public static readonly TimeSpan MaximumAccessAge = TimeSpan.FromMinutes(30);
+    public static readonly TimeSpan MaximumHeartbeatAge = TimeSpan.FromSeconds(15);
+    public bool AccessFresh => AccessCheckedAtUtc is { } value && value <= ObservedAtUtc && ObservedAtUtc - value <= MaximumAccessAge;
+    public bool HeartbeatFresh => RuntimeHeartbeatAtUtc is { } value && value <= ObservedAtUtc && ObservedAtUtc - value <= MaximumHeartbeatAge;
+    public bool Ready => AccessReady && AccessFresh && AgentRunning && HeartbeatFresh && !LeaseLost;
+}
+
 /// <summary>
 /// UI-neutral owner for the WPE process runtime. Presentation shells may create this host,
 /// but trading lifecycle, access readiness and runtime projection do not depend on WPF.
@@ -28,6 +49,7 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
     private readonly Task _snapshotPumpTask;
     private string _runtimeJson;
     private bool _publicMarketStarted;
+    private int _accessReady;
     private int _disposed;
 
     public TradingRuntimeHost(string userName)
@@ -75,6 +97,7 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
         PublishAccess(report, settings);
         settings.LastAccessCheckAtUtc = report.CheckedAtUtc;
         _settingsStore.Save(settings);
+        Volatile.Write(ref _accessReady, report.Ready ? 1 : 0);
         return report.Ready;
     }
 
@@ -90,6 +113,31 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
     {
         ThrowIfDisposed();
         return Volatile.Read(ref _runtimeJson);
+    }
+
+    public TradingRuntimeHealthV1 ReadHealth()
+    {
+        ThrowIfDisposed();
+        var state = ServiceLocator.SystemState;
+        var heartbeat = state.RuntimeHeartbeatAtUtc is DateTime value
+            ? new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc))
+            : null;
+        var recovery = string.IsNullOrWhiteSpace(state.RuntimeRecoveryStatus) ? "UNKNOWN" : state.RuntimeRecoveryStatus;
+        var accessChecked = state.LastAccessCheckAtUtc is DateTime access
+            ? new DateTimeOffset(DateTime.SpecifyKind(access, DateTimeKind.Utc))
+            : null;
+        return new(
+            TradingRuntimeHealthV1.CurrentSchema,
+            DateTimeOffset.UtcNow,
+            Volatile.Read(ref _accessReady) != 0,
+            accessChecked,
+            AutoTradingAgent.IsRunning,
+            state.Status.ToString(),
+            state.RuntimeRunId,
+            heartbeat,
+            recovery,
+            state.RuntimeEventSequence,
+            string.Equals(recovery, "LEASE_LOST", StringComparison.Ordinal));
     }
 
     public async ValueTask DisposeAsync()
