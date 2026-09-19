@@ -90,7 +90,9 @@ public sealed partial class AgentSqliteStore
         await connection.OpenAsync(ct);
         await EnsureExecutionSimulationStorageAsync(connection, ct);
         await EnsureExecutionRealityDriftStorageAsync(connection, ct);
+        await EnsureExecutionSimulationResearchProvenanceStorageAsync(connection, ct);
         await VerifySimulationComparisonSourcesAsync(connection, comparison, ct);
+        await VerifyExecutionSimulationResearchProvenanceForComparisonAsync(connection, comparison, ct);
 
         await using var insert = connection.CreateCommand();
         insert.CommandText = """
