@@ -19,6 +19,10 @@ jobs:
       with:
         persist-credentials: false
 
+    - name: Verify release-readiness static gate
+      shell: pwsh
+      run: ./eng/release-readiness.ps1 -StaticGatesOnly
+
     - name: Setup pnpm
       uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       with:
@@ -125,10 +129,6 @@ jobs:
     - name: Test .NET
       shell: pwsh
       run: ./eng/test.ps1 -Configuration Release
-
-    - name: Verify release-readiness static gate
-      shell: pwsh
-      run: ./eng/release-readiness.ps1 -StaticGatesOnly
 
     - name: Verify soak evidence harness
       shell: pwsh
