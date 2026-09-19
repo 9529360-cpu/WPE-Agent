@@ -1,5 +1,10 @@
 $ErrorActionPreference='Stop'
 
+function Throws([scriptblock]$action,[string]$contains){
+    try{& $action|Out-Null;throw "expected:$contains"}
+    catch{if($_.Exception.Message -notlike "*$contains*"){throw}}
+}
+
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $paths=@(
     'eng/release-readiness.ps1',
@@ -57,6 +62,30 @@ foreach($required in @(
     'Signing and verification passed for $($executables.Count) runtime executable(s).'
 )){
     if($sign.IndexOf($required,[StringComparison]::Ordinal) -lt 0){throw "sign.contract-missing:$required"}
+}
+
+$testRoot=Join-Path $root ('artifacts/release-script-security-'+[Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $testRoot -Force|Out-Null
+try{
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip=Join-Path $testRoot 'zip-slip.zip'
+    $archive=[IO.Compression.ZipFile]::Open($zip,[IO.Compression.ZipArchiveMode]::Create)
+    try{
+        $entry=$archive.CreateEntry('../escape.txt')
+        $writer=[IO.StreamWriter]::new($entry.Open())
+        try{$writer.Write('escape')}finally{$writer.Dispose()}
+    }finally{$archive.Dispose()}
+
+    $zipHash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+    $resultPath=Join-Path $testRoot 'package-result.json'
+    [ordered]@{package=$zip;sha256=$zipHash}|ConvertTo-Json|Set-Content -LiteralPath $resultPath -Encoding utf8
+    "$zipHash  $([IO.Path]::GetFileName($zip))"|Set-Content -LiteralPath (Join-Path $testRoot 'SHA256SUMS') -Encoding ascii
+    $verifyPath=Join-Path $root 'eng/verify-beta-package.ps1'
+    $verification=Join-Path $testRoot 'verification'
+    Throws {& $verifyPath -ResultPath $resultPath -VerificationDirectory $verification} 'Archive entry escapes verification root.'
+    if(Test-Path -LiteralPath (Join-Path $testRoot 'escape.txt')){throw 'verify.zip-slip-created-escaped-file'}
+}finally{
+    Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 'PASS runtime bundle release scripts parse and preserve required contracts'
