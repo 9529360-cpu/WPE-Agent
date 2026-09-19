@@ -96,7 +96,7 @@ public sealed class StrategyAdaptiveIntelligenceTests : IDisposable
         var longProfile=new StrategyProfile{Id="long",Symbol="BTCUSDT",Lifecycle=StrategyLifecycle.Active,QualityScore=.8,Expectancy=.01};
         var shortProfile=new StrategyProfile{Id="short",Symbol="BTCUSDT",Lifecycle=StrategyLifecycle.Active,QualityScore=.8,Expectancy=.01};
         var longSignal=new StrategyCycleSelection(longProfile,new("long","BTCUSDT",1,.75,"long"),MarketRegime.Trending,.60);
-        var shortSignal=new StrategyCycleSelection(shortProfile,new("short","BTCUSDT",-1,.75,"short"),MarketRegime.Trending,.40);
+        var shortSignal=new StrategyCycleSelection(shortProfile,new("short","BTCUSDT",-1,.50,"short"),MarketRegime.Trending,.40);
 
         var consensus=AdaptiveStrategySelector.SelectConsensus([longSignal,shortSignal]);
 
