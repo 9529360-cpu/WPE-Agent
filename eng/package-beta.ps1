@@ -345,8 +345,9 @@ foreach ($copy in $copyPlan) {
     $prefix = $copy.Destination.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
     $manifest += @(Get-ChildItem -LiteralPath $copy.Destination -Recurse -Force -File | Sort-Object FullName | ForEach-Object {
         $relative = $_.FullName.Substring($prefix.Length).Replace('\', '/')
+        $packageRelative = if ($copy.Label -eq "desktop") { "app/$relative" } else { "$($copy.Label)/$relative" }
         [ordered]@{
-            path = (if ($copy.Label -eq "desktop") { "app/$relative" } else { "$($copy.Label)/$relative" })
+            path = $packageRelative
             size = [long]$_.Length
             sha256 = Get-Sha256 $_.FullName
         }
@@ -358,23 +359,31 @@ $manifest | ForEach-Object { "$($_.sha256)  $($_.path)" } | Set-Content -Literal
 
 $components = @{}
 $runtimeLibraries = @{}
-$assetsFile = Join-Path $root "obj/project.assets.json"
-if (-not (Test-Path -LiteralPath $assetsFile -PathType Leaf)) { throw "NuGet project.assets.json is required for distribution-scope classification." }
-$runtimeAssetJson = (& node (Join-Path $PSScriptRoot "classify-nuget-assets.mjs") $assetsFile $Runtime | Out-String)
-if ($LASTEXITCODE -ne 0) { throw "Unable to classify NuGet runtime assets from project.assets.json." }
-$parsedRuntimeLibraries = $runtimeAssetJson | ConvertFrom-Json
-foreach ($library in $parsedRuntimeLibraries) {
-    $runtimeLibraries[[string]$library] = $true
+$assetFiles = @(
+    (Join-Path $root "obj/project.assets.json"),
+    (Join-Path $root "WPE.Headless/obj/project.assets.json"),
+    (Join-Path $root "WPE.Maintenance/obj/project.assets.json")
+)
+foreach ($assetsFile in $assetFiles) {
+    if (-not (Test-Path -LiteralPath $assetsFile -PathType Leaf)) { throw "Runtime bundle NuGet project.assets.json is required: $assetsFile" }
+    $runtimeAssetJson = (& node (Join-Path $PSScriptRoot "classify-nuget-assets.mjs") $assetsFile $Runtime | Out-String)
+    if ($LASTEXITCODE -ne 0) { throw "Unable to classify NuGet runtime assets from $assetsFile." }
+    $parsedRuntimeLibraries = $runtimeAssetJson | ConvertFrom-Json
+    foreach ($library in $parsedRuntimeLibraries) {
+        $runtimeLibraries[[string]$library] = $true
+    }
 }
-$dotnetPackageJson = (& dotnet list $projectFile package --include-transitive --format json | Out-String)
-if ($LASTEXITCODE -ne 0) { throw "dotnet dependency enumeration failed." }
-$dotnetPackages = $dotnetPackageJson | ConvertFrom-Json
 $packageFolder = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $HOME ".nuget/packages" }
 $resolvedNuget = [System.Collections.Generic.List[object]]::new()
-foreach ($project in @($dotnetPackages.projects)) {
-    foreach ($framework in @($project.frameworks)) {
-        foreach ($package in @($framework.topLevelPackages)) { $resolvedNuget.Add([pscustomobject]@{ id = $package.id; version = $package.resolvedVersion }) }
-        foreach ($package in @($framework.transitivePackages)) { $resolvedNuget.Add([pscustomobject]@{ id = $package.id; version = $package.resolvedVersion }) }
+foreach ($dependencyProject in @($projectFile, $headlessProject, $maintenanceProject)) {
+    $dotnetPackageJson = (& dotnet list $dependencyProject package --include-transitive --format json | Out-String)
+    if ($LASTEXITCODE -ne 0) { throw "dotnet dependency enumeration failed for $dependencyProject." }
+    $dotnetPackages = $dotnetPackageJson | ConvertFrom-Json
+    foreach ($project in @($dotnetPackages.projects)) {
+        foreach ($framework in @($project.frameworks)) {
+            foreach ($package in @($framework.topLevelPackages)) { $resolvedNuget.Add([pscustomobject]@{ id = $package.id; version = $package.resolvedVersion }) }
+            foreach ($package in @($framework.transitivePackages)) { $resolvedNuget.Add([pscustomobject]@{ id = $package.id; version = $package.resolvedVersion }) }
+        }
     }
 }
 foreach ($package in $resolvedNuget) {
