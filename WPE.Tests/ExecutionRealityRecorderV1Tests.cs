@@ -9,12 +9,13 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "wpe-execution-recorder-" + Guid.NewGuid().ToString("N"));
     private string Database => Path.Combine(_directory, "agent.db");
     private static readonly DateTimeOffset Now = new(2026, 9, 18, 12, 0, 5, TimeSpan.Zero);
+    private static readonly DateTimeOffset ExecutionStart = Now.AddSeconds(-1);
 
     [Fact]
-    public async Task ExactAutomaticAttributionAndConfirmedFeeProduceComparableFact()
+    public async Task DurableIntentAuthorityAndConfirmedFeeProduceComparableFact()
     {
         var store = Store();
-        await SaveArtifact(store, "execution-a", Artifact("cycle-a", "strategy-a", "v7", "order-a"));
+        await AuthorizeArtifact(store, Artifact("cycle-a", "strategy-a", "v7", "order-a"));
         await store.SaveExchangeOrderFeeEvidenceAsync(Fee("order-a", .04008m), default);
 
         var recorder = new ExecutionRealityRecorderV1(store, () => Now);
@@ -22,9 +23,7 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
             "cycle-a",
             Intent("order-a"),
             Order("order-a", "FILLED", 1m, 100.2m),
-            Now.AddSeconds(-1),
             Costs(),
-            "fallback-v1",
             default);
 
         Assert.True(result.Recorded);
@@ -37,6 +36,7 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
         Assert.Equal("strategy-a", fact.StrategyId);
         Assert.Equal("v7", fact.StrategyVersion);
         Assert.Equal("research-cost-v1", fact.CostModelVersion);
+        Assert.Equal(1000, fact.ObservationLatencyMs);
         Assert.True(fact.FeeComparable);
         Assert.True(fact.TotalComparable);
         Assert.Equal(10m, fact.SlippageDriftBps);
@@ -48,15 +48,13 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
     public async Task MissingFeeEvidenceKeepsPriceFactButWithholdsTotalComparison()
     {
         var store = Store();
-        await SaveArtifact(store, "execution-a", Artifact("cycle-a", "strategy-a", "v7", "order-a"));
+        await AuthorizeArtifact(store, Artifact("cycle-a", "strategy-a", "v7", "order-a"));
 
         var result = await new ExecutionRealityRecorderV1(store, () => Now).RecordAsync(
             "cycle-a",
             Intent("order-a"),
             Order("order-a", "FILLED", 1m, 100.2m),
-            Now.AddSeconds(-1),
             Costs(),
-            "fallback-v1",
             default);
 
         Assert.True(result.Recorded);
@@ -71,56 +69,133 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
     }
 
     [Fact]
-    public async Task MissingOrConflictingStrategyAttributionDoesNotInventIdentity()
+    public async Task MissingArtifactDoesNotInventStrategyIdentity()
     {
         var store = Store();
-        var recorder = new ExecutionRealityRecorderV1(store, () => Now);
 
-        var missing = await recorder.RecordAsync(
+        var result = await new ExecutionRealityRecorderV1(store, () => Now).RecordAsync(
             "cycle-missing",
             Intent("missing"),
             Order("missing", "FILLED", 1m, 100m),
-            Now.AddSeconds(-1),
             Costs(),
-            "fallback-v1",
             default);
-        Assert.False(missing.Recorded);
-        Assert.Equal("strategy-attribution-legacy-version-only", missing.Code);
 
-        await SaveArtifact(store, "execution-a", Artifact("cycle-conflict", "strategy-a", "v1", "conflict-a"));
-        await SaveArtifact(store, "execution-b", Artifact("cycle-conflict", "strategy-b", "v2", "conflict-b"));
-        var conflicting = await recorder.RecordAsync(
-            "cycle-conflict",
-            Intent("conflict-a"),
-            Order("conflict-a", "FILLED", 1m, 100m),
-            Now.AddSeconds(-1),
-            Costs(),
-            "fallback-v1",
-            default);
-        Assert.False(conflicting.Recorded);
-        Assert.Equal("strategy-attribution-conflicting-correlation", conflicting.Code);
-
+        Assert.False(result.Recorded);
+        Assert.Equal("intent-authority-automatic-artifact-missing", result.Code);
         Assert.Empty(await store.GetRecentExecutionRealityDriftAsync(10, default));
     }
 
     [Fact]
-    public async Task OrderIdentityMismatchFailsClosed()
+    public async Task PersistedIntentMismatchDoesNotWriteDrift()
     {
         var store = Store();
-        await SaveArtifact(store, "execution-a", Artifact("cycle-a", "strategy-a", "v1", "order-a"));
+        await AuthorizeArtifact(store, Artifact("cycle-a", "strategy-a", "v7", "order-a"));
+
+        var mismatched = Intent("order-a") with { ExpectedPrice = 101m };
+        var result = await new ExecutionRealityRecorderV1(store, () => Now).RecordAsync(
+            "cycle-a",
+            mismatched,
+            Order("order-a", "FILLED", 1m, 101m),
+            Costs(),
+            default);
+
+        Assert.False(result.Recorded);
+        Assert.Equal("intent-authority-automatic-intent-mismatch", result.Code);
+        Assert.Empty(await store.GetRecentExecutionRealityDriftAsync(10, default));
+    }
+
+    [Fact]
+    public async Task MissingExecutingEventDoesNotAcceptCallerSuppliedTiming()
+    {
+        var store = Store();
+        var artifact = Artifact("cycle-a", "strategy-a", "v7", "order-a");
+        Assert.True((await store.SaveAutomaticExecutionAsync(artifact.CorrelationId, artifact, default)).Succeeded);
+        Assert.True((await store.RecordAutomaticRiskDecisionAsync(
+            artifact.CorrelationId,
+            Receipt(artifact),
+            default)).Succeeded);
+
+        var result = await new ExecutionRealityRecorderV1(store, () => Now).RecordAsync(
+            "cycle-a",
+            Intent("order-a"),
+            Order("order-a", "FILLED", 1m, 100m),
+            Costs(),
+            default);
+
+        Assert.False(result.Recorded);
+        Assert.Equal("intent-authority-automatic-executing-event-missing", result.Code);
+        Assert.Empty(await store.GetRecentExecutionRealityDriftAsync(10, default));
+    }
+
+    [Fact]
+    public async Task TamperedArtifactMetadataCannotAuthorizeRealityWrite()
+    {
+        var store = Store();
+        var artifact = Artifact("cycle-a", "strategy-a", "v7", "order-a");
+        Assert.True((await store.SaveAutomaticExecutionAsync(artifact.CorrelationId, artifact, default)).Succeeded);
+
+        await using (var connection = new SqliteConnection($"Data Source={Database}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE automatic_execution_queue SET strategy_id='tampered-strategy' WHERE execution_id='cycle-a'";
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+
+        var result = await new ExecutionRealityRecorderV1(store, () => Now).RecordAsync(
+            "cycle-a",
+            Intent("order-a"),
+            Order("order-a", "FILLED", 1m, 100m),
+            Costs(),
+            default);
+
+        Assert.False(result.Recorded);
+        Assert.Equal("intent-authority-automatic-artifact-invalid", result.Code);
+        Assert.Empty(await store.GetRecentExecutionRealityDriftAsync(10, default));
+    }
+
+    [Fact]
+    public async Task TamperedRiskReceiptCannotAuthorizeRealityWrite()
+    {
+        var store = Store();
+        await AuthorizeArtifact(store, Artifact("cycle-a", "strategy-a", "v7", "order-a"));
+
+        await using (var connection = new SqliteConnection($"Data Source={Database}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE automatic_execution_queue SET risk_receipt_hash='bad' WHERE execution_id='cycle-a'";
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+
+        var result = await new ExecutionRealityRecorderV1(store, () => Now).RecordAsync(
+            "cycle-a",
+            Intent("order-a"),
+            Order("order-a", "FILLED", 1m, 100m),
+            Costs(),
+            default);
+
+        Assert.False(result.Recorded);
+        Assert.Equal("intent-authority-automatic-risk-receipt-invalid", result.Code);
+        Assert.Empty(await store.GetRecentExecutionRealityDriftAsync(10, default));
+    }
+
+    [Fact]
+    public async Task OrderIdentityMismatchFailsClosedBeforePersistence()
+    {
+        var store = Store();
+        await AuthorizeArtifact(store, Artifact("cycle-a", "strategy-a", "v1", "order-a"));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             new ExecutionRealityRecorderV1(store, () => Now).RecordAsync(
                 "cycle-a",
                 Intent("order-a"),
                 Order("different-order", "FILLED", 1m, 100m),
-                Now.AddSeconds(-1),
                 Costs(),
-                "fallback-v1",
                 default));
     }
 
-    private AgentSqliteStore Store() => new(Database, () => Now);
+    private AgentSqliteStore Store() => new(Database, () => ExecutionStart);
 
     private static ExecutionRealityCostAssumptionV1 Costs() =>
         new("research-cost-v1", .0004m, .001m);
@@ -148,22 +223,51 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
             correlationId,
             [new DurableExecutionIntentSnapshotV1(
                 0, "BTCUSDT", "Long", 1m, false, 90m, 120m, clientOrderId,
-                "strategy.entry", "OpenLong", "Market", 0, 100m)],
+                "automatic.risk-approved", "OpenLong", "Market", 0, 100m)],
             5,
             true,
-            "binance",
+            "binance-futures",
             "Testnet",
             strategyId,
             strategyVersion,
-            Now.AddSeconds(-10),
+            ExecutionStart.AddSeconds(-10),
             "market-v1",
-            Now.AddSeconds(-5),
-            Now.AddMinutes(1));
+            ExecutionStart.AddSeconds(-5),
+            ExecutionStart.AddMinutes(1));
 
-    private static async Task SaveArtifact(AgentSqliteStore store, string executionId, DurableExecutionArtifactV2 artifact)
+    private static DeterministicRiskReceipt Receipt(DurableExecutionArtifactV2 artifact)
     {
-        var result = await store.SaveAutomaticExecutionAsync(executionId, artifact, default);
-        Assert.True(result.Succeeded);
+        var hashes = DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);
+        return new(
+            "risk-" + artifact.CorrelationId,
+            artifact.CorrelationId,
+            hashes.IntentHash,
+            true,
+            ExecutionStart.AddSeconds(-1),
+            ExecutionStart.AddMinutes(1),
+            null,
+            hashes.ArtifactHash);
+    }
+
+    private static async Task AuthorizeArtifact(AgentSqliteStore store, DurableExecutionArtifactV2 artifact)
+    {
+        Assert.True((await store.SaveAutomaticExecutionAsync(artifact.CorrelationId, artifact, default)).Succeeded);
+        Assert.True((await store.RecordAutomaticRiskDecisionAsync(
+            artifact.CorrelationId,
+            Receipt(artifact),
+            default)).Succeeded);
+        Assert.True((await store.TryClaimAutomaticExecutionAsync(
+            artifact.CorrelationId,
+            "worker",
+            TimeSpan.FromSeconds(30),
+            default)).Claimed);
+        Assert.True((await store.TryTransitionAutomaticExecutionAsync(
+            artifact.CorrelationId,
+            AutomaticExecutionQueueStatus.Claimed,
+            AutomaticExecutionQueueStatus.Executing,
+            "worker",
+            "automatic.executing",
+            default)).Succeeded);
     }
 
     public void Dispose()
