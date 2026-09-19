@@ -27,7 +27,7 @@ public sealed class RuntimeHistoricalCollectionStateStore
     public Task<HistoricalCollectionPageV1<HistoricalOrderV1>> ReadOrdersAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default) =>
         ReadAsync(HistoricalCollectionKindV1.Orders, request, "execution_events", "occurred_at", TimeSpan.FromDays(30),
             "SELECT id,occurred_at,cycle_id,client_order_id,symbol,side,action,reduce_only,quantity,avg_price,status FROM execution_events ORDER BY occurred_at DESC,id DESC LIMIT $limit OFFSET $offset",
-            r => new HistoricalOrderV1(r.GetInt64(0), Instant(r.GetString(1)), Text(r,2), Text(r,3), Safe(r.GetString(4),80), Safe(r.GetString(5),20), Safe(r.GetString(6),40), r.GetInt32(7)==1, Decimal(r,8), NullableDecimal(r,9), Safe(r.GetString(10),40)), ct);
+            r => new HistoricalOrderV1(r.GetInt64(0), Instant(r.GetString(1)), Masked(r,2,"cycle"), Masked(r,3,"order"), Safe(r.GetString(4),80), Safe(r.GetString(5),20), Safe(r.GetString(6),40), r.GetInt32(7)==1, Decimal(r,8), NullableDecimal(r,9), Safe(r.GetString(10),40)), ct);
 
     public Task<HistoricalCollectionPageV1<HistoricalEquityPointV1>> ReadEquityAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default) =>
         ReadAsync(HistoricalCollectionKindV1.Equity, request, "equity_snapshots", "observed_at", TimeSpan.FromHours(24),
@@ -298,6 +298,7 @@ public sealed class RuntimeHistoricalCollectionStateStore
     private static decimal? NullableDecimal(SqliteDataReader r,int i)=>r.IsDBNull(i)?null:Decimal(r,i);
     private static string Hash(string value)=>Regex.IsMatch(value,"^[A-Fa-f0-9]{64}$",RegexOptions.CultureInvariant)?value:throw new InvalidOperationException("Historical hash is invalid.");
     private static string? Text(SqliteDataReader r,int i,int max=120)=>r.IsDBNull(i)?null:Safe(r.GetString(i),max);
+    private static string? Masked(SqliteDataReader r,int i,string prefix)=>r.IsDBNull(i)?null:SensitiveDataRedactor.MaskIdentifier(r.GetString(i),prefix);
     private static string Safe(string value,int max)
     {
         var singleLine=value.Replace('\r',' ').Replace('\n',' ').Trim();
