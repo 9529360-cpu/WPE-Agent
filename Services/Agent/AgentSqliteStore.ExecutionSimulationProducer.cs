@@ -32,7 +32,7 @@ public sealed partial class AgentSqliteStore
         await connection.OpenAsync(ct);
         await EnsureExecutionSimulationStorageAsync(connection, ct);
         await EnsureExecutionSimulationSourceStorageAsync(connection, ct);
-        await using var transaction = await connection.BeginTransactionAsync(ct);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct);
 
         var fillInserted = await InsertSimulationFillAsync(connection, transaction, fill, ct);
         if (!fillInserted)
