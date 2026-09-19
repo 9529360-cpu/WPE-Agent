@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using 币安量化机器人.Core.Strategy;
@@ -194,13 +195,13 @@ internal static class StrategyQualificationArtifactCanonicalizerV1
                 root.GetProperty("shadow_observation_count").GetInt32(),
                 root.GetProperty("shadow_evidence_set_sha256").GetString()??string.Empty,
                 hashes,
-                DateTimeOffset.Parse(root.GetProperty("first_observed_at_utc").GetString()??string.Empty),
-                DateTimeOffset.Parse(root.GetProperty("last_observed_at_utc").GetString()??string.Empty),
+                DateTimeOffset.Parse(root.GetProperty("first_observed_at_utc").GetString()??string.Empty,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),
+                DateTimeOffset.Parse(root.GetProperty("last_observed_at_utc").GetString()??string.Empty,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),
                 root.GetProperty("expectancy").GetDouble(),
                 root.GetProperty("max_drawdown").GetDouble(),
                 root.GetProperty("quality_score").GetDouble(),
                 root.GetProperty("failure_streak").GetInt32(),
-                DateTimeOffset.Parse(root.GetProperty("qualified_at_utc").GetString()??string.Empty),
+                DateTimeOffset.Parse(root.GetProperty("qualified_at_utc").GetString()??string.Empty,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),
                 bytes,
                 canonicalSha256);
             return IsCanonical(value);
