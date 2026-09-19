@@ -38,6 +38,9 @@ foreach($required in @(
 }
 foreach($required in @(
     'Payload manifest does not exactly cover the runtime bundle files.',
+    'Archive entry escapes verification root.',
+    'Archive contains duplicate normalized entry paths.',
+    'Package metadata path escapes package root.',
     'Runtime package signature states are mixed.',
     'Runtime package executable timestamp is missing',
     'Signed runtime bundle verification requires the approved signer subject and thumbprint.'
