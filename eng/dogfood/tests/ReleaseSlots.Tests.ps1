@@ -3,7 +3,7 @@ function Assert($condition,[string]$message){if(-not $condition){throw "ASSERT: 
 function Throws([scriptblock]$action,[string]$contains){try{& $action|Out-Null;throw "expected:$contains"}catch{if($_.Exception.Message -notlike "*$contains*"){throw}}}
 function Hash([string]$path){(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
 function New-TestCandidate {
-    param([string]$SourceRoot,[string]$SlotsRoot,[string]$Version,[string]$SourceIdentity,[string]$ConfigurationSchema,[string]$MigrationVersion,[string[]]$Gates,[string]$ProbeScript='dogfood-probe.ps1',[switch]$Dirty,[switch]$Unsigned,[switch]$ReviewRequired,[switch]$NotDistributable,[switch]$BadVerificationHash,[switch]$BadManifestHash,[switch]$AddUnmanifestedPayload)
+    param([string]$SourceRoot,[string]$SlotsRoot,[string]$Version,[string]$SourceIdentity,[string]$ConfigurationSchema,[string]$MigrationVersion,[string[]]$Gates,[switch]$Dirty,[switch]$Unsigned,[switch]$ReviewRequired,[switch]$NotDistributable,[switch]$BadVerificationHash,[switch]$BadManifestHash,[switch]$AddUnmanifestedPayload)
     $signedStatus=if($Unsigned){'unsigned'}else{'Valid'};$licenseStatus=if($ReviewRequired){'review_required'}else{'passed'};$licenseReview=if($ReviewRequired){1}else{0}
     $metadata=[ordered]@{source=[ordered]@{dirty=[bool]$Dirty};signing=[ordered]@{status=$signedStatus;distributable=(-not $NotDistributable)};contents=[ordered]@{licenseGateStatus=$licenseStatus;licenseReviewCount=$licenseReview}}
     $metadata|ConvertTo-Json -Depth 6|Set-Content (Join-Path $SourceRoot 'RELEASE-METADATA.json') -Encoding utf8
@@ -13,15 +13,21 @@ function New-TestCandidate {
     $verification=Join-Path (Split-Path $SlotsRoot -Parent) ("verification-$Version.json")
     [ordered]@{schemaVersion='wpe.beta-package-verification.v1';status='passed';distributable=(-not $NotDistributable);signingStatus=$signedStatus;licenseGateStatus=$licenseStatus;licenseReview=$licenseReview;manifestFailures=0;forbiddenFiles=0}|ConvertTo-Json|Set-Content $verification -Encoding utf8
     $manifestHash=if($BadManifestHash){'0'*64}else{Hash (Join-Path $SourceRoot 'FILE-MANIFEST.json')};$verificationHash=if($BadVerificationHash){'0'*64}else{Hash $verification}
-    & $script:new -SourceRoot $SourceRoot -SlotsRoot $SlotsRoot -Version $Version -SourceIdentity $SourceIdentity -ConfigurationSchema $ConfigurationSchema -MigrationVersion $MigrationVersion -Gates $Gates -ProbeScript $ProbeScript -ExpectedSourceManifestHash $manifestHash -PackageVerificationPath $verification -ExpectedPackageVerificationHash $verificationHash
+    & $script:new -SourceRoot $SourceRoot -SlotsRoot $SlotsRoot -Version $Version -SourceIdentity $SourceIdentity -ConfigurationSchema $ConfigurationSchema -MigrationVersion $MigrationVersion -Gates $Gates -ExpectedSourceManifestHash $manifestHash -PackageVerificationPath $verification -ExpectedPackageVerificationHash $verificationHash
 }
 function Write-Proof([string]$path,$candidate,$lkg,[hashtable]$overrides){
     $now=[DateTimeOffset]::UtcNow
     $proof=[ordered]@{
-        schemaVersion='wpe.trusted-runtime-proof/1.0';proofId='proof/current-001';sourceIdentity='runtime/snapshot-authority-v1'
+        schemaVersion='wpe.trusted-runtime-proof/1.1';proofId='proof/current-001';sourceIdentity='runtime/snapshot-authority-v1'
         sourceTimestampUtc=$now.AddSeconds(-2).ToString('O');snapshotTimestampUtc=$now.ToString('O');environment='Testnet';bridgeState='connected'
         authority=[ordered]@{id='authority/dogfood-001';status='active';current=$true;expiresUtc=$now.AddMinutes(5).ToString('O')}
         evidenceGates=@([ordered]@{reference='gate/build';status='passed'},[ordered]@{reference='gate/tests';status='passed'})
+        probes=[ordered]@{
+            install=[ordered]@{status='passed';target='candidate';evidenceSha256=('1'*64)}
+            startup=[ordered]@{status='passed';target='candidate';evidenceSha256=('2'*64)}
+            restartRecovery=[ordered]@{status='passed';target='candidate';evidenceSha256=('3'*64)}
+            rollback=[ordered]@{status='passed';target='last-known-good';evidenceSha256=('4'*64)}
+        }
         candidateManifestSha256=$candidate.ManifestSha256;lastKnownGoodManifestSha256=$lkg.ManifestSha256
     }
     foreach($key in $overrides.Keys){$proof[$key]=$overrides[$key]}
@@ -92,14 +98,7 @@ try{
     $tokens=$null;$parseErrors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($test,[ref]$tokens,[ref]$parseErrors);Assert ($parseErrors.Count -eq 0) 'validator AST parse failed'
     $declared=@($ast.ParamBlock.Parameters|ForEach-Object {$_.Name.VariablePath.UserPath});Assert ((Compare-Object $contract $declared -SyncWindow 0).Count -eq 0) 'stable parameter order changed'
     $source=Join-Path $root 'package';New-Item -ItemType Directory -Path $source|Out-Null
-    @'
-param([ValidateSet('install','startup','restart','rollback')]$Mode,[switch]$ProviderReadOnly,[string]$Environment)
-if(-not $ProviderReadOnly -or $Environment -ne 'Testnet'){exit 9}
-exit 0
-'@.Trim()|Set-Content -LiteralPath (Join-Path $source 'dogfood-probe.ps1') -Encoding utf8
     'payload'|Set-Content -LiteralPath (Join-Path $source 'app.bin') -Encoding ascii
-    $missingProbe=Join-Path $root 'missing-probe-package';Copy-Item $source $missingProbe -Recurse;Remove-Item (Join-Path $missingProbe 'dogfood-probe.ps1')
-    Throws {New-TestCandidate -SourceRoot $missingProbe -SlotsRoot (Join-Path $root 'missing-probe-slots') -Version '0.8.0' -SourceIdentity 'commit/missing-probe' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build'} 'probe.missing'
     $canonicalPackage=Join-Path $root 'artifacts/beta-packages/verified-package';New-Item -ItemType Directory -Path (Split-Path $canonicalPackage -Parent) -Force|Out-Null;Copy-Item $source $canonicalPackage -Recurse
     $canonical=New-TestCandidate -SourceRoot $canonicalPackage -SlotsRoot (Join-Path $root 'canonical-slots') -Version '0.9.0' -SourceIdentity 'commit/canonical' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build'
     Assert ($canonical.ManifestSha256 -match '^[a-f0-9]{64}$') 'canonical verified artifacts package was rejected solely for its path'
@@ -128,7 +127,7 @@ exit 0
     $bad=$acceptance.Clone();$bad.TrustedRuntimeProofPath=Join-Path $root 'missing.json';Throws {& $test @bad} 'runtime.proof-missing'
     '{bad-json'|Set-Content -LiteralPath $proofPath -Encoding ascii;$bad=$acceptance.Clone();$bad.ExpectedTrustedRuntimeProofHash=Hash $proofPath;Throws {& $test @bad} 'runtime.proof-malformed'
     $badHash=Write-Proof $proofPath $candidate $lkg @{unexpected='not-authorized'};$bad=$acceptance.Clone();$bad.ExpectedTrustedRuntimeProofHash=$badHash;Throws {& $test @bad} 'runtime.proof-unknown-field'
-    $incomplete=[ordered]@{schemaVersion='wpe.trusted-runtime-proof/1.0';proofId='proof/current-001'};$incomplete|ConvertTo-Json|Set-Content $proofPath -Encoding utf8;$bad=$acceptance.Clone();$bad.ExpectedTrustedRuntimeProofHash=Hash $proofPath;Throws {& $test @bad} 'runtime.proof-source-untrusted'
+    $incomplete=[ordered]@{schemaVersion='wpe.trusted-runtime-proof/1.1';proofId='proof/current-001'};$incomplete|ConvertTo-Json|Set-Content $proofPath -Encoding utf8;$bad=$acceptance.Clone();$bad.ExpectedTrustedRuntimeProofHash=Hash $proofPath;Throws {& $test @bad} 'runtime.proof-source-untrusted'
     Add-Content -LiteralPath $proofPath -Value 'tamper';Throws {& $test @acceptance} 'runtime.proof-hash-mismatch'
     $proofHash=Write-Proof $proofPath $candidate $lkg @{};$acceptance.ExpectedTrustedRuntimeProofHash=$proofHash
     $bad=$acceptance.Clone();$bad.ExpectedRuntimeProofId='proof/new-invocation';Throws {& $test @bad} 'runtime.proof-replay'
@@ -157,10 +156,16 @@ exit 0
     $otherSource=Join-Path $root 'other-package';Copy-Item -LiteralPath $source -Destination $otherSource -Recurse
     $other=New-TestCandidate -SourceRoot $otherSource -SlotsRoot $slots -Version '1.1.0' -SourceIdentity 'commit/other' -ConfigurationSchema 'cfg/2' -MigrationVersion 'db/1' -Gates 'build','tests';$bad=$acceptance.Clone();$bad.CandidateRoot=$other.CandidateRoot;$bad.ExpectedCandidateManifestHash=$other.ManifestSha256;$bad.ExpectedTrustedRuntimeProofHash=Write-Proof $proofPath $other $lkg @{};Throws {& $test @bad} 'configuration.schema-mismatch'
     $badSource=Join-Path $root 'bad-package';New-Item -ItemType Directory $badSource|Out-Null;'payload'|Set-Content (Join-Path $badSource 'app.bin') -Encoding ascii
-    "param([string]`$Mode,[switch]`$ProviderReadOnly,[string]`$Environment);if(`$Mode -eq 'startup'){exit 7};exit 0"|Set-Content (Join-Path $badSource 'dogfood-probe.ps1') -Encoding utf8
-    $failed=New-TestCandidate -SourceRoot $badSource -SlotsRoot $slots -Version '1.2.0' -SourceIdentity 'commit/fail' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests';$failedProofHash=Write-Proof $proofPath $failed $lkg @{};$failedSoakHash=Write-SoakEvidence $soakPath $failed @{}
+    $failed=New-TestCandidate -SourceRoot $badSource -SlotsRoot $slots -Version '1.2.0' -SourceIdentity 'commit/fail' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests'
+    $failedProbes=[ordered]@{
+        install=[ordered]@{status='passed';target='candidate';evidenceSha256=('1'*64)}
+        startup=[ordered]@{status='failed';target='candidate';evidenceSha256=('2'*64)}
+        restartRecovery=[ordered]@{status='passed';target='candidate';evidenceSha256=('3'*64)}
+        rollback=[ordered]@{status='passed';target='last-known-good';evidenceSha256=('4'*64)}
+    }
+    $failedProofHash=Write-Proof $proofPath $failed $lkg @{probes=$failedProbes};$failedSoakHash=Write-SoakEvidence $soakPath $failed @{}
     $failedArgs=$switchArgs.Clone();$failedArgs.CandidateRoot=$failed.CandidateRoot;$failedArgs.ExpectedCandidateManifestHash=$failed.ManifestSha256;$failedArgs.ExpectedTrustedRuntimeProofHash=$failedProofHash;$failedArgs.ExpectedSoakEvidenceHash=$failedSoakHash;$failedArgs.OperatorRoot=Join-Path $root 'failed-operator'
-    Throws {& $switch @failedArgs} 'probe.startup.failed';Assert (-not(Test-Path (Join-Path $failedArgs.OperatorRoot 'current.json'))) 'failed candidate switched operator pointer'
+    Throws {& $switch @failedArgs} 'runtime.probe-startup-not-passed';Assert (-not(Test-Path (Join-Path $failedArgs.OperatorRoot 'current.json'))) 'failed candidate switched operator pointer'
     Throws {& $new -SourceRoot (Join-Path $root 'release') -SlotsRoot $slots -Version '2.0.0' -SourceIdentity 'commit/eee' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build' -ExpectedSourceManifestHash ('0'*64) -PackageVerificationPath (Join-Path $root 'missing-verification.json') -ExpectedPackageVerificationHash ('0'*64)} 'source.missing'
     'PASS ReleaseSlots anchored-manifest/trusted-runtime/install/start/restart/rollback/atomic-switch/mainnet/mutation-default/user-data'
 }finally{Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue}
