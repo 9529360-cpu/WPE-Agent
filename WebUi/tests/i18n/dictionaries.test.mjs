@@ -73,7 +73,7 @@ test('converged route tree preserves accepted Teacher, notification, settings an
 })
 
 test('execution cockpit settlement and reconciliation copy is localized in all six locales',()=>{
-  const keys=['dashboard.closedTradeAttribution','dashboard.closedTradeHelp','dashboard.noClosedTradeReviews','dashboard.reconciliationGates','dashboard.reconciliationHelp','dashboard.auditRiskAllowed','dashboard.auditRiskBlocked','dashboard.strategyIdentity','dashboard.entryExit','dashboard.netPnl','dashboard.feeFundingSlippage','dashboard.positionReconciliation','dashboard.protectionReconciliation','dashboard.externalPositionIsolation','dashboard.legacyVersionOnly']
+  const keys=['dashboard.closedTradeAttribution','dashboard.closedTradeHelp','dashboard.noClosedTradeReviews','dashboard.reconciliationGates','dashboard.reconciliationHelp','dashboard.auditRiskAllowed','dashboard.auditRiskBlocked','dashboard.strategyIdentity','dashboard.entryExit','dashboard.netPnl','dashboard.feeFundingSlippage','dashboard.positionReconciliation','dashboard.protectionReconciliation','dashboard.externalPositionIsolation','dashboard.legacyVersionOnly','dashboard.tradeTrace','dashboard.riskAtTrade','dashboard.executionAtTrade','dashboard.marketEvidenceAtTrade']
   for(const locale of locales)for(const key of keys){
     const value=translate(locale,key)
     assert.notEqual(value,key,`${locale}:${key} returned raw key`)
