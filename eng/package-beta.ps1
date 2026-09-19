@@ -58,6 +58,9 @@ function Assert-DetachedSigningAttestation(
     if ($cms.SignerInfos.Count -ne 1) {
         throw "Runtime bundle signing attestation must contain exactly one signer."
     }
+    if ($cms.SignerInfos[0].DigestAlgorithm.Value -ne "2.16.840.1.101.3.4.2.1") {
+        throw "Runtime bundle signing attestation must use SHA-256."
+    }
     $certificate = $cms.SignerInfos[0].Certificate
     if ($null -eq $certificate -or
         $certificate.Subject -ne $ExpectedSubject -or
