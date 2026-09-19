@@ -23,6 +23,8 @@ export function projectRuntimeHistory(runtime: WpeRuntimeState): HistoryProjecti
   const backtests = runtime.historicalBacktests
   const skillCalls = runtime.historicalSkillCalls
   const auditEvents = runtime.historicalAuditEvents
+  const postTradeReviews = runtime.historicalPostTradeReviews
+  const reconciliations = runtime.historicalReconciliations
 
   return {
     orders: orders ? { ...pageMetadata(orders), items: orders.state === 'available' ? orders.items.map(({ sequence, occurredAtUtc, symbol, side, action, quantity, averagePrice, status }) => ({ sequence, occurredAtUtc, symbol, side, action, quantity, averagePrice, status })) : [] } : unsupportedHistoryProjection.orders,
@@ -30,6 +32,8 @@ export function projectRuntimeHistory(runtime: WpeRuntimeState): HistoryProjecti
     backtests: backtests ? { ...pageMetadata(backtests), items: backtests.state === 'available' ? backtests.items.map(({ backtestId, completedAtUtc, strategyId, strategyVersion, symbol, status, coverageDays, trades, outOfSampleReturn, maxDrawdown, sharpe }) => ({ backtestId, completedAtUtc: completedAtUtc!, strategyId, strategyVersion, symbol, status, coverageDays, trades, outOfSampleReturn, maxDrawdown, sharpe })) : [] } : unsupportedHistoryProjection.backtests,
     skillCalls: skillCalls ? { ...pageMetadata(skillCalls), items: skillCalls.state === 'available' ? skillCalls.items.map(({ id, occurredAtUtc, skill, status, durationMs, mode, remoteLlmUsed, tokens, costUsd }) => ({ id, occurredAtUtc, skill, status, durationMs, mode, remoteLlmUsed, tokens, costUsd })) : [] } : unsupportedHistoryProjection.skillCalls,
     auditEvents: auditEvents ? { ...pageMetadata(auditEvents), items: auditEvents.state === 'available' ? auditEvents.items.map(({ id, occurredAtUtc, category, source, status }) => ({ id, occurredAtUtc, category, source, status })) : [] } : unsupportedHistoryProjection.auditEvents,
+    postTradeReviews: postTradeReviews ? { ...pageMetadata(postTradeReviews), items: postTradeReviews.state === 'available' ? postTradeReviews.items.map(({ closedAtUtc, symbol, side, entryPrice, exitPrice, quantity, fees, feeBasis, totalSlippageAmount, slippageBasis, fundingAmount, fundingBasis, netPnl, returnPct, outcome, strategyId, strategyVersion, attributionBasis }) => ({ closedAtUtc, symbol, side, entryPrice, exitPrice, quantity, fees, feeBasis, totalSlippageAmount, slippageBasis, fundingAmount, fundingBasis, netPnl, returnPct, outcome, strategyId, strategyVersion, attributionBasis })) : [] } : unsupportedHistoryProjection.postTradeReviews,
+    reconciliations: reconciliations ? { ...pageMetadata(reconciliations), items: reconciliations.state === 'available' ? reconciliations.items.map(({ kind, schema, observedAtUtc, evaluatedAtUtc, state, allowsRiskIncrease, canonicalSha256 }) => ({ kind, schema, observedAtUtc, evaluatedAtUtc, state, allowsRiskIncrease, canonicalSha256 })) : [] } : unsupportedHistoryProjection.reconciliations,
   }
 }
 
