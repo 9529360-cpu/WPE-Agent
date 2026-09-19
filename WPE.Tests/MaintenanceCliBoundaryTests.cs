@@ -8,6 +8,7 @@ public sealed class MaintenanceCliBoundaryTests
         var root = Root();
         var program = File.ReadAllText(Path.Combine(root, "WPE.Maintenance", "Program.cs"));
         var project = File.ReadAllText(Path.Combine(root, "WPE.Maintenance", "WPE.Maintenance.csproj"));
+        var mainProject = File.ReadAllText(Path.Combine(root, "币安量化机器人.csproj"));
         var solution = File.ReadAllText(Path.Combine(root, "币安量化机器人.sln"));
 
         Assert.Contains("RuntimeStateBackupService", program, StringComparison.Ordinal);
