@@ -134,62 +134,7 @@ foreach ($probeName in $probeContracts.Keys) {
     if ($probeFields.Count -ne 3 -or @($probeFields | Where-Object { $_ -notin @('status','target','evidenceSha256') }).Count) { Stop-Gate "runtime.probe-$probeName-invalid" }
     if ([string]$probe.status -cne 'passed' -or
         [string]$probe.target -cne [string]$probeContracts[$probeName] -or
-        [string]$probe.evidenceSha256 -notmatch '^[a-f0-9]{64}
-
-$suite = Get-AnchoredJson $FullReleaseEvidencePath $ExpectedFullReleaseEvidenceHash 'full-release'
-if ($suite.status -cne 'passed' -or $suite.configuration -cne 'Release' -or [int]$suite.failed -ne 0 -or [int]$suite.total -le 0) { Stop-Gate 'full-release.not-passed' }
-
-$accepted = @{}
-for ($i = 0; $i -lt $ProducerVerdictPaths.Count; $i++) {
-    $verdict = Get-AnchoredJson $ProducerVerdictPaths[$i] $ExpectedProducerVerdictHashes[$i] 'producer.verdict'
-    if ($verdict.verdict -cne 'ACCEPT' -or [string]::IsNullOrWhiteSpace([string]$verdict.taskId)) { Stop-Gate 'producer.not-accepted' }
-    $accepted[[string]$verdict.taskId] = $true
-}
-foreach ($taskId in $requiredProducers) { if (-not $accepted.ContainsKey($taskId)) { Stop-Gate 'producer.required-verdict-missing' } }
-
-$resolvedProviderRoot = Resolve-LocalFixedPath $AuthorizedProviderFixtureRoot 'provider.fixture-root'
-$resolvedProviderFixture = Resolve-LocalFixedPath $ProviderFixturePath 'provider.fixture-path'
-$rootWithSeparator = $resolvedProviderRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-if (-not $resolvedProviderFixture.StartsWith($rootWithSeparator, [StringComparison]::OrdinalIgnoreCase)) { Stop-Gate 'provider.fixture-outside-authorized-root' }
-if (-not (Test-Path -LiteralPath $resolvedProviderRoot -PathType Container)) { Stop-Gate 'provider.fixture-root-missing' }
-Assert-NoReparsePoint $resolvedProviderRoot $resolvedProviderFixture
-if (-not (Test-Path -LiteralPath $resolvedProviderFixture -PathType Leaf)) { Stop-Gate 'provider.fixture-missing' }
-$providerFixtureHash = (Get-FileHash -LiteralPath $resolvedProviderFixture -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($providerFixtureHash -cne $ExpectedProviderFixtureHash.ToLowerInvariant()) { Stop-Gate 'provider.fixture-hash-mismatch' }
-
-$mutationEvidenceRef = $null
-if ($TestnetMutationSmoke) {
-    if ([string]::IsNullOrWhiteSpace($VerifiedMutationGateEvidencePath) -or $ExpectedVerifiedMutationGateEvidenceHash -notmatch '^[a-fA-F0-9]{64}$') { Stop-Gate 'mutation.gate-evidence-required' }
-    $mutation = Get-AnchoredJson $VerifiedMutationGateEvidencePath $ExpectedVerifiedMutationGateEvidenceHash 'mutation.gate'
-    if ($mutation.status -cne 'passed' -or $mutation.environment -cne 'Testnet' -or $mutation.authorized -ne $true) { Stop-Gate 'mutation.gate-not-authorized' }
-    $mutationEvidenceRef = $mutation.evidenceId
-}
-
-$repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
-$commands = [Collections.Generic.List[object]]::new()
-$commands.Add((New-Command 'web-lint' 'pnpm' @('--dir', (Join-Path $repo 'WebUi'), 'lint') 'validation'))
-$commands.Add((New-Command 'web-typecheck' 'pnpm' @('--dir', (Join-Path $repo 'WebUi'), 'typecheck') 'validation'))
-$commands.Add((New-Command 'web-build' 'pnpm' @('--dir', (Join-Path $repo 'WebUi'), 'build') 'validation'))
-$commands.Add((New-Command 'full-dotnet-release-tests' (Join-Path $repo 'eng\test.ps1') @('-Configuration', 'Release') 'validation'))
-$commands.Add((New-Command 'release-readiness' (Join-Path $repo 'eng\release-readiness.ps1') @('-Runtime', 'win-x64') 'candidate'))
-$commands.Add((New-Command 'package-beta' (Join-Path $repo 'eng\package-beta.ps1') @() 'candidate'))
-$dogfoodArguments = @('-CandidateRoot',$CandidateRoot,'-LastKnownGoodRoot',$LastKnownGoodRoot,'-ProviderReadOnly','-RequireTrustedRuntimeFresh','-VerifyInstall','-VerifyStartup','-VerifyRestartRecovery','-VerifyRollback','-RejectMainnet','-ExpectedCandidateManifestHash',$ExpectedCandidateManifestHash,'-ExpectedLastKnownGoodManifestHash',$ExpectedLastKnownGoodManifestHash,'-TrustedRuntimeProofPath',$TrustedRuntimeProofPath,'-ExpectedTrustedRuntimeProofHash',$ExpectedTrustedRuntimeProofHash,'-ExpectedRuntimeProofId',$ExpectedRuntimeProofId,'-ExpectedRuntimeSourceIdentity',$ExpectedRuntimeSourceIdentity,'-ExpectedEvidenceGateRefs') + @($ExpectedEvidenceGateRefs) + @('-SoakEvidencePath',$SoakEvidencePath,'-ExpectedSoakEvidenceHash',$ExpectedSoakEvidenceHash,'-MinimumSoakDurationMinutes',[string]$MinimumSoakDurationMinutes)
-$commands.Add((New-Command 'dogfood-install-start-restart-rollback' (Join-Path $repo 'eng\dogfood\Test-DogfoodRelease.ps1') $dogfoodArguments 'dogfood'))
-$commands.Add((New-Command 'playwright-customer-routes' 'node' @('--test',(Join-Path $repo 'WebUi\tests\v1-visible-surface.test.mjs')) 'customer-surface'))
-$commands.Add((New-Command 'provider-read-only' (Join-Path $repo 'eng\dogfood\Test-ProviderReadOnly.ps1') @('-FixturePath',$resolvedProviderFixture) 'provider-read-only'))
-if ($TestnetMutationSmoke) { $commands.Add((New-Command 'testnet-mutation-smoke' (Join-Path $repo 'eng\smoke-review-testnet.ps1') @('-VerifiedGateEvidenceRef',[string]$mutationEvidenceRef) 'authorized-testnet-mutation')) }
-
-[pscustomobject][ordered]@{
-    schemaVersion = 'wpe.v1-candidate-gate-plan/1.0'
-    valid = $true
-    dryRun = $true
-    environment = 'Testnet'
-    mainnetRejected = $true
-    mutationEnabled = [bool]$TestnetMutationSmoke
-    fullReleaseEvidenceHash = $ExpectedFullReleaseEvidenceHash.ToLowerInvariant()
-    commands = @($commands)
-}
-) {
+        [string]$probe.evidenceSha256 -notmatch '^[a-f0-9]{64}$') {
         Stop-Gate "runtime.probe-$probeName-not-passed"
     }
 }
