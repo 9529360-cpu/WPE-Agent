@@ -231,6 +231,120 @@ public sealed class StrategyShadowObservationProvenanceTests : IDisposable
             artifact.CanonicalBytes,new string('0',64),out _));
     }
 
+    [Fact]
+    public async Task ShadowPromotionPersistsCanonicalQualificationBeforeActive()
+    {
+        var profile=Profile();
+        var validationAt=Now.AddMinutes(-10);
+        var store=await SeedAuthority(validationAt,profile,includeTimeline:true);
+        await SeedCanonicalShadowRows(store,profile,validationAt,24);
+
+        var agent=new StrategyResearchAgent(store,utcNow:()=>Now.UtcDateTime);
+        agent.SetSchedulerHealth(true);
+        await agent.ObserveAsync(Pack(Market(Now.AddSeconds(-5),price:113m)),default);
+
+        var restored=(await store.GetStrategiesAsync(default)).Single(x=>x.Id==profile.Id);
+        Assert.Equal(StrategyLifecycle.Active,restored.Lifecycle);
+
+        var qualification=await store.GetStrategyQualificationAsync(profile.Id,profile.Version,default);
+        Assert.NotNull(qualification);
+        Assert.True(StrategyQualificationArtifactCanonicalizerV1.IsCanonical(qualification));
+        Assert.Equal(25,qualification!.ShadowObservationCount);
+        Assert.Equal(restored.ShadowObservations,qualification.ShadowObservationCount);
+        Assert.Equal(restored.Expectancy,qualification.Expectancy);
+        Assert.Equal(restored.MaxDrawdown,qualification.MaxDrawdown);
+        Assert.Equal(restored.QualityScore,qualification.QualityScore);
+        Assert.Equal(restored.FailureStreak,qualification.FailureStreak);
+        Assert.True(qualification.QualifiedAtUtc<=new DateTimeOffset(restored.StateChangedAtUtc!.Value.ToUniversalTime()));
+    }
+
+    [Fact]
+    public async Task QualificationPersistenceIsIdempotentAppendOnlyAndReplaysExactShadowSet()
+    {
+        var profile=Profile();
+        var validationAt=Now.AddMinutes(-10);
+        var store=await SeedAuthority(validationAt,profile,includeTimeline:true);
+        await SeedCanonicalShadowRows(store,profile,validationAt,24);
+        var rows=await store.GetCanonicalStrategyShadowObservationsAsync(profile.Id,profile.Version,default);
+        var artifact=StrategyQualificationArtifactCanonicalizerV1.Create(rows,Now);
+
+        Assert.True(await store.SaveStrategyQualificationAsync(artifact,default));
+        Assert.False(await new AgentSqliteStore(Database,()=>Now).SaveStrategyQualificationAsync(artifact,default));
+        var replay=await new AgentSqliteStore(Database,()=>Now).GetStrategyQualificationAsync(profile.Id,profile.Version,default);
+        Assert.NotNull(replay);
+        Assert.Equal(artifact.CanonicalSha256,replay!.CanonicalSha256);
+        Assert.Equal(artifact.CanonicalBytes,replay.CanonicalBytes);
+
+        await using var connection=new SqliteConnection($"Data Source={Database}");
+        await connection.OpenAsync();
+        foreach(var sql in new[]
+        {
+            "UPDATE strategy_qualification_artifacts SET shadow_observation_count=999",
+            "DELETE FROM strategy_qualification_artifacts"
+        })
+        {
+            await using var command=connection.CreateCommand();
+            command.CommandText=sql;
+            await Assert.ThrowsAsync<SqliteException>(()=>command.ExecuteNonQueryAsync());
+        }
+    }
+
+    [Fact]
+    public async Task QualificationRejectsInsufficientDuplicateOrMixedShadowEvidence()
+    {
+        var profile=Profile();
+        var validationAt=Now.AddMinutes(-10);
+        var store=await SeedAuthority(validationAt,profile,includeTimeline:true);
+        await SeedCanonicalShadowRows(store,profile,validationAt,StrategyGovernor.MinimumShadowObservations-1);
+        var rows=(await store.GetCanonicalStrategyShadowObservationsAsync(profile.Id,profile.Version,default)).ToArray();
+
+        Assert.Throws<InvalidOperationException>(()=>
+            StrategyQualificationArtifactCanonicalizerV1.Create(rows,Now));
+        Assert.Throws<InvalidOperationException>(()=>
+            StrategyQualificationArtifactCanonicalizerV1.Create([..rows,rows[0]],Now));
+
+        var mixed=rows.ToArray();
+        mixed[0]=mixed[0] with{TimelineSha256=new string('0',64)};
+        Assert.Throws<InvalidOperationException>(()=>
+            StrategyQualificationArtifactCanonicalizerV1.Create(mixed,Now));
+    }
+
+    [Fact]
+    public void QualificationPolicyAndEvidenceSetAreCryptographicallyBound()
+    {
+        var source=File.ReadAllText(Path.Combine(
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..","..")),
+            "Services","Agent","StrategyResearchAgent.cs"));
+
+        var helper=source.IndexOf("PersistQualificationBeforeActivationAsync",StringComparison.Ordinal);
+        var lifecycle=source.IndexOf("profile.Lifecycle=next",helper,StringComparison.Ordinal);
+        var failover=source.LastIndexOf("PersistQualificationBeforeActivationAsync(challenger",StringComparison.Ordinal);
+        var failoverLifecycle=source.IndexOf("challenger.Lifecycle = StrategyLifecycle.Active",failover,StringComparison.Ordinal);
+
+        Assert.True(helper>=0&&lifecycle>helper);
+        Assert.True(failover>=0&&failoverLifecycle>failover);
+    }
+
+    private async Task SeedCanonicalShadowRows(
+        AgentSqliteStore store,
+        StrategyProfile profile,
+        DateTimeOffset validationAt,
+        int count)
+    {
+        var validation=ValidationFact(profile,validationAt);
+        var timeline=Timeline(profile);
+        for(var i=0;i<count;i++)
+        {
+            var collectedAt=validationAt.AddSeconds(20*(i+1));
+            var observedAt=collectedAt.AddSeconds(1);
+            var market=Market(collectedAt,price:100m+i*.5m);
+            var signal=new StrategySignal(profile.Id,profile.Symbol,1,.8,"qualification-test",profile.Version);
+            var row=StrategyShadowObservationCanonicalizerV1.Create(
+                profile,signal,market,validation,timeline,observedAt);
+            Assert.True(await store.SaveStrategyShadowObservationAsync(row,default));
+        }
+    }
+
     private async Task<AgentSqliteStore> SeedAuthority(
         DateTimeOffset validationAt,
         StrategyProfile profile,
@@ -350,13 +464,16 @@ public sealed class StrategyShadowObservationProvenanceTests : IDisposable
         };
     }
 
-    private static MarketEvidence Market(DateTimeOffset collectedAt,string environment="Testnet")
+    private static MarketEvidence Market(
+        DateTimeOffset collectedAt,
+        string environment="Testnet",
+        decimal price=100m)
     {
         var market=new MarketEvidence(
             "BTCUSDT",
-            100m,
-            95m,
-            105m,
+            price,
+            price-5m,
+            price+5m,
             55,
             .01,
             .02,
