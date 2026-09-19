@@ -50,7 +50,7 @@ public static class AdaptiveStrategySelector
     public static StrategyCycleSelection? SelectBest(IEnumerable<StrategyCycleSelection> candidates)
         => candidates
             .Where(Eligible)
-            .OrderByDescending(value => value.SelectionScore)
+            .OrderByDescending(Score)
             .ThenByDescending(value => value.Profile.Expectancy)
             .ThenBy(value => value.Profile.Id, StringComparer.Ordinal)
             .FirstOrDefault();
@@ -62,13 +62,13 @@ public static class AdaptiveStrategySelector
         if (leader is null)
             return null;
 
-        var total = eligible.Sum(value => Math.Max(0, value.SelectionScore));
+        var total = eligible.Sum(Score);
         if (total <= 0)
             return null;
 
         var sameDirection = eligible
             .Where(value => value.Signal.Direction == leader.Signal.Direction)
-            .Sum(value => Math.Max(0, value.SelectionScore));
+            .Sum(Score);
         var agreement = Math.Clamp(sameDirection / total, 0, 1);
         if (agreement < MinimumDirectionalConsensus)
             return null;
@@ -106,7 +106,8 @@ public static class AdaptiveStrategySelector
            value.Signal.Direction is -1 or 1 &&
            double.IsFinite(value.Signal.Confidence) &&
            value.Signal.Confidence is > 0 and <= 1 &&
-           double.IsFinite(value.Profile.QualityScore) &&
-           double.IsFinite(value.SelectionScore) &&
-           value.SelectionScore >= 0;
+           double.IsFinite(value.Profile.QualityScore);
+
+    private static double Score(StrategyCycleSelection value)
+        => Math.Clamp(value.Profile.QualityScore, 0, 1) * Math.Clamp(value.Signal.Confidence, 0, 1);
 }
