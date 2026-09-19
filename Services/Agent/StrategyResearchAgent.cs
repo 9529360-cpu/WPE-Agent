@@ -129,12 +129,19 @@ public sealed class StrategyResearchAgent
         MarketEvidence market,
         IReadOnlyList<NewsEvidence> news,
         CancellationToken ct)
+        => (await GetAdaptiveSignalEvidenceAsync(profile, market, news, ct)).Signal;
+
+    public async Task<AdaptiveStrategySignalEvidence> GetAdaptiveSignalEvidenceAsync(
+        StrategyProfile profile,
+        MarketEvidence market,
+        IReadOnlyList<NewsEvidence> news,
+        CancellationToken ct)
     {
         var raw = GetSignal(profile, market, news);
-        if (raw.Direction == 0 || raw.Confidence <= 0)
-            return raw;
-
         var regime = MarketRegimeClassifier.Detect(market);
+        if (raw.Direction == 0 || raw.Confidence <= 0)
+            return new(raw, regime, 0, 0, .5, 0, .5);
+
         var performance = await _database.GetStrategyObservationPerformanceAsync(profile.Id, ct);
         var regimePerformance = performance.Regimes?.FirstOrDefault(value =>
             string.Equals(value.Regime, regime.ToString(), StringComparison.Ordinal));
@@ -175,11 +182,19 @@ public sealed class StrategyResearchAgent
             reasons.Add($"execution_feedback=pending({execution.Trades}/{StrategyGovernor.MinimumExecutionFeedbackTrades})");
         }
 
-        return raw with
+        var signal = raw with
         {
             Confidence = Math.Clamp(calibratedConfidence, 0, raw.Confidence),
             Reason = string.Join("; ", reasons)
         };
+        return new(
+            signal,
+            regime,
+            regimePerformance?.Observations ?? 0,
+            regimePerformance?.Expectancy ?? 0,
+            regimePerformance?.CalibrationScore ?? .5,
+            execution.Trades,
+            execution.PosteriorWinRate);
     }
 
     private async Task<IReadOnlyList<StrategyProfile>> EnsureCandidatesAsync(IReadOnlyList<string> symbols, CancellationToken ct)
@@ -252,7 +267,7 @@ internal sealed class HistoricalResearchEngine
 
     internal static StrategyRobustness EvaluateRobustness(IReadOnlyList<(double Return,bool Trade)> values,double? trainExpectancy=null,double? testExpectancy=null)
     {
-        const int folds=StrategyGovernor.RequiredEvaluatedRegimes;if(values.Count<folds)return new(-1,1,0,0,false,0);
+        const int folds=StrategyGovernor.TemporalRobustnessFolds;if(values.Count<folds)return new(-1,1,0,0,false,0);
         var metrics=new List<(double Return,double Drawdown,double Expectancy,int Trades)>();
         for(var fold=0;fold<folds;fold++)
         {
@@ -261,7 +276,7 @@ internal sealed class HistoricalResearchEngine
         }
         var split=Math.Clamp((int)(values.Count*.65),1,values.Count);var train=trainExpectancy??Metrics(values.Take(split).ToArray()).Expectancy;var test=testExpectancy??Metrics(values.Skip(split).ToArray()).Expectancy;
         var gap=Math.Abs(train-test);var passing=metrics.Count(x=>x.Trades>0&&x.Return>=-.08&&x.Drawdown<=.25&&x.Expectancy>=-.0005);var worst=metrics.Min(x=>x.Return);
-        var passed=passing>=StrategyGovernor.MinimumPassingRegimes&&worst>=StrategyGovernor.MinimumWorstRegimeReturn&&gap<=StrategyGovernor.MaximumTrainTestExpectancyGap;var downside=Math.Max(0,-worst);var score=Math.Clamp((passing/(double)folds)*.5+Math.Max(0,1-downside/Math.Abs(StrategyGovernor.MinimumWorstRegimeReturn))*.25+Math.Max(0,1-gap/StrategyGovernor.MaximumTrainTestExpectancyGap)*.25,0,1);
+        var passed=passing>=StrategyGovernor.MinimumPassingTemporalFolds&&worst>=StrategyGovernor.MinimumWorstRegimeReturn&&gap<=StrategyGovernor.MaximumTrainTestExpectancyGap;var downside=Math.Max(0,-worst);var score=Math.Clamp((passing/(double)folds)*.5+Math.Max(0,1-downside/Math.Abs(StrategyGovernor.MinimumWorstRegimeReturn))*.25+Math.Max(0,1-gap/StrategyGovernor.MaximumTrainTestExpectancyGap)*.25,0,1);
         return new(worst,gap,passing,folds,passed,score);
     }
 

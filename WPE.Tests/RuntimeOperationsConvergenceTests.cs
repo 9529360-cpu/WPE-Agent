@@ -9,13 +9,16 @@ public sealed class RuntimeOperationsConvergenceTests
         var appData = File.ReadAllText(Path.Combine(root, "Services", "AppDataPaths.cs"));
         var bootstrap = File.ReadAllText(Path.Combine(root, "Services", "RuntimeProcessBootstrap.cs"));
         var headless = File.ReadAllText(Path.Combine(root, "WPE.Headless", "Program.cs"));
+        var headlessDataRoot = File.ReadAllText(Path.Combine(root, "WPE.Headless", "HeadlessDataRootBootstrap.cs"));
         var maintenance = File.ReadAllText(Path.Combine(root, "WPE.Maintenance", "Program.cs"));
         var backup = File.ReadAllText(Path.Combine(root, "Services", "Backup", "RuntimeStateBackupService.cs"));
         var restore = File.ReadAllText(Path.Combine(root, "Services", "Backup", "RuntimeStateRestoreService.cs"));
 
         Assert.Contains("WPE_AGENT_DATA_ROOT", appData, StringComparison.Ordinal);
         Assert.Contains("AppDataPaths.DataRootEnvironmentVariable", headless, StringComparison.Ordinal);
-        Assert.Contains("RequireAbsolutePath(parsed.Options, \"data-root\")", maintenance, StringComparison.Ordinal);
+        Assert.Contains("HeadlessDataRootBootstrap.Resolve", headless, StringComparison.Ordinal);
+        Assert.Contains("DataRootPathPolicy.TryNormalizeFixedLocalRoot", headlessDataRoot, StringComparison.Ordinal);
+        Assert.Contains("RequireFixedLocalDataRoot(parsed.Options, \"data-root\")", maintenance, StringComparison.Ordinal);
 
         Assert.Contains("DataRootMaintenanceLease.AcquireProcessLease", bootstrap, StringComparison.Ordinal);
         Assert.Contains("DataRootMaintenanceLease.AcquireExclusiveMaintenanceLease", backup, StringComparison.Ordinal);

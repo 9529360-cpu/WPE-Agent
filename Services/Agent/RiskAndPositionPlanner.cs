@@ -9,8 +9,9 @@ public sealed class RiskAndPositionPlanner
 
     public (IReadOnlyList<ExecutionIntent> Intents,string Result) Plan(
         DecisionPlan d,EvidencePack e,TradingRule rule,RiskLimits limits,decimal dayHigh,
-        bool safeToIncreaseRisk=true,string? safetyReason=null,PositionSide? lockedSide=null)
+        bool safeToIncreaseRisk=true,string? safetyReason=null,PositionSide? lockedSide=null,double riskBudgetMultiplier=1)
     {
+        var adaptiveRiskMultiplier=Math.Clamp(double.IsFinite(riskBudgetMultiplier)?riskBudgetMultiplier:1,.10,1);
         var riskIncreasing=DeterministicPlanSkill.IsRiskIncreasing(d.Action);
         if(!safeToIncreaseRisk&&riskIncreasing)return(Array.Empty<ExecutionIntent>(),safetyReason??L("Risk.Recovery"));
         if(e.Completeness<70&&riskIncreasing)return(Array.Empty<ExecutionIntent>(),L("Risk.Completeness"));
@@ -52,7 +53,7 @@ public sealed class RiskAndPositionPlanner
             if(otherMargin+targetMargin>e.Account.Equity*limits.MaxMargin)return(null,L("Risk.MarginLimit",limits.MaxMargin));
 
             var stopDistance=Math.Abs(entry-d.StopLossPrice);
-            var riskQuantity=e.Account.Equity*limits.MaxRiskPerTrade/Math.Max(stopDistance,.00000001m);
+            var riskQuantity=e.Account.Equity*limits.MaxRiskPerTrade*(decimal)adaptiveRiskMultiplier/Math.Max(stopDistance,.00000001m);
             var exposureQuantity=e.Account.Equity*limits.MaxSymbolExposure/Math.Max(entry,.00000001m);
             var accountExposure=e.Positions.Where(x=>x.Symbol!=d.Instrument).Sum(x=>x.Quantity*x.MarkPrice);
             var accountRoom=Math.Max(0,e.Account.Equity*limits.MaxAccountExposure-accountExposure);

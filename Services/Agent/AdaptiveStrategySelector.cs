@@ -2,12 +2,26 @@ using 币安量化机器人.Core.Strategy;
 
 namespace 币安量化机器人.Services.Agent;
 
+public sealed record AdaptiveStrategySignalEvidence(
+    StrategySignal Signal,
+    MarketRegime Regime,
+    int RegimeObservations,
+    double RegimeExpectancy,
+    double RegimeCalibrationScore,
+    int ExecutionTrades,
+    double ExecutionPosteriorWinRate);
+
 public sealed record StrategyCycleSelection(
     StrategyProfile Profile,
     StrategySignal Signal,
     MarketRegime Regime,
     double SelectionScore,
-    double StrategyAgreement = 1);
+    double StrategyAgreement = 1,
+    int RegimeObservations = 0,
+    double RegimeExpectancy = 0,
+    double RegimeCalibrationScore = .5,
+    int ExecutionTrades = 0,
+    double ExecutionPosteriorWinRate = .5);
 
 public static class AdaptiveStrategySelector
 {
@@ -31,12 +45,22 @@ public static class AdaptiveStrategySelector
                          value.Lifecycle == StrategyLifecycle.Active &&
                          value.Symbol.Equals(market.Symbol, StringComparison.OrdinalIgnoreCase)))
             {
-                var signal = await research.GetAdaptiveSignalAsync(profile, market, evidence.News, ct);
+                var adaptive = await research.GetAdaptiveSignalEvidenceAsync(profile, market, evidence.News, ct);
+                var signal = adaptive.Signal;
                 if (signal.Direction == 0 || signal.Confidence <= 0)
                     continue;
 
                 var score = Math.Clamp(profile.QualityScore, 0, 1) * Math.Clamp(signal.Confidence, 0, 1);
-                candidates.Add(new(profile, signal, MarketRegimeClassifier.Detect(market), score));
+                candidates.Add(new(
+                    profile,
+                    signal,
+                    adaptive.Regime,
+                    score,
+                    RegimeObservations: adaptive.RegimeObservations,
+                    RegimeExpectancy: adaptive.RegimeExpectancy,
+                    RegimeCalibrationScore: adaptive.RegimeCalibrationScore,
+                    ExecutionTrades: adaptive.ExecutionTrades,
+                    ExecutionPosteriorWinRate: adaptive.ExecutionPosteriorWinRate));
             }
 
             var consensus = SelectConsensus(candidates);

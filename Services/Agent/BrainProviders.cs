@@ -85,26 +85,45 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
 
     public Task<BrainDecisionResult> DecideAsync(EvidencePack evidence, AgentContext context, CancellationToken ct)
     {
+        double PlanningScore(MarketDecisionAssessment assessment)
+        {
+            var allocation=context.StrategyPortfolio?.ForSymbol(assessment.Symbol);
+            if(allocation is not null&&allocation.DirectionMatches(assessment.RecommendedAction))
+                return allocation.OpportunityScore;
+            return assessment.Confidence*(1-assessment.ConflictRatio);
+        }
+
         var selected = context.MarketAssessments.Where(x => x.EntryReady && x.Fresh)
-            .OrderByDescending(x => x.Confidence * (1 - x.ConflictRatio))
+            .OrderByDescending(PlanningScore)
+            .ThenByDescending(x => x.Confidence * (1 - x.ConflictRatio))
             .ThenByDescending(x => Math.Abs(x.NetScore))
             .FirstOrDefault();
+        var allocation=selected is null?null:context.StrategyPortfolio?.ForSymbol(selected.Symbol);
+        if(allocation is not null&&!allocation.DirectionMatches(selected!.RecommendedAction))allocation=null;
         var blocked = context.CircuitBreakerActive || selected is null;
+        var reason=context.CircuitBreakerActive
+            ?"local risk circuit breaker is active"
+            :selected?.Summary??"no locally validated entry is ready";
+        if(!blocked&&allocation is not null)reason=$"{reason}; {allocation.Reason}";
         var decision = new DecisionPlan
         {
             Action = blocked ? DecisionAction.Hold : selected!.RecommendedAction,
             Instrument = selected?.Symbol ?? evidence.Markets.Keys.FirstOrDefault() ?? "BTCUSDT",
-            TargetTier = blocked ? 0 : 1,
+            TargetTier = blocked ? 0 : allocation?.TargetTier ?? 1,
             Confidence = selected?.Confidence ?? 0,
             Regime = selected?.Regime.ToString() ?? MarketRegime.Unknown.ToString(),
-            Reason = context.CircuitBreakerActive ? "local risk circuit breaker is active" : selected?.Summary ?? "no locally validated entry is ready",
+            Reason = reason,
             Invalidation = "local signal, data freshness, strategy health, or risk gate becomes invalid",
             EvidenceReferences = selected?.Signals.OrderByDescending(x => Math.Abs(x.WeightedScore)).Take(5).Select(x => x.Name).ToList() ?? [],
             MissingConditions = selected?.MissingConditions.ToList() ?? context.MarketAssessments.SelectMany(x => x.MissingConditions).Distinct().ToList(),
-            ConflictSummary = selected is null ? "no executable local assessment" : $"conflict={selected.ConflictRatio:F3}; score={selected.NetScore:F3}",
+            ConflictSummary = selected is null
+                ?"no executable local assessment"
+                :allocation is null
+                    ?$"conflict={selected.ConflictRatio:F3}; score={selected.NetScore:F3}"
+                    :$"conflict={selected.ConflictRatio:F3}; score={selected.NetScore:F3}; opportunity={allocation.OpportunityScore:F3}; capital={allocation.CapitalShare:F3}; risk_multiplier={allocation.RiskMultiplier:F3}; exploration={allocation.IsExploration}",
             StrategyVersion = "wpe-local-deterministic-v1"
         };
-        var audit = JsonSerializer.Serialize(new { provider = Name, decision.Action, decision.Instrument, decision.Confidence, decision.Reason });
+        var audit = JsonSerializer.Serialize(new { provider = Name, decision.Action, decision.Instrument, decision.TargetTier, decision.Confidence, allocation?.OpportunityScore, allocation?.CapitalShare, allocation?.RiskMultiplier, allocation?.IsExploration, decision.Reason });
         return Task.FromResult(new BrainDecisionResult(decision, audit, audit));
     }
 }
