@@ -43,6 +43,48 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RestoreCommitsSecurityStorageEvidenceBeforeGenerationCommit()
+    {
+        var source = Layout("security-source");
+        var target = Layout("security-target");
+        await CreateDatabase(source.DataFile("agent.db"), "new");
+        await CreateDatabase(target.DataFile("agent.db"), "old");
+        await SeedSecurityStorage(source, validHash: true);
+
+        var backup = await Backup(source).CreateAsync(Path.Combine(_root, "security-backups"));
+        var result = await Restore(target).RestoreAsync(backup.Directory);
+        var evidence = await ReadSecurityRestoreEvidence(target.DataFile("security-storage.db"));
+
+        Assert.NotNull(result.SecurityStorageEvidenceSha256);
+        Assert.Equal(64, result.SecurityStorageEvidenceSha256!.Length);
+        Assert.Equal(result.BackupId, evidence.BackupId);
+        Assert.Equal(result.SecurityStorageEvidenceSha256, evidence.PlanSha256, ignoreCase: true);
+        Assert.Equal(result.RestoreId, evidence.AuditCorrelationId);
+        Assert.Equal(1, evidence.Count);
+        Assert.Equal("new", await ReadDatabase(target.DataFile("agent.db")));
+    }
+
+    [Fact]
+    public async Task InvalidSecurityStorageEnvelopeInventoryFailsBeforeActivation()
+    {
+        var source = Layout("security-invalid-source");
+        var target = Layout("security-invalid-target");
+        await CreateDatabase(source.DataFile("agent.db"), "new");
+        await CreateDatabase(target.DataFile("agent.db"), "old");
+        await SeedSecurityStorage(source, validHash: false);
+
+        var backup = await Backup(source).CreateAsync(Path.Combine(_root, "security-invalid-backups"));
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            Restore(target).RestoreAsync(backup.Directory));
+
+        Assert.Contains("security-storage record hash", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("old", await ReadDatabase(target.DataFile("agent.db")));
+        Assert.False(File.Exists(target.RuntimeFile(RuntimeStateRestoreRecovery.JournalFileName)));
+        Assert.Empty(Directory.EnumerateDirectories(target.BackupsDirectory));
+    }
+
+    [Fact]
     public async Task FaultAfterRestoredActivationRollsBackOriginalGeneration()
     {
         var source = Layout("fault-source");
@@ -183,6 +225,63 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT value FROM checkpoint_test WHERE id=1";
         return Convert.ToString(await command.ExecuteScalarAsync());
+    }
+
+    private async Task SeedSecurityStorage(AppDataLayout layout, bool validHash)
+    {
+        var encryption = new VersionedEnvelopeEncryptionService(_protector);
+        var plaintext = System.Text.Encoding.UTF8.GetBytes("restore-secret");
+        byte[]? encoded = null;
+        try
+        {
+            var envelope = encryption.Encrypt(
+                plaintext,
+                new EnvelopeAssociatedData("credential", "restore-record-1", 1));
+            encoded = EncryptedRecordCodec.Encode(envelope);
+            var expectedHash = validHash
+                ? Convert.ToHexString(SHA256.HashData(encoded))
+                : new string('A', 64);
+            var storage = new SqliteSecurityStorage(
+                layout.DataFile("security-storage.db"),
+                () => Now);
+            await storage.AddTrustedRecordAsync(
+                new TrustedStorageRecord(
+                    new(
+                        "credential",
+                        "restore-record-1",
+                        1,
+                        expectedHash,
+                        LegacyFormat.None),
+                    encoded),
+                CancellationToken.None);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plaintext);
+            if (encoded is not null) CryptographicOperations.ZeroMemory(encoded);
+        }
+    }
+
+    private static async Task<(string BackupId, string PlanSha256, string AuditCorrelationId, int Count)>
+        ReadSecurityRestoreEvidence(string databasePath)
+    {
+        await using var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder
+            {
+                DataSource = databasePath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false
+            }.ToString());
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT backup_id,plan_sha256,audit_correlation_id," +
+            "(SELECT COUNT(*) FROM security_storage_restores) " +
+            "FROM security_storage_restores ORDER BY id DESC LIMIT 1;";
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return (reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3));
     }
 
     public void Dispose()
