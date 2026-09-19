@@ -24,8 +24,13 @@ public sealed class ResearchExecutionCostAuthorityV1Tests
         Assert.Equal(64, value.CostModelSha256.Length);
         Assert.Equal(artifact.ArtifactHash, value.ResearchArtifactSha256);
         Assert.False(value.ExecutionAuthority);
-        Assert.Equal(value, second.Value);
+        var repeated=Assert.IsType<ResearchExecutionCostProjectionV1>(second.Value);
+        Assert.Equal(value.CanonicalSha256,repeated.CanonicalSha256);
+        Assert.True(value.CanonicalBytes.SequenceEqual(repeated.CanonicalBytes));
+        Assert.Equal(value.CostModelVersion,repeated.CostModelVersion);
+        Assert.Equal(value.ResearchArtifactSha256,repeated.ResearchArtifactSha256);
         Assert.True(ResearchExecutionCostAuthorityV1.IsCanonical(value));
+        Assert.True(ResearchExecutionCostAuthorityV1.IsCanonical(repeated));
     }
 
     [Fact]
