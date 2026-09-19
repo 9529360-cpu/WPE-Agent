@@ -133,6 +133,32 @@ public sealed class StrategyShadowObservationProvenanceTests : IDisposable
     }
 
     [Fact]
+    public async Task LegacyObservationRowsCannotInflateCanonicalShadowQualification()
+    {
+        var profile=Profile();
+        profile.ShadowObservations=StrategyGovernor.MinimumShadowObservations-1;
+        var store=await SeedAuthority(Now.AddMinutes(-10),profile,includeTimeline:true);
+        for(var i=0;i<StrategyGovernor.MinimumShadowObservations-1;i++)
+            await store.RecordStrategyObservationAsync(
+                profile.Id,
+                profile.Symbol,
+                i%2==0?1:-1,
+                100m+i,
+                .6,
+                default);
+
+        var agent=new StrategyResearchAgent(store,utcNow:()=>Now.UtcDateTime);
+        agent.SetSchedulerHealth(true);
+        await agent.ObserveAsync(Pack(Market(Now.AddMinutes(-1))),default);
+
+        Assert.Equal(1,await Count("strategy_shadow_observation_artifacts"));
+        Assert.Equal(StrategyGovernor.MinimumShadowObservations,await Count("strategy_observations"));
+        var restored=(await store.GetStrategiesAsync(default)).Single(x=>x.Id==profile.Id);
+        Assert.Equal(1,restored.ShadowObservations);
+        Assert.Equal(StrategyLifecycle.Shadow,restored.Lifecycle);
+    }
+
+    [Fact]
     public async Task MissingTimelineProvenanceDoesNotCountShadowObservation()
     {
         var profile=Profile();
