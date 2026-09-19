@@ -135,6 +135,8 @@ jobs:
         if (-not (Test-Path -LiteralPath "artifacts/publish/WebUi/out/index.html" -PathType Leaf)) {
           throw "Published Reference UI export is missing."
         }
+        $forbiddenExtensions = @(".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12", ".pfx")
+        $forbiddenSuffixes = @(".db-wal", ".db-shm", ".sqlite-wal", ".sqlite-shm", ".sqlite3-wal", ".sqlite3-shm")
         $forbidden = Get-ChildItem artifacts/publish -Recurse -File | Where-Object {
           $name = $_.Name.ToLowerInvariant()
           $extension = $_.Extension.ToLowerInvariant()
@@ -142,11 +144,7 @@ jobs:
           $secretData = ($name.Contains("secrets") -or $name.Contains("credentials")) -and
             @(".json", ".dat", ".txt", ".xml", ".yaml", ".yml") -contains $extension
           $knownState -or $secretData -or
-          $extension -match '^\.(db|sqlite|sqlite3|pem|key|p12|pfx)
-        if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
- -or
-          $name -match '\.(db|sqlite|sqlite3)-(wal|shm)
-        if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
-
+          $forbiddenExtensions -contains $extension -or
+          ($forbiddenSuffixes | Where-Object { $name.EndsWith($_) })
         }
         if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
