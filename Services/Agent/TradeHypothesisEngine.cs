@@ -201,11 +201,23 @@ public sealed class TradeHypothesisEngine
             if (previous.Stage == TradeHypothesisStage.Watching &&
                 (trendImproved || bookImproved || bookPersistentlySupportive) &&
                 microstructureNoLongerHostile)
+            {
                 nextStage = TradeHypothesisStage.ScoutReady;
-            else if (previous.Stage == TradeHypothesisStage.ScoutReady &&
-                     shortTermConfirmed &&
-                     microstructureNoLongerHostile)
-                nextStage = TradeHypothesisStage.Confirmed;
+            }
+            else if (previous.Stage == TradeHypothesisStage.ScoutReady)
+            {
+                if (!microstructureNoLongerHostile)
+                    nextStage = TradeHypothesisStage.Watching;
+                else if (shortTermConfirmed)
+                    nextStage = TradeHypothesisStage.Confirmed;
+            }
+            else if (previous.Stage == TradeHypothesisStage.Confirmed)
+            {
+                if (!microstructureNoLongerHostile)
+                    nextStage = TradeHypothesisStage.Watching;
+                else if (!shortTermConfirmed)
+                    nextStage = TradeHypothesisStage.ScoutReady;
+            }
         }
 
         var risk = nextStage switch

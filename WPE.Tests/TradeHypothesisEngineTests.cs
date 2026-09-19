@@ -61,6 +61,45 @@ public sealed class TradeHypothesisEngineTests
     }
 
     [Fact]
+    public void ScoutFallsBackToWatchingWhenMicrostructureTurnsHostileBeforeEntry()
+    {
+        var first=Market(81117.2m,80906m,81715.8m,26.5,-.34,-.23,5.13,.99);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var scout=TradeHypothesisEngine.EvaluateMarket(
+            Market(81120m,80906m,81715.8m,27,-.33,-.22,5.10,.82),
+            watching,[],Now.AddMinutes(1));
+
+        var weakened=TradeHypothesisEngine.EvaluateMarket(
+            Market(81097.6m,80906m,81715.8m,27,-.34,-.22,5.08,-.22),
+            scout,[],Now.AddMinutes(2));
+
+        Assert.Equal(TradeHypothesisStage.Watching,weakened.Stage);
+        Assert.False(weakened.Actionable);
+        Assert.Equal(0,weakened.RiskBudgetMultiplier);
+    }
+
+    [Fact]
+    public void ConfirmedFallsBackToScoutWhenMomentumConfirmationFadesBeforeEntry()
+    {
+        var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var scout=TradeHypothesisEngine.EvaluateMarket(
+            Market(81105m,80906m,81805.3m,34,-.18,-.12,5.05,-.08),
+            watching,[],Now.AddMinutes(1));
+        var confirmed=TradeHypothesisEngine.EvaluateMarket(
+            Market(81180m,80906m,81805.3m,39,.08,.03,4.95,.22),
+            scout,[],Now.AddMinutes(2));
+
+        var weakened=TradeHypothesisEngine.EvaluateMarket(
+            Market(81145m,80906m,81805.3m,35,-.05,-.02,4.90,.25),
+            confirmed,[],Now.AddMinutes(3));
+
+        Assert.Equal(TradeHypothesisStage.ScoutReady,weakened.Stage);
+        Assert.True(weakened.Actionable);
+        Assert.Equal(.18,weakened.RiskBudgetMultiplier,10);
+    }
+
+    [Fact]
     public async Task ScoutCanBecomeConfirmedButExistingPositionPreventsRepeatedEntryDecision()
     {
         var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
