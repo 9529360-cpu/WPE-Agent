@@ -10,7 +10,7 @@ WPE.Maintenance is an offline Windows-only maintenance executable for WPE runtim
 - Keep backup output outside the active Data directory.
 - Treat backup files as sensitive encrypted state even though the payload is encrypted.
 
-The backup and restore commands acquire the exclusive data-root maintenance lease. If any normal WPE process still owns the shared lease, the operation fails closed. The Windows Service and the maintenance CLI must point at the same absolute root: configure the service with `WPE_AGENT_DATA_ROOT`, then pass that exact path as `--data-root` to maintenance.
+The backup and restore commands acquire the exclusive data-root maintenance lease. If any normal WPE process still owns the shared lease, the operation fails closed. The Windows Service and the maintenance CLI must point at the same absolute root: prefer a service command line containing `--data-root <absolute-path>` (or use `WPE_AGENT_DATA_ROOT`), then pass that exact path as `--data-root` to maintenance. If the service argument and environment variable are both present, WPE requires them to resolve to the same path.
 
 Because backup encryption and restore journals use Windows current-user DPAPI, run the service and maintenance CLI under the same Windows account. Moving only the data directory to another account is not a supported recovery path.
 
