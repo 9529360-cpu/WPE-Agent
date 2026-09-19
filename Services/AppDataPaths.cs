@@ -47,6 +47,54 @@ public sealed class AppDataLayout
     private static string Ensure(string path) { Directory.CreateDirectory(path); return Path.GetFullPath(path); }
 }
 
+public static class DataRootPathPolicy
+{
+    public static bool TryNormalizeFixedLocalRoot(
+        string? value,
+        out string? normalized)
+    {
+        normalized = null;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+
+        var candidate = value.Trim();
+        if (candidate.StartsWith(@"\\\\", StringComparison.Ordinal) ||
+            !Path.IsPathFullyQualified(candidate))
+            return false;
+
+        try
+        {
+            var full = Path.GetFullPath(candidate);
+            var root = Path.GetPathRoot(full);
+            if (string.IsNullOrWhiteSpace(root) ||
+                root.StartsWith(@"\\\\", StringComparison.Ordinal))
+                return false;
+
+            if (OperatingSystem.IsWindows() &&
+                new DriveInfo(root).DriveType != DriveType.Fixed)
+                return false;
+
+            normalized = string.Equals(
+                full,
+                root,
+                StringComparison.OrdinalIgnoreCase)
+                ? root
+                : full.TrimEnd(
+                    Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is ArgumentException or
+            NotSupportedException or
+            PathTooLongException or
+            IOException or
+            UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+}
+
 public sealed record LegacyMigrationItem(string RelativePath, string Status, string? ErrorType = null);
 public sealed record LegacyMigrationResult(DateTimeOffset CompletedAtUtc, IReadOnlyList<LegacyMigrationItem> Items)
 {
