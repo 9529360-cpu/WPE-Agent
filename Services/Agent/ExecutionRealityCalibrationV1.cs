@@ -215,6 +215,7 @@ internal sealed class ExecutionRealityCalibrationServiceV1(AgentSqliteStore stor
 
     private static bool Eligible(ExecutionDriftSummaryV1 x)
         =>string.Equals(x.Environment,"Testnet",StringComparison.Ordinal)
+          &&!x.ClientOrderId.EndsWith("-E",StringComparison.Ordinal)
           &&x.RequestedQuantity>0&&x.FinalObservedQuantity>0&&x.FillRatio is>0 and<=1
           &&x.FinalStatus is "FILLED" or "PARTIALLY_FILLED";
 
