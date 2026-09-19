@@ -15,7 +15,8 @@ public sealed record PostTradePnlSimulationSourceV1(
     string CorrelationId,
     string ClientOrderId,
     bool ReduceOnly,
-    string CanonicalSha256);
+    string SimulationSourceSha256,
+    string SimulatedFillSha256);
 
 public sealed record PostTradePnlDriftV1(
     string Schema,
@@ -28,6 +29,7 @@ public sealed record PostTradePnlDriftV1(
     decimal ClosingQuantity,
     string EntryLedgerSha256,
     IReadOnlyList<PostTradePnlSimulationSourceV1> EntrySimulationSources,
+    string CloseSimulationSourceSha256,
     string CloseSimulationSha256,
     decimal ActualEntryPrice,
     decimal ActualExitPrice,
@@ -56,7 +58,7 @@ public sealed record PostTradePnlDriftV1(
 
 public static class PostTradePnlDriftCanonicalizerV1
 {
-    public const string Schema = "wpe.post-trade-pnl-drift/1.0";
+    public const string Schema = "wpe.post-trade-pnl-drift/1.1";
 
     public static PostTradePnlDriftV1 Create(
         string closeClientOrderId,
@@ -68,6 +70,7 @@ public static class PostTradePnlDriftCanonicalizerV1
         decimal closingQuantity,
         string entryLedgerSha256,
         IReadOnlyList<PostTradePnlSimulationSourceV1> entrySimulationSources,
+        string closeSimulationSourceSha256,
         string closeSimulationSha256,
         decimal actualEntryPrice,
         decimal actualExitPrice,
@@ -99,7 +102,9 @@ public static class PostTradePnlDriftCanonicalizerV1
             || actualFees < 0
             || simulatedFees < 0)
             throw new InvalidOperationException("Post-trade PnL drift economics are invalid.");
-        if (!LowerSha(entryLedgerSha256) || !LowerSha(closeSimulationSha256))
+        if (!LowerSha(entryLedgerSha256)
+            || !LowerSha(closeSimulationSourceSha256)
+            || !LowerSha(closeSimulationSha256))
             throw new InvalidOperationException("Post-trade PnL drift source hash is invalid.");
         if (comparedAtUtc == default || comparedAtUtc.Offset != TimeSpan.Zero)
             throw new InvalidOperationException("Post-trade PnL drift comparison time must be UTC.");
@@ -112,7 +117,8 @@ public static class PostTradePnlDriftCanonicalizerV1
             if (source.Sequence != i
                 || string.IsNullOrWhiteSpace(source.CorrelationId)
                 || string.IsNullOrWhiteSpace(source.ClientOrderId)
-                || !LowerSha(source.CanonicalSha256))
+                || !LowerSha(source.SimulationSourceSha256)
+                || !LowerSha(source.SimulatedFillSha256))
                 throw new InvalidOperationException("Post-trade PnL simulation source identity is invalid.");
         }
 
@@ -158,6 +164,7 @@ public static class PostTradePnlDriftCanonicalizerV1
             closingQuantity,
             entryLedgerSha256,
             sources,
+            closeSimulationSourceSha256,
             closeSimulationSha256,
             actualEntryPrice,
             actualExitPrice,
@@ -208,6 +215,7 @@ public static class PostTradePnlDriftCanonicalizerV1
                 value.ClosingQuantity,
                 value.EntryLedgerSha256,
                 value.EntrySimulationSources,
+                value.CloseSimulationSourceSha256,
                 value.CloseSimulationSha256,
                 value.ActualEntryPrice,
                 value.ActualExitPrice,
@@ -264,7 +272,8 @@ public static class PostTradePnlDriftCanonicalizerV1
                     Required(item, "correlation_id"),
                     Required(item, "client_order_id"),
                     item.GetProperty("reduce_only").GetBoolean(),
-                    Required(item, "canonical_sha256")))
+                    Required(item, "simulation_source_sha256"),
+                    Required(item, "simulated_fill_sha256")))
                 .ToArray();
 
             value = new(
@@ -278,6 +287,7 @@ public static class PostTradePnlDriftCanonicalizerV1
                 root.GetProperty("closing_quantity").GetDecimal(),
                 Required(root, "entry_ledger_sha256"),
                 sources,
+                Required(root, "close_simulation_source_sha256"),
                 Required(root, "close_simulation_sha256"),
                 root.GetProperty("actual_entry_price").GetDecimal(),
                 root.GetProperty("actual_exit_price").GetDecimal(),
@@ -329,6 +339,7 @@ public static class PostTradePnlDriftCanonicalizerV1
             writer.WriteNumber("actual_exit_price", value.ActualExitPrice);
             writer.WriteString("close_client_order_id", value.CloseClientOrderId);
             writer.WriteString("close_cycle_id", value.CloseCycleId);
+            writer.WriteString("close_simulation_source_sha256", value.CloseSimulationSourceSha256);
             writer.WriteString("close_simulation_sha256", value.CloseSimulationSha256);
             writer.WriteNumber("closing_quantity", value.ClosingQuantity);
             writer.WriteString("compared_at_utc", value.ComparedAtUtc.ToUniversalTime());
@@ -338,11 +349,12 @@ public static class PostTradePnlDriftCanonicalizerV1
             foreach (var source in value.EntrySimulationSources.OrderBy(x => x.Sequence))
             {
                 writer.WriteStartObject();
-                writer.WriteString("canonical_sha256", source.CanonicalSha256);
                 writer.WriteString("client_order_id", source.ClientOrderId);
                 writer.WriteString("correlation_id", source.CorrelationId);
                 writer.WriteBoolean("reduce_only", source.ReduceOnly);
                 writer.WriteNumber("sequence", source.Sequence);
+                writer.WriteString("simulated_fill_sha256", source.SimulatedFillSha256);
+                writer.WriteString("simulation_source_sha256", source.SimulationSourceSha256);
                 writer.WriteEndObject();
             }
             writer.WriteEndArray();
