@@ -62,6 +62,29 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     }
 
     [Fact]
+    public async Task AutomaticGatewayBridgesValidatedDurableAuthorityIntoMutationGateway()
+    {
+        var setup=Setup(TradingAuthorizationMode.Auto);
+        var artifact=AutomaticArtifact();
+        var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);
+        var receipt=new DeterministicRiskReceipt(
+            "risk-auto",artifact.CorrelationId,hashes.IntentHash,true,Now.AddSeconds(-5),Now.AddMinutes(1),null,hashes.ArtifactHash);
+
+        Assert.True((await setup.Store.SaveAutomaticExecutionAsync(artifact.CorrelationId,artifact,CancellationToken.None)).Succeeded);
+        Assert.True((await setup.Store.RecordAutomaticRiskDecisionAsync(artifact.CorrelationId,receipt,CancellationToken.None)).Succeeded);
+        Assert.True((await setup.Store.TryClaimAutomaticExecutionAsync(artifact.CorrelationId,"worker",TimeSpan.FromSeconds(30),CancellationToken.None)).Claimed);
+        Assert.True((await setup.Store.TryTransitionAutomaticExecutionAsync(
+            artifact.CorrelationId,AutomaticExecutionQueueStatus.Claimed,AutomaticExecutionQueueStatus.Executing,
+            "worker","automatic.executing",CancellationToken.None)).Succeeded);
+
+        var result=await new TradingAutomaticExecutionGateway(setup.Gateway,setup.Exchange,setup.Store,null,()=>Now)
+            .ExecuteAsync(artifact,receipt,CancellationToken.None);
+
+        Assert.Equal(AutomaticGatewayExecutionState.Succeeded,result.State);
+        Assert.True(setup.Exchange.MutationCount>0);
+    }
+
+    [Fact]
     public async Task AutomaticOrderObserverConfirmsMatchingExchangeOrderWithoutMutation()
     {
         var setup=Setup(TradingAuthorizationMode.Auto);var artifact=AutomaticArtifact();

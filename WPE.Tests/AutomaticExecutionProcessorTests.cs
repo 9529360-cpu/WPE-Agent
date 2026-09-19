@@ -59,6 +59,20 @@ public sealed class AutomaticExecutionProcessorTests:IDisposable
     }
 
     [Fact]
+    public async Task RejectedGatewayPreservesSafeDiagnosticCode()
+    {
+        var store=Store();await Approve(store,"rejected",Artifact());
+        var gateway=new Gateway{Execution=new(AutomaticGatewayExecutionState.Rejected,"execution.intent-hash-mismatch")};
+
+        var result=await Processor(store,new Validator(),gateway).ProcessNextAsync("worker",CancellationToken.None);
+
+        Assert.True(result.Handled);
+        Assert.Equal("execution.intent-hash-mismatch",result.Code);
+        Assert.Equal(AutomaticExecutionQueueStatus.FailedTerminal,(await store.GetAutomaticExecutionAsync("rejected",CancellationToken.None))!.Status);
+        Assert.Contains(await store.GetAutomaticExecutionEventsAsync("rejected",100,CancellationToken.None),x=>x.EventCode=="execution.intent-hash-mismatch");
+    }
+
+    [Fact]
     public async Task UnknownOutcome_ReconcilesByQueryAndNeverResubmits()
     {
         var store=Store();await Approve(store,"unknown",Artifact());var gateway=new Gateway{Execution=new(AutomaticGatewayExecutionState.Unknown,"unknown"),Reconciliation=new(AutomaticGatewayReconciliationState.Unknown,"unknown")};var processor=Processor(store,new Validator(),gateway);
