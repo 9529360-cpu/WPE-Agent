@@ -46,6 +46,7 @@ foreach($required in @(
     'Archive entry escapes verification root.',
     'Archive contains duplicate normalized entry paths.',
     'Package metadata path escapes package root.',
+    'Archive must contain exactly one top-level package directory.',
     'PAYLOAD-SHA256SUMS does not match FILE-MANIFEST.json.',
     '$expectedSumLine = "$zipHash  $([System.IO.Path]::GetFileName($zip))"',
     '(Get-Item -LiteralPath $path).Length -ne [long]$entry.length',
@@ -84,6 +85,21 @@ try{
     $verification=Join-Path $testRoot 'verification'
     Throws {& $verifyPath -ResultPath $resultPath -VerificationDirectory $verification} 'Archive entry escapes verification root.'
     if(Test-Path -LiteralPath (Join-Path $testRoot 'escape.txt')){throw 'verify.zip-slip-created-escaped-file'}
+
+    $zip=Join-Path $testRoot 'extra-top-level.zip'
+    $archive=[IO.Compression.ZipFile]::Open($zip,[IO.Compression.ZipArchiveMode]::Create)
+    try{
+        foreach($name in @('package/placeholder.txt','extra.txt')){
+            $entry=$archive.CreateEntry($name)
+            $writer=[IO.StreamWriter]::new($entry.Open())
+            try{$writer.Write('x')}finally{$writer.Dispose()}
+        }
+    }finally{$archive.Dispose()}
+    $zipHash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+    [ordered]@{package=$zip;sha256=$zipHash}|ConvertTo-Json|Set-Content -LiteralPath $resultPath -Encoding utf8
+    "$zipHash  $([IO.Path]::GetFileName($zip))"|Set-Content -LiteralPath (Join-Path $testRoot 'SHA256SUMS') -Encoding ascii
+    if(Test-Path -LiteralPath $verification){Remove-Item -LiteralPath $verification -Recurse -Force}
+    Throws {& $verifyPath -ResultPath $resultPath -VerificationDirectory $verification} 'Archive must contain exactly one top-level package directory.'
 }finally{
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
