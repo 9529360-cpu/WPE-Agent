@@ -8,6 +8,7 @@ public sealed class ReleaseSoakGateBoundaryTests
         var root=Root();
         var release=File.ReadAllText(Path.Combine(root,"eng","dogfood","Test-DogfoodRelease.ps1"));
         var slot=File.ReadAllText(Path.Combine(root,"eng","dogfood","Switch-DogfoodSlot.ps1"));
+        var candidate=File.ReadAllText(Path.Combine(root,"eng","dogfood","New-Candidate.ps1"));
         var workflow=File.ReadAllText(Path.Combine(root,".github","workflows","dotnet.yml"));
 
         Assert.Contains("SoakEvidencePath",release,StringComparison.Ordinal);
@@ -17,6 +18,11 @@ public sealed class ReleaseSoakGateBoundaryTests
         Assert.Contains("candidate.Manifest.sourceIdentity",release,StringComparison.Ordinal);
         Assert.Contains("candidate.ManifestHash",release,StringComparison.Ordinal);
         Assert.Contains("SoakEvidenceSha256",release,StringComparison.Ordinal);
+
+        Assert.Contains("entry.size",candidate,StringComparison.Ordinal);
+        Assert.DoesNotContain("entry.bytes",candidate,StringComparison.Ordinal);
+        Assert.Contains("package.manifest-inventory-drift",candidate,StringComparison.Ordinal);
+        Assert.Contains("$label.inventory-drift",release,StringComparison.Ordinal);
 
         Assert.Contains("ExpectedSoakEvidenceHash",slot,StringComparison.Ordinal);
         Assert.Contains("soakEvidenceSha256=$result.SoakEvidenceSha256",slot,StringComparison.Ordinal);
