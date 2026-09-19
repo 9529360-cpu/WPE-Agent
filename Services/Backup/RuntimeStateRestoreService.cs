@@ -66,6 +66,7 @@ public sealed class RuntimeStateRestoreService
         var failed = RuntimeStateRestoreRecovery.FailedDirectory(_layout, restoreId);
         var leasePath = _layout.RuntimeFile(DataRootMaintenanceLease.LeaseFileName);
         using var maintenanceLease = DataRootMaintenanceLease.AcquireExclusiveMaintenanceLease(leasePath);
+        SqliteConnection.ClearAllPools();
 
         RuntimeStateRestoreRecovery.RecoverUnderExclusiveLease(
             _layout, maintenanceLease, _keyProtector);
