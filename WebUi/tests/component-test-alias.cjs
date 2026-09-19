@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- CJS preload patches CJS alias resolution for compiled component tests. */
 const Module = require('node:module')
 const path = require('node:path')
 
