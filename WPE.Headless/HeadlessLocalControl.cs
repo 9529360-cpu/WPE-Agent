@@ -46,9 +46,14 @@ public static class HeadlessLocalControlProtocol
                 return Reject("control.request-invalid");
 
             var allowed = new HashSet<string>(StringComparer.Ordinal) { "schema", "command", "confirmation" };
+            var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var property in document.RootElement.EnumerateObject())
+            {
                 if (!allowed.Contains(property.Name))
                     return Reject("control.request-field-unsupported");
+                if (!seen.Add(property.Name))
+                    return Reject("control.request-field-duplicate");
+            }
 
             var schema = ReadString(document.RootElement, "schema");
             var command = ReadString(document.RootElement, "command");
