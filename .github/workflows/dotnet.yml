@@ -130,6 +130,10 @@ jobs:
       shell: pwsh
       run: ./eng/ops/tests/HeadlessSoak.Tests.ps1
 
+    - name: Verify dogfood release slots
+      shell: pwsh
+      run: ./eng/dogfood/tests/ReleaseSlots.Tests.ps1
+
     - name: Publish maintenance candidate
       run: dotnet publish "WPE.Maintenance/WPE.Maintenance.csproj" --configuration Release --no-restore --output artifacts/maintenance
 
