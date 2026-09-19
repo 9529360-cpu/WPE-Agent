@@ -39,6 +39,7 @@ foreach($required in @(
 foreach($required in @(
     'Payload manifest does not exactly cover the runtime bundle files.',
     'Runtime package signature states are mixed.',
+    'Runtime package executable timestamp is missing',
     'Signed runtime bundle verification requires the approved signer subject and thumbprint.'
 )){
     if($verify.IndexOf($required,[StringComparison]::Ordinal) -lt 0){throw "verify.contract-missing:$required"}
@@ -46,6 +47,7 @@ foreach($required in @(
 foreach($required in @(
     'wpe.runtime-bundle-signing/1.0',
     'Signing staging does not match release-readiness artifact',
+    'Authenticode timestamp is missing',
     'Signing and verification passed for $($executables.Count) runtime executable(s).'
 )){
     if($sign.IndexOf($required,[StringComparison]::Ordinal) -lt 0){throw "sign.contract-missing:$required"}
