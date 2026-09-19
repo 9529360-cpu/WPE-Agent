@@ -199,16 +199,7 @@ public sealed class ExecutionSimulationComparisonPersistenceTests : IDisposable
     }
 
     private static ExecutionSimulationResearchProvenanceV1 Provenance(ExecutionSimulationFillV1 simulated) =>
-        ExecutionSimulationResearchProvenanceCanonicalizerV1.Create(
-            simulated,
-            new string('a', 64),
-            new string('b', 64),
-            new string('c', 64),
-            new string('d', 64),
-            MarketAt.AddHours(-2),
-            MarketAt.AddHours(-1),
-            MarketAt.AddMinutes(-1),
-            SimulatedAt.AddSeconds(1));
+        ExecutionSimulationResearchProvenanceFixture.Create(simulated);
 
     private static ExecutionSimulationFillV1 Simulated(
         string strategyId,
