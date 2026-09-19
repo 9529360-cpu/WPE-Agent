@@ -22,6 +22,56 @@ function Get-Sha256([string]$Path) {
     (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Assert-ZipEntriesSafe([string]$ZipPath, [string]$DestinationRoot) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $destination = [System.IO.Path]::GetFullPath($DestinationRoot)
+    $prefix = $destination.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $targets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        foreach ($entry in $archive.Entries) {
+            $entryName = ([string]$entry.FullName).Replace('\', '/')
+            if ([string]::IsNullOrWhiteSpace($entryName) -or
+                $entryName.StartsWith('/', [System.StringComparison]::Ordinal) -or
+                $entryName.Contains(':')) {
+                throw "Archive entry path is invalid."
+            }
+
+            $relative = $entryName.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+            if ([System.IO.Path]::IsPathRooted($relative)) {
+                throw "Archive entry path is rooted."
+            }
+
+            $target = [System.IO.Path]::GetFullPath((Join-Path $destination $relative))
+            if (-not $target.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Archive entry escapes verification root."
+            }
+            if (-not $targets.Add($target)) {
+                throw "Archive contains duplicate normalized entry paths."
+            }
+        }
+    } finally {
+        $archive.Dispose()
+    }
+}
+
+function Resolve-InPackageRoot([string]$PackageRoot, [string]$RelativePath) {
+    if ([string]::IsNullOrWhiteSpace($RelativePath)) {
+        throw "Package metadata path is missing."
+    }
+    $relative = $RelativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+    if ([System.IO.Path]::IsPathRooted($relative)) {
+        throw "Package metadata path must be relative."
+    }
+    $package = [System.IO.Path]::GetFullPath($PackageRoot)
+    $prefix = $package.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $resolved = [System.IO.Path]::GetFullPath((Join-Path $package $relative))
+    if (-not $resolved.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Package metadata path escapes package root."
+    }
+    return $resolved
+}
+
 function Get-TextSha256([string]$Value) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
@@ -57,6 +107,7 @@ $sumLine = (Get-Content -Raw -LiteralPath $sumsPath).Trim()
 if ($zipHash -ne $result.sha256 -or -not $sumLine.StartsWith($zipHash, [System.StringComparison]::OrdinalIgnoreCase)) { throw "Outer ZIP SHA-256 mismatch." }
 
 if (Test-Path -LiteralPath $verify) { Remove-Item -LiteralPath $verify -Recurse -Force }
+Assert-ZipEntriesSafe $zip $verify
 Expand-Archive -LiteralPath $zip -DestinationPath $verify
 $packageDirectories = @(Get-ChildItem -LiteralPath $verify -Directory -Force)
 if ($packageDirectories.Count -ne 1) { throw "Expected one package root in the archive." }
@@ -78,7 +129,7 @@ if (-not (Test-Path -LiteralPath $licenseReportPath -PathType Leaf) -or -not (Te
 }
 $licenseReport = Get-Content -Raw -LiteralPath $licenseReportPath | ConvertFrom-Json
 $policyDecision = Get-Content -Raw -LiteralPath $policyDecisionPath | ConvertFrom-Json
-$noticePath = Join-Path $packageRoot ([string]$metadata.contents.thirdPartyNoticePath).Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+$noticePath = Resolve-InPackageRoot $packageRoot ([string]$metadata.contents.thirdPartyNoticePath)
 if (-not (Test-Path -LiteralPath $noticePath -PathType Leaf)) { throw "Distribution THIRD-PARTY-NOTICES.txt is missing." }
 $noticeHash = (Get-FileHash -LiteralPath $noticePath -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($noticeHash -ne [string]$metadata.contents.thirdPartyNoticeSha256) { throw "Distribution third-party notice SHA-256 mismatch." }
