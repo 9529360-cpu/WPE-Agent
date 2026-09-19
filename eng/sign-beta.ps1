@@ -2,6 +2,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$PublishPath,
     [string[]]$AdditionalPublishPaths = @(),
+    [string]$ReadinessReportPath,
+    [string]$SigningResultPath,
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[A-Fa-f0-9]{40}$')]
     [string]$CertificateThumbprint,
@@ -20,8 +22,38 @@ function Resolve-InRoot([string]$Path) {
     return $resolved
 }
 
+
+function Get-TextSha256([string]$Value) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-ArtifactTreeFacts([string]$Path) {
+    $prefix = $Path.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -File | Sort-Object FullName)
+    $lines = @($files | ForEach-Object {
+        $relative = $_.FullName.Substring($prefix.Length).Replace('\', '/')
+        $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$relative|$($_.Length)|$hash"
+    })
+    [pscustomobject]@{
+        FileCount = $files.Count
+        TotalBytes = [long](($files | Measure-Object -Property Length -Sum).Sum)
+        TreeSha256 = Get-TextSha256 ($lines -join [Environment]::NewLine)
+    }
+}
+
 $signingRoots = @($PublishPath) + @($AdditionalPublishPaths) | ForEach-Object { Resolve-InRoot $_ } | Select-Object -Unique
 if ($signingRoots.Count -eq 0) { throw "At least one signing staging directory is required." }
+$bundleAttestationRequested = -not [string]::IsNullOrWhiteSpace($ReadinessReportPath) -or -not [string]::IsNullOrWhiteSpace($SigningResultPath)
+if ($bundleAttestationRequested -and ([string]::IsNullOrWhiteSpace($ReadinessReportPath) -or [string]::IsNullOrWhiteSpace($SigningResultPath))) {
+    throw "ReadinessReportPath and SigningResultPath must be supplied together."
+}
 foreach ($signingRoot in $signingRoots) {
     if (-not (Test-Path -LiteralPath $signingRoot -PathType Container)) {
         throw "Signing staging directory is missing: $signingRoot"
@@ -56,6 +88,43 @@ if (@($executables | Select-Object -ExpandProperty FullName -Unique).Count -ne $
     throw "Signing staging resolved the same executable more than once."
 }
 
+$preSignFacts = @{}
+$readiness = $null
+$readinessHash = $null
+$resultPath = $null
+if ($bundleAttestationRequested) {
+    $readinessPath = Resolve-InRoot $ReadinessReportPath
+    $resultPath = Resolve-InRoot $SigningResultPath
+    if (-not (Test-Path -LiteralPath $readinessPath -PathType Leaf)) { throw "Release-readiness report is missing." }
+    try { $readiness = Get-Content -Raw -LiteralPath $readinessPath | ConvertFrom-Json } catch { throw "Release-readiness report is malformed." }
+    if ($readiness.schemaVersion -ne "wpe.release-readiness.v1" -or $readiness.status -ne "passed") { throw "Release-readiness report did not pass." }
+    if ($readiness.source.dirty -ne $false -or [string]$readiness.source.commit -notmatch '^[0-9a-f]{40}$') { throw "Release-readiness source identity is not signable." }
+    if (-not $readiness.artifacts -or -not $readiness.artifacts.desktop -or -not $readiness.artifacts.headless -or -not $readiness.artifacts.maintenance) {
+        throw "Release-readiness runtime bundle facts are incomplete."
+    }
+    if ($executables.Count -ne 3) { throw "Runtime-bundle attestation requires Desktop, Headless, and Maintenance staging." }
+    $readinessHash = (Get-FileHash -LiteralPath $readinessPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $expectedByExe = @{
+        "WPE-Agent.exe" = [pscustomobject]@{ Label = "desktop"; Facts = $readiness.artifacts.desktop }
+        "WPE-Headless.exe" = [pscustomobject]@{ Label = "headless"; Facts = $readiness.artifacts.headless }
+        "WPE.Maintenance.exe" = [pscustomobject]@{ Label = "maintenance"; Facts = $readiness.artifacts.maintenance }
+    }
+    foreach ($executable in $executables) {
+        if (-not $expectedByExe.ContainsKey($executable.Name)) { throw "Unexpected runtime executable in bundle signing: $($executable.Name)" }
+        $expected = $expectedByExe[$executable.Name]
+        $facts = Get-ArtifactTreeFacts $executable.Directory.FullName
+        if ($facts.TreeSha256 -ne [string]$expected.Facts.treeSha256 -or $facts.FileCount -ne [int]$expected.Facts.fileCount) {
+            throw "Signing staging does not match release-readiness artifact: $($expected.Label)"
+        }
+        $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($executable.FullName).FileVersion
+        $parsedVersion = [Version]$fileVersion
+        if ("$($parsedVersion.Major).$($parsedVersion.Minor).$($parsedVersion.Build)" -ne [string]$readiness.productVersion) {
+            throw "Signing staging binary version does not match release-readiness product version: $($executable.Name)"
+        }
+        $preSignFacts[$executable.FullName] = [pscustomobject]@{ Label = $expected.Label; Facts = $facts }
+    }
+}
+
 foreach ($executable in $executables) {
     & $signTool sign /fd SHA256 /td SHA256 /tr $TimestampUrl /sha1 $certificate.Thumbprint /s My $executable.FullName
     if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed for $($executable.Name)." }
@@ -67,6 +136,38 @@ foreach ($executable in $executables) {
     if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
         throw "PowerShell did not validate the resulting Authenticode signature for $($executable.Name)."
     }
+}
+
+if ($bundleAttestationRequested) {
+    $signedArtifacts = @($executables | ForEach-Object {
+        $before = $preSignFacts[$_.FullName]
+        $after = Get-ArtifactTreeFacts $_.Directory.FullName
+        [ordered]@{
+            label = $before.Label
+            executable = $_.Name
+            inputTreeSha256 = $before.Facts.TreeSha256
+            outputTreeSha256 = $after.TreeSha256
+            outputFileCount = $after.FileCount
+            executableSha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            signatureStatus = "Valid"
+        }
+    } | Sort-Object label)
+    $result = [ordered]@{
+        schemaVersion = "wpe.runtime-bundle-signing/1.0"
+        signedAtUtc = [DateTimeOffset]::UtcNow.ToString("O")
+        sourceCommit = [string]$readiness.source.commit
+        productVersion = [string]$readiness.productVersion
+        readinessReportSha256 = $readinessHash
+        publisherSubject = $certificate.Subject
+        certificateThumbprint = $certificate.Thumbprint.ToUpperInvariant()
+        timestampUrl = $TimestampUrl
+        artifacts = $signedArtifacts
+    }
+    $resultDirectory = Split-Path -Parent $resultPath
+    New-Item -ItemType Directory -Path $resultDirectory -Force | Out-Null
+    $temporaryResult = Join-Path $resultDirectory ('.signing-result.' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporaryResult -Encoding utf8
+    Move-Item -LiteralPath $temporaryResult -Destination $resultPath -Force
 }
 Write-Host "Signing and verification passed for $($executables.Count) runtime executable(s)." -ForegroundColor Green
 
