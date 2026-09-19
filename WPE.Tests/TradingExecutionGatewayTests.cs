@@ -186,6 +186,7 @@ public sealed class TradingExecutionGatewayTests:IDisposable
         Assert.Contains("ProviderCapabilityProbe",source,StringComparison.Ordinal);
         Assert.Contains("var recoveryServices=await ProductionRecoveryComposition.CreateAsync(exchange,executor,Db",source,StringComparison.Ordinal);
         Assert.Contains("var executionGateway=recoveryServices.Gateway;",source,StringComparison.Ordinal);
+        Assert.Contains("var automaticGateway=new TradingAutomaticExecutionGateway(executionGateway,exchange,Db,realtime);",source,StringComparison.Ordinal);
         Assert.Contains("ExecutePositionManagementRecoveryAsync(recoveryServices.Recovery",source,StringComparison.Ordinal);
         Assert.DoesNotContain("var executionGateway=new TradingExecutionGateway(executor,Db);",source,StringComparison.Ordinal);
         Assert.DoesNotContain("new TradingExecutionGateway(new ",source,StringComparison.Ordinal);

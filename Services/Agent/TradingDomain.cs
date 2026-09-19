@@ -37,12 +37,15 @@ internal static class ConfirmedMarketCandlesV1
     internal static TimeSpan Duration(string interval)=>interval switch{"1m"=>TimeSpan.FromMinutes(1),"5m"=>TimeSpan.FromMinutes(5),"15m"=>TimeSpan.FromMinutes(15),"1h"=>TimeSpan.FromHours(1),"4h"=>TimeSpan.FromHours(4),"1d"=>TimeSpan.FromDays(1),_=>throw new ArgumentException("Unsupported market interval.",nameof(interval))};
     private static bool Valid(CandleEvidence x)=>x.Open>0&&x.High>0&&x.Low>0&&x.Close>0&&x.Low<=Math.Min(x.Open,x.Close)&&x.High>=Math.Max(x.Open,x.Close)&&x.High>=x.Low&&x.Volume>=0&&x.QuoteVolume>=0&&x.Trades>=0&&x.TakerBuyVolume>=0;
 }
-public sealed record RealtimeMarketSnapshot(string Symbol,decimal LastPrice,decimal BestBid,decimal BestAsk,decimal BidQuantity,decimal AskQuantity,decimal BuyVolume5m,decimal SellVolume5m,decimal LastMinuteVolume,DateTime UpdatedAt,long Messages,bool Connected)
+public sealed record RealtimeMarketSnapshot(string Symbol,decimal LastPrice,decimal BestBid,decimal BestAsk,decimal BidQuantity,decimal AskQuantity,decimal BuyVolume5m,decimal SellVolume5m,decimal LastMinuteVolume,DateTime UpdatedAt,DateTime BookUpdatedAt,long Messages,bool Connected)
 {
+    public RealtimeMarketSnapshot(string Symbol,decimal LastPrice,decimal BestBid,decimal BestAsk,decimal BidQuantity,decimal AskQuantity,decimal BuyVolume5m,decimal SellVolume5m,decimal LastMinuteVolume,DateTime UpdatedAt,long Messages,bool Connected)
+        :this(Symbol,LastPrice,BestBid,BestAsk,BidQuantity,AskQuantity,BuyVolume5m,SellVolume5m,LastMinuteVolume,UpdatedAt,UpdatedAt,Messages,Connected){}
     public double SpreadBps=>BestBid>0&&BestAsk>=BestBid?(double)((BestAsk-BestBid)/((BestAsk+BestBid)/2)*10000):999;
     public double OrderFlowImbalance=>BuyVolume5m+SellVolume5m>0?(double)((BuyVolume5m-SellVolume5m)/(BuyVolume5m+SellVolume5m)):0;
     public bool Fresh=>Connected&&DateTime.UtcNow-UpdatedAt<TimeSpan.FromSeconds(15);
-    public bool EligibleForEnrichment=>Fresh&&LastPrice>0&&BestBid>0&&BestAsk>=BestBid&&BidQuantity>=0&&AskQuantity>=0;
+    public bool BookFresh=>Connected&&BookUpdatedAt.Kind==DateTimeKind.Utc&&BookUpdatedAt<=DateTime.UtcNow&&DateTime.UtcNow-BookUpdatedAt<TimeSpan.FromSeconds(15);
+    public bool EligibleForEnrichment=>Fresh&&BookFresh&&LastPrice>0&&BestBid>0&&BestAsk>=BestBid&&BidQuantity>=0&&AskQuantity>=0;
 }
 public sealed record RealtimeAgentEvent(string EventType,string Symbol,string Status,string Summary,DateTime OccurredAt,string PayloadHash);
 public sealed class MarketQualityEvidence
