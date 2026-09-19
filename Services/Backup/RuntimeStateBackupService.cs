@@ -69,6 +69,7 @@ public sealed class RuntimeStateBackupService
     {
         ArgumentNullException.ThrowIfNull(maintenanceLease);
         maintenanceLease.RequireExclusiveFor(_layout.RuntimeFile(DataRootMaintenanceLease.LeaseFileName));
+        // Exclusive maintenance owns the data root, so release any pooled SQLite handles\n        // retained by earlier same-process verification/setup before snapshotting files.\n        SqliteConnection.ClearAllPools();
         if (string.IsNullOrWhiteSpace(destinationRoot))
             throw new ArgumentException("Backup destination root is required.", nameof(destinationRoot));
         if (!_keyProtector.IsAvailable)
