@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using WpeAgent.RuntimeContracts;
+using 币安量化机器人.Services;
 
 namespace WpeAgent.RuntimeServices;
 
@@ -49,34 +50,114 @@ public sealed class RuntimeHistoricalCollectionStateStore
             r => new HistoricalAuditEventV1(Safe(r.GetString(0),120), Instant(r.GetString(1)), Safe(r.GetString(2),80), Safe(r.GetString(3),80), Text(r,4,120), "RECORDED"), ct);
 
 
-    public Task<HistoricalCollectionPageV1<HistoricalPostTradeReviewV1>> ReadPostTradeReviewsAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default) =>
-        ReadAsync(HistoricalCollectionKindV1.PostTradeReviews, request, "trade_outcomes", "closed_at", null,
-            "SELECT client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,fees,fee_basis,fee_rate,entry_slippage_amount,exit_slippage_amount,total_slippage_amount,slippage_basis,funding_amount,funding_basis,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis FROM trade_outcomes WHERE client_order_id IS NOT NULL ORDER BY closed_at DESC,id DESC LIMIT $limit OFFSET $offset",
-            r => new HistoricalPostTradeReviewV1(
-                "wpe.post-trade-review/1.4",
-                Safe(r.GetString(0),120),
-                Safe(r.GetString(1),120),
-                Safe(r.GetString(2),80),
-                Safe(r.GetString(3),20),
-                Decimal(r,4),
-                Decimal(r,5),
-                Decimal(r,6),
-                Decimal(r,7),
-                Safe(r.GetString(8),80),
-                Decimal(r,9),
-                Decimal(r,10),
-                Decimal(r,11),
-                Decimal(r,12),
-                Safe(r.GetString(13),80),
-                Decimal(r,14),
-                Safe(r.GetString(15),80),
-                Decimal(r,16),
-                Decimal(r,17),
-                Decimal(r,16)>0?"win":Decimal(r,16)<0?"loss":"flat",
-                Instant(r.GetString(18)),
-                Text(r,19,120),
-                Safe(r.GetString(20),80),
-                Safe(r.GetString(21),80)), ct);
+    public async Task<HistoricalCollectionPageV1<HistoricalPostTradeReviewV1>> ReadPostTradeReviewsAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var kind=HistoricalCollectionKindV1.PostTradeReviews;
+        var limit=Math.Clamp(request.Limit,1,HistoricalCollectionPageV1<HistoricalPostTradeReviewV1>.MaximumPageSize);
+        if(!TryOffset(kind,request.Cursor,out var offset))return Page<HistoricalPostTradeReviewV1>(kind,RuntimeCollectionState.Error,[],null,null,"The collection cursor is invalid or expired.");
+        try
+        {
+            await using var connection=new SqliteConnection(_connectionString);await connection.OpenAsync(ct);
+            if(!await TableExists(connection,"trade_outcomes",ct))return Page<HistoricalPostTradeReviewV1>(kind,RuntimeCollectionState.Unsupported,[],null,null,"The SQLite post-trade collection is not available.");
+            var updatedAt=await Latest(connection,"trade_outcomes","closed_at",ct);
+            var raw=new List<RawPostTradeReview>(limit+1);
+            await using(var command=connection.CreateCommand())
+            {
+                command.CommandText="SELECT client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,fees,fee_basis,fee_rate,entry_slippage_amount,exit_slippage_amount,total_slippage_amount,slippage_basis,funding_amount,funding_basis,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis FROM trade_outcomes WHERE client_order_id IS NOT NULL AND cycle_id IS NOT NULL ORDER BY closed_at DESC,id DESC LIMIT $limit OFFSET $offset";
+                command.Parameters.AddWithValue("$limit",limit+1);command.Parameters.AddWithValue("$offset",offset);
+                await using var reader=await command.ExecuteReaderAsync(ct);
+                while(await reader.ReadAsync(ct))
+                {
+                    var clientOrderId=Safe(reader.GetString(0),120);if(string.IsNullOrWhiteSpace(clientOrderId))throw new InvalidOperationException("Post-trade close identity is invalid.");
+                    var cycleId=reader.GetString(1);if(string.IsNullOrWhiteSpace(cycleId))throw new InvalidOperationException("Post-trade cycle identity is invalid.");
+                    var net=Decimal(reader,16);
+                    raw.Add(new(
+                        cycleId,
+                        Safe(reader.GetString(2),80),
+                        Safe(reader.GetString(3),20),
+                        Decimal(reader,4),
+                        Decimal(reader,5),
+                        Decimal(reader,6),
+                        Decimal(reader,7),
+                        Safe(reader.GetString(8),80),
+                        Decimal(reader,9),
+                        Decimal(reader,10),
+                        Decimal(reader,11),
+                        Decimal(reader,12),
+                        Safe(reader.GetString(13),80),
+                        Decimal(reader,14),
+                        Safe(reader.GetString(15),80),
+                        net,
+                        Decimal(reader,17),
+                        net>0?"win":net<0?"loss":"flat",
+                        Instant(reader.GetString(18)),
+                        Text(reader,19,120),
+                        Safe(reader.GetString(20),80),
+                        Safe(reader.GetString(21),80)));
+                }
+            }
+            var hasMore=raw.Count>limit;if(hasMore)raw.RemoveAt(raw.Count-1);
+            var queueAvailable=await TableExists(connection,"automatic_execution_queue",ct);
+            var eventsAvailable=await TableExists(connection,"automatic_execution_events",ct);
+            var items=new List<HistoricalPostTradeReviewV1>(raw.Count);
+            foreach(var row in raw)
+            {
+                var trace=await ReadPostTradeTraceAsync(connection,row.CycleId,queueAvailable,eventsAvailable,ct);
+                items.Add(new(
+                    trace.TraceId,
+                    "wpe.post-trade-review/1.4",
+                    row.Symbol,row.Side,row.EntryPrice,row.ExitPrice,row.Quantity,row.Fees,row.FeeBasis,row.FeeRate,
+                    row.EntrySlippageAmount,row.ExitSlippageAmount,row.TotalSlippageAmount,row.SlippageBasis,
+                    row.FundingAmount,row.FundingBasis,row.NetPnl,row.ReturnPct,row.Outcome,row.ClosedAtUtc,
+                    row.StrategyId,row.StrategyVersion,row.AttributionBasis,
+                    trace.TraceState,trace.RiskDecision,trace.ExecutionStatus,trace.ExecutionCode,trace.ExecutionAttempts,
+                    trace.MarketCollectedAtUtc,trace.MarketDataVersion));
+            }
+            return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count):null,updatedAt,null);
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch{return Page<HistoricalPostTradeReviewV1>(kind,RuntimeCollectionState.Error,[],null,null,"The SQLite post-trade reviews could not be read.");}
+    }
+
+    private async Task<PostTradeExecutionTrace> ReadPostTradeTraceAsync(SqliteConnection connection,string cycleId,bool queueAvailable,bool eventsAvailable,CancellationToken ct)
+    {
+        var traceId=SensitiveDataRedactor.MaskIdentifier(cycleId,"trade");
+        if(!queueAvailable)return new(traceId,"legacy","Unavailable","Unavailable","trace.queue-unavailable",null,null,null);
+        var rows=new List<(string Id,string Status,string Code,int Attempts,DateTimeOffset? MarketAt,string? MarketVersion)>(2);
+        await using(var command=connection.CreateCommand())
+        {
+            command.CommandText="SELECT execution_id,status,last_code,attempt_count,market_collected_at,market_data_version FROM automatic_execution_queue WHERE correlation_id=$cycle ORDER BY updated_at DESC,execution_id DESC LIMIT 2";
+            command.Parameters.AddWithValue("$cycle",cycleId);
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var attempts=reader.GetInt32(3);if(attempts<0)throw new InvalidOperationException("Execution attempt count is invalid.");
+                var marketAt=reader.IsDBNull(4)?null:Instant(reader.GetString(4));
+                rows.Add((reader.GetString(0),Safe(reader.GetString(1),40),Safe(reader.GetString(2),120),attempts,marketAt,Text(reader,5,80)));
+            }
+        }
+        if(rows.Count==0)return new(traceId,"legacy","Unavailable","Unavailable","trace.execution-unavailable",null,null,null);
+        if(rows.Count!=1)return new(traceId,"ambiguous","Ambiguous","Ambiguous","trace.multiple-executions",null,null,null);
+        var row=rows[0];
+        var risk="Unavailable";
+        if(eventsAvailable)
+        {
+            var approved=0;var blocked=0;
+            await using var command=connection.CreateCommand();
+            command.CommandText="SELECT to_status,COUNT(*) FROM automatic_execution_events WHERE execution_id=$id AND to_status IN ('RiskApproved','RiskBlocked') GROUP BY to_status";
+            command.Parameters.AddWithValue("$id",row.Id);
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var count=reader.GetInt32(1);if(count<0)throw new InvalidOperationException("Risk event count is invalid.");
+                if(string.Equals(reader.GetString(0),"RiskApproved",StringComparison.Ordinal))approved+=count;
+                else if(string.Equals(reader.GetString(0),"RiskBlocked",StringComparison.Ordinal))blocked+=count;
+            }
+            risk=approved>0&&blocked==0?"Approved":blocked>0&&approved==0?"Blocked":approved==0&&blocked==0?"Unavailable":"Conflicting";
+        }
+        return new(traceId,"available",risk,row.Status,row.Code,row.Attempts,row.MarketAt,row.MarketVersion);
+    }
 
     public async Task<HistoricalCollectionPageV1<HistoricalReconciliationV1>> ReadReconciliationsAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default)
     {
@@ -172,6 +253,13 @@ public sealed class RuntimeHistoricalCollectionStateStore
         }
         catch{return false;}
     }
+    private sealed record RawPostTradeReview(
+        string CycleId,string Symbol,string Side,decimal EntryPrice,decimal ExitPrice,decimal Quantity,decimal Fees,string FeeBasis,decimal FeeRate,
+        decimal EntrySlippageAmount,decimal ExitSlippageAmount,decimal TotalSlippageAmount,string SlippageBasis,decimal FundingAmount,string FundingBasis,
+        decimal NetPnl,decimal ReturnPct,string Outcome,DateTimeOffset ClosedAtUtc,string? StrategyId,string StrategyVersion,string AttributionBasis);
+    private sealed record PostTradeExecutionTrace(
+        string TraceId,string TraceState,string RiskDecision,string ExecutionStatus,string ExecutionCode,int? ExecutionAttempts,DateTimeOffset? MarketCollectedAtUtc,string? MarketDataVersion);
+
     private static DateTimeOffset Instant(string value)=>DateTimeOffset.Parse(value,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind).ToUniversalTime();
     private static decimal Decimal(SqliteDataReader r,int i)=>decimal.Parse(r.GetString(i),NumberStyles.Number,CultureInfo.InvariantCulture);
     private static decimal? NullableDecimal(SqliteDataReader r,int i)=>r.IsDBNull(i)?null:Decimal(r,i);
