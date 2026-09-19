@@ -10,7 +10,9 @@ public sealed record ExecutionRealityRecordResultV1(
     bool Idempotent,
     bool FeeComparable,
     string Code,
-    string? CanonicalSha256);
+    string? CanonicalSha256,
+    bool ComparisonRecorded = false,
+    string? ComparisonCanonicalSha256 = null);
 
 public sealed class ExecutionRealityRecorderV1
 {
@@ -27,9 +29,7 @@ public sealed class ExecutionRealityRecorderV1
         string correlationId,
         ExecutionIntent intent,
         ExchangeOrder order,
-        DateTimeOffset intendedAtUtc,
         ExecutionRealityCostAssumptionV1 costs,
-        string fallbackStrategyVersion,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(intent);
@@ -44,8 +44,6 @@ public sealed class ExecutionRealityRecorderV1
             throw new ArgumentOutOfRangeException(nameof(costs), "Commission rate is invalid.");
         if (costs.SlippageRate < 0 || costs.SlippageRate >= 1)
             throw new ArgumentOutOfRangeException(nameof(costs), "Slippage rate is invalid.");
-        if (intendedAtUtc == default || intendedAtUtc.Offset != TimeSpan.Zero)
-            throw new ArgumentException("Intended time must be UTC.", nameof(intendedAtUtc));
         if (!string.Equals(intent.ClientOrderId, order.ClientOrderId, StringComparison.Ordinal))
             throw new InvalidOperationException("Execution order identity does not match the intended client order id.");
         if (!string.Equals(intent.Symbol, order.Symbol, StringComparison.Ordinal))
@@ -53,12 +51,15 @@ public sealed class ExecutionRealityRecorderV1
         if (intent.ExpectedPrice <= 0)
             return new(false, false, false, "expected-price-unavailable", null);
 
-        var attribution = await _store.GetExecutionRealityAttributionAsync(
+        var authority = await _store.GetExecutionRealityIntentAuthorityAsync(
             correlationId,
-            fallbackStrategyVersion,
+            intent,
             ct);
-        if (string.IsNullOrWhiteSpace(attribution.StrategyId))
-            return new(false, false, false, "strategy-attribution-" + attribution.Basis, null);
+        if (!authority.Bound
+            || string.IsNullOrWhiteSpace(authority.StrategyId)
+            || string.IsNullOrWhiteSpace(authority.StrategyVersion)
+            || authority.ExecutionStartedAtUtc is null)
+            return new(false, false, false, "intent-authority-" + authority.Code, null);
 
         var fee = await _store.GetExecutionRealityFeeObservationAsync(
             order.ClientOrderId,
@@ -68,8 +69,8 @@ public sealed class ExecutionRealityRecorderV1
         var expectation = new ExecutionRealityExpectationV1(
             correlationId,
             intent.ClientOrderId,
-            attribution.StrategyId,
-            attribution.StrategyVersion,
+            authority.StrategyId,
+            authority.StrategyVersion,
             costs.Version,
             intent.Symbol,
             intent.Side,
@@ -79,7 +80,7 @@ public sealed class ExecutionRealityRecorderV1
             intent.ExpectedPrice,
             costs.CommissionRate,
             costs.SlippageRate,
-            intendedAtUtc);
+            authority.ExecutionStartedAtUtc.Value);
         var observation = new ExecutionRealityObservationV1(
             order.ClientOrderId,
             order.Status,
@@ -91,6 +92,35 @@ public sealed class ExecutionRealityRecorderV1
             now);
         var fact = ExecutionRealityDriftV1.Analyze(expectation, observation);
         var persisted = await _store.SaveExecutionRealityDriftAsync(fact, ct);
-        return new(true, persisted.Idempotent, fact.FeeComparable, persisted.Code, fact.CanonicalSha256);
+
+        var simulated = await _store.GetExecutionSimulationIntentEvidenceAsync(
+            correlationId,
+            intent.ClientOrderId,
+            ct);
+        if (simulated is null)
+            return new(true, persisted.Idempotent, fact.FeeComparable, persisted.Code, fact.CanonicalSha256);
+
+        var comparedAt = _utcNow().ToUniversalTime();
+        if (comparedAt < fact.ObservedAtUtc)
+            comparedAt = fact.ObservedAtUtc;
+        if (comparedAt < simulated.Fill.SimulatedAtUtc)
+            comparedAt = simulated.Fill.SimulatedAtUtc;
+
+        var comparison = ExecutionSimulationComparisonCanonicalizerV1.Create(
+            simulated.Fill,
+            fact,
+            comparedAt);
+        var comparisonPersisted = await _store.SaveExecutionSimulationComparisonAsync(
+            comparison,
+            ct);
+
+        return new(
+            true,
+            persisted.Idempotent,
+            fact.FeeComparable,
+            persisted.Code,
+            fact.CanonicalSha256,
+            true,
+            comparison.CanonicalSha256);
     }
 }
