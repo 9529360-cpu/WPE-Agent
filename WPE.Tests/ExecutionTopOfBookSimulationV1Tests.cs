@@ -95,7 +95,7 @@ public sealed class ExecutionTopOfBookSimulationV1Tests : IDisposable
     public void VenueRuleViolationIsUnsupportedNotRoundedIntoA DifferentOrder()
     {
         var bundle = Bundle(
-            Artifact(quantity:.15m),
+            Artifact(quantity:0.15m),
             Snapshot(),
             new TradingRule("BTCUSDT", .1m, .1m, .1m, 5m, 20),
             Now);
