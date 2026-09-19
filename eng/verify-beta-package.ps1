@@ -160,6 +160,9 @@ foreach ($artifact in $runtimeArtifacts) {
     if ($signature.Status -notin @([System.Management.Automation.SignatureStatus]::Valid, [System.Management.Automation.SignatureStatus]::NotSigned)) {
         throw "Runtime package executable has invalid Authenticode state: $($artifact.Label):$($signature.Status)"
     }
+    if ($signature.Status -eq [System.Management.Automation.SignatureStatus]::Valid -and $null -eq $signature.TimeStamperCertificate) {
+        throw "Runtime package executable timestamp is missing: $($artifact.Label)"
+    }
     $artifactStates.Add([pscustomobject]@{ Label=$artifact.Label; Root=$artifact.Root; Executable=$executables[0]; Readiness=$artifact.Readiness; Facts=$facts; Signature=$signature })
 }
 $allSigned = @($artifactStates | Where-Object { $_.Signature.Status -eq [System.Management.Automation.SignatureStatus]::Valid }).Count -eq 3
