@@ -44,7 +44,7 @@ public sealed record RealtimeMarketSnapshot(string Symbol,decimal LastPrice,deci
     public double SpreadBps=>BestBid>0&&BestAsk>=BestBid?(double)((BestAsk-BestBid)/((BestAsk+BestBid)/2)*10000):999;
     public double OrderFlowImbalance=>BuyVolume5m+SellVolume5m>0?(double)((BuyVolume5m-SellVolume5m)/(BuyVolume5m+SellVolume5m)):0;
     public bool Fresh=>Connected&&DateTime.UtcNow-UpdatedAt<TimeSpan.FromSeconds(15);
-    public bool BookFresh=>Connected&&DateTime.UtcNow-BookUpdatedAt<TimeSpan.FromSeconds(15);
+    public bool BookFresh=>Connected&&BookUpdatedAt.Kind==DateTimeKind.Utc&&BookUpdatedAt<=DateTime.UtcNow&&DateTime.UtcNow-BookUpdatedAt<TimeSpan.FromSeconds(15);
     public bool EligibleForEnrichment=>Fresh&&BookFresh&&LastPrice>0&&BestBid>0&&BestAsk>=BestBid&&BidQuantity>=0&&AskQuantity>=0;
 }
 public sealed record RealtimeAgentEvent(string EventType,string Symbol,string Status,string Summary,DateTime OccurredAt,string PayloadHash);
