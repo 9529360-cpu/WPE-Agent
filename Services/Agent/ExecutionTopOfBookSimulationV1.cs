@@ -312,8 +312,11 @@ public static class ExecutionTopOfBookSimulationV1
             || source.IntendedQuantity <= 0
             || source.ExpectedPrice <= 0
             || source.SimulatedAtUtc == default
-            || source.SimulatedAtUtc.Offset != TimeSpan.Zero
-            || !LowerSha(source.SimulatedFillSha256))
+            || source.SimulatedAtUtc.Offset != TimeSpan.Zero)
+            return false;
+
+        if (!string.IsNullOrEmpty(source.SimulatedFillSha256)
+            && !LowerSha(source.SimulatedFillSha256))
             return false;
 
         if (source.RuleAvailable)
@@ -360,7 +363,8 @@ public static class ExecutionTopOfBookSimulationV1
             return true;
 
         return source.CanonicalBytes.Length > 0
-            && LowerSha(source.CanonicalSha256);
+            && LowerSha(source.CanonicalSha256)
+            && LowerSha(source.SimulatedFillSha256);
     }
 
     private static bool IntentPassesRule(ExecutionSimulationSourceV1 source)
