@@ -178,6 +178,7 @@ public static class RuntimeSnapshotFactory
             HistoricalBacktests = Historical(history.Backtests),
             HistoricalSkillCalls = Historical(history.SkillCalls),
             HistoricalAuditEvents = Historical(history.AuditEvents),
+            HistoricalPostTradePnlDrift = Historical(history.PostTradePnlDrift),
             ConnectionStatus = new(connectionCollectionState,connectionCollectionState==RuntimeCollectionState.Available?runtimeConnection.Value:null,SafeMessage(connectionCollectionState,connectionMessage,"Connection readiness check failed.",generatedAtUtc)),
             StrategyRegistry = new(strategyRegistryCollectionState,strategyRegistryCollectionState==RuntimeCollectionState.Available?runtimeStrategyRegistry.Profiles.Select(x=>x with{LastReason=UiDiagnostic.SafeText(x.LastReason)}).ToArray():Array.Empty<RuntimeStrategyProfileV1>(),SafeMessage(strategyRegistryCollectionState,strategyRegistryMessage,"Strategy registry read failed.",generatedAtUtc)),
             StrategyLifecycleEvents = new(strategyRegistryCollectionState,strategyRegistryCollectionState==RuntimeCollectionState.Available?runtimeStrategyRegistry.Events.Select(x=>x with{Reason=UiDiagnostic.SafeText(x.Reason)}).ToArray():Array.Empty<RuntimeStrategyLifecycleEventV1>(),SafeMessage(strategyRegistryCollectionState,strategyRegistryMessage,"Strategy lifecycle read failed.",generatedAtUtc)),
