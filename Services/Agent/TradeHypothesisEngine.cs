@@ -175,21 +175,26 @@ public sealed class TradeHypothesisEngine
             ? market.Trend15m > previous.LastTrend15m + .08 || market.Rsi > previous.LastRsi + 4
             : market.Trend15m < previous.LastTrend15m - .08 || market.Rsi < previous.LastRsi - 4;
 
-        var bookImproved = longSide
+        var bookAvailable = !market.Quality.Anomalies.Contains("order_book_missing",StringComparer.OrdinalIgnoreCase);
+        var bookImproved = bookAvailable && (longSide
             ? market.Quality.OrderBookImbalance > previous.LastOrderBookImbalance + .20
-            : market.Quality.OrderBookImbalance < previous.LastOrderBookImbalance - .20;
-        var bookPersistentlySupportive = longSide
+            : market.Quality.OrderBookImbalance < previous.LastOrderBookImbalance - .20);
+        var bookPersistentlySupportive = bookAvailable && (longSide
             ? previous.LastOrderBookImbalance >= .35 && market.Quality.OrderBookImbalance >= .35
-            : previous.LastOrderBookImbalance <= -.35 && market.Quality.OrderBookImbalance <= -.35;
+            : previous.LastOrderBookImbalance <= -.35 && market.Quality.OrderBookImbalance <= -.35);
 
         var takerAvailable = market.Derivatives.TakerBuySellRatio > 0;
         var takerReclaimed = takerAvailable && (longSide
             ? market.Derivatives.TakerBuySellRatio >= 1m
             : market.Derivatives.TakerBuySellRatio <= 1m);
+        var flowReclaimed = market.Quality.OrderFlowAvailable && (longSide
+            ? market.Quality.OrderFlowImbalance >= 0
+            : market.Quality.OrderFlowImbalance <= 0);
 
-        var microstructureNoLongerHostile = longSide
-            ? market.Quality.OrderBookImbalance > -.20 || takerReclaimed
-            : market.Quality.OrderBookImbalance < .20 || takerReclaimed;
+        var bookNoLongerHostile = bookAvailable && (longSide
+            ? market.Quality.OrderBookImbalance > -.20
+            : market.Quality.OrderBookImbalance < .20);
+        var microstructureNoLongerHostile = bookNoLongerHostile || flowReclaimed || takerReclaimed;
 
         var shortTermConfirmed = longSide
             ? market.Trend15m >= 0 && market.Rsi >= Math.Max(32, previous.LastRsi)
@@ -425,13 +430,20 @@ public sealed class TradeHypothesisEngine
         double.IsFinite(market.Trend1h) &&
         double.IsFinite(market.Trend4h) &&
         double.IsFinite(market.Quality.AtrPercent) &&
-        double.IsFinite(market.Quality.OrderBookImbalance);
+        double.IsFinite(market.Quality.OrderBookImbalance) &&
+        double.IsFinite(market.Quality.OrderFlowImbalance);
 
     private static IReadOnlyList<string> Evidence(MarketEvidence market)
     {
         var taker = market.Derivatives.TakerBuySellRatio > 0
             ? $"taker_buy_sell={market.Derivatives.TakerBuySellRatio:F3}"
             : "taker_buy_sell=unavailable";
+        var flow = market.Quality.OrderFlowAvailable
+            ? $"order_flow_5m={market.Quality.OrderFlowImbalance:F3}"
+            : "order_flow_5m=unavailable";
+        var book = market.Quality.Anomalies.Contains("order_book_missing",StringComparer.OrdinalIgnoreCase)
+            ? "order_book=unavailable"
+            : $"order_book={market.Quality.OrderBookImbalance:F3}";
         return
         [
             $"price={market.Price:F2}",
@@ -441,7 +453,8 @@ public sealed class TradeHypothesisEngine
             $"trend1h={market.Trend1h:F3}%",
             $"trend4h={market.Trend4h:F3}%",
             $"rsi={market.Rsi:F1}",
-            $"order_book={market.Quality.OrderBookImbalance:F3}",
+            book,
+            flow,
             taker,
             $"market_quality={market.Quality.QualityScore}"
         ];

@@ -40,7 +40,8 @@ internal static class ConfirmedMarketCandlesV1
 public sealed record RealtimeMarketSnapshot(string Symbol,decimal LastPrice,decimal BestBid,decimal BestAsk,decimal BidQuantity,decimal AskQuantity,decimal BuyVolume5m,decimal SellVolume5m,decimal LastMinuteVolume,DateTime UpdatedAt,long Messages,bool Connected)
 {
     public double SpreadBps=>BestBid>0&&BestAsk>=BestBid?(double)((BestAsk-BestBid)/((BestAsk+BestBid)/2)*10000):999;
-    public double OrderFlowImbalance=>BuyVolume5m+SellVolume5m>0?(double)((BuyVolume5m-SellVolume5m)/(BuyVolume5m+SellVolume5m)):0;
+    public bool HasOrderFlow=>BuyVolume5m+SellVolume5m>0;
+    public double OrderFlowImbalance=>HasOrderFlow?(double)((BuyVolume5m-SellVolume5m)/(BuyVolume5m+SellVolume5m)):0;
     public bool Fresh=>Connected&&DateTime.UtcNow-UpdatedAt<TimeSpan.FromSeconds(15);
     public bool EligibleForEnrichment=>Fresh&&LastPrice>0&&BestBid>0&&BestAsk>=BestBid&&BidQuantity>=0&&AskQuantity>=0;
 }
@@ -51,6 +52,8 @@ public sealed class MarketQualityEvidence
     public decimal BestAsk { get; init; }
     public double SpreadBps { get; init; }
     public double OrderBookImbalance { get; init; }
+    public double OrderFlowImbalance { get; init; }
+    public bool OrderFlowAvailable { get; init; }
     public double AtrPercent { get; init; } = .01;
     public double RealizedVolatility { get; init; } = .01;
     public double RelativeVolume { get; init; } = 1;

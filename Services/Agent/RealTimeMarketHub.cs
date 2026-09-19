@@ -39,7 +39,23 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
     }
     public MarketEvidence Enrich(MarketEvidence market)
     {
-        var live=GetSnapshot(market.Symbol);if(live is null||!live.EligibleForEnrichment)return market;var flow=live.OrderFlowImbalance;var spread=live.SpreadBps;var liquidity=Math.Clamp((1-Math.Min(1,spread/20))*.45+Math.Min(1,(double)((live.BidQuantity+live.AskQuantity)*live.LastPrice/1_000_000m))*.25+Math.Min(1,(double)(live.BuyVolume5m+live.SellVolume5m)/1000)*.30,0,1);var anomalies=market.Quality.Anomalies.Where(x=>x!="book_ticker_missing"&&x!="order_book_missing").ToArray();var quality=new MarketQualityEvidence{BestBid=live.BestBid,BestAsk=live.BestAsk,SpreadBps=spread,OrderBookImbalance=flow,AtrPercent=market.Quality.AtrPercent,RealizedVolatility=market.Quality.RealizedVolatility,RelativeVolume=market.Quality.RelativeVolume,LiquidityScore=Math.Max(market.Quality.LiquidityScore,liquidity),LiquidationIntensity=market.Quality.LiquidationIntensity,ClockSkewMilliseconds=market.Quality.ClockSkewMilliseconds,SourceCount=market.Quality.SourceCount+1,QualityScore=Math.Min(100,market.Quality.QualityScore+5),Anomalies=anomalies};return market with{Price=live.LastPrice,CollectedAt=live.UpdatedAt,Quality=quality};
+        var live=GetSnapshot(market.Symbol);
+        if(live is null||!live.EligibleForEnrichment)return market;
+        return market with{Price=live.LastPrice,CollectedAt=live.UpdatedAt,Quality=MergeQuality(market.Quality,live)};
+    }
+    internal static MarketQualityEvidence MergeQuality(MarketQualityEvidence baseline,RealtimeMarketSnapshot live)
+    {
+        var spread=live.SpreadBps;
+        var liquidity=Math.Clamp((1-Math.Min(1,spread/20))*.45+Math.Min(1,(double)((live.BidQuantity+live.AskQuantity)*live.LastPrice/1_000_000m))*.25+Math.Min(1,(double)(live.BuyVolume5m+live.SellVolume5m)/1000)*.30,0,1);
+        var anomalies=baseline.Anomalies.Where(x=>x!="book_ticker_missing").ToArray();
+        return new MarketQualityEvidence{
+            BestBid=live.BestBid,BestAsk=live.BestAsk,SpreadBps=spread,
+            OrderBookImbalance=baseline.OrderBookImbalance,
+            OrderFlowImbalance=live.OrderFlowImbalance,OrderFlowAvailable=live.HasOrderFlow,
+            AtrPercent=baseline.AtrPercent,RealizedVolatility=baseline.RealizedVolatility,RelativeVolume=baseline.RelativeVolume,
+            LiquidityScore=Math.Max(baseline.LiquidityScore,liquidity),LiquidationIntensity=baseline.LiquidationIntensity,
+            ClockSkewMilliseconds=baseline.ClockSkewMilliseconds,SourceCount=baseline.SourceCount+1,
+            QualityScore=Math.Min(100,baseline.QualityScore+5),Anomalies=anomalies};
     }
     private async Task MarketLoopAsync(CancellationToken ct)
     {

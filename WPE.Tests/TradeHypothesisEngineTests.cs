@@ -47,6 +47,34 @@ public sealed class TradeHypothesisEngineTests
     }
 
     [Fact]
+    public void RealtimeBuyFlowCanUnblockScoutWhenDepthBookIsStillHostile()
+    {
+        var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var improved=Market(81105m,80906m,81805.3m,34,-.18,-.12,5.05,-.75,flowAvailable:true,flow:.40);
+
+        var scout=TradeHypothesisEngine.EvaluateMarket(improved,watching,[],Now.AddMinutes(1));
+
+        Assert.Equal(TradeHypothesisStage.ScoutReady,scout.Stage);
+        Assert.True(scout.Actionable);
+        Assert.Contains("order_flow_5m=0.400",scout.Evidence);
+    }
+
+    [Fact]
+    public void MissingDepthDoesNotCountAsNeutralMicrostructure()
+    {
+        var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var improvedButDepthMissing=Market(81105m,80906m,81805.3m,34,-.18,-.12,5.05,0,bookAvailable:false);
+
+        var stillWatching=TradeHypothesisEngine.EvaluateMarket(improvedButDepthMissing,watching,[],Now.AddMinutes(1));
+
+        Assert.Equal(TradeHypothesisStage.Watching,stillWatching.Stage);
+        Assert.False(stillWatching.Actionable);
+        Assert.Contains("order_book=unavailable",stillWatching.Evidence);
+    }
+
+    [Fact]
     public void PersistentlySupportiveOrderBookCanConfirmScoutWithoutNeedingImpossibleFurtherImprovement()
     {
         var first=Market(81117.2m,80906m,81715.8m,26.5,-.34,-.23,5.13,.99);
@@ -396,7 +424,10 @@ public sealed class TradeHypothesisEngineTests
         double trend15m,
         double trend1h,
         double trend4h,
-        double book) =>
+        double book,
+        bool flowAvailable=false,
+        double flow=0,
+        bool bookAvailable=true) =>
         new(
             "BTCUSDT",
             price,
@@ -415,11 +446,14 @@ public sealed class TradeHypothesisEngineTests
                 BestAsk=price+.5m,
                 SpreadBps=1.2,
                 OrderBookImbalance=book,
+                OrderFlowAvailable=flowAvailable,
+                OrderFlowImbalance=flow,
                 AtrPercent=.0015,
                 RealizedVolatility=.01,
                 RelativeVolume=1.2,
                 LiquidityScore=.95,
-                QualityScore=97
+                QualityScore=97,
+                Anomalies=bookAvailable?[]:["order_book_missing"]
             }
         };
 }

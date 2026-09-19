@@ -34,11 +34,15 @@ public sealed class SignalAggregationSkill
         Add("trend_1h","1h",market.Trend1h,.19,.012);
         Add("trend_4h","4h",market.Trend4h,.23,.025);
         Add("rsi","15m",market.Rsi-50,.08,20);
-        Add("order_flow","derivatives",(double)(market.Derivatives.TakerBuySellRatio-1),.08,.20);
+        if(market.Quality.OrderFlowAvailable)
+            Add("order_flow","realtime_5m",market.Quality.OrderFlowImbalance,.08,.35);
+        else if(market.Derivatives.TakerBuySellRatio>0)
+            Add("order_flow","derivatives",(double)(market.Derivatives.TakerBuySellRatio-1),.08,.20);
         Add("funding","derivatives",(double)-market.Derivatives.FundingRate,.04,.001);
         Add("crowd","derivatives",(double)(1-market.Derivatives.LongShortRatio),.04,.30);
         Add("basis","derivatives",(double)market.Derivatives.Basis,.03,.003);
-        Add("order_book","microstructure",market.Quality.OrderBookImbalance,.06,.35);
+        if(!market.Quality.Anomalies.Contains("order_book_missing",StringComparer.OrdinalIgnoreCase))
+            Add("order_book","microstructure",market.Quality.OrderBookImbalance,.06,.35);
             Add("relative_volume","volume",Math.Sign(market.Trend15m)*Math.Max(0,market.Quality.RelativeVolume-1),.04,1);
             if(localSignal is not null) Add("local_strategy","strategy",localSignal.Direction*localSignal.Confidence,.20,1);
 
@@ -75,6 +79,7 @@ public sealed class SignalAggregationSkill
     private static bool ValidMarket(MarketEvidence? market)=>market is not null&&market.Derivatives is not null&&MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)&&
         !string.IsNullOrWhiteSpace(market.Symbol)&&market.Price>0&&market.CollectedAt!=default&&market.CollectedAt.Kind==DateTimeKind.Utc&&
         market.Rsi is>=0 and<=100&&market.Support>0&&market.Resistance>0&&market.Support<=market.Resistance&&market.Quality.QualityScore is>=0 and<=100&&market.Quality.LiquidityScore is>=0 and<=1&&
+        (!market.Quality.OrderFlowAvailable||double.IsFinite(market.Quality.OrderFlowImbalance))&&
         Finite(market.Rsi,market.Trend15m,market.Trend1h,market.Trend4h,market.Quality.OrderBookImbalance,market.Quality.RelativeVolume,market.Quality.AtrPercent,market.Quality.LiquidationIntensity);
     private static bool Finite(params double[] values)=>values.All(double.IsFinite);
     private static MarketDecisionAssessment InvalidMarket(string? symbol)=>new()
