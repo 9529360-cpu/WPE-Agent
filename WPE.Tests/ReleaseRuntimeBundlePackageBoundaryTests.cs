@@ -17,6 +17,7 @@ public sealed class ReleaseRuntimeBundlePackageBoundaryTests
         Assert.Contains("Executable = \"WPE.Maintenance.exe\"",source,StringComparison.Ordinal);
         Assert.Contains("Runtime bundle signature states must be all Valid or all NotSigned.",source,StringComparison.Ordinal);
         Assert.Contains("Runtime bundle signer identity does not match the approved publisher.",source,StringComparison.Ordinal);
+        Assert.Contains("Runtime bundle executable timestamp is missing",source,StringComparison.Ordinal);
 
         Assert.Contains("$payloadRoot = Join-Path $packageRoot \"app\"",source,StringComparison.Ordinal);
         Assert.Contains("$headlessPayloadRoot = Join-Path $packageRoot \"headless\"",source,StringComparison.Ordinal);
@@ -48,6 +49,8 @@ public sealed class ReleaseRuntimeBundlePackageBoundaryTests
         Assert.Contains("[string]$ExpectedSignerThumbprint",source,StringComparison.Ordinal);
         Assert.Contains("Payload manifest does not exactly cover the runtime bundle files.",source,StringComparison.Ordinal);
         Assert.Contains("Runtime package signature states are mixed.",source,StringComparison.Ordinal);
+        Assert.Contains("Runtime package executable timestamp is missing",source,StringComparison.Ordinal);
+        Assert.Contains("TimeStamperCertificate",source,StringComparison.Ordinal);
         Assert.Contains("wpe.runtime-bundle-signing/1.0",source,StringComparison.Ordinal);
         Assert.Contains("Signing transition artifact facts do not match package bytes",source,StringComparison.Ordinal);
         Assert.Contains("Signed runtime bundle verification requires the approved signer subject and thumbprint.",source,StringComparison.Ordinal);
