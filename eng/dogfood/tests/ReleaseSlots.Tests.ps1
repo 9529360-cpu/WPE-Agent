@@ -97,6 +97,8 @@ try{
     foreach($name in $contract){Assert ($command -contains $name) "missing parameter $name"}
     $tokens=$null;$parseErrors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($test,[ref]$tokens,[ref]$parseErrors);Assert ($parseErrors.Count -eq 0) 'validator AST parse failed'
     $declared=@($ast.ParamBlock.Parameters|ForEach-Object {$_.Name.VariablePath.UserPath});Assert ((Compare-Object $contract $declared -SyncWindow 0).Count -eq 0) 'stable parameter order changed'
+    $switchTokens=$null;$switchParseErrors=$null;$null=[Management.Automation.Language.Parser]::ParseFile($switch,[ref]$switchTokens,[ref]$switchParseErrors);Assert ($switchParseErrors.Count -eq 0) 'slot switch AST parse failed'
+    $switchSource=Get-Content -Raw -LiteralPath $switch;Assert ([regex]::Matches($switchSource,'\$result=& \$test').Count -eq 1) 'slot switch validator invocation duplicated'
     $source=Join-Path $root 'package';New-Item -ItemType Directory -Path $source|Out-Null
     'payload'|Set-Content -LiteralPath (Join-Path $source 'app.bin') -Encoding ascii
     $canonicalPackage=Join-Path $root 'artifacts/beta-packages/verified-package';New-Item -ItemType Directory -Path (Split-Path $canonicalPackage -Parent) -Force|Out-Null;Copy-Item $source $canonicalPackage -Recurse
