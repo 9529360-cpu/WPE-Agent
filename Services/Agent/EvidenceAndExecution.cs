@@ -130,17 +130,39 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
 
     public async Task<DurableReviewReconciliationResult> ReconcileAsync(DurableReviewExecutionArtifactV1 artifact,CancellationToken ct)
     {
-        if(artifact is null||!DurableReviewArtifactCanonicalizer.Validate(artifact).Valid)return new(DurableReviewReconciliationState.Failed,"review.reconcile-artifact-invalid");var found=0;var missing=0;
+        if(artifact is null||!DurableReviewArtifactCanonicalizer.Validate(artifact).Valid)
+            return new(DurableReviewReconciliationState.Failed,"review.reconcile-artifact-invalid");
+
+        var completedCount=0;
+        var notSubmittedCount=0;
         foreach(var intent in artifact.Intents)
         {
-            var order=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);var status=await _db.GetOrderIntentStatusAsync(intent.ClientOrderId,ct);
-            if(order is null){missing++;continue;}found++;
-            if(order.ExecutedQuantity<=0&&order.Status is "CANCELED" or "EXPIRED" or "REJECTED")return new(DurableReviewReconciliationState.Failed,"review.reconcile-order-terminal");
+            var journaled=await _db.HasExecutionSubmissionJournalAsync(intent.ClientOrderId,ct);
+            var order=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);
+            var providerState=ProviderOrderReconciliationServiceV1.ClassifyProviderState(
+                intent.Symbol,intent.ClientOrderId,intent.Quantity,journaled,order);
+
+            if(providerState==ProviderOrderLifecycleStateV1.TerminalNoFill)
+                return new(DurableReviewReconciliationState.Failed,"review.reconcile-order-terminal");
+            if(providerState==ProviderOrderLifecycleStateV1.NotSubmitted)
+            {
+                notSubmittedCount++;
+                continue;
+            }
+            if(providerState!=ProviderOrderLifecycleStateV1.Filled)
+                return new(DurableReviewReconciliationState.Unknown,"review.reconcile-manual-required");
+
+            var status=await _db.GetOrderIntentStatusAsync(intent.ClientOrderId,ct);
             var completed=intent.ReduceOnly?status is "COMPLETED" or "EMERGENCY_CLOSED":status=="PROTECTED";
-            if(!completed)return new(DurableReviewReconciliationState.Unknown,"review.reconcile-manual-required");
+            if(!completed)
+                return new(DurableReviewReconciliationState.Unknown,"review.reconcile-manual-required");
+            completedCount++;
         }
-        if(found==0&&missing==artifact.Intents.Count)return new(DurableReviewReconciliationState.NotSubmitted,"review.reconcile-not-submitted");
-        if(missing>0)return new(DurableReviewReconciliationState.Unknown,"review.reconcile-manual-required");
+
+        if(notSubmittedCount==artifact.Intents.Count)
+            return new(DurableReviewReconciliationState.NotSubmitted,"review.reconcile-not-submitted");
+        if(completedCount!=artifact.Intents.Count)
+            return new(DurableReviewReconciliationState.Unknown,"review.reconcile-manual-required");
         return new(DurableReviewReconciliationState.Succeeded,"review.reconcile-succeeded");
     }
 
