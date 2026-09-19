@@ -57,6 +57,26 @@ public sealed class RuntimeStateRestoreActivationBoundaryTests
     }
 
     [Fact]
+    public void BackupPathsReleasePooledSqliteHandlesAsExecutableStatements()
+    {
+        var path = Path.Combine(
+            Root(), "Services", "Backup", "RuntimeStateBackupService.cs");
+        var lines = File.ReadAllLines(path);
+
+        Assert.Equal(
+            2,
+            lines.Count(line =>
+                string.Equals(
+                    line.Trim(),
+                    "SqliteConnection.ClearAllPools();",
+                    StringComparison.Ordinal)));
+        Assert.DoesNotContain(
+            @"handles\n",
+            File.ReadAllText(path),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SecurityStorageEvidenceIsAuthenticatedReadVerifyThenAppendEvidence()
     {
         var source = File.ReadAllText(Path.Combine(
