@@ -40,6 +40,19 @@ public sealed class RuntimeStateRestoreActivationBoundaryTests
     }
 
     [Fact]
+    public void PublicBackupRecoversInterruptedRestoreInsideTheSameExclusiveLease()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            Root(), "Services", "Backup", "RuntimeStateBackupService.cs"));
+
+        var lease = source.IndexOf("AcquireExclusiveMaintenanceLease", StringComparison.Ordinal);
+        var recovery = source.IndexOf("RuntimeStateRestoreRecovery.RecoverUnderExclusiveLease", StringComparison.Ordinal);
+        var snapshot = source.IndexOf("CreateUnderExclusiveLeaseAsync(", recovery, StringComparison.Ordinal);
+
+        Assert.True(lease >= 0 && recovery > lease && snapshot > recovery);
+    }
+
+    [Fact]
     public void SecurityStorageEvidenceIsAuthenticatedReadVerifyThenAppendEvidence()
     {
         var source = File.ReadAllText(Path.Combine(
