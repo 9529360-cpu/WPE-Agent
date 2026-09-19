@@ -48,8 +48,14 @@ public sealed class RuntimeStateRestoreService
         _phaseHook = phaseHook;
     }
 
+    public Task<RuntimeStateRestoreResult> RestoreAsync(
+        string backupDirectory,
+        CancellationToken cancellationToken = default)
+        => RestoreAsync(backupDirectory, null, cancellationToken);
+
     public async Task<RuntimeStateRestoreResult> RestoreAsync(
         string backupDirectory,
+        string? expectedBackupId,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(backupDirectory))
@@ -72,6 +78,13 @@ public sealed class RuntimeStateRestoreService
 
         var verified = await _verifier.VerifyToStagingAsync(
             backupRoot, stage, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(expectedBackupId) &&
+            !string.Equals(expectedBackupId, verified.BackupId, StringComparison.Ordinal))
+        {
+            TryDeleteDirectory(stage);
+            throw new InvalidDataException(
+                "Authenticated runtime-state backup id does not match the explicit restore confirmation.");
+        }
 
         RuntimeStateBackupResult? safetyBackup = null;
         RuntimeStateSecurityStorageRestorePlan? securityRestorePlan = null;
