@@ -1,3 +1,4 @@
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -198,24 +199,31 @@ public sealed class RuntimeStateBackupService
                 var read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken).ConfigureAwait(false);
                 if (read == 0 && wroteChunk) break;
 
-                var plaintext = buffer.AsSpan(0, read);
-                plaintextHash.AppendData(plaintext);
-                plaintextLength += read;
-                var envelope = _encryption.Encrypt(
-                    plaintext,
-                    new EnvelopeAssociatedData(
-                        "runtime-state-backup-chunk",
-                        $"{backupId}:{logicalName}:{chunkIndex}",
-                        1));
-                var encryptedBytes = JsonSerializer.SerializeToUtf8Bytes(envelope, Json);
-                var relative = $"payload/chunk-{ordinal:D2}-{chunkIndex:D6}.wpeenv.json";
-                var fullPath = Path.Combine(stagingDirectory, relative.Replace('/', Path.DirectorySeparatorChar));
-                await File.WriteAllBytesAsync(fullPath, encryptedBytes, cancellationToken).ConfigureAwait(false);
-                chunks.Add(relative);
-                encryptedFiles.Add(new(relative, encryptedBytes.LongLength, Hash(encryptedBytes)));
-                CryptographicOperations.ZeroMemory(plaintext);
-                wroteChunk = true;
-                chunkIndex++;
+                var plaintext = new byte[read];
+                if (read > 0) Buffer.BlockCopy(buffer, 0, plaintext, 0, read);
+                try
+                {
+                    plaintextHash.AppendData(plaintext);
+                    plaintextLength += read;
+                    var envelope = _encryption.Encrypt(
+                        plaintext,
+                        new EnvelopeAssociatedData(
+                            "runtime-state-backup-chunk",
+                            $"{backupId}:{logicalName}:{chunkIndex}",
+                            1));
+                    var encryptedBytes = JsonSerializer.SerializeToUtf8Bytes(envelope, Json);
+                    var relative = $"payload/chunk-{ordinal:D2}-{chunkIndex:D6}.wpeenv.json";
+                    var fullPath = Path.Combine(stagingDirectory, relative.Replace('/', Path.DirectorySeparatorChar));
+                    await File.WriteAllBytesAsync(fullPath, encryptedBytes, cancellationToken).ConfigureAwait(false);
+                    chunks.Add(relative);
+                    encryptedFiles.Add(new(relative, encryptedBytes.LongLength, Hash(encryptedBytes)));
+                    wroteChunk = true;
+                    chunkIndex++;
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(plaintext);
+                }
 
                 if (read == 0) break;
             }
