@@ -157,6 +157,14 @@ public sealed class ExecutionRealityCalibrationTests : IDisposable
         Assert.True(await service.BuildAndPersistSafelyAsync(default));
         Assert.False(await service.BuildAndPersistSafelyAsync(default));
 
+        var fakeHash=new string('f',64);
+        var fakeSource=new ExecutionRealityCalibrationSourceV1(
+            "execution-position-drift:"+fakeHash,fakeHash,fakeHash,fakeHash,fakeHash,1,_now);
+        var fake=ExecutionRealityCalibrationCanonicalizerV1.Create(
+            fakeSource,_now,ExecutionRealityCalibrationServiceV1.MinimumSamplesPerBucket,[],
+            ["execution-calibration.samples-insufficient"]);
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveExecutionRealityCalibrationAsync(fake,default));
+
         await using var c=new SqliteConnection($"Data Source={Database}");await c.OpenAsync();
         foreach(var sql in new[]{
             "UPDATE execution_reality_calibrations SET status='Available'",
