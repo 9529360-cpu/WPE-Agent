@@ -174,27 +174,27 @@ export function ExecutionCockpit() {
           <section className="min-w-0 overflow-hidden rounded-lg border border-border">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2.5">
               <div>
-                <div className="text-xs font-medium">Closed trade attribution</div>
-                <div className="mt-0.5 text-[10px] text-muted-foreground">Persisted post-trade accounting; strategy identity is attribution, not a causal performance claim.</div>
+                <div className="text-xs font-medium">{t('dashboard.closedTradeAttribution')}</div>
+                <div className="mt-0.5 text-[10px] text-muted-foreground">{t('dashboard.closedTradeHelp')}</div>
               </div>
               <SectionLink href="/history">{t('dashboard.viewAll')}</SectionLink>
             </div>
             {postTradeState !== 'available' ? (
               <CollectionNotice state={postTradeState} message={runtime.historicalPostTradeReviews?.message} />
             ) : postTrades.length === 0 ? (
-              <div className="flex min-h-24 items-center justify-center p-4 text-xs text-muted-foreground">No confirmed closed-trade reviews.</div>
+              <div className="flex min-h-24 items-center justify-center p-4 text-xs text-muted-foreground">{t('dashboard.noClosedTradeReviews')}</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[860px] text-left text-xs">
                   <thead className="border-b border-border text-muted-foreground">
-                    <tr><th className="px-3 py-2 font-medium">{t('common.time')}</th><th className="px-3 py-2 font-medium">{t('common.symbol')}</th><th className="px-3 py-2 font-medium">Strategy identity</th><th className="px-3 py-2 text-right font-medium">Entry → Exit</th><th className="px-3 py-2 text-right font-medium">Net PnL</th><th className="px-3 py-2 text-right font-medium">Fee / Funding / Slippage</th></tr>
+                    <tr><th className="px-3 py-2 font-medium">{t('common.time')}</th><th className="px-3 py-2 font-medium">{t('common.symbol')}</th><th className="px-3 py-2 font-medium">{t('dashboard.strategyIdentity')}</th><th className="px-3 py-2 text-right font-medium">{t('dashboard.entryExit')}</th><th className="px-3 py-2 text-right font-medium">{t('dashboard.netPnl')}</th><th className="px-3 py-2 text-right font-medium">{t('dashboard.feeFundingSlippage')}</th></tr>
                   </thead>
                   <tbody>
                     {postTrades.map(review => (
                       <tr key={review.clientOrderId} className="border-b border-border/70 last:border-0">
                         <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">{formatDate(review.closedAtUtc)}</td>
                         <td className="px-3 py-2.5"><div className="font-medium">{review.symbol}</div><div className={sideTone(review.side)}>{review.side}</div></td>
-                        <td className="max-w-52 px-3 py-2.5"><div className="truncate font-medium">{review.strategyId ?? review.strategyVersion}</div><div className="truncate text-[10px] text-muted-foreground">{review.strategyId ? review.strategyVersion : 'Legacy version only'} · {review.attributionBasis}</div></td>
+                        <td className="max-w-52 px-3 py-2.5"><div className="truncate font-medium">{review.strategyId ?? review.strategyVersion}</div><div className="truncate text-[10px] text-muted-foreground">{review.strategyId ? review.strategyVersion : t('dashboard.legacyVersionOnly')} · {review.attributionBasis}</div></td>
                         <td className="px-3 py-2.5 text-right tabular">{formatNumber(review.entryPrice, { maximumFractionDigits: 8 })} → {formatNumber(review.exitPrice, { maximumFractionDigits: 8 })}</td>
                         <td className={'px-3 py-2.5 text-right tabular font-medium ' + (review.netPnl >= 0 ? 'text-success' : 'text-danger')}><div>{formatNumber(review.netPnl, { maximumFractionDigits: 4 })}</div><div className="text-[10px]">{review.returnPct >= 0 ? '+' : ''}{formatNumber(review.returnPct * 100, { maximumFractionDigits: 2 })}%</div></td>
                         <td className="px-3 py-2.5 text-right tabular"><div>{formatNumber(review.fees, { maximumFractionDigits: 4 })} / {formatNumber(review.fundingAmount, { maximumFractionDigits: 4 })} / {formatNumber(review.totalSlippageAmount, { maximumFractionDigits: 4 })}</div><div className="mt-1 max-w-72 text-[10px] text-muted-foreground">{review.feeBasis} · {review.fundingBasis} · {review.slippageBasis}</div></td>
@@ -208,16 +208,16 @@ export function ExecutionCockpit() {
 
           <section className="min-w-0 overflow-hidden rounded-lg border border-border">
             <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
-              <div className="flex items-center gap-2 text-xs font-medium"><ShieldAlert className="size-4 text-muted-foreground" aria-hidden="true" />Reconciliation gates</div>
+              <div className="flex items-center gap-2 text-xs font-medium"><ShieldAlert className="size-4 text-muted-foreground" aria-hidden="true" />{t('dashboard.reconciliationGates')}</div>
               <SectionLink href="/risk">{t('dashboard.riskSummary')}</SectionLink>
             </div>
             {reconciliationState !== 'available' ? (
               <CollectionNotice state={reconciliationState} message={runtime.historicalReconciliations?.message} />
             ) : (
               <div className="px-3">
-                <ReconciliationRow label="Position ledger ↔ provider" item={latestReconciliation('position')} formatDate={formatDate} />
-                <ReconciliationRow label="Protection orders" item={latestReconciliation('protection')} formatDate={formatDate} />
-                <ReconciliationRow label="External position isolation" item={latestReconciliation('externalIsolation')} formatDate={formatDate} />
+                <ReconciliationRow label={t('dashboard.positionReconciliation')} item={latestReconciliation('position')} formatDate={formatDate} />
+                <ReconciliationRow label={t('dashboard.protectionReconciliation')} item={latestReconciliation('protection')} formatDate={formatDate} />
+                <ReconciliationRow label={t('dashboard.externalPositionIsolation')} item={latestReconciliation('externalIsolation')} formatDate={formatDate} />
               </div>
             )}
           </section>
@@ -225,18 +225,18 @@ export function ExecutionCockpit() {
 
         <section className="min-w-0 overflow-hidden rounded-lg border border-border">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2.5">
-            <div className="flex items-center gap-2 text-xs font-medium"><History className="size-4 text-muted-foreground" aria-hidden="true" />Execution ledger</div>
+            <div className="flex items-center gap-2 text-xs font-medium"><History className="size-4 text-muted-foreground" aria-hidden="true" />{t('dashboard.executionLedger')}</div>
             <SectionLink href="/history">{t('dashboard.viewAll')}</SectionLink>
           </div>
           {ledgerState !== 'available' ? (
             <CollectionNotice state={ledgerState} message={runtime.historicalOrders?.message} />
           ) : ledger.length === 0 ? (
-            <div className="flex min-h-24 items-center justify-center p-4 text-xs text-muted-foreground">No persisted execution events.</div>
+            <div className="flex min-h-24 items-center justify-center p-4 text-xs text-muted-foreground">{t('dashboard.noExecutionEvents')}</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-left text-xs">
                 <thead className="border-b border-border text-muted-foreground">
-                  <tr><th className="px-3 py-2 font-medium">{t('common.time')}</th><th className="px-3 py-2 font-medium">{t('common.symbol')}</th><th className="px-3 py-2 font-medium">Side / action</th><th className="px-3 py-2 text-right font-medium">{t('common.quantity')}</th><th className="px-3 py-2 text-right font-medium">Average price</th><th className="px-3 py-2 font-medium">{t('common.status')}</th></tr>
+                  <tr><th className="px-3 py-2 font-medium">{t('common.time')}</th><th className="px-3 py-2 font-medium">{t('common.symbol')}</th><th className="px-3 py-2 font-medium">{t('dashboard.sideAction')}</th><th className="px-3 py-2 text-right font-medium">{t('common.quantity')}</th><th className="px-3 py-2 text-right font-medium">{t('dashboard.averagePrice')}</th><th className="px-3 py-2 font-medium">{t('common.status')}</th></tr>
                 </thead>
                 <tbody>
                   {ledger.map(row => (
