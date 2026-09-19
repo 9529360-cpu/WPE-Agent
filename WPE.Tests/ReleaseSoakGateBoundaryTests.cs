@@ -24,6 +24,12 @@ public sealed class ReleaseSoakGateBoundaryTests
         Assert.Contains("package.manifest-inventory-drift",candidate,StringComparison.Ordinal);
         Assert.Contains("$label.inventory-drift",release,StringComparison.Ordinal);
 
+        Assert.Contains("runtime.probes-missing",release,StringComparison.Ordinal);
+        Assert.Contains("restartRecovery='candidate'",release,StringComparison.Ordinal);
+        Assert.Contains("wpe.trusted-runtime-proof/1.1",release,StringComparison.Ordinal);
+        Assert.DoesNotContain("Invoke-Probe",release,StringComparison.Ordinal);
+        Assert.DoesNotContain("probeScript",candidate,StringComparison.Ordinal);
+
         Assert.Contains("ExpectedSoakEvidenceHash",slot,StringComparison.Ordinal);
         Assert.Contains("soakEvidenceSha256=$result.SoakEvidenceSha256",slot,StringComparison.Ordinal);
         Assert.Contains("Verify dogfood release slots",workflow,StringComparison.Ordinal);
