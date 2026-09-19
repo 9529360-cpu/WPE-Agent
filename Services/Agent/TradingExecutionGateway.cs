@@ -291,6 +291,9 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
            ||!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid
            ||artifact.Environment!="Testnet")
             return null;
+        var providerId=_exchange is IExchangeProvider provider?provider.ProviderId:artifact.ProviderId;
+        if(!string.Equals(providerId,artifact.ProviderId,StringComparison.Ordinal))
+            return null;
         try{return await _exchange.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);}
         catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
         catch{return null;}
