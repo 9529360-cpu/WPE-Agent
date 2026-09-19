@@ -139,7 +139,8 @@ public sealed record StrategyObservationPerformance(
     int FailureStreak,
     string Summary,
     double CalibrationScore = .5,
-    IReadOnlyList<StrategyRegimePerformance>? Regimes = null);
+    IReadOnlyList<StrategyRegimePerformance>? Regimes = null,
+    int RawObservations = 0);
 
 public enum MeanReversionRegime { Unknown, Range, Trend, Volatile }
 public sealed record MeanReversionMarketState(MeanReversionRegime Regime,double ZScore,double Rsi,double Adx,double AtrRatio,double DistanceAtr,double VolumeRatio);
