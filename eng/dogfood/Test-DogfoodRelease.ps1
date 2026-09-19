@@ -54,11 +54,25 @@ function Read-VerifiedManifest([string]$root,[string]$label,[string]$expectedHas
     if($m.environment -ne 'Testnet'){throw "$label.environment-mismatch"}
     if(-not $m.configurationSchema -or -not $m.migrationVersion -or -not $m.sourceIdentity){throw "$label.manifest-incomplete"}
     if(($m|ConvertTo-Json -Depth 20) -match '(?i)api.?key|secret|password|credential|private.?key'){throw "$label.credentials-forbidden"}
+    $manifestPaths=[Collections.Generic.List[string]]::new()
+    $seenManifestPaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach($entry in $m.files){
-        $file=Join-Path $resolved ([string]$entry.path);$full=[IO.Path]::GetFullPath($file)
+        $relative=([string]$entry.path).Replace('\\','/')
+        if([string]::IsNullOrWhiteSpace($relative) -or [IO.Path]::IsPathRooted($relative)){throw "$label.path-invalid"}
+        if(-not $seenManifestPaths.Add($relative)){throw "$label.path-duplicate"}
+        $file=Join-Path $resolved ($relative.Replace('/',[IO.Path]::DirectorySeparatorChar));$full=[IO.Path]::GetFullPath($file)
         if(-not $full.StartsWith($resolved+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw "$label.path-escape"}
         if(-not(Test-Path -LiteralPath $full -PathType Leaf)){throw "$label.file-missing"}
         if((Get-Sha256 $full) -ne $entry.sha256 -or (Get-Item -LiteralPath $full).Length -ne $entry.length){throw "$label.hash-drift"}
+        $manifestPaths.Add($relative)
+    }
+    $manifestFile=[IO.Path]::GetFullPath($path)
+    $actualPaths=@(Get-ChildItem -LiteralPath $resolved -Recurse -Force -File|Where-Object{
+        -not $_.FullName.Equals($manifestFile,[StringComparison]::OrdinalIgnoreCase)
+    }|ForEach-Object{$_.FullName.Substring(($resolved+[IO.Path]::DirectorySeparatorChar).Length).Replace('\\','/')})
+    if($actualPaths.Count -ne $manifestPaths.Count -or
+       (Compare-Object @($actualPaths|Sort-Object) @($manifestPaths|Sort-Object) -SyncWindow 0).Count -ne 0){
+        throw "$label.inventory-drift"
     }
     [pscustomobject]@{Root=$resolved;Manifest=$m;ManifestHash=$actualHash}
 }
