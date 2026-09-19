@@ -110,6 +110,32 @@ public sealed class ExecutionRealityStabilityTests : IDisposable
     }
 
     [Fact]
+    public async Task StabilityCanRecoverWhenCalibrationWasAlreadyPersistedInPriorCycle()
+    {
+        var store=new AgentSqliteStore(Database,()=>_now);
+        var intent=Intent("stability-retry");
+        await Drift(store,intent,ExecutionDriftPhaseV1.IntentAccepted,ExecutionDriftSourceV1.Local,"INTENT",0,0,null);
+        _now=_now.AddMilliseconds(5);
+        await Drift(store,intent,ExecutionDriftPhaseV1.SubmissionAttempted,ExecutionDriftSourceV1.Local,"SUBMISSION_ATTEMPTED",0,0,null);
+        _now=_now.AddMilliseconds(5);
+        await Drift(store,intent,ExecutionDriftPhaseV1.ProviderObserved,ExecutionDriftSourceV1.Exchange,"FILLED",1m,100m,_now);
+        await Drift(store,intent,ExecutionDriftPhaseV1.ExecutionRecorded,ExecutionDriftSourceV1.Exchange,"FILLED",1m,100m,_now);
+        await store.RecordExecutionAsync("cycle-stability-retry",intent,Order(intent),"strategy-v1",default);
+
+        var snapshot=await store.GetExecutionPositionLedgerSnapshotAsync(default);
+        var position=PositionReconciliationServiceV1.Reconcile(snapshot.Legs,[Position(1m)],_now,_now);
+        Assert.True(await store.PersistExecutionPositionDriftEvidenceSafelyAsync(snapshot,position,default));
+
+        var calibration=new ExecutionRealityCalibrationServiceV1(store);
+        Assert.True(await calibration.BuildAndPersistSafelyAsync(default));
+        Assert.False(await calibration.BuildAndPersistSafelyAsync(default));
+
+        var stability=new ExecutionRealityStabilityServiceV1(store);
+        Assert.True(await stability.BuildAndPersistSafelyAsync(default));
+        Assert.False(await stability.BuildAndPersistSafelyAsync(default));
+    }
+
+    [Fact]
     public async Task StabilityEvidenceCannotBePersistedAgainstNonexistentCalibration()
     {
         var store=new AgentSqliteStore(Database,()=>_now);
@@ -133,6 +159,8 @@ public sealed class ExecutionRealityStabilityTests : IDisposable
 
         var agent=File.ReadAllText(Path.Combine(root,"Services","AutoTradingAgent.cs"));
         Assert.Contains("ExecutionRealityStabilityServiceV1",agent,StringComparison.Ordinal);
+        Assert.Contains("new ExecutionRealityCalibrationServiceV1(Db).BuildAndPersistSafelyAsync(ct);await new ExecutionRealityStabilityServiceV1(Db).BuildAndPersistSafelyAsync(ct)",agent,StringComparison.Ordinal);
+        Assert.DoesNotContain("calibrationPersisted",agent,StringComparison.Ordinal);
         Assert.Contains("pendingRecovery.SafeToIncreaseRisk&&protectionReconciliation.AllowsRiskIncrease&&positionReconciliation.AllowsRiskIncrease&&externalPositionIsolation.AllowsRiskIncrease",agent,StringComparison.Ordinal);
         Assert.DoesNotContain("ExecutionRealityStabilityServiceV1(Db).BuildAndPersistSafelyAsync(ct)&&",agent,StringComparison.Ordinal);
     }
