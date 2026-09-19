@@ -149,8 +149,21 @@ public static class LegacyPortableDataMigrator
 
 public static class AppDataPaths
 {
+    public const string DataRootEnvironmentVariable = "WPE_AGENT_DATA_ROOT";
+
     private static readonly Lazy<AppDataLayout> Current = new(() => new AppDataLayout(
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WPE Agent")));
+        ResolveRootDirectory(
+            Environment.GetEnvironmentVariable(DataRootEnvironmentVariable),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData))));
+
+    internal static string ResolveRootDirectory(string? configuredRoot, string localApplicationData)
+    {
+        if (string.IsNullOrWhiteSpace(configuredRoot))
+            return Path.GetFullPath(Path.Combine(localApplicationData, "WPE Agent"));
+        if (!Path.IsPathRooted(configuredRoot))
+            throw new InvalidOperationException($"{DataRootEnvironmentVariable} must be an absolute path.");
+        return Path.GetFullPath(configuredRoot);
+    }
 
     public static string RootDirectory => Current.Value.RootDirectory;
     public static string DataDirectory => Current.Value.DataDirectory;

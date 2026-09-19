@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: product-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     runs-on: windows-latest
@@ -18,6 +22,10 @@ jobs:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         persist-credentials: false
+
+    - name: Verify release-readiness static gate
+      shell: pwsh
+      run: ./eng/release-readiness.ps1 -StaticGatesOnly
 
     - name: Setup pnpm
       uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -74,6 +82,55 @@ jobs:
       with:
         dotnet-version: '8.0.x'
 
+    - name: Verify signing attestation crypto primitive
+      shell: pwsh
+      run: |
+        Add-Type -AssemblyName System.Security.Cryptography.Pkcs
+        $rsa = [System.Security.Cryptography.RSA]::Create(2048)
+        try {
+          $request = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
+            "CN=WPE Signing Attestation CI",
+            $rsa,
+            [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+            [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+          $certificate = $request.CreateSelfSigned(
+            [DateTimeOffset]::UtcNow.AddMinutes(-1),
+            [DateTimeOffset]::UtcNow.AddMinutes(5))
+          try {
+            $content = [System.Text.Encoding]::UTF8.GetBytes("wpe-runtime-tree-attestation")
+            $cms = [System.Security.Cryptography.Pkcs.SignedCms]::new(
+              [System.Security.Cryptography.Pkcs.ContentInfo]::new($content),
+              $true)
+            $signer = [System.Security.Cryptography.Pkcs.CmsSigner]::new($certificate)
+            $signer.DigestAlgorithm = [System.Security.Cryptography.Oid]::new("2.16.840.1.101.3.4.2.1")
+            $cms.ComputeSignature($signer)
+            $verification = [System.Security.Cryptography.Pkcs.SignedCms]::new(
+              [System.Security.Cryptography.Pkcs.ContentInfo]::new($content),
+              $true)
+            $encodedAttestation = $cms.Encode()
+            $verification.Decode($encodedAttestation)
+            $verification.CheckSignature($true)
+            if ($verification.SignerInfos.Count -ne 1) { throw "Detached CMS signer count mismatch." }
+
+            $tamperedContent = [System.Text.Encoding]::UTF8.GetBytes("wpe-runtime-tree-attestation-tampered")
+            $tampered = [System.Security.Cryptography.Pkcs.SignedCms]::new(
+              [System.Security.Cryptography.Pkcs.ContentInfo]::new($tamperedContent),
+              $true)
+            $tampered.Decode($encodedAttestation)
+            $tamperRejected = $false
+            try {
+              $tampered.CheckSignature($true)
+            } catch {
+              $tamperRejected = $true
+            }
+            if (-not $tamperRejected) { throw "Detached CMS accepted tampered content." }
+          } finally {
+            $certificate.Dispose()
+          }
+        } finally {
+          $rsa.Dispose()
+        }
+
     - name: Verify UTF-8 source
       shell: pwsh
       run: ./eng/verify-utf8.ps1
@@ -84,12 +141,96 @@ jobs:
     - name: Build .NET
       run: dotnet build "币安量化机器人.sln" --configuration Release --no-restore
 
+    - name: Verify portable runtime target
+      run: dotnet build "币安量化机器人.csproj" --configuration Release --framework net8.0 --no-restore
+
+    - name: Publish headless candidate
+      run: dotnet publish "WPE.Headless/WPE.Headless.csproj" --configuration Release --framework net8.0 --no-restore --output artifacts/headless
+
+    - name: Verify headless boundary
+      shell: pwsh
+      run: |
+        if (-not (Test-Path -LiteralPath "artifacts/headless/WPE-Headless.dll" -PathType Leaf)) {
+          throw "Headless runtime assembly is missing."
+        }
+        if (-not (Test-Path -LiteralPath "artifacts/headless/Resources/i18n/zh_CN.json" -PathType Leaf)) {
+          throw "Headless localization resources are missing."
+        }
+        if (Test-Path -LiteralPath "artifacts/headless/WebUi") {
+          throw "Desktop Web UI entered the headless artifact."
+        }
+        $deps = Get-Content -Raw -LiteralPath "artifacts/headless/WPE-Headless.deps.json"
+        foreach ($forbiddenDependency in @("Microsoft.WindowsDesktop.App", "Microsoft.Web.WebView2", "ScottPlot.WPF", "PresentationFramework")) {
+          if ($deps.Contains($forbiddenDependency, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Headless artifact contains forbidden presentation dependency: $forbiddenDependency"
+          }
+        }
+        $forbidden = Get-ChildItem artifacts/headless -Recurse -File | Where-Object {
+          $name = $_.Name.ToLowerInvariant()
+          $extension = $_.Extension.ToLowerInvariant()
+          $knownState = $name -match '^(agent-settings|appsettings|order-state|local-accounts|local-session|device-license|llm-calls|llm-cache)'
+          $secretData = ($name.Contains("secrets") -or $name.Contains("credentials")) -and
+            @(".json", ".dat", ".txt", ".xml", ".yaml", ".yml") -contains $extension
+          $knownState -or $secretData -or
+          @(".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12", ".pfx") -contains $extension -or
+          $name.EndsWith(".db-wal") -or $name.EndsWith(".db-shm") -or
+          $name.EndsWith(".sqlite-wal") -or $name.EndsWith(".sqlite-shm") -or
+          $name.EndsWith(".sqlite3-wal") -or $name.EndsWith(".sqlite3-shm")
+        }
+        if ($forbidden) { throw "Forbidden runtime or secret files entered headless output: $($forbidden.FullName -join ', ')" }
+
     - name: Test .NET
       shell: pwsh
       run: ./eng/test.ps1 -Configuration Release
 
+    - name: Verify soak evidence harness
+      shell: pwsh
+      run: ./eng/ops/tests/HeadlessSoak.Tests.ps1
+
+    - name: Verify dogfood release slots
+      shell: pwsh
+      run: ./eng/dogfood/tests/ReleaseSlots.Tests.ps1
+
+    - name: Verify V1 candidate gate
+      shell: pwsh
+      run: ./eng/dogfood/tests/V1CandidateGate.Tests.ps1
+
+    - name: Publish maintenance candidate
+      run: dotnet publish "WPE.Maintenance/WPE.Maintenance.csproj" --configuration Release --no-restore --output artifacts/maintenance
+
+    - name: Verify maintenance artifact boundary
+      shell: pwsh
+      run: |
+        if (-not (Get-ChildItem artifacts/maintenance -Filter WPE.Maintenance.exe)) {
+          throw "Maintenance executable is missing."
+        }
+        if (Test-Path -LiteralPath "artifacts/maintenance/WebUi") {
+          throw "Maintenance artifact must not contain WebUi."
+        }
+        $deps = Get-Content -LiteralPath "artifacts/maintenance/WPE.Maintenance.deps.json" -Raw
+        foreach ($forbiddenDependency in @("Microsoft.Web.WebView2", "ScottPlot.WPF", "Microsoft.WindowsDesktop.App")) {
+          if ($deps.Contains($forbiddenDependency, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Maintenance artifact contains forbidden presentation dependency: $forbiddenDependency"
+          }
+        }
+        $forbiddenExtensions = @(".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12", ".pfx")
+        $forbiddenSuffixes = @(".db-wal", ".db-shm", ".sqlite-wal", ".sqlite-shm", ".sqlite3-wal", ".sqlite3-shm")
+        $forbidden = Get-ChildItem artifacts/maintenance -Recurse -File | Where-Object {
+          $lowerName = $_.Name.ToLowerInvariant()
+          $extension = $_.Extension.ToLowerInvariant()
+          $knownState = $lowerName -match '^(agent-settings|appsettings|order-state|local-accounts|local-session|device-license|llm-calls|llm-cache)'
+          $secretData = ($lowerName.Contains("secrets") -or $lowerName.Contains("credentials")) -and
+            @(".json", ".dat", ".txt", ".xml", ".yaml", ".yml") -contains $extension
+          $knownState -or $secretData -or
+          $forbiddenExtensions -contains $extension -or
+          ($forbiddenSuffixes | Where-Object { $lowerName.EndsWith($_) })
+        }
+        if ($forbidden) {
+          throw "Forbidden runtime or secret files entered maintenance output: $($forbidden.FullName -join ', ')"
+        }
+
     - name: Publish candidate
-      run: dotnet publish "币安量化机器人.csproj" --configuration Release --no-restore --output artifacts/publish
+      run: dotnet publish "币安量化机器人.csproj" --configuration Release --framework net8.0-windows --no-restore --output artifacts/publish
 
     - name: Verify publish boundary
       shell: pwsh
@@ -98,9 +239,16 @@ jobs:
         if (-not (Test-Path -LiteralPath "artifacts/publish/WebUi/out/index.html" -PathType Leaf)) {
           throw "Published Reference UI export is missing."
         }
+        $forbiddenExtensions = @(".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12", ".pfx")
+        $forbiddenSuffixes = @(".db-wal", ".db-shm", ".sqlite-wal", ".sqlite-shm", ".sqlite3-wal", ".sqlite3-shm")
         $forbidden = Get-ChildItem artifacts/publish -Recurse -File | Where-Object {
-          $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
-          $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)$' -or
-          $_.Name -match '(?i)\.(db|sqlite|sqlite3)-(wal|shm)$'
+          $name = $_.Name.ToLowerInvariant()
+          $extension = $_.Extension.ToLowerInvariant()
+          $knownState = $name -match '^(agent-settings|appsettings|order-state|local-accounts|local-session|device-license|llm-calls|llm-cache)'
+          $secretData = ($name.Contains("secrets") -or $name.Contains("credentials")) -and
+            @(".json", ".dat", ".txt", ".xml", ".yaml", ".yml") -contains $extension
+          $knownState -or $secretData -or
+          $forbiddenExtensions -contains $extension -or
+          ($forbiddenSuffixes | Where-Object { $name.EndsWith($_) })
         }
         if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
