@@ -20,6 +20,10 @@ public sealed class HeadlessSoakEvidenceBoundaryTests
         Assert.Contains("soak.candidate-manifest-mismatch",verifier,StringComparison.Ordinal);
         Assert.Contains("samples-hash-mismatch",verifier,StringComparison.Ordinal);
         Assert.Contains("duration-insufficient",verifier,StringComparison.Ordinal);
+        Assert.Contains("sample-time-not-strictly-increasing",verifier,StringComparison.Ordinal);
+        Assert.Contains("sample-gap-exceeded",verifier,StringComparison.Ordinal);
+        Assert.Contains("sample-start-coverage-missing",verifier,StringComparison.Ordinal);
+        Assert.Contains("sample-end-coverage-missing",verifier,StringComparison.Ordinal);
 
         foreach(var source in new[]{watcher,verifier})
         foreach(var forbidden in new[]{
