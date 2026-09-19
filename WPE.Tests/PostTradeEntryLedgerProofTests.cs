@@ -69,7 +69,7 @@ public sealed class PostTradeEntryLedgerProofTests : IDisposable
                 "Long",
                 1m,
                 [
-                    Event(0,"open",false,.5m,100m,Now.AddMinutes(-2)),
+                    Event(0,"open",false,0.5m,100m,Now.AddMinutes(-2)),
                     Event(1,"reduce",true,1m,101m,Now.AddMinutes(-1))
                 ]));
 
@@ -78,7 +78,7 @@ public sealed class PostTradeEntryLedgerProofTests : IDisposable
             "cycle-close",
             "BTCUSDT",
             "Long",
-            .5m,
+            0.5m,
             [Event(0,"open",false,1m,100m,Now.AddMinutes(-1))]);
 
         Assert.False(PostTradeEntryLedgerProofCanonicalizerV1.IsCanonical(
@@ -217,7 +217,7 @@ public sealed class PostTradeEntryLedgerProofTests : IDisposable
             "cycle-close",
             "BTCUSDT",
             "Long",
-            .25m,
+            0.25m,
             [Event(0,"open",false,1m,100m,Now.AddMinutes(-1))]);
 
         Assert.True(PostTradeEntryLedgerProofCanonicalizerV1.TryDeserialize(
