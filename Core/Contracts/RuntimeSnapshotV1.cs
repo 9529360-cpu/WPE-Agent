@@ -347,6 +347,7 @@ public sealed class RuntimeSnapshotV1
     public RuntimeHistoricalCollectionV1<HistoricalBacktestV1> HistoricalBacktests { get; init; } = new(RuntimeCollectionState.Unsupported, [], null, null, "local-agent-sqlite", "Historical backtests are not connected.");
     public RuntimeHistoricalCollectionV1<HistoricalSkillCallV1> HistoricalSkillCalls { get; init; } = new(RuntimeCollectionState.Unsupported, [], null, null, "local-agent-sqlite", "Historical skill calls are not connected.");
     public RuntimeHistoricalCollectionV1<HistoricalAuditEventV1> HistoricalAuditEvents { get; init; } = new(RuntimeCollectionState.Unsupported, [], null, null, "local-agent-sqlite", "Historical audit events are not connected.");
+    public RuntimeHistoricalCollectionV1<HistoricalPostTradePnlDriftV1> HistoricalPostTradePnlDrift { get; init; } = new(RuntimeCollectionState.Unsupported, [], null, null, "local-agent-sqlite", "Post-trade PnL drift history is not connected.");
 
     // Temporary compatibility surface for the existing Web UI runtime bridge.
     [JsonExtensionData]
