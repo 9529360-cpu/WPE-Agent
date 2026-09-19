@@ -379,9 +379,20 @@ try {
         }
     } finally { Pop-Location }
     Invoke-Step ".NET tests" { & (Join-Path $root "eng/test.ps1") -Configuration Release; if ($LASTEXITCODE -ne 0) { throw ".NET tests failed." } }
-    Invoke-Step ".NET Release build" { Invoke-External "dotnet" @("build", $projectFile, "--configuration", "Release", "--no-restore", "--nologo") }
-    Invoke-Step "Release publish" { & (Join-Path $root "publish.ps1") -Configuration Release -Runtime $Runtime -Output $outputPath -SkipWebBuild; if ($LASTEXITCODE -ne 0) { throw "Release publish failed." } }
-    Invoke-Step "Published artifact validation" { Assert-PublishArtifact }
+    Invoke-Step ".NET solution restore" { Invoke-External "dotnet" @("restore", $solutionFile, "--runtime", $Runtime, "--nologo") }
+    Invoke-Step ".NET Release build" { Invoke-External "dotnet" @("build", $solutionFile, "--configuration", "Release", "--no-restore", "--nologo") }
+    Invoke-Step "Headless publish" {
+        Reset-ArtifactDirectory $headlessOutputPath
+        Invoke-External "dotnet" @("publish", $headlessProject, "--configuration", "Release", "--framework", "net8.0", "--runtime", $Runtime, "--self-contained", "false", "--no-restore", "-p:Version=$productVersion", "-p:AssemblyVersion=$assemblyVersion", "-p:FileVersion=$assemblyVersion", "-p:DebugType=None", "-p:DebugSymbols=false", "--output", $headlessOutputPath)
+    }
+    Invoke-Step "Headless artifact validation" { Assert-HeadlessArtifact }
+    Invoke-Step "Maintenance publish" {
+        Reset-ArtifactDirectory $maintenanceOutputPath
+        Invoke-External "dotnet" @("publish", $maintenanceProject, "--configuration", "Release", "--framework", "net8.0", "--runtime", $Runtime, "--self-contained", "false", "--no-restore", "-p:Version=$productVersion", "-p:AssemblyVersion=$assemblyVersion", "-p:FileVersion=$assemblyVersion", "-p:DebugType=None", "-p:DebugSymbols=false", "--output", $maintenanceOutputPath)
+    }
+    Invoke-Step "Maintenance artifact validation" { Assert-MaintenanceArtifact }
+    Invoke-Step "Desktop release publish" { & (Join-Path $root "publish.ps1") -Configuration Release -Runtime $Runtime -Output $outputPath -SkipWebBuild; if ($LASTEXITCODE -ne 0) { throw "Release publish failed." } }
+    Invoke-Step "Desktop artifact validation" { Assert-PublishArtifact }
     $overallStatus = "passed"
 } catch {
     $overallStatus = "failed"
