@@ -176,6 +176,46 @@ public sealed class StrategyAdaptiveIntelligenceTests : IDisposable
     }
 
     [Fact]
+    public void TrendBreakoutIgnoresIntrabarRealtimeSpikeWithoutConfirmedClose()
+    {
+        var profile=new StrategyProfile
+        {
+            Id="trend-confirmed",
+            Symbol="BTCUSDT",
+            Family=StrategyFamily.TrendBreakout,
+            Parameters=LocalStrategyParameters.For(StrategyFamily.TrendBreakout,0)
+        };
+        var candles=BreakoutCandles(103m);
+        var market=new MarketEvidence("BTCUSDT",110m,95m,115m,55,.01,.02,.03,new(0,1,1,1,1,1,0),DateTime.UtcNow){Candles=candles};
+
+        var signal=new HistoricalResearchEngine().Signal(profile,market,Array.Empty<NewsEvidence>());
+
+        Assert.Equal(0,signal.Direction);
+        Assert.Equal(0,signal.Confidence);
+        Assert.Contains("confirmed_close=",signal.Reason,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TrendBreakoutUsesConfirmedCloseAgainstPriorWindowNotRealtimePrice()
+    {
+        var profile=new StrategyProfile
+        {
+            Id="trend-confirmed",
+            Symbol="BTCUSDT",
+            Family=StrategyFamily.TrendBreakout,
+            Parameters=LocalStrategyParameters.For(StrategyFamily.TrendBreakout,0)
+        };
+        var candles=BreakoutCandles(106m);
+        var market=new MarketEvidence("BTCUSDT",90m,85m,110m,55,.01,.02,.03,new(0,1,1,1,1,1,0),DateTime.UtcNow){Candles=candles};
+
+        var signal=new HistoricalResearchEngine().Signal(profile,market,Array.Empty<NewsEvidence>());
+
+        Assert.Equal(1,signal.Direction);
+        Assert.True(signal.Confidence>0);
+        Assert.Contains("prior48_high=105",signal.Reason,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task BadRegimeCalibrationCanOnlyReduceLiveSignalConfidence()
     {
         var store=new AgentSqliteStore(DatabasePath);
@@ -228,6 +268,27 @@ public sealed class StrategyAdaptiveIntelligenceTests : IDisposable
         Assert.True(raw.Confidence>0);
         Assert.True(adaptive.Confidence<raw.Confidence);
         Assert.Contains("calibration=",adaptive.Reason,StringComparison.Ordinal);
+    }
+
+    private static CandleEvidence[] BreakoutCandles(decimal finalClose)
+    {
+        var start=DateTime.UtcNow.AddMinutes(-80*15);
+        var candles=Enumerable.Range(0,80).Select(index=>
+        {
+            var close=100m+index*.03m;
+            var high=close+.10m;
+            if(index==60)high=105m;
+            return new CandleEvidence(start.AddMinutes(index*15),close-.05m,high,close-.10m,close,100m,10000m,10,50m);
+        }).ToArray();
+        var last=candles[^1];
+        candles[^1]=last with
+        {
+            Open=finalClose-.10m,
+            High=finalClose+.10m,
+            Low=finalClose-.20m,
+            Close=finalClose
+        };
+        return candles;
     }
 
     public void Dispose()
