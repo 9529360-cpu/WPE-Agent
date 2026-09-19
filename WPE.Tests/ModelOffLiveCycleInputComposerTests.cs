@@ -317,6 +317,107 @@ public sealed class ModelOffLiveCycleInputComposerTests
     }
 
     [Fact]
+    public async Task HypothesisDrivenCycleCanReachCanonicalSevenAgentGateWithoutPromotedTargetStrategy()
+    {
+        var directory=Path.Combine(Path.GetTempPath(),"wpe-live-hypothesis-"+Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var request=Request();
+            var hypothesis=new TradeHypothesis(
+                "HYP-BTCUSDT-TEST",
+                TradeHypothesis.CurrentVersion,
+                "BTCUSDT",
+                TradeHypothesisKind.TrendPullbackLong,
+                TradeHypothesisStage.ScoutReady,
+                1,
+                MarketRegime.Trending,
+                Now.AddMinutes(-2),
+                Now.AddSeconds(-10),
+                3,
+                100000m,
+                98000m,
+                102000m,
+                97500m,
+                98000m,
+                -.12,
+                -.05,
+                1.25,
+                36,
+                -.05,
+                1.01m,
+                .18,
+                "Higher-timeframe uptrend with a pullback holding near support.",
+                "Support held and short-horizon behavior improved.",
+                "Invalidate below the volatility-adjusted support break.",
+                ["price=100000","support=98000","trend4h=1.25%"]);
+            var assessment=new MarketDecisionAssessment
+            {
+                Symbol="BTCUSDT",
+                Regime=MarketRegime.Trending,
+                NetScore=-.42,
+                Confidence=.30,
+                ConflictRatio=.72,
+                Fresh=true,
+                EntryReady=false,
+                RecommendedAction=DecisionAction.Hold,
+                MissingConditions=["legacy thresholds not met"],
+                Summary="legacy aggregation remains non-actionable"
+            };
+            var decision=new DecisionPlan
+            {
+                Action=DecisionAction.OpenLong,
+                Instrument="BTCUSDT",
+                TargetTier=1,
+                Confidence=0,
+                EntryPrice=100000m,
+                StopLossPrice=98000m,
+                TakeProfitPrice=104000m,
+                RiskRewardRatio=2,
+                StrategyVersion=hypothesis.Version,
+                DecisionContextKind=TradeHypothesisEngine.DecisionContextKind,
+                DecisionContextId=hypothesis.Id,
+                HypothesisStage=hypothesis.Stage.ToString(),
+                RiskBudgetMultiplier=hypothesis.RiskBudgetMultiplier,
+                Reason=hypothesis.Thesis,
+                Invalidation=hypothesis.Invalidation
+            };
+            var review=new DecisionReview{Accepted=true,Decision=decision};
+            var hypotheses=new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["BTCUSDT"]=hypothesis
+            };
+            var hypothesisRequest=request with
+            {
+                Research=new Dictionary<string,ResearchValidationResult>
+                {
+                    ["ETHUSDT"]=Research("ETHUSDT")
+                },
+                Assessments=[assessment],
+                DecisionReview=review,
+                TradeHypotheses=hypotheses
+            };
+
+            var inputs=ModelOffLiveCycleInputComposerV1.Compose(hypothesisRequest);
+            Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(inputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output));
+            Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(inputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Strategy).Output));
+
+            var result=await new ModelOffProductionCycleOrchestratorV1(
+                new AgentSqliteStore(Path.Combine(directory,"agent.db"),()=>Now))
+                .RunAsync(new(hypothesisRequest.CycleId,Now,inputs),CancellationToken.None);
+
+            Assert.True(result.EligibleForRiskIncrease);
+            Assert.True(AutoTradingAgent.ModelOffProductionGateAllowsRiskIncrease(result));
+            Assert.Equal("model-off.production-cycle-ready",result.Code);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try{Directory.Delete(directory,true);}catch(IOException){}
+        }
+    }
+
+    [Fact]
     public async Task ProductionShadowPersistsSevenOutputsWithoutChangingExecution()
     {
         var directory = Path.Combine(Path.GetTempPath(), "wpe-live-shadow-" + Guid.NewGuid().ToString("N"));
