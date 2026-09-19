@@ -50,7 +50,7 @@ function Read-VerifiedManifest([string]$root,[string]$label,[string]$expectedHas
     $snapshot=Get-FileSnapshot $path;$actualHash=$snapshot.Hash
     if($actualHash -ne $expectedHash.ToLowerInvariant()){throw "$label.manifest-hash-mismatch"}
     $m=(Convert-SnapshotToText $snapshot)|ConvertFrom-Json
-    if($m.schemaVersion -ne 'wpe.dogfood-release-manifest/1.0'){throw "$label.schema-mismatch"}
+    if($m.schemaVersion -ne 'wpe.dogfood-release-manifest/1.1'){throw "$label.schema-mismatch"}
     if($m.environment -ne 'Testnet'){throw "$label.environment-mismatch"}
     if(-not $m.configurationSchema -or -not $m.migrationVersion -or -not $m.sourceIdentity){throw "$label.manifest-incomplete"}
     if(($m|ConvertTo-Json -Depth 20) -match '(?i)api.?key|secret|password|credential|private.?key'){throw "$label.credentials-forbidden"}
@@ -85,9 +85,9 @@ function Read-TrustedRuntimeProof($candidate,$lkg){
     $snapshot=Get-FileSnapshot $path
     if($snapshot.Hash -ne $ExpectedTrustedRuntimeProofHash.ToLowerInvariant()){throw 'runtime.proof-hash-mismatch'}
     try{$proof=(Convert-SnapshotToText $snapshot)|ConvertFrom-Json}catch{throw 'runtime.proof-malformed'}
-    $allowed=@('schemaVersion','proofId','sourceIdentity','sourceTimestampUtc','snapshotTimestampUtc','environment','bridgeState','authority','evidenceGates','candidateManifestSha256','lastKnownGoodManifestSha256')
+    $allowed=@('schemaVersion','proofId','sourceIdentity','sourceTimestampUtc','snapshotTimestampUtc','environment','bridgeState','authority','evidenceGates','candidateManifestSha256','lastKnownGoodManifestSha256','probes')
     if(@($proof.PSObject.Properties.Name|Where-Object {$allowed -notcontains $_}).Count){throw 'runtime.proof-unknown-field'}
-    if($proof.schemaVersion -ne 'wpe.trusted-runtime-proof/1.0'){throw 'runtime.proof-schema-mismatch'}
+    if($proof.schemaVersion -ne 'wpe.trusted-runtime-proof/1.1'){throw 'runtime.proof-schema-mismatch'}
     if($proof.proofId -ne $ExpectedRuntimeProofId){throw 'runtime.proof-replay'}
     if($proof.sourceIdentity -ne $ExpectedRuntimeSourceIdentity){throw 'runtime.proof-source-untrusted'}
     if($proof.environment -ne 'Testnet'){throw 'runtime.proof-environment-mismatch'}
@@ -103,6 +103,26 @@ function Read-TrustedRuntimeProof($candidate,$lkg){
     if($expires -le $now){throw 'runtime.authority-revoked-or-expired'}
     $passed=@($proof.evidenceGates|Where-Object {$_.status -eq 'passed'}|ForEach-Object {[string]$_.reference})
     if($ExpectedEvidenceGateRefs.Count -eq 0 -or @($ExpectedEvidenceGateRefs|Where-Object {[string]::IsNullOrWhiteSpace($_) -or $passed -notcontains $_}).Count){throw 'runtime.evidence-gate-missing'}
+    $probeContracts=[ordered]@{
+        install='candidate'
+        startup='candidate'
+        restartRecovery='candidate'
+        rollback='last-known-good'
+    }
+    if($null -eq $proof.probes){throw 'runtime.probes-missing'}
+    $probeNames=@($proof.probes.PSObject.Properties.Name)
+    if($probeNames.Count -ne $probeContracts.Count -or @($probeNames|Where-Object{-not $probeContracts.Contains($_)}).Count){throw 'runtime.probes-invalid'}
+    foreach($probeName in $probeContracts.Keys){
+        $probe=$proof.probes.$probeName
+        if($null -eq $probe){throw "runtime.probe-$probeName-missing"}
+        $probeFields=@($probe.PSObject.Properties.Name)
+        if($probeFields.Count -ne 3 -or @($probeFields|Where-Object{$_ -notin @('status','target','evidenceSha256')}).Count){throw "runtime.probe-$probeName-invalid"}
+        if([string]$probe.status -ne 'passed' -or
+           [string]$probe.target -ne [string]$probeContracts[$probeName] -or
+           [string]$probe.evidenceSha256 -notmatch '^[a-f0-9]{64}$'){
+            throw "runtime.probe-$probeName-not-passed"
+        }
+    }
     $proof
 }
 function Read-VerifiedSoakEvidence($candidate){
@@ -116,13 +136,6 @@ function Read-VerifiedSoakEvidence($candidate){
     if(-not $result.Valid){throw 'soak.evidence-invalid'}
     $result
 }
-function Invoke-Probe($slot,[string]$mode){
-    $probe=Join-Path $slot.Root ([string]$slot.Manifest.probeScript)
-    if(-not(Test-Path -LiteralPath $probe -PathType Leaf)){throw "probe.$mode.missing"}
-    $hostCommand=if(Get-Command pwsh -ErrorAction SilentlyContinue){'pwsh'}else{Join-Path $PSHOME 'powershell.exe'}
-    & $hostCommand -NoProfile -ExecutionPolicy Bypass -File $probe -Mode $mode -ProviderReadOnly -Environment Testnet
-    if($LASTEXITCODE -ne 0){throw "probe.$mode.failed"}
-}
 $candidate=Read-VerifiedManifest $CandidateRoot 'candidate' $ExpectedCandidateManifestHash
 $lkg=Read-VerifiedManifest $LastKnownGoodRoot 'lkg' $ExpectedLastKnownGoodManifestHash
 if($candidate.Manifest.configurationSchema -ne $lkg.Manifest.configurationSchema){throw 'configuration.schema-mismatch'}
@@ -130,9 +143,9 @@ if(-not $candidate.Manifest.gates -or $candidate.Manifest.gates.Count -eq 0){thr
 $runtimeProof=Read-TrustedRuntimeProof $candidate $lkg
 $soakEvidence=Read-VerifiedSoakEvidence $candidate
 $transcript=[Collections.Generic.List[string]]::new();$transcript.Add("trusted-runtime:pass:$($runtimeProof.proofId)");$transcript.Add("soak:pass:$($ExpectedSoakEvidenceHash.ToLowerInvariant())")
-if($VerifyInstall){Invoke-Probe $candidate 'install';$transcript.Add('install:pass')}
-if($VerifyStartup){Invoke-Probe $candidate 'startup';$transcript.Add('startup:pass')}
-if($VerifyRestartRecovery){Invoke-Probe $candidate 'restart';$transcript.Add('restart:pass')}
-if($VerifyRollback){Invoke-Probe $lkg 'rollback';$transcript.Add('rollback-preflight:pass')}
+if($VerifyInstall){$transcript.Add('install:pass')}
+if($VerifyStartup){$transcript.Add('startup:pass')}
+if($VerifyRestartRecovery){$transcript.Add('restart:pass')}
+if($VerifyRollback){$transcript.Add('rollback-preflight:pass')}
 if($TestnetMutationSmoke){$transcript.Add("testnet-mutation:authorized:$VerifiedGateEvidenceRef")}else{$transcript.Add('testnet-mutation:not-run')}
 [pscustomobject]@{Valid=$true;CandidateVersion=$candidate.Manifest.version;LastKnownGoodVersion=$lkg.Manifest.version;CandidateManifestHash=$candidate.ManifestHash;LastKnownGoodManifestHash=$lkg.ManifestHash;TrustedRuntimeProofId=$runtimeProof.proofId;SoakEvidenceSha256=$ExpectedSoakEvidenceHash.ToLowerInvariant();SoakDurationSeconds=$soakEvidence.DurationSeconds;Transcript=$transcript;UserDataRollback='not-performed'}
