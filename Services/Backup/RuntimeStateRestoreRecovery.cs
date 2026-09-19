@@ -1,15 +1,19 @@
 using System.IO;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using 币安量化机器人.Services.Security;
 
 namespace 币安量化机器人.Services.Backup;
 
 public static class RuntimeStateRestoreRecovery
 {
-    public const string JournalFileName = "runtime-state-restore-journal-v1.json";
+    public const string JournalFileName = "runtime-state-restore-journal-v1.wpeenv.json";
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
-    public static bool RecoverIfNeeded(AppDataLayout layout)
+    public static bool RecoverIfNeeded(
+        AppDataLayout layout,
+        IPlatformKeyProtector? keyProtector = null)
     {
         ArgumentNullException.ThrowIfNull(layout);
         var journalPath = layout.RuntimeFile(JournalFileName);
@@ -17,13 +21,14 @@ public static class RuntimeStateRestoreRecovery
 
         using var lease = DataRootMaintenanceLease.AcquireExclusiveMaintenanceLease(
             layout.RuntimeFile(DataRootMaintenanceLease.LeaseFileName));
-        RecoverUnderExclusiveLease(layout, lease);
+        RecoverUnderExclusiveLease(layout, lease, keyProtector);
         return true;
     }
 
     internal static void RecoverUnderExclusiveLease(
         AppDataLayout layout,
-        DataRootMaintenanceLeaseHandle lease)
+        DataRootMaintenanceLeaseHandle lease,
+        IPlatformKeyProtector? keyProtector = null)
     {
         ArgumentNullException.ThrowIfNull(layout);
         ArgumentNullException.ThrowIfNull(lease);
@@ -32,7 +37,11 @@ public static class RuntimeStateRestoreRecovery
         var journalPath = layout.RuntimeFile(JournalFileName);
         if (!File.Exists(journalPath)) return;
 
-        var journal = ReadJournal(journalPath);
+        var protector = keyProtector ?? new WindowsCurrentUserKeyProtector();
+        if (!protector.IsAvailable)
+            throw new InvalidOperationException("The restore journal key protector is unavailable.");
+
+        var journal = ReadJournal(journalPath, protector);
         var stage = StageDirectory(layout, journal.RestoreId);
         var rollback = RollbackDirectory(layout, journal.RestoreId);
         var failed = FailedDirectory(layout, journal.RestoreId);
@@ -76,24 +85,47 @@ public static class RuntimeStateRestoreRecovery
 
     internal static void WriteJournal(
         AppDataLayout layout,
-        RuntimeStateRestoreJournalV1 journal)
+        RuntimeStateRestoreJournalV1 journal,
+        IPlatformKeyProtector? keyProtector = null)
     {
         ArgumentNullException.ThrowIfNull(layout);
         ArgumentNullException.ThrowIfNull(journal);
         ValidateJournal(journal);
 
-        var path = layout.RuntimeFile(JournalFileName);
-        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var protector = keyProtector ?? new WindowsCurrentUserKeyProtector();
+        if (!protector.IsAvailable)
+            throw new InvalidOperationException("The restore journal key protector is unavailable.");
+
+        var plaintext = JsonSerializer.SerializeToUtf8Bytes(journal, Json);
         try
         {
-            File.WriteAllBytes(temp, JsonSerializer.SerializeToUtf8Bytes(journal, Json));
-            using (var stream = new FileStream(temp, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-                stream.Flush(true);
-            File.Move(temp, path, true);
+            var envelope = new VersionedEnvelopeEncryptionService(protector).Encrypt(
+                plaintext,
+                new EnvelopeAssociatedData(
+                    "runtime-state-restore-journal",
+                    journal.RestoreId,
+                    1));
+            var wrapper = new RuntimeStateRestoreJournalEnvelopeV1(
+                RuntimeStateRestoreJournalEnvelopeV1.CurrentSchema,
+                journal.RestoreId,
+                envelope);
+            var path = layout.RuntimeFile(JournalFileName);
+            var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllBytes(temp, JsonSerializer.SerializeToUtf8Bytes(wrapper, Json));
+                using (var stream = new FileStream(temp, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                    stream.Flush(true);
+                File.Move(temp, path, true);
+            }
+            finally
+            {
+                if (File.Exists(temp)) File.Delete(temp);
+            }
         }
         finally
         {
-            if (File.Exists(temp)) File.Delete(temp);
+            CryptographicOperations.ZeroMemory(plaintext);
         }
     }
 
@@ -106,15 +138,39 @@ public static class RuntimeStateRestoreRecovery
     internal static string FailedDirectory(AppDataLayout layout, string restoreId)
         => ResolveRuntimeDirectory(layout, "restore-failed-" + SafeId(restoreId));
 
-    private static RuntimeStateRestoreJournalV1 ReadJournal(string path)
+    private static RuntimeStateRestoreJournalV1 ReadJournal(
+        string path,
+        IPlatformKeyProtector keyProtector)
     {
         var info = new FileInfo(path);
-        if (!info.Exists || info.Length <= 0 || info.Length > 64 * 1024)
+        if (!info.Exists || info.Length <= 0 || info.Length > 256 * 1024)
             throw new InvalidDataException("Runtime-state restore journal length is invalid.");
-        var journal = JsonSerializer.Deserialize<RuntimeStateRestoreJournalV1>(File.ReadAllBytes(path))
-            ?? throw new InvalidDataException("Runtime-state restore journal is invalid.");
-        ValidateJournal(journal);
-        return journal;
+
+        var wrapper = JsonSerializer.Deserialize<RuntimeStateRestoreJournalEnvelopeV1>(File.ReadAllBytes(path))
+            ?? throw new InvalidDataException("Runtime-state restore journal envelope is invalid.");
+        if (!string.Equals(
+                wrapper.Schema,
+                RuntimeStateRestoreJournalEnvelopeV1.CurrentSchema,
+                StringComparison.Ordinal))
+            throw new InvalidDataException("Runtime-state restore journal envelope schema is unsupported.");
+
+        var restoreId = SafeId(wrapper.RestoreId);
+        var plaintext = new VersionedEnvelopeEncryptionService(keyProtector).Decrypt(
+            wrapper.Envelope,
+            new EnvelopeAssociatedData("runtime-state-restore-journal", restoreId, 1));
+        try
+        {
+            var journal = JsonSerializer.Deserialize<RuntimeStateRestoreJournalV1>(plaintext)
+                ?? throw new InvalidDataException("Runtime-state restore journal is invalid.");
+            ValidateJournal(journal);
+            if (!string.Equals(journal.RestoreId, restoreId, StringComparison.Ordinal))
+                throw new InvalidDataException("Runtime-state restore journal identity does not match its envelope.");
+            return journal;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plaintext);
+        }
     }
 
     private static void ValidateJournal(RuntimeStateRestoreJournalV1 journal)
