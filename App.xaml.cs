@@ -14,6 +14,7 @@ public partial class App : global::System.Windows.Application
 {
     private static IServiceProvider? _serviceProvider;
     private TradingRuntimeHost? _runtimeHost;
+    private WpfLocalizationBridge? _localizationBridge;
 
     public static IServiceProvider ServiceProvider
     {
@@ -36,6 +37,7 @@ public partial class App : global::System.Windows.Application
         base.OnStartup(e);
 
         LocalizationService.Current.Initialize();
+        _localizationBridge = new WpfLocalizationBridge(LocalizationService.Current);
 
         if (e.Args.Any(x => string.Equals(x, "--i18n-test", StringComparison.OrdinalIgnoreCase)))
         {
@@ -439,6 +441,8 @@ public partial class App : global::System.Windows.Application
         }
         finally
         {
+            _localizationBridge?.Dispose();
+            _localizationBridge = null;
             Log.CloseAndFlush();
             base.OnExit(e);
         }
