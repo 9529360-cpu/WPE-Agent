@@ -224,9 +224,6 @@ public static class PostTradeEntryLedgerProofCanonicalizerV1
             || item.ExchangeUpdatedAtUtc is { Offset: var offset } && offset != TimeSpan.Zero)
             throw new InvalidOperationException("Post-trade entry ledger event is invalid.");
 
-        if (item.ExchangeUpdatedAtUtc is { } exchangeUpdated
-            && exchangeUpdated > item.OccurredAtUtc.AddMinutes(5))
-            throw new InvalidOperationException("Exchange update time is inconsistent with the persisted execution event.");
     }
 
     private static byte[] Serialize(PostTradeEntryLedgerProofV1 value)
