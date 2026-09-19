@@ -19,6 +19,9 @@ public sealed class HeadlessSoakEvidenceBoundaryTests
         Assert.Contains("soak.source-identity-mismatch",verifier,StringComparison.Ordinal);
         Assert.Contains("soak.candidate-manifest-mismatch",verifier,StringComparison.Ordinal);
         Assert.Contains("samples-hash-mismatch",verifier,StringComparison.Ordinal);
+        Assert.Contains("ExpectedEvidenceSha256",verifier,StringComparison.Ordinal);
+        Assert.Contains("Get-FileSnapshot",verifier,StringComparison.Ordinal);
+        Assert.Contains("EvidenceSha256=$evidenceSnapshot.Hash",verifier,StringComparison.Ordinal);
         Assert.Contains("duration-insufficient",verifier,StringComparison.Ordinal);
         Assert.Contains("requested-duration-mismatch",verifier,StringComparison.Ordinal);
         Assert.Contains("sample-time-not-strictly-increasing",verifier,StringComparison.Ordinal);
