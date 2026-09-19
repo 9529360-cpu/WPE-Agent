@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using System.Globalization;
 using System.Security.Cryptography;
+using 币安量化机器人.Core.Strategy;
 
 namespace 币安量化机器人.Services.Agent;
 
@@ -24,13 +25,13 @@ public sealed partial class AgentSqliteStore
             insert.CommandText="""
                 INSERT OR IGNORE INTO strategy_shadow_observation_artifacts(
                     canonical_sha256,schema,strategy_id,strategy_version,symbol,lifecycle,
-                    validation_at,observed_at,market_collected_at,market_provenance_sha256,
-                    market_provenance_bytes,backtest_validation_sha256,backtest_validation_bytes,
-                    timeline_sha256,canonical_bytes)
+                    validation_at,observed_at,market_collected_at,market_price,direction,confidence,
+                    market_provenance_sha256,market_provenance_bytes,
+                    backtest_validation_sha256,backtest_validation_bytes,timeline_sha256,canonical_bytes)
                 VALUES(
                     $hash,$schema,$strategy,$version,$symbol,$lifecycle,
-                    $validationAt,$observed,$marketAt,$marketHash,$marketBytes,$validationHash,$validationBytes,
-                    $timelineHash,$bytes);
+                    $validationAt,$observed,$marketAt,$marketPrice,$direction,$confidence,
+                    $marketHash,$marketBytes,$validationHash,$validationBytes,$timelineHash,$bytes);
                 SELECT changes();
                 """;
             insert.Parameters.AddWithValue("$hash",value.CanonicalSha256);
@@ -42,6 +43,9 @@ public sealed partial class AgentSqliteStore
             insert.Parameters.AddWithValue("$validationAt",value.ValidationAtUtc.ToString("O"));
             insert.Parameters.AddWithValue("$observed",value.ObservedAtUtc.ToString("O"));
             insert.Parameters.AddWithValue("$marketAt",value.MarketCollectedAtUtc.ToString("O"));
+            insert.Parameters.AddWithValue("$marketPrice",value.MarketPrice.ToString(CultureInfo.InvariantCulture));
+            insert.Parameters.AddWithValue("$direction",value.Direction);
+            insert.Parameters.AddWithValue("$confidence",value.Confidence);
             insert.Parameters.AddWithValue("$marketHash",value.MarketProvenanceSha256);
             insert.Parameters.Add("$marketBytes",SqliteType.Blob).Value=value.MarketProvenanceCanonicalBytes;
             insert.Parameters.AddWithValue("$validationHash",value.BacktestValidationSha256);
@@ -55,7 +59,7 @@ public sealed partial class AgentSqliteStore
         await using var query=connection.CreateCommand();
         query.CommandText="""
             SELECT canonical_sha256,schema,symbol,lifecycle,validation_at,observed_at,market_collected_at,
-                   market_provenance_sha256,market_provenance_bytes,
+                   market_price,direction,confidence,market_provenance_sha256,market_provenance_bytes,
                    backtest_validation_sha256,backtest_validation_bytes,timeline_sha256,canonical_bytes
             FROM strategy_shadow_observation_artifacts
             WHERE strategy_id=$strategy
@@ -70,9 +74,9 @@ public sealed partial class AgentSqliteStore
         if(!await reader.ReadAsync(ct))
             throw new InvalidOperationException("Strategy shadow observation idempotent replay lost persisted evidence.");
 
-        var marketBytes=(byte[])reader[8];
-        var validationBytes=(byte[])reader[10];
-        var bytes=(byte[])reader[12];
+        var marketBytes=(byte[])reader[11];
+        var validationBytes=(byte[])reader[13];
+        var bytes=(byte[])reader[15];
         if(!string.Equals(reader.GetString(0),value.CanonicalSha256,StringComparison.Ordinal)
            ||!string.Equals(reader.GetString(1),value.Schema,StringComparison.Ordinal)
            ||!string.Equals(reader.GetString(2),value.Symbol,StringComparison.Ordinal)
@@ -80,15 +84,110 @@ public sealed partial class AgentSqliteStore
            ||DateTimeOffset.Parse(reader.GetString(4),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind)!=value.ValidationAtUtc
            ||DateTimeOffset.Parse(reader.GetString(5),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind)!=value.ObservedAtUtc
            ||DateTimeOffset.Parse(reader.GetString(6),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind)!=value.MarketCollectedAtUtc
-           ||!string.Equals(reader.GetString(7),value.MarketProvenanceSha256,StringComparison.Ordinal)
+           ||decimal.Parse(reader.GetString(7),CultureInfo.InvariantCulture)!=value.MarketPrice
+           ||reader.GetInt32(8)!=value.Direction
+           ||reader.GetDouble(9)!=value.Confidence
+           ||!string.Equals(reader.GetString(10),value.MarketProvenanceSha256,StringComparison.Ordinal)
            ||!CryptographicOperations.FixedTimeEquals(marketBytes,value.MarketProvenanceCanonicalBytes)
-           ||!string.Equals(reader.GetString(9),value.BacktestValidationSha256,StringComparison.Ordinal)
+           ||!string.Equals(reader.GetString(12),value.BacktestValidationSha256,StringComparison.Ordinal)
            ||!CryptographicOperations.FixedTimeEquals(validationBytes,value.BacktestValidationCanonicalBytes)
-           ||!string.Equals(reader.GetString(11),value.TimelineSha256,StringComparison.Ordinal)
+           ||!string.Equals(reader.GetString(14),value.TimelineSha256,StringComparison.Ordinal)
            ||!CryptographicOperations.FixedTimeEquals(bytes,value.CanonicalBytes))
             throw new InvalidOperationException("Strategy shadow observation replay conflicts with persisted evidence.");
 
         return false;
+    }
+
+    internal async Task<StrategyObservationPerformance> GetStrategyShadowObservationPerformanceAsync(
+        string strategyId,
+        string strategyVersion,
+        CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(strategyId)||string.IsNullOrWhiteSpace(strategyVersion))
+            return new(0,0,0,0,0,"canonical shadow observations unavailable");
+
+        await using var connection=new SqliteConnection(_cs);
+        await connection.OpenAsync(ct);
+        await EnsureStrategyShadowObservationStorageAsync(connection,ct);
+
+        await using var query=connection.CreateCommand();
+        query.CommandText="""
+            SELECT canonical_sha256,schema,strategy_id,strategy_version,symbol,lifecycle,
+                   validation_at,observed_at,market_collected_at,market_price,direction,confidence,
+                   market_provenance_sha256,market_provenance_bytes,
+                   backtest_validation_sha256,backtest_validation_bytes,timeline_sha256,canonical_bytes
+            FROM strategy_shadow_observation_artifacts
+            WHERE strategy_id=$strategy AND strategy_version=$version
+            ORDER BY market_collected_at,canonical_sha256;
+            """;
+        query.Parameters.AddWithValue("$strategy",strategyId);
+        query.Parameters.AddWithValue("$version",strategyVersion);
+
+        var rows=new List<StrategyShadowObservationV1>();
+        string? validationHash=null;
+        string? timelineHash=null;
+        await using var reader=await query.ExecuteReaderAsync(ct);
+        while(await reader.ReadAsync(ct))
+        {
+            var row=new StrategyShadowObservationV1(
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                DateTimeOffset.Parse(reader.GetString(6),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),
+                DateTimeOffset.Parse(reader.GetString(7),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),
+                DateTimeOffset.Parse(reader.GetString(8),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),
+                decimal.Parse(reader.GetString(9),CultureInfo.InvariantCulture),
+                reader.GetInt32(10),
+                reader.GetDouble(11),
+                reader.GetString(14),
+                (byte[])reader[15],
+                reader.GetString(16),
+                string.Empty,
+                "Testnet",
+                reader.GetString(12),
+                (byte[])reader[13],
+                (byte[])reader[17],
+                reader.GetString(0));
+            if(!StrategyShadowObservationCanonicalizerV1.IsCanonical(row))
+                throw new InvalidOperationException("Persisted strategy shadow observation failed canonical verification.");
+            if(validationHash is not null
+               &&(!string.Equals(validationHash,row.BacktestValidationSha256,StringComparison.Ordinal)
+                  ||!string.Equals(timelineHash,row.TimelineSha256,StringComparison.Ordinal)))
+                throw new InvalidOperationException("Strategy shadow qualification mixes validation or timeline authority.");
+            validationHash??=row.BacktestValidationSha256;
+            timelineHash??=row.TimelineSha256;
+            rows.Add(row);
+        }
+
+        if(rows.Count<2)
+            return new(rows.Count,0,0,0,0,"canonical shadow observations pending");
+
+        var returns=new List<double>(rows.Count-1);
+        foreach(var (current,next) in rows.Zip(rows.Skip(1)))
+            returns.Add((double)current.Direction*(double)(next.MarketPrice/current.MarketPrice-1));
+
+        var expectancy=returns.Average();
+        var equity=1d;
+        var high=1d;
+        var drawdown=0d;
+        var failures=0;
+        foreach(var value in returns)
+        {
+            equity*=Math.Max(.01,1+value);
+            high=Math.Max(high,equity);
+            drawdown=Math.Max(drawdown,(high-equity)/high);
+            if(value<0)failures++;else failures=0;
+        }
+        var quality=Math.Clamp(.5+expectancy*50-drawdown,0,1);
+        return new(
+            rows.Count,
+            expectancy,
+            drawdown,
+            quality,
+            failures,
+            $"canonical_shadow_observations={rows.Count} expectancy={expectancy:P2} drawdown={drawdown:P1}");
     }
 
     private async Task VerifyStrategyShadowSourcesAsync(
@@ -170,6 +269,9 @@ public sealed partial class AgentSqliteStore
                 validation_at TEXT NOT NULL,
                 observed_at TEXT NOT NULL,
                 market_collected_at TEXT NOT NULL,
+                market_price TEXT NOT NULL,
+                direction INTEGER NOT NULL CHECK(direction BETWEEN -1 AND 1),
+                confidence REAL NOT NULL CHECK(confidence>=0 AND confidence<=1),
                 market_provenance_sha256 TEXT NOT NULL,
                 market_provenance_bytes BLOB NOT NULL,
                 backtest_validation_sha256 TEXT NOT NULL,
