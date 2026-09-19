@@ -84,12 +84,15 @@ jobs:
     - name: Build .NET
       run: dotnet build "币安量化机器人.sln" --configuration Release --no-restore
 
+    - name: Verify portable runtime target
+      run: dotnet build "币安量化机器人.csproj" --configuration Release --framework net8.0 --no-restore
+
     - name: Test .NET
       shell: pwsh
       run: ./eng/test.ps1 -Configuration Release
 
     - name: Publish candidate
-      run: dotnet publish "币安量化机器人.csproj" --configuration Release --no-restore --output artifacts/publish
+      run: dotnet publish "币安量化机器人.csproj" --configuration Release --framework net8.0-windows --no-restore --output artifacts/publish
 
     - name: Verify publish boundary
       shell: pwsh
