@@ -49,6 +49,21 @@ public sealed class RuntimeHistoricalCollectionStateStore
         ("external_position_isolation_audits","evaluated_at")
     ];
 
+    private static readonly (string Table,string Timestamp)[] PostTradeVersionSources=
+    [
+        ("trade_outcomes","closed_at"),
+        ("automatic_execution_queue","updated_at"),
+        ("automatic_execution_events","occurred_at"),
+        ("model_off_canonical_audits","recorded_at_utc")
+    ];
+
+    private static readonly (string Table,string Timestamp)[] ReconciliationVersionSources=
+    [
+        ("position_reconciliation_audits","evaluated_at"),
+        ("protection_reconciliation_audits","evaluated_at"),
+        ("external_position_isolation_audits","evaluated_at")
+    ];
+
     internal async Task<HistoricalCollectionChangeVector> ReadChangeVectorAsync(CancellationToken ct=default)
     {
         await using var connection=new SqliteConnection(_connectionString);await connection.OpenAsync(ct);
@@ -117,10 +132,11 @@ public sealed class RuntimeHistoricalCollectionStateStore
         ArgumentNullException.ThrowIfNull(request);
         var kind=HistoricalCollectionKindV1.PostTradeReviews;
         var limit=Math.Clamp(request.Limit,1,HistoricalCollectionPageV1<HistoricalPostTradeReviewV1>.MaximumPageSize);
-        if(!TryOffset(kind,request.Cursor,out var offset))return Page<HistoricalPostTradeReviewV1>(kind,RuntimeCollectionState.Error,[],null,null,"The collection cursor is invalid or expired.");
         try
         {
             await using var connection=new SqliteConnection(_connectionString);await connection.OpenAsync(ct);
+            var versionBefore=await CollectionVersionAsync(connection,PostTradeVersionSources,ct);
+            if(!TryOffset(kind,request.Cursor,versionBefore,out var offset))return Page<HistoricalPostTradeReviewV1>(kind,RuntimeCollectionState.Error,[],null,null,"The collection cursor is invalid, expired, or belongs to a different collection version.");
             if(!await TableExists(connection,"trade_outcomes",ct))return Page<HistoricalPostTradeReviewV1>(kind,RuntimeCollectionState.Unsupported,[],null,null,"The SQLite post-trade collection is not available.");
             var updatedAt=await Latest(connection,"trade_outcomes","closed_at",ct);
             var raw=new List<RawPostTradeReview>(limit+1);
@@ -181,7 +197,9 @@ public sealed class RuntimeHistoricalCollectionStateStore
                     trace.TraceState,trace.RiskDecision,trace.ExecutionStatus,trace.ExecutionCode,trace.ExecutionAttempts,
                     trace.MarketCollectedAtUtc,trace.MarketDataVersion,evidence.State,evidence.Chain));
             }
-            return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count):null,updatedAt,null);
+            var versionAfter=await CollectionVersionAsync(connection,PostTradeVersionSources,ct);
+            if(!string.Equals(versionBefore,versionAfter,StringComparison.Ordinal))return Page<HistoricalPostTradeReviewV1>(kind,RuntimeCollectionState.Error,[],null,null,"The historical collection changed during the read.");
+            return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count,versionBefore):null,updatedAt,null);
         }
         catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
         catch{return Page<HistoricalPostTradeReviewV1>(kind,RuntimeCollectionState.Error,[],null,null,"The SQLite post-trade reviews could not be read.");}
@@ -349,10 +367,11 @@ public sealed class RuntimeHistoricalCollectionStateStore
         ArgumentNullException.ThrowIfNull(request);
         var kind=HistoricalCollectionKindV1.Reconciliations;
         var limit=Math.Clamp(request.Limit,1,HistoricalCollectionPageV1<HistoricalReconciliationV1>.MaximumPageSize);
-        if(!TryOffset(kind,request.Cursor,out var offset))return Page<HistoricalReconciliationV1>(kind,RuntimeCollectionState.Error,[],null,null,"The collection cursor is invalid or expired.");
         try
         {
             await using var connection=new SqliteConnection(_connectionString);await connection.OpenAsync(ct);
+            var versionBefore=await CollectionVersionAsync(connection,ReconciliationVersionSources,ct);
+            if(!TryOffset(kind,request.Cursor,versionBefore,out var offset))return Page<HistoricalReconciliationV1>(kind,RuntimeCollectionState.Error,[],null,null,"The collection cursor is invalid, expired, or belongs to a different collection version.");
             var sources=new List<(string Kind,string Table)>();
             foreach(var source in new[]{("position","position_reconciliation_audits"),("protection","protection_reconciliation_audits"),("externalIsolation","external_position_isolation_audits")})
                 if(await TableExists(connection,source.Item2,ct))sources.Add(source);
@@ -394,7 +413,9 @@ public sealed class RuntimeHistoricalCollectionStateStore
                     hash));
             }
             var hasMore=items.Count>limit;if(hasMore)items.RemoveAt(items.Count-1);
-            return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count):null,updatedAt,null);
+            var versionAfter=await CollectionVersionAsync(connection,ReconciliationVersionSources,ct);
+            if(!string.Equals(versionBefore,versionAfter,StringComparison.Ordinal))return Page<HistoricalReconciliationV1>(kind,RuntimeCollectionState.Error,[],null,null,"The historical collection changed during the read.");
+            return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count,versionBefore):null,updatedAt,null);
         }
         catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
         catch{return Page<HistoricalReconciliationV1>(kind,RuntimeCollectionState.Error,[],null,null,"The SQLite reconciliation audits could not be read.");}
@@ -404,17 +425,21 @@ public sealed class RuntimeHistoricalCollectionStateStore
     {
         ArgumentNullException.ThrowIfNull(request);
         var limit=Math.Clamp(request.Limit,1,HistoricalCollectionPageV1<T>.MaximumPageSize);
-        if(!TryOffset(kind,request.Cursor,out var offset)) return Page<T>(kind,RuntimeCollectionState.Error,[],null,null,"The collection cursor is invalid or expired.");
         try
         {
             await using var connection=new SqliteConnection(_connectionString);await connection.OpenAsync(ct);
+            var versionSources=new[]{(Table:table,Timestamp:timestampColumn)};
+            var versionBefore=await CollectionVersionAsync(connection,versionSources,ct);
+            if(!TryOffset(kind,request.Cursor,versionBefore,out var offset)) return Page<T>(kind,RuntimeCollectionState.Error,[],null,null,"The collection cursor is invalid, expired, or belongs to a different collection version.");
             if(!await TableExists(connection,table,ct)) return Page<T>(kind,RuntimeCollectionState.Unsupported,[],null,null,"The SQLite collection is not available.");
             var updatedAt=await Latest(connection,table,timestampColumn,ct);
             if(staleAfter is not null&&updatedAt is not null&&_utcNow()-updatedAt>staleAfter.Value) return Page<T>(kind,RuntimeCollectionState.Stale,[],null,updatedAt,"The persisted collection is stale.");
             var items=new List<T>(limit+1);await using var command=connection.CreateCommand();command.CommandText=sql;command.Parameters.AddWithValue("$limit",limit+1);command.Parameters.AddWithValue("$offset",offset);
             await using var reader=await command.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct))items.Add(map(reader));
             var hasMore=items.Count>limit;if(hasMore)items.RemoveAt(items.Count-1);
-            return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count):null,updatedAt,null);
+            var versionAfter=await CollectionVersionAsync(connection,versionSources,ct);
+            if(!string.Equals(versionBefore,versionAfter,StringComparison.Ordinal))return Page<T>(kind,RuntimeCollectionState.Error,[],null,null,"The historical collection changed during the read.");
+            return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count,versionBefore):null,updatedAt,null);
         }
         catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
         catch{return Page<T>(kind,RuntimeCollectionState.Error,[],null,null,"The SQLite collection could not be read.");}
@@ -423,14 +448,31 @@ public sealed class RuntimeHistoricalCollectionStateStore
     private static HistoricalCollectionPageV1<T> Page<T>(HistoricalCollectionKindV1 kind,RuntimeCollectionState state,IReadOnlyList<T> items,string? cursor,DateTimeOffset? updated,string? message)=>new(HistoricalCollectionPageV1<T>.CurrentContractVersion,kind,state,items,cursor,updated,SourceName,message);
     private static async Task<bool> TableExists(SqliteConnection c,string table,CancellationToken ct){await using var q=c.CreateCommand();q.CommandText="SELECT 1 FROM sqlite_master WHERE type='table' AND name=$name";q.Parameters.AddWithValue("$name",table);return await q.ExecuteScalarAsync(ct) is not null;}
     private static async Task<DateTimeOffset?> Latest(SqliteConnection c,string table,string column,CancellationToken ct){await using var q=c.CreateCommand();q.CommandText=$"SELECT MAX({column}) FROM {table}";var value=await q.ExecuteScalarAsync(ct);return value is null||value is DBNull?null:Instant(Convert.ToString(value,CultureInfo.InvariantCulture)!);}
-    private string Cursor(HistoricalCollectionKindV1 kind,int offset)
+    private static async Task<string> CollectionVersionAsync(SqliteConnection connection,IReadOnlyList<(string Table,string Timestamp)> sources,CancellationToken ct)
+    {
+        var parts=new string[sources.Count];
+        for(var i=0;i<sources.Count;i++)
+        {
+            var source=sources[i];
+            if(!await TableExists(connection,source.Table,ct)){parts[i]=source.Table+"=missing";continue;}
+            await using var command=connection.CreateCommand();
+            command.CommandText=$"SELECT COALESCE(MAX(rowid),0),COALESCE(MAX({source.Timestamp}),'') FROM {source.Table}";
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            if(!await reader.ReadAsync(ct))throw new InvalidOperationException("Historical collection version could not be read.");
+            parts[i]=$"{source.Table}={reader.GetInt64(0).ToString(CultureInfo.InvariantCulture)}:{reader.GetString(1)}";
+        }
+        return string.Join("|",parts);
+    }
+
+    private string Cursor(HistoricalCollectionKindV1 kind,int offset,string collectionVersion)
     {
         var expiresAt=_utcNow().Add(HistoricalCollectionRequestV1.CursorLifetime).ToUnixTimeSeconds();
-        var payload=Encoding.UTF8.GetBytes($"v1:{kind}:{offset}:{expiresAt}");
+        var versionHash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(collectionVersion)));
+        var payload=Encoding.UTF8.GetBytes($"v2:{kind}:{offset}:{expiresAt}:{versionHash}");
         var signature=HMACSHA256.HashData(_cursorKey,payload);
         return Convert.ToBase64String(payload)+"."+Convert.ToBase64String(signature);
     }
-    private bool TryOffset(HistoricalCollectionKindV1 kind,string? cursor,out int offset)
+    private bool TryOffset(HistoricalCollectionKindV1 kind,string? cursor,string collectionVersion,out int offset)
     {
         offset=0;if(string.IsNullOrWhiteSpace(cursor))return true;
         try
@@ -440,7 +482,10 @@ public sealed class RuntimeHistoricalCollectionStateStore
             if(!string.Equals(Convert.ToBase64String(payload),segments[0],StringComparison.Ordinal)||!string.Equals(Convert.ToBase64String(supplied),segments[1],StringComparison.Ordinal))return false;
             var expected=HMACSHA256.HashData(_cursorKey,payload);if(!CryptographicOperations.FixedTimeEquals(expected,supplied))return false;
             var parts=Encoding.UTF8.GetString(payload).Split(':');
-            return parts.Length==4&&parts[0]=="v1"&&parts[1]==kind.ToString()
+            if(parts.Length!=5||parts[0]!="v2"||parts[1]!=kind.ToString())return false;
+            var suppliedVersion=Convert.FromHexString(Hash(parts[4]));
+            var expectedVersion=SHA256.HashData(Encoding.UTF8.GetBytes(collectionVersion));
+            return CryptographicOperations.FixedTimeEquals(suppliedVersion,expectedVersion)
                 &&int.TryParse(parts[2],NumberStyles.None,CultureInfo.InvariantCulture,out offset)&&offset>=0&&offset<=1_000_000
                 &&long.TryParse(parts[3],NumberStyles.None,CultureInfo.InvariantCulture,out var expiresAt)&&expiresAt>_utcNow().ToUnixTimeSeconds();
         }

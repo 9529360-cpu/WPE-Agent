@@ -124,6 +124,34 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
     }
 
     [Fact]
+    public async Task SignedCursorInvalidatesWhenCollectionOrderingVersionChanges()
+    {
+        await InitializeAsync();
+        for(var i=0;i<2;i++)await ExecuteAsync("INSERT INTO execution_events(cycle_id,client_order_id,symbol,side,action,reduce_only,quantity,status,occurred_at) VALUES($c,$o,'BTCUSDT','Long','OPEN',0,'1','FILLED',$t)",("$c",$"cycle-version-{i}"),("$o",$"order-version-{i}"),("$t",Now.ToString("O")));
+        var store=new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now);
+        var first=await store.ReadOrdersAsync(new(1));var cursor=Assert.IsType<string>(first.NextCursor);
+        await ExecuteAsync("INSERT INTO execution_events(cycle_id,client_order_id,symbol,side,action,reduce_only,quantity,status,occurred_at) VALUES('cycle-version-new','order-version-new','BTCUSDT','Long','OPEN',0,'1','FILLED',$t)",("$t",Now.ToString("O")));
+
+        var changed=await store.ReadOrdersAsync(new(1,cursor));
+
+        Assert.Equal(RuntimeCollectionState.Error,changed.State);Assert.Empty(changed.Items);Assert.Null(changed.NextCursor);
+    }
+
+    [Fact]
+    public async Task PostTradeCursorInvalidatesWhenExecutionEvidenceChanges()
+    {
+        await InitializeAsync();
+        for(var i=0;i<2;i++)await ExecuteAsync("INSERT INTO trade_outcomes(client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,fees,fee_basis,fee_rate,entry_slippage_amount,exit_slippage_amount,total_slippage_amount,slippage_basis,funding_amount,funding_basis,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis) VALUES($close,$cycle,'BTCUSDT','Long','100','101','1','0','unavailable','0','0','0','0','unavailable','0','unavailable','1','.01',$t,NULL,'legacy-v1','legacy-version-only')",("$close",$"close-version-{i}"),("$cycle",$"cycle-post-version-{i}"),("$t",Now.ToString("O")));
+        var store=new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now);
+        var first=await store.ReadPostTradeReviewsAsync(new(1));var cursor=Assert.IsType<string>(first.NextCursor);
+        await ExecuteAsync("INSERT INTO automatic_execution_queue(execution_id,correlation_id,status,last_code,attempt_count,market_collected_at,market_data_version,updated_at) VALUES('execution-version','cycle-post-version-0','Succeeded','automatic.succeeded',1,$t,'market-v1',$t)",("$t",Now.ToString("O")));
+
+        var changed=await store.ReadPostTradeReviewsAsync(new(1,cursor));
+
+        Assert.Equal(RuntimeCollectionState.Error,changed.State);Assert.Empty(changed.Items);Assert.Null(changed.NextCursor);
+    }
+
+    [Fact]
     public async Task InvalidCursorAndStaleDataFailClosedWithoutItems()
     {
         await InitializeAsync();await ExecuteAsync("INSERT INTO equity_snapshots(observed_at,equity,available_balance,environment,provider_id) VALUES($t,'10','9','Testnet','binance')",("$t",Now.AddDays(-2).ToString("O")));
