@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using WpeAgent.RuntimeContracts;
 using WpeAgent.RuntimeServices;
+using 币安量化机器人.Services.Agent;
 
 namespace WPE.Tests;
 
@@ -64,6 +65,80 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
     }
 
     [Fact]
+    public async Task PostTradePnlDriftProjectsCanonicalBusinessFieldsWithoutOpaqueIdentity()
+    {
+        await InitializeAsync();
+        var fact=PostTradePnlDriftCanonicalizerV1.Create(
+            "close-secret",
+            "cycle-close-secret",
+            "trend-alpha",
+            "v1",
+            "BTCUSDT",
+            PositionSide.Long,
+            1m,
+            new string('a',64),
+            [new(0,"cycle-open-secret","open-secret",false,new string('b',64),new string('c',64))],
+            new string('d',64),
+            new string('e',64),
+            100m,
+            110m,
+            10m,
+            0.084m,
+            "estimated-static-rate",
+            0m,
+            "unavailable",
+            9.916m,
+            100.5m,
+            109.5m,
+            true,
+            0.084m,
+            Now);
+        await ExecuteAsync(
+            "INSERT INTO post_trade_pnl_drift(canonical_sha256,compared_at,canonical_bytes) VALUES($hash,$t,$bytes)",
+            ("$hash",fact.CanonicalSha256),
+            ("$t",fact.ComparedAtUtc.ToString("O")),
+            ("$bytes",fact.CanonicalBytes));
+
+        var store=new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now);
+        var page=await store.ReadPostTradePnlDriftAsync(new());
+        var item=Assert.Single(page.Items);
+
+        Assert.Equal(RuntimeCollectionState.Available,page.State);
+        Assert.Equal("trend-alpha",item.StrategyId);
+        Assert.Equal("BTCUSDT",item.Symbol);
+        Assert.Equal(10m,item.ActualGrossPnl);
+        Assert.Equal(9m,item.SimulatedGrossPnl);
+        Assert.Equal(1m,item.ObservedMinusSimulatedGrossPnl);
+        Assert.False(item.FeeAdjustedPnlComparable);
+        Assert.False(item.NetPnlComparable);
+        var json=System.Text.Json.JsonSerializer.Serialize(page);
+        Assert.DoesNotContain("close-secret",json);
+        Assert.DoesNotContain(fact.CanonicalSha256,json);
+
+        await ExecuteAsync(
+            "UPDATE post_trade_pnl_drift SET compared_at=$t WHERE canonical_sha256=$hash",
+            ("$t",Now.AddDays(1).ToString("O")),
+            ("$hash",fact.CanonicalSha256));
+        var metadataMismatch=await store.ReadPostTradePnlDriftAsync(new());
+        Assert.Equal(RuntimeCollectionState.Error,metadataMismatch.State);
+        Assert.Empty(metadataMismatch.Items);
+        Assert.Null(metadataMismatch.NextCursor);
+
+        await ExecuteAsync(
+            "UPDATE post_trade_pnl_drift SET compared_at=$t WHERE canonical_sha256=$hash",
+            ("$t",fact.ComparedAtUtc.ToString("O")),
+            ("$hash",fact.CanonicalSha256));
+        await ExecuteAsync(
+            "UPDATE post_trade_pnl_drift SET canonical_bytes=$bytes WHERE canonical_sha256=$hash",
+            ("$bytes",new byte[]{1,2,3}),
+            ("$hash",fact.CanonicalSha256));
+        var corrupted=await store.ReadPostTradePnlDriftAsync(new());
+        Assert.Equal(RuntimeCollectionState.Error,corrupted.State);
+        Assert.Empty(corrupted.Items);
+        Assert.Null(corrupted.NextCursor);
+    }
+
+    [Fact]
     public async Task MissingTableIsUnsupportedAndAuditPayloadIsNeverProjected()
     {
         Directory.CreateDirectory(_directory);await ExecuteAsync("CREATE TABLE runtime_events(event_id TEXT,sequence INTEGER,correlation_id TEXT,event_type TEXT,source TEXT,payload_json TEXT,occurred_at TEXT)");
@@ -78,6 +153,7 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
         CREATE TABLE runtime_skill_calls(id INTEGER PRIMARY KEY AUTOINCREMENT,occurred_at TEXT,skill TEXT,status TEXT,duration_ms INTEGER,mode TEXT,remote_llm INTEGER,tokens INTEGER,cost_usd TEXT);
         CREATE TABLE backtest_runs(id TEXT PRIMARY KEY,strategy_id TEXT,strategy_version TEXT,symbol TEXT,status TEXT,completed_at TEXT,coverage_days INTEGER,trades INTEGER,out_of_sample_return REAL,max_drawdown REAL,sharpe REAL);
         CREATE TABLE runtime_events(event_id TEXT,sequence INTEGER,correlation_id TEXT,event_type TEXT,source TEXT,payload_json TEXT,occurred_at TEXT);
+        CREATE TABLE post_trade_pnl_drift(canonical_sha256 TEXT PRIMARY KEY,compared_at TEXT NOT NULL,canonical_bytes BLOB NOT NULL);
         """);}
     private async Task ExecuteAsync(string sql,params (string Name,object Value)[] values){Directory.CreateDirectory(_directory);await using var c=new SqliteConnection($"Data Source={DatabasePath}");await c.OpenAsync();await using var q=c.CreateCommand();q.CommandText=sql;foreach(var value in values)q.Parameters.AddWithValue(value.Name,value.Value);await q.ExecuteNonQueryAsync();}
     public void Dispose(){SqliteConnection.ClearAllPools();if(Directory.Exists(_directory))Directory.Delete(_directory,true);}
