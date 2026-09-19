@@ -11,6 +11,7 @@ $paths=@(
     'eng/sign-beta.ps1',
     'eng/package-beta.ps1',
     'eng/verify-beta-package.ps1',
+    'eng/dogfood/New-Candidate.ps1',
     'eng/dogfood/Test-DogfoodRelease.ps1',
     'eng/dogfood/Switch-DogfoodSlot.ps1',
     'eng/dogfood/Invoke-V1CandidateGate.ps1',
