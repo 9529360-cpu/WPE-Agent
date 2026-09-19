@@ -31,24 +31,29 @@ function Write-SoakEvidence([string]$path,$candidate,[hashtable]$overrides){
     $manifest=Get-Content -Raw -LiteralPath (Join-Path $candidate.CandidateRoot 'release-manifest.json')|ConvertFrom-Json
     $now=[DateTimeOffset]::UtcNow
     $samplePath=Join-Path (Split-Path -Parent $path) 'headless-soak-samples.jsonl'
-    $sample=[ordered]@{
-        schemaVersion='wpe.headless-soak-sample/1.0'
-        sampledAtUtc=$now.AddSeconds(-5).ToString('O')
-        observedAtUtc=$now.AddSeconds(-6).ToString('O')
-        healthAgeSeconds=1
-        processState='ready'
-        processCode='headless.ready'
-        runtimeReady=$true
-        agentRunning=$true
-        accessFresh=$true
-        heartbeatFresh=$true
-        leaseLost=$false
-        inStartupGrace=$false
-        accepted=$true
-        reason=$null
+    $started=$now.AddHours(-25)
+    $sampleLines=[Collections.Generic.List[string]]::new()
+    for($index=0;$index -lt 1350;$index++){
+        $sampledAt=$started.AddSeconds(90000.0*($index/1349.0))
+        $sample=[ordered]@{
+            schemaVersion='wpe.headless-soak-sample/1.0'
+            sampledAtUtc=$sampledAt.ToString('O')
+            observedAtUtc=$sampledAt.AddSeconds(-1).ToString('O')
+            healthAgeSeconds=1
+            processState='ready'
+            processCode='headless.ready'
+            runtimeReady=$true
+            agentRunning=$true
+            accessFresh=$true
+            heartbeatFresh=$true
+            leaseLost=$false
+            inStartupGrace=(($sampledAt-$started).TotalSeconds -lt 60)
+            accepted=$true
+            reason=$null
+        }
+        $sampleLines.Add(($sample|ConvertTo-Json -Compress))
     }
-    $sampleJson=$sample|ConvertTo-Json -Compress
-    @(1..1350|ForEach-Object{$sampleJson})|Set-Content -LiteralPath $samplePath -Encoding utf8
+    $sampleLines|Set-Content -LiteralPath $samplePath -Encoding utf8
     $e=[ordered]@{
         schemaVersion='wpe.headless-soak-evidence/1.0'
         status='passed'
