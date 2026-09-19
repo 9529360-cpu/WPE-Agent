@@ -35,12 +35,12 @@ public sealed class ExecutionTopOfBookSimulationV1Tests : IDisposable
     {
         var bundle = Bundle(
             Artifact(quantity:2m),
-            Snapshot(askQuantity:.75m, bidQuantity:5m),
+            Snapshot(askQuantity:0.75m, bidQuantity:5m),
             Rule(),
             Now);
 
         Assert.Equal(ExecutionSimulationFillStateV1.Partial, bundle.Fill.State);
-        Assert.Equal(.75m, bundle.Fill.ExecutedQuantity);
+        Assert.Equal(0.75m, bundle.Fill.ExecutedQuantity);
         Assert.Equal(101m, bundle.Fill.AveragePrice);
         Assert.Equal("top-of-book-partial", bundle.Fill.ReasonCode);
     }
