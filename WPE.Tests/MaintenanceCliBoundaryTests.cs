@@ -23,7 +23,7 @@ public sealed class MaintenanceCliBoundaryTests
         Assert.True(cleanup >= 0 && verifiedOutput > cleanup);
         Assert.Contains("<TargetFramework>net8.0</TargetFramework>", project, StringComparison.Ordinal);
         Assert.Contains("..\\币安量化机器人.csproj", project, StringComparison.Ordinal);
-        Assert.Contains("WPE.Maintenance\\\\**\\\\*.cs", mainProject, StringComparison.Ordinal);
+        Assert.Contains("WPE.Maintenance\\**\\*.cs", mainProject, StringComparison.Ordinal);
         Assert.Contains("WPE.Maintenance", solution, StringComparison.Ordinal);
 
         foreach (var source in new[] { program, project })
