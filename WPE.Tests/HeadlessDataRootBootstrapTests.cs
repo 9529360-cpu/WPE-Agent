@@ -32,6 +32,24 @@ public sealed class HeadlessDataRootBootstrapTests
     }
 
     [Fact]
+    public void DriveRootRemainsFullyQualified()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var root = Path.GetPathRoot(Path.GetTempPath());
+        Assert.False(string.IsNullOrWhiteSpace(root));
+
+        var result = HeadlessDataRootBootstrap.Resolve(
+            new[] { "--data-root", root! },
+            null);
+
+        Assert.True(result.Success);
+        Assert.True(Path.IsPathFullyQualified(result.Root));
+        Assert.Equal(root, result.Root, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(DriveType.Fixed, new DriveInfo(result.Root!).DriveType);
+    }
+
+    [Fact]
     public void ConflictingRootsFailClosed()
     {
         var argumentRoot = Path.Combine(Path.GetTempPath(), "wpe-service-a");
