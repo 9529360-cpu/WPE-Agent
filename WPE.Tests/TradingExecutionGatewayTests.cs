@@ -140,6 +140,29 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     }
 
     [Fact]
+    public async Task AutomaticReconciliationMissingWithoutSubmissionProofRemainsUnknown()
+    {
+        var setup=Setup(TradingAuthorizationMode.Auto);
+
+        var result=await new TradingAutomaticExecutionGateway(setup.Gateway,setup.Exchange,setup.Store)
+            .ReconcileAsync(AutomaticArtifact(),CancellationToken.None);
+
+        Assert.Equal(AutomaticGatewayReconciliationState.Unknown,result.State);
+        Assert.Equal("automatic.reconcile-unknown",result.Code);
+    }
+
+    [Fact]
+    public async Task ReviewReconciliationMissingWithoutSubmissionProofRemainsUnknown()
+    {
+        var setup=Setup(TradingAuthorizationMode.Review);
+
+        var result=await setup.Executor.ReconcileAsync(ReviewArtifact(),CancellationToken.None);
+
+        Assert.Equal(DurableReviewReconciliationState.Unknown,result.State);
+        Assert.Equal("review.reconcile-manual-required",result.Code);
+    }
+
+    [Fact]
     public async Task ReviewReconciliationJournaledMissingOrderIsUnknownNotNotSubmitted()
     {
         var setup=Setup(TradingAuthorizationMode.Review);
