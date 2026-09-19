@@ -79,6 +79,47 @@ public sealed class RuntimeStateBackupServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task BackupDestinationThroughReparsePointFailsClosed()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        await CreateDatabase(_layout.DataFile("agent.db"));
+        var target = Path.Combine(_root, "backup-link-target");
+        var link = Path.Combine(_root, "backup-link");
+        Directory.CreateDirectory(target);
+
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(link, target);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException or
+                IOException or
+                PlatformNotSupportedException)
+            {
+                return;
+            }
+
+            var destination = Path.Combine(link, "nested");
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                Service().CreateAsync(destination));
+
+            Assert.Contains("reparse", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(Directory.Exists(destination));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(target));
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+                Directory.Delete(link);
+            if (Directory.Exists(target))
+                Directory.Delete(target, true);
+        }
+    }
+
+    [Fact]
     public async Task BackupFailsClosedWhenRuntimeOwnsDataRoot()
     {
         await CreateDatabase(_layout.DataFile("agent.db"));
