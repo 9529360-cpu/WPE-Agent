@@ -33,6 +33,9 @@ public sealed class RuntimeStateRestoreActivationBoundaryTests
         Assert.Contains("VerifyPlaintextDataDirectoryAsync", service, StringComparison.Ordinal);
         Assert.Contains("_securityRestoreEvidence.CommitAsync", service, StringComparison.Ordinal);
         Assert.Contains("RuntimeStateRestorePhase.Committed", service, StringComparison.Ordinal);
+        var evidenceCommit = service.IndexOf("_securityRestoreEvidence.CommitAsync", StringComparison.Ordinal);
+        var generationCommit = service.IndexOf("journal = journal with { Phase = RuntimeStateRestorePhase.Committed }", StringComparison.Ordinal);
+        Assert.True(evidenceCommit >= 0 && generationCommit > evidenceCommit);
         Assert.Contains("RecoverUnderExclusiveLease", recovery, StringComparison.Ordinal);
     }
 
