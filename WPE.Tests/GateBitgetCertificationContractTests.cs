@@ -97,6 +97,37 @@ public sealed class GateBitgetCertificationContractTests : IDisposable
     public void GateProtectionTerminalsFailClosed(string providerState, string expected)
         => Assert.Equal(expected, GateExchangeProvider.NormalizeProtectionStatus(providerState));
 
+    [Fact]
+    public async Task GateProtectionSizeProjectsPositionWideOrFixedCoverage()
+    {
+        var profile=new ExchangeConnectionProfile{ProviderId="gate",IsTestnet=true,ExecutionEnabled=false,Endpoint="https://api-testnet.gateapi.io"};
+        await using var provider=new GateExchangeProvider(profile,"key","secret");
+        var multipliers=Assert.IsType<ConcurrentDictionary<string,decimal>>(
+            typeof(GateExchangeProvider).GetField("_multipliers",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(provider));
+        multipliers["BTC_USDT"]=0.001m;
+        var method=typeof(GateExchangeProvider).GetMethod("MapProtection",BindingFlags.NonPublic|BindingFlags.Instance)!;
+
+        using var fullJson=JsonDocument.Parse("""{"id":"p1","status":"open","order_type":"close-long-order","create_time":"1700000000","initial":{"contract":"BTC_USDT","size":"0","text":"full"},"trigger":{"rule":2}}""");
+        var full=await Assert.IsType<Task<ExchangeOrder>>(method.Invoke(provider,[fullJson.RootElement,CancellationToken.None]));
+        Assert.Equal(ProtectionCoverageKind.PositionWide,full.ProtectionCoverage);
+        Assert.Equal(0m,full.ProtectionQuantity);
+
+        using var fixedJson=JsonDocument.Parse("""{"id":"p2","status":"open","order_type":"close-long-order","create_time":"1700000000","initial":{"contract":"BTC_USDT","size":"3","text":"fixed"},"trigger":{"rule":2}}""");
+        var fixedOrder=await Assert.IsType<Task<ExchangeOrder>>(method.Invoke(provider,[fixedJson.RootElement,CancellationToken.None]));
+        Assert.Equal(ProtectionCoverageKind.FixedQuantity,fixedOrder.ProtectionCoverage);
+        Assert.Equal(0.003m,fixedOrder.ProtectionQuantity);
+    }
+
+    [Fact]
+    public void BitgetOnlyPositionLevelPlansClaimPositionWideCoverage()
+    {
+        Assert.Equal(ProtectionCoverageKind.PositionWide,BitgetExchangeProvider.ProtectionCoverage("pos_profit"));
+        Assert.Equal(ProtectionCoverageKind.PositionWide,BitgetExchangeProvider.ProtectionCoverage("pos_loss"));
+        Assert.Equal(ProtectionCoverageKind.Unknown,BitgetExchangeProvider.ProtectionCoverage("profit_plan"));
+        Assert.Equal(ProtectionCoverageKind.Unknown,BitgetExchangeProvider.ProtectionCoverage("loss_plan"));
+        Assert.Equal(ProtectionCoverageKind.Unknown,BitgetExchangeProvider.ProtectionCoverage(""));
+    }
+
     [Theory]
     [InlineData("open", "", "NEW")]
     [InlineData("finished", "filled", "FILLED")]
