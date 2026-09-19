@@ -16,9 +16,9 @@ public sealed class ExecutionDriftLedgerTests : IDisposable
     {
         var store=new AgentSqliteStore(Database,()=>_now);
         var client="drift-order-1";
-        await Add(store,client,ExecutionDriftPhaseV1.IntentAccepted,ExecutionDriftSourceV1.Local,"INTENT",0,0,null);
-        _now=_now.AddMilliseconds(5);
         await Add(store,client,ExecutionDriftPhaseV1.PreflightQuote,ExecutionDriftSourceV1.Local,"QUOTE",0,100m,null,spread:4,liquidity:.8,atr:.02);
+        _now=_now.AddMilliseconds(5);
+        await Add(store,client,ExecutionDriftPhaseV1.IntentAccepted,ExecutionDriftSourceV1.Local,"INTENT",0,0,null);
         _now=_now.AddMilliseconds(5);
         await Add(store,client,ExecutionDriftPhaseV1.SubmissionAttempted,ExecutionDriftSourceV1.Local,"SUBMISSION_ATTEMPTED",0,0,null);
         _now=_now.AddMilliseconds(10);
@@ -46,7 +46,7 @@ public sealed class ExecutionDriftLedgerTests : IDisposable
         Assert.Equal(.8d,summary.PreflightLiquidityScore);
         Assert.Equal(.02d,summary.PreflightAtrPercent);
         Assert.Equal(10d,summary.SubmitToFirstExchangeMilliseconds);
-        Assert.Equal(50d,summary.IntentToFinalMilliseconds);
+        Assert.Equal(45d,summary.IntentToFinalMilliseconds);
         Assert.Equal(100d,summary.AdverseSlippageBps);
         Assert.Equal("PARTIALLY_FILLED",summary.FinalStatus);
     }
