@@ -149,7 +149,7 @@ internal static class ExecutionRealityStabilityCanonicalizerV1
     {
         if(string.IsNullOrWhiteSpace(x.ProviderId)||string.IsNullOrWhiteSpace(x.Environment)||string.IsNullOrWhiteSpace(x.Symbol)
            ||!Enum.IsDefined(x.OrderType)||x.RequiredFolds!=RequiredFolds||x.MinimumCompleteSamplesPerFold!=MinimumCompleteSamplesPerFold
-           ||x.CompleteSamples<0||x.Folds.Count is<0 or>RequiredFolds)return false;
+           ||x.CompleteSamples<0||(x.Folds.Count!=0&&x.Folds.Count!=RequiredFolds))return false;
         var observed=x.Folds.Count==RequiredFolds&&x.Folds.All(f=>f.CompleteSamples>=MinimumCompleteSamplesPerFold)
                      &&x.CompleteSamples>=RequiredFolds*MinimumCompleteSamplesPerFold;
         if(x.Status!=(observed?ExecutionRealityStabilityStatusV1.Observed:ExecutionRealityStabilityStatusV1.Unsupported))return false;
