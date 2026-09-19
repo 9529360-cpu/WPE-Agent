@@ -110,9 +110,14 @@ public sealed class StrategyResearchAgent
             var market = evidence.Markets.GetValueOrDefault(profile.Symbol);
             if (market is null) continue;
             var signal = _engine.Signal(profile, market, evidence.News);
-            var shadowObservation=await CreateShadowObservationAsync(profile,signal,market,ct);
-            if(shadowObservation is not null
-               &&await _database.SaveStrategyShadowObservationAsync(shadowObservation,ct))
+            if(profile.Lifecycle==StrategyLifecycle.Shadow)
+            {
+                var shadowObservation=await CreateShadowObservationAsync(profile,signal,market,ct);
+                if(shadowObservation is not null
+                   &&await _database.SaveStrategyShadowObservationAsync(shadowObservation,ct))
+                    await _database.RecordStrategyObservationAsync(profile.Id, profile.Symbol, signal.Direction, market.Price, signal.Confidence, ct);
+            }
+            else
                 await _database.RecordStrategyObservationAsync(profile.Id, profile.Symbol, signal.Direction, market.Price, signal.Confidence, ct);
             var performance = await _database.GetStrategyObservationPerformanceAsync(profile.Id, ct);
             profile.ShadowObservations = performance.Observations; profile.Expectancy = performance.Expectancy;
@@ -153,6 +158,8 @@ public sealed class StrategyResearchAgent
         MarketEvidence market,
         CancellationToken ct)
     {
+        if(profile.Lifecycle!=StrategyLifecycle.Shadow)
+            return null;
         if(!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)
            ||market.Provenance is null
            ||!string.Equals(market.Provenance.Environment,"Testnet",StringComparison.Ordinal))
@@ -202,7 +209,7 @@ public sealed class StrategyResearchAgent
             validation.MonteCarloLossProbability,
             validation.QualityScore,
             approved:true,
-            promoted:profile.Lifecycle==StrategyLifecycle.Active);
+            promoted:false);
         if(!BacktestValidationCanonicalizerV1.IsCanonical(validationFact,observedAt))
             return null;
 
