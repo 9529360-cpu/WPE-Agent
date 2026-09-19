@@ -26,6 +26,11 @@ public sealed class ReleaseRuntimeBundleReadinessTests
         Assert.Contains("Headless binary version does not match product Version",source,StringComparison.Ordinal);
         Assert.Contains("Maintenance binary version does not match product Version",source,StringComparison.Ordinal);
         Assert.Contains("Published binary version",source,StringComparison.Ordinal);
+
+        var workflow=File.ReadAllText(Path.Combine(Root(),".github","workflows","dotnet.yml"));
+        var staticGate=workflow.IndexOf("Verify release-readiness static gate",StringComparison.Ordinal);
+        var webInstall=workflow.IndexOf("Install Web UI dependencies",StringComparison.Ordinal);
+        Assert.True(staticGate>=0 && webInstall>staticGate);
     }
 
     [Fact]
