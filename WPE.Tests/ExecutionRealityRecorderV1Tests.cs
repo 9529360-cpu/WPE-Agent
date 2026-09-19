@@ -138,7 +138,7 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
         {
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
-            command.CommandText = "UPDATE automatic_execution_queue SET environment='Mainnet' WHERE execution_id='cycle-a'";
+            command.CommandText = "UPDATE automatic_execution_queue SET strategy_id='tampered-strategy' WHERE execution_id='cycle-a'";
             Assert.Equal(1, await command.ExecuteNonQueryAsync());
         }
 
