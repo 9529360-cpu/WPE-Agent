@@ -67,6 +67,53 @@ public sealed partial class AgentSqliteStore
         return false;
     }
 
+    internal async Task<StrategyExposureTimelineArtifactV1?> GetStrategyExposureTimelineAsync(
+        string canonicalSha256,
+        string strategyId,
+        string strategyVersion,
+        string symbol,
+        CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(canonicalSha256)
+           ||string.IsNullOrWhiteSpace(strategyId)
+           ||string.IsNullOrWhiteSpace(strategyVersion)
+           ||string.IsNullOrWhiteSpace(symbol))
+            return null;
+
+        await using var connection=new SqliteConnection(_cs);
+        await connection.OpenAsync(ct);
+        await EnsureStrategyExposureTimelineStorageAsync(connection,ct);
+
+        await using var query=connection.CreateCommand();
+        query.CommandText="""
+            SELECT schema,strategy_id,strategy_version,symbol,decision_count,
+                   first_tradable_at,last_tradable_at,canonical_bytes
+            FROM strategy_exposure_timeline_artifacts
+            WHERE canonical_sha256=$hash
+            LIMIT 1;
+            """;
+        query.Parameters.AddWithValue("$hash",canonicalSha256);
+        await using var reader=await query.ExecuteReaderAsync(ct);
+        if(!await reader.ReadAsync(ct))return null;
+
+        var bytes=(byte[])reader[7];
+        if(!StrategyExposureTimelineV1.TryDeserializeArtifact(bytes,canonicalSha256,out var artifact)
+           ||artifact is null
+           ||!string.Equals(reader.GetString(0),artifact.Schema,StringComparison.Ordinal)
+           ||!string.Equals(reader.GetString(1),strategyId,StringComparison.Ordinal)
+           ||!string.Equals(reader.GetString(1),artifact.StrategyId,StringComparison.Ordinal)
+           ||!string.Equals(reader.GetString(2),strategyVersion,StringComparison.Ordinal)
+           ||!string.Equals(reader.GetString(2),artifact.StrategyVersion,StringComparison.Ordinal)
+           ||!string.Equals(reader.GetString(3),symbol,StringComparison.Ordinal)
+           ||!string.Equals(reader.GetString(3),artifact.Symbol,StringComparison.Ordinal)
+           ||reader.GetInt32(4)!=artifact.DecisionCount
+           ||DateTimeOffset.Parse(reader.GetString(5),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind)!=artifact.FirstTradableAtUtc
+           ||DateTimeOffset.Parse(reader.GetString(6),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind)!=artifact.LastTradableAtUtc)
+            throw new InvalidOperationException("Persisted strategy exposure timeline failed canonical read verification.");
+
+        return artifact;
+    }
+
     private static async Task EnsureStrategyExposureTimelineStorageAsync(
         SqliteConnection connection,
         CancellationToken ct)
