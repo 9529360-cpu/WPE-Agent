@@ -44,6 +44,8 @@ The verifier checks:
 - evidence schema and UTC time ordering;
 - requested observation duration;
 - minimum sample coverage;
+- strictly increasing sample timestamps with bounded inter-sample gaps;
+- sample coverage reaching both the start and end of the claimed observation window;
 - zero invalid samples;
 - the configured unhealthy-sample budget;
 - maximum observed health age;
