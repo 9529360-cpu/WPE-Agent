@@ -1,4 +1,5 @@
 using System.IO;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using 币安量化机器人.Core.Strategy;
@@ -81,6 +82,58 @@ internal static class StrategyExposureTimelineV1
         var bytes=SerializeArtifact(draft);
         var hash=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
         return draft with{CanonicalBytes=bytes,CanonicalSha256=hash};
+    }
+
+    internal static bool TryDeserializeArtifact(
+        ReadOnlySpan<byte> canonicalBytes,
+        string canonicalSha256,
+        out StrategyExposureTimelineArtifactV1? artifact)
+    {
+        artifact=null;
+        if(canonicalBytes.Length==0||!LowerSha256(canonicalSha256))return false;
+        try
+        {
+            var hash=Convert.ToHexString(SHA256.HashData(canonicalBytes)).ToLowerInvariant();
+            if(!string.Equals(hash,canonicalSha256,StringComparison.Ordinal))return false;
+            using var document=JsonDocument.Parse(canonicalBytes.ToArray());
+            var root=document.RootElement;
+            var decisions=new List<StrategyExposureDecisionV1>();
+            foreach(var value in root.GetProperty("decisions").EnumerateArray())
+            {
+                decisions.Add(new(
+                    value.GetProperty("sequence").GetInt32(),
+                    value.GetProperty("strategy_id").GetString()??string.Empty,
+                    value.GetProperty("strategy_version").GetString()??string.Empty,
+                    value.GetProperty("symbol").GetString()??string.Empty,
+                    DateTimeOffset.Parse(value.GetProperty("source_candle_open_time_utc").GetString()??string.Empty,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),
+                    DateTimeOffset.Parse(value.GetProperty("evidence_available_at_utc").GetString()??string.Empty,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),
+                    DateTimeOffset.Parse(value.GetProperty("signal_generated_at_utc").GetString()??string.Empty,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),
+                    DateTimeOffset.Parse(value.GetProperty("tradable_at_utc").GetString()??string.Empty,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),
+                    value.GetProperty("target_exposure").GetInt32(),
+                    value.GetProperty("execution_open_price").GetDecimal(),
+                    value.GetProperty("execution_close_price").GetDecimal(),
+                    value.GetProperty("execution_volume").GetDecimal()));
+            }
+            artifact=new(
+                root.GetProperty("schema").GetString()??string.Empty,
+                root.GetProperty("strategy_id").GetString()??string.Empty,
+                root.GetProperty("strategy_version").GetString()??string.Empty,
+                root.GetProperty("symbol").GetString()??string.Empty,
+                root.GetProperty("decision_count").GetInt32(),
+                DateTimeOffset.Parse(root.GetProperty("first_tradable_at_utc").GetString()??string.Empty,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),
+                DateTimeOffset.Parse(root.GetProperty("last_tradable_at_utc").GetString()??string.Empty,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),
+                decisions,
+                canonicalBytes.ToArray(),
+                canonicalSha256);
+            if(IsCanonical(artifact))return true;
+            artifact=null;
+            return false;
+        }
+        catch
+        {
+            artifact=null;
+            return false;
+        }
     }
 
     internal static bool IsCanonical(StrategyExposureTimelineArtifactV1? artifact)
