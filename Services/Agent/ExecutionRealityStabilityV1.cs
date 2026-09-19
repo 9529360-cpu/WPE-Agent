@@ -306,19 +306,19 @@ public sealed partial class AgentSqliteStore
             CREATE TRIGGER IF NOT EXISTS execution_reality_stability_no_delete BEFORE DELETE ON execution_reality_stability_audits BEGIN SELECT RAISE(ABORT,'execution reality stability audits are append-only'); END;
             """;
         q.ExecuteNonQuery();
+        EnsureColumn(c,"execution_reality_stability_audits","source_calibration_status","TEXT NOT NULL DEFAULT 'Unsupported'");
     }
 
     internal async Task<ExecutionRealityCalibrationReferenceV1?> GetLatestExecutionRealityCalibrationReferenceAsync(CancellationToken ct)
     {
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
-            SELECT canonical_sha256,generated_at,status,source_position_link_id,source_position_link_sha256,
-                   source_execution_ledger_sha256,source_execution_trace_sha256,source_drift_trace_sha256,source_last_execution_event_id
+            SELECT canonical_sha256,schema,generated_at,status,source_position_link_id,source_position_link_sha256,
+                   source_execution_ledger_sha256,source_execution_trace_sha256,source_drift_trace_sha256,
+                   source_last_execution_event_id,source_drift_schema,canonical_bytes
             FROM execution_reality_calibrations ORDER BY generated_at DESC,rowid DESC LIMIT 1
             """;
         await using var r=await q.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct))return null;
-        if(!Enum.TryParse<ExecutionRealityCalibrationStatusV1>(r.GetString(2),out var status))return null;
-        return new(r.GetString(0),DateTimeOffset.Parse(r.GetString(1),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind).ToUniversalTime(),
-            status,r.GetString(3),r.GetString(4),r.GetString(5),r.GetString(6),r.GetString(7),r.GetInt64(8));
+        return ReadCalibrationReference(r);
     }
 
     internal async Task<bool> SaveExecutionRealityStabilityAsync(ExecutionRealityStabilityReportV1 value,CancellationToken ct)
@@ -329,19 +329,22 @@ public sealed partial class AgentSqliteStore
         await using(var source=c.CreateCommand())
         {
             source.Transaction=tx;source.CommandText="""
-                SELECT COUNT(*) FROM execution_reality_calibrations
-                WHERE canonical_sha256=$calibration AND generated_at=$generated AND status=$calibrationStatus
+                SELECT canonical_bytes FROM execution_reality_calibrations
+                WHERE canonical_sha256=$calibration AND schema=$schema AND generated_at=$generated AND status=$calibrationStatus
                   AND source_position_link_id=$link AND source_position_link_sha256=$linkHash
                   AND source_execution_trace_sha256=$executionTrace AND source_drift_trace_sha256=$driftTrace
-                  AND source_last_execution_event_id=$cursor
+                  AND source_last_execution_event_id=$cursor AND source_drift_schema=$driftSchema
+                LIMIT 1
                 """;
             source.Parameters.AddWithValue("$calibration",value.SourceCalibrationSha256);
+            source.Parameters.AddWithValue("$schema",ExecutionRealityCalibrationCanonicalizerV1.Schema);
             source.Parameters.AddWithValue("$generated",value.GeneratedAtUtc.ToString("O",CultureInfo.InvariantCulture));
             source.Parameters.AddWithValue("$calibrationStatus",value.SourceCalibrationStatus.ToString());
             source.Parameters.AddWithValue("$link",value.SourcePositionLinkId);source.Parameters.AddWithValue("$linkHash",value.SourcePositionLinkSha256);
             source.Parameters.AddWithValue("$executionTrace",value.SourceExecutionTraceSha256);source.Parameters.AddWithValue("$driftTrace",value.SourceDriftTraceSha256);
-            source.Parameters.AddWithValue("$cursor",value.SourceLastExecutionEventId);
-            if(Convert.ToInt32(await source.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)!=1)
+            source.Parameters.AddWithValue("$cursor",value.SourceLastExecutionEventId);source.Parameters.AddWithValue("$driftSchema",ExecutionDriftCanonicalizerV1.Schema);
+            var sourceBytes=await source.ExecuteScalarAsync(ct) as byte[];
+            if(sourceBytes is null||!string.Equals(Convert.ToHexString(SHA256.HashData(sourceBytes)).ToLowerInvariant(),value.SourceCalibrationSha256,StringComparison.Ordinal))
                 throw new InvalidOperationException("Execution reality stability source calibration binding is invalid.");
         }
         await using var q=c.CreateCommand();q.Transaction=tx;q.CommandText="""
@@ -362,4 +365,37 @@ public sealed partial class AgentSqliteStore
         var inserted=Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1;
         await tx.CommitAsync(ct);return inserted;
     }
+
+    private static ExecutionRealityCalibrationReferenceV1? ReadCalibrationReference(SqliteDataReader r)
+    {
+        try
+        {
+            var hash=r.GetString(0);var schema=r.GetString(1);
+            var generated=DateTimeOffset.Parse(r.GetString(2),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind).ToUniversalTime();
+            if(!Enum.TryParse<ExecutionRealityCalibrationStatusV1>(r.GetString(3),out var status))return null;
+            var linkId=r.GetString(4);var linkHash=r.GetString(5);var ledgerHash=r.GetString(6);var executionHash=r.GetString(7);
+            var driftHash=r.GetString(8);var cursor=r.GetInt64(9);var driftSchema=r.GetString(10);var bytes=(byte[])r[11];
+            if(schema!=ExecutionRealityCalibrationCanonicalizerV1.Schema||driftSchema!=ExecutionDriftCanonicalizerV1.Schema
+               ||generated.Offset!=TimeSpan.Zero||cursor<1||linkId!="execution-position-drift:"+linkHash
+               ||!ValidHash(hash)||!ValidHash(linkHash)||!ValidHash(ledgerHash)||!ValidHash(executionHash)||!ValidHash(driftHash)
+               ||!string.Equals(Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),hash,StringComparison.Ordinal))
+                return null;
+            using var document=JsonDocument.Parse(bytes);var root=document.RootElement;
+            if(root.GetProperty("schema").GetString()!=schema
+               ||root.GetProperty("generatedAtUtc").GetDateTimeOffset().ToUniversalTime()!=generated
+               ||!string.Equals(root.GetProperty("status").GetString(),status.ToString(),StringComparison.OrdinalIgnoreCase)
+               ||root.GetProperty("sourcePositionLinkId").GetString()!=linkId
+               ||root.GetProperty("sourcePositionLinkSha256").GetString()!=linkHash
+               ||root.GetProperty("sourceExecutionLedgerSha256").GetString()!=ledgerHash
+               ||root.GetProperty("sourceExecutionTraceSha256").GetString()!=executionHash
+               ||root.GetProperty("sourceDriftTraceSha256").GetString()!=driftHash
+               ||root.GetProperty("sourceLastExecutionEventId").GetInt64()!=cursor
+               ||root.GetProperty("sourceDriftSchema").GetString()!=driftSchema)
+                return null;
+            return new(hash,generated,status,linkId,linkHash,ledgerHash,executionHash,driftHash,cursor);
+        }
+        catch{return null;}
+    }
+
+    private static bool ValidHash(string value)=>value is{Length:64}&&value.All(Uri.IsHexDigit);
 }
