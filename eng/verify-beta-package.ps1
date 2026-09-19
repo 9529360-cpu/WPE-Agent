@@ -14,6 +14,36 @@ function Resolve-InRoot([string]$Path) {
     return $resolved
 }
 
+
+function Get-Sha256([string]$Path) {
+    (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Get-TextSha256([string]$Value) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-ArtifactTreeFacts([string]$Path) {
+    $prefix = $Path.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -File | Sort-Object FullName)
+    $lines = @($files | ForEach-Object {
+        $relative = $_.FullName.Substring($prefix.Length).Replace('\', '/')
+        $hash = Get-Sha256 $_.FullName
+        "$relative|$($_.Length)|$hash"
+    })
+    [pscustomobject]@{
+        FileCount = $files.Count
+        TotalBytes = [long](($files | Measure-Object -Property Length -Sum).Sum)
+        TreeSha256 = Get-TextSha256 ($lines -join [Environment]::NewLine)
+    }
+}
+
 $resultFile = Resolve-InRoot $ResultPath
 $verify = Resolve-InRoot $VerificationDirectory
 $result = Get-Content -Raw -LiteralPath $resultFile | ConvertFrom-Json
@@ -29,6 +59,11 @@ $packageDirectories = @(Get-ChildItem -LiteralPath $verify -Directory -Force)
 if ($packageDirectories.Count -ne 1) { throw "Expected one package root in the archive." }
 $packageRoot = $packageDirectories[0].FullName
 $payloadRoot = Join-Path $packageRoot "app"
+$headlessRoot = Join-Path $packageRoot "headless"
+$maintenanceRoot = Join-Path $packageRoot "maintenance"
+foreach ($runtimeRoot in @($payloadRoot, $headlessRoot, $maintenanceRoot)) {
+    if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) { throw "Runtime bundle directory is missing: $runtimeRoot" }
+}
 
 $metadata = Get-Content -Raw -LiteralPath (Join-Path $packageRoot "RELEASE-METADATA.json") | ConvertFrom-Json
 $readiness = Get-Content -Raw -LiteralPath (Join-Path $packageRoot "RELEASE-READINESS.json") | ConvertFrom-Json
@@ -52,33 +87,127 @@ foreach ($requiredNotice in @("Microsoft.Web.WebView2 1.0.2903.40", "OpenTK 4.3.
 [object[]]$sbomComponents = $sbom.components
 
 $manifestFailures = [System.Collections.Generic.List[string]]::new()
+$packagePrefix = $packageRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
 foreach ($entry in $manifest) {
-    $path = Join-Path $payloadRoot ([string]$entry.path).Replace('/', [System.IO.Path]::DirectorySeparatorChar)
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256) {
+    $relative = ([string]$entry.path).Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+    $path = [System.IO.Path]::GetFullPath((Join-Path $packageRoot $relative))
+    if (-not $path.StartsWith($packagePrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+        -not (Test-Path -LiteralPath $path -PathType Leaf) -or
+        (Get-Sha256 $path) -ne [string]$entry.sha256) {
         $manifestFailures.Add([string]$entry.path)
     }
 }
 if ($manifestFailures.Count -gt 0) { throw "Payload manifest verification failed for $($manifestFailures.Count) file(s)." }
 
-$actualPayloadFiles = @(Get-ChildItem -LiteralPath $payloadRoot -Recurse -Force -File)
-if ($actualPayloadFiles.Count -ne $manifest.Count) { throw "Payload file count does not match the manifest." }
+$actualPayloadFiles = @(
+    @(Get-ChildItem -LiteralPath $payloadRoot -Recurse -Force -File) +
+    @(Get-ChildItem -LiteralPath $headlessRoot -Recurse -Force -File) +
+    @(Get-ChildItem -LiteralPath $maintenanceRoot -Recurse -Force -File)
+)
+if ($actualPayloadFiles.Count -ne $manifest.Count) { throw "Runtime bundle file count does not match the manifest." }
+$forbiddenExtensions = @(".pdb", ".cs", ".csproj", ".sln", ".ps1", ".db", ".sqlite", ".sqlite3", ".log", ".pem", ".key", ".p12", ".pfx", ".env")
+$forbiddenSuffixes = @(".db-wal", ".db-shm", ".sqlite-wal", ".sqlite-shm", ".sqlite3-wal", ".sqlite3-shm")
 $forbidden = @($actualPayloadFiles | Where-Object {
-    $_.Extension -match '^(?i:\.pdb|\.cs|\.csproj|\.sln|\.ps1|\.db|\.db-wal|\.db-shm|\.sqlite|\.sqlite3|\.log)$' -or
-    $_.Name -match '^(?i:agent-settings.*\.json|appsettings.*\.json|order-state.*\.json|api\.txt)$'
+    $name = $_.Name.ToLowerInvariant()
+    $extension = $_.Extension.ToLowerInvariant()
+    $knownState = $name -match '^(agent-settings|appsettings|order-state|local-accounts|local-session|device-license|llm-calls|llm-cache)'
+    $secretData = ($name.Contains("secrets") -or $name.Contains("credentials")) -and
+        @(".json", ".dat", ".txt", ".xml", ".yaml", ".yml") -contains $extension
+    $knownState -or $secretData -or $forbiddenExtensions -contains $extension -or
+        ($forbiddenSuffixes | Where-Object { $name.EndsWith($_) })
 })
 if ($forbidden.Count -gt 0) { throw "Forbidden source/runtime artifacts were found in the archive." }
 
-$executables = @(Get-ChildItem -LiteralPath $payloadRoot -File -Filter "*.exe")
-if ($executables.Count -ne 1) { throw "Expected one application executable in the archive." }
-$signature = Get-AuthenticodeSignature -LiteralPath $executables[0].FullName
-if ($metadata.signing.status -eq "unsigned" -and $signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) { throw "Unsigned package metadata does not match the executable." }
-if ($metadata.signing.status -eq "valid" -and $signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) { throw "Signed package metadata does not match the executable." }
-if ($readiness.status -ne "passed") { throw "Embedded release-readiness report did not pass." }
-if ($metadata.productVersion -ne $readiness.productVersion) { throw "Package and release-readiness product versions do not match." }
-$binaryFileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($executables[0].FullName).FileVersion
-$parsedBinaryVersion = [Version]$binaryFileVersion
-$binaryProductVersion = "$($parsedBinaryVersion.Major).$($parsedBinaryVersion.Minor).$($parsedBinaryVersion.Build)"
-if ($metadata.productVersion -ne $binaryProductVersion) { throw "Package metadata and executable product versions do not match." }
+if ($readiness.schemaVersion -ne "wpe.release-readiness.v1" -or $readiness.status -ne "passed") { throw "Embedded release-readiness report did not pass." }
+if ($metadata.productVersion -ne $readiness.productVersion -or
+    [string]$metadata.source.commit -ne [string]$readiness.source.commit) {
+    throw "Package and release-readiness source identity do not match."
+}
+if (-not $readiness.artifacts -or -not $readiness.artifacts.desktop -or -not $readiness.artifacts.headless -or -not $readiness.artifacts.maintenance) {
+    throw "Embedded release-readiness runtime bundle facts are incomplete."
+}
+
+$runtimeArtifacts = @(
+    [pscustomobject]@{ Label = "desktop"; Root = $payloadRoot; Executable = "WPE-Agent.exe"; Readiness = $readiness.artifacts.desktop },
+    [pscustomobject]@{ Label = "headless"; Root = $headlessRoot; Executable = "WPE-Headless.exe"; Readiness = $readiness.artifacts.headless },
+    [pscustomobject]@{ Label = "maintenance"; Root = $maintenanceRoot; Executable = "WPE.Maintenance.exe"; Readiness = $readiness.artifacts.maintenance }
+)
+$artifactStates = [System.Collections.Generic.List[object]]::new()
+foreach ($artifact in $runtimeArtifacts) {
+    $executables = @(Get-ChildItem -LiteralPath $artifact.Root -File -Filter "*.exe")
+    if ($executables.Count -ne 1 -or $executables[0].Name -ne $artifact.Executable) {
+        throw "Runtime package artifact has the wrong executable identity: $($artifact.Label)"
+    }
+    $binaryFileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($executables[0].FullName).FileVersion
+    $parsedBinaryVersion = [Version]$binaryFileVersion
+    $binaryProductVersion = "$($parsedBinaryVersion.Major).$($parsedBinaryVersion.Minor).$($parsedBinaryVersion.Build)"
+    if ($metadata.productVersion -ne $binaryProductVersion) { throw "Runtime package binary version mismatch: $($artifact.Label)" }
+    $facts = Get-ArtifactTreeFacts $artifact.Root
+    $signature = Get-AuthenticodeSignature -LiteralPath $executables[0].FullName
+    if ($signature.Status -notin @([System.Management.Automation.SignatureStatus]::Valid, [System.Management.Automation.SignatureStatus]::NotSigned)) {
+        throw "Runtime package executable has invalid Authenticode state: $($artifact.Label):$($signature.Status)"
+    }
+    $artifactStates.Add([pscustomobject]@{ Label=$artifact.Label; Root=$artifact.Root; Executable=$executables[0]; Readiness=$artifact.Readiness; Facts=$facts; Signature=$signature })
+}
+$allSigned = @($artifactStates | Where-Object { $_.Signature.Status -eq [System.Management.Automation.SignatureStatus]::Valid }).Count -eq 3
+$allUnsigned = @($artifactStates | Where-Object { $_.Signature.Status -eq [System.Management.Automation.SignatureStatus]::NotSigned }).Count -eq 3
+if (-not ($allSigned -or $allUnsigned)) { throw "Runtime package signature states are mixed." }
+
+$embeddedReadinessPath = Join-Path $packageRoot "RELEASE-READINESS.json"
+$embeddedReadinessHash = Get-Sha256 $embeddedReadinessPath
+if ([string]$metadata.signing.readinessReportSha256 -ne $embeddedReadinessHash) { throw "Package metadata readiness hash mismatch." }
+
+if ($allSigned) {
+    if ([string]$metadata.signing.status -ne "valid" -or -not [bool]$metadata.signing.distributable) { throw "Signed runtime bundle metadata is not distributable." }
+    $signingPath = Join-Path $packageRoot "SIGNING-RESULT.json"
+    if (-not (Test-Path -LiteralPath $signingPath -PathType Leaf)) { throw "Signed runtime bundle is missing SIGNING-RESULT.json." }
+    if ((Get-Sha256 $signingPath) -ne [string]$metadata.signing.transitionResultSha256) { throw "Signing transition result hash mismatch." }
+    $signingResult = Get-Content -Raw -LiteralPath $signingPath | ConvertFrom-Json
+    if ($signingResult.schemaVersion -ne "wpe.runtime-bundle-signing/1.0" -or
+        [string]$signingResult.readinessReportSha256 -ne $embeddedReadinessHash -or
+        [string]$signingResult.sourceCommit -ne [string]$metadata.source.commit -or
+        [string]$signingResult.productVersion -ne [string]$metadata.productVersion) {
+        throw "Signing transition result is not bound to the package."
+    }
+    if (@($signingResult.artifacts).Count -ne 3) { throw "Signing transition result must contain three artifacts." }
+    foreach ($state in $artifactStates) {
+        $entry = @($signingResult.artifacts | Where-Object { $_.label -eq $state.Label })
+        if ($entry.Count -ne 1) { throw "Signing transition artifact identity is invalid: $($state.Label)" }
+        $entry = $entry[0]
+        if ([string]$entry.inputTreeSha256 -ne [string]$state.Readiness.treeSha256 -or
+            [string]$entry.outputTreeSha256 -ne $state.Facts.TreeSha256 -or
+            [int]$entry.outputFileCount -ne $state.Facts.FileCount -or
+            [string]$entry.executableSha256 -ne (Get-Sha256 $state.Executable.FullName) -or
+            [string]$entry.executable -ne $state.Executable.Name -or
+            [string]$entry.signatureStatus -ne "Valid") {
+            throw "Signing transition artifact facts do not match package bytes: $($state.Label)"
+        }
+        if ($state.Signature.SignerCertificate.Subject -ne [string]$metadata.signing.subject -or
+            $state.Signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne ([string]$metadata.signing.thumbprint).ToUpperInvariant()) {
+            throw "Runtime package signer identity mismatch: $($state.Label)"
+        }
+    }
+} else {
+    if ([string]$metadata.signing.status -ne "unsigned" -or [bool]$metadata.signing.distributable) { throw "Unsigned runtime bundle metadata is invalid." }
+    if (Test-Path -LiteralPath (Join-Path $packageRoot "SIGNING-RESULT.json")) { throw "Unsigned runtime bundle must not contain a signing transition result." }
+    foreach ($state in $artifactStates) {
+        if ($state.Facts.TreeSha256 -ne [string]$state.Readiness.treeSha256 -or
+            $state.Facts.FileCount -ne [int]$state.Readiness.fileCount) {
+            throw "Unsigned runtime package bytes do not match release readiness: $($state.Label)"
+        }
+    }
+}
+
+if (@($metadata.contents.runtimeArtifacts).Count -ne 3) { throw "Package runtime artifact metadata is incomplete." }
+foreach ($state in $artifactStates) {
+    $entry = @($metadata.contents.runtimeArtifacts | Where-Object { $_.label -eq $state.Label })
+    if ($entry.Count -ne 1 -or
+        [string]$entry[0].treeSha256 -ne $state.Facts.TreeSha256 -or
+        [int]$entry[0].fileCount -ne $state.Facts.FileCount -or
+        [string]$entry[0].executableSha256 -ne (Get-Sha256 $state.Executable.FullName)) {
+        throw "Package runtime artifact metadata mismatch: $($state.Label)"
+    }
+}
 if ($sbom.bomFormat -ne "CycloneDX" -or $sbom.specVersion -ne "1.5" -or $sbomComponents.Count -eq 0) { throw "CycloneDX SBOM is missing or invalid." }
 if ($licenseReport.releaseIntent -ne "evaluation" -or -not $licenseReport.gatePassed -or $licenseReport.summary.components -ne $sbomComponents.Count) {
     throw "Embedded evaluation license report does not match the SBOM."
