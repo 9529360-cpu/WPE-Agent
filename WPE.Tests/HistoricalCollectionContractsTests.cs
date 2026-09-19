@@ -18,7 +18,7 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
         var store=new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now);
         var first=await store.ReadOrdersAsync(new(2));var second=await store.ReadOrdersAsync(new(2,first.NextCursor));
         var wrongCollection=await store.ReadEquityAsync(new(2,first.NextCursor));
-        Assert.Equal(RuntimeCollectionState.Available,first.State);Assert.Equal(2,first.Items.Count);Assert.NotNull(first.NextCursor);Assert.Single(second.Items);Assert.Equal("cycle-0",first.Items[0].CorrelationId);Assert.Equal("local-agent-sqlite",first.Source);Assert.Equal(RuntimeCollectionState.Error,wrongCollection.State);Assert.Empty(wrongCollection.Items);
+        Assert.Equal(RuntimeCollectionState.Available,first.State);Assert.Equal(2,first.Items.Count);Assert.NotNull(first.NextCursor);Assert.Single(second.Items);Assert.Matches("^cycle#[A-F0-9]{12}$",first.Items[0].CorrelationId!);Assert.Matches("^order#[A-F0-9]{12}$",first.Items[0].ClientOrderId!);Assert.Equal("local-agent-sqlite",first.Source);Assert.Equal(RuntimeCollectionState.Error,wrongCollection.State);Assert.Empty(wrongCollection.Items);var json=System.Text.Json.JsonSerializer.Serialize(first);Assert.DoesNotContain("cycle-0",json,StringComparison.Ordinal);Assert.DoesNotContain("order-0",json,StringComparison.Ordinal);
     }
 
     [Fact]
