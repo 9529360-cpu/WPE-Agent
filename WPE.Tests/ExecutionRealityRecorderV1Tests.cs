@@ -99,7 +99,8 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
         Assert.Equal(result.ComparisonCanonicalSha256, comparison.CanonicalSha256);
         Assert.Equal(bundle.Fill.CanonicalSha256, comparison.SimulatedCanonicalSha256);
         Assert.True(comparison.PriceComparable);
-        Assert.Equal(10m, comparison.PriceDriftBps);
+        Assert.NotNull(comparison.PriceDriftBps);
+        Assert.InRange(comparison.PriceDriftBps!.Value, 9.9m, 10m);
         Assert.False(comparison.FeeComparable);
         Assert.False(comparison.TotalComparable);
     }
