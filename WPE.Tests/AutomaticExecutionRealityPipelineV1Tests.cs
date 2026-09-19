@@ -120,6 +120,36 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
     }
 
     [Fact]
+    public async Task BackfillRetriesComparisonAfterModelOffObservationIsAlreadyComplete()
+    {
+        var store=Store();
+        var artifact=Artifact(ExecutionOrderType.Market);
+        await Approve(store,"exec-reality-retry",artifact);
+        var gateway=new EvidenceGateway(_clock);
+        var processor=new AutomaticExecutionProcessor(store,new Validator(),gateway,()=>_clock.Now);
+
+        var processed=await processor.ProcessNextAsync("worker",default);
+
+        Assert.True(processed.Handled);
+        Assert.Equal("automatic.succeeded",processed.Code);
+        Assert.Empty(await store.GetRecentExecutionSimulationComparisonsAsync(10,default));
+        Assert.Equal(3,(await store.GetModelOffCanonicalAuditsAsync(artifact.CorrelationId,default)).Count);
+
+        var firstBackfill=await processor.BackfillObservationsAsync(default);
+        Assert.Equal(1,firstBackfill.Examined);
+        Assert.Empty(await store.GetRecentExecutionSimulationComparisonsAsync(10,default));
+
+        gateway.Order=new ExchangeOrder(
+            "BTCUSDT","venue-retry","WPE-REALITY","FILLED",
+            1m,100.20m,"MARKET",PositionSide.Long,false,_clock.Now.UtcDateTime);
+
+        var secondBackfill=await processor.BackfillObservationsAsync(default);
+
+        Assert.True(secondBackfill.Examined>0);
+        Assert.Single(await store.GetRecentExecutionSimulationComparisonsAsync(10,default));
+    }
+
+    [Fact]
     public async Task RepeatedPipelineCaptureReusesExactSourceAndFill()
     {
         var store=Store();
@@ -282,7 +312,10 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
                 "ok"));
     }
 
-    private sealed class EvidenceGateway(Clock clock):IAutomaticExecutionGateway,IAutomaticExecutionRealityEvidenceReader
+    private sealed class EvidenceGateway(Clock clock):
+        IAutomaticExecutionGateway,
+        IAutomaticExecutionRealityEvidenceReader,
+        IAutomaticExecutionOrderEvidenceReader
     {
         public bool IsTestnet=>true;
         public int ExecuteCount{get;private set;}
@@ -319,6 +352,23 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
             DurableExecutionIntentSnapshotV1 intent,
             CancellationToken ct)=>
             Task.FromResult(Order);
+
+        public Task<ModelOffExchangeOrderEvidenceV1> ObserveOrdersAsync(
+            DurableExecutionArtifactV2 artifact,
+            CancellationToken ct)
+        {
+            var entries=artifact.Intents.OrderBy(x=>x.Sequence)
+                .Select(x=>new ModelOffExchangeOrderEvidenceEntryV1(
+                    x.Sequence,"confirmed","FILLED",x.Quantity))
+                .ToArray();
+            return Task.FromResult(ModelOffExchangeOrderEvidenceContractV1.Create(
+                artifact.CorrelationId,
+                ModelOffExchangeOrderEvidenceStateV1.Confirmed,
+                artifact.Intents.Count,
+                artifact.Intents.Count,
+                clock.Now,
+                entries));
+        }
     }
 
     private sealed class ExecutionOnlyGateway:IAutomaticExecutionGateway
