@@ -53,6 +53,9 @@ public sealed class ReleaseRuntimeBundlePackageBoundaryTests
         Assert.Contains("Archive contains duplicate normalized entry paths.",source,StringComparison.Ordinal);
         Assert.Contains("Resolve-InPackageRoot",source,StringComparison.Ordinal);
         Assert.Contains("Package metadata path escapes package root.",source,StringComparison.Ordinal);
+        Assert.Contains("PAYLOAD-SHA256SUMS does not match FILE-MANIFEST.json.",source,StringComparison.Ordinal);
+        Assert.Contains("$expectedSumLine = \"$zipHash  $([System.IO.Path]::GetFileName($zip))\"",source,StringComparison.Ordinal);
+        Assert.Contains("(Get-Item -LiteralPath $path).Length -ne [long]$entry.length",source,StringComparison.Ordinal);
         Assert.Contains("Runtime package signature states are mixed.",source,StringComparison.Ordinal);
         Assert.Contains("Runtime package executable timestamp is missing",source,StringComparison.Ordinal);
         Assert.Contains("TimeStamperCertificate",source,StringComparison.Ordinal);
