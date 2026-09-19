@@ -86,7 +86,7 @@ internal static class ExecutionRealityStabilityCanonicalizerV1
         if(rows.Any(x=>!ValidBucket(x)))throw new ArgumentException("Execution reality stability bucket is invalid.");
 
         var reasons=reasonCodes.Where(x=>!string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).OrderBy(x=>x,StringComparer.Ordinal).ToArray();
-        if(source.Status!=ExecutionRealityCalibrationStatusV1.Available&&rows.Count!=0)
+        if(source.Status!=ExecutionRealityCalibrationStatusV1.Available&&rows.Length!=0)
             throw new ArgumentException("Unavailable calibration cannot carry observed stability buckets.");
         var status=source.Status==ExecutionRealityCalibrationStatusV1.Available&&rows.Any(x=>x.Status==ExecutionRealityStabilityStatusV1.Observed)
             ?ExecutionRealityStabilityStatusV1.Observed:ExecutionRealityStabilityStatusV1.Unsupported;
