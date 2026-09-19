@@ -309,6 +309,9 @@ if ($allSigned) {
     }
 }
 $signatureStatus = if ($allSigned) { "valid" } else { "unsigned" }
+$isSigned = $allSigned
+$desktopState = @($artifactStates | Where-Object { $_.Label -eq "desktop" })[0]
+$binaryVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($desktopState.Executable.FullName).FileVersion
 if (-not $PackageVersion) { $PackageVersion = "$projectVersion-$Channel.1+$shortCommit" }
 $safeVersion = $PackageVersion.Replace('+', '-').Replace('/', '-').Replace('\', '-')
 $packageName = "WPE-Agent-$safeVersion-$Runtime-portable"
@@ -477,16 +480,28 @@ $metadata = [ordered]@{
     }
     signing = [ordered]@{
         status = $signatureStatus
-        subject = if ($isSigned) { $signature.SignerCertificate.Subject } else { $null }
-        thumbprint = if ($isSigned) { $signature.SignerCertificate.Thumbprint } else { $null }
-        distributable = ($isSigned -and -not $dirty)
-        note = if (-not $isSigned) { "Unsigned Beta package; internal evaluation only and non-distributable." } elseif ($dirty) { "Signed payload came from a dirty source tree; non-distributable." } else { "Signature valid; commercial release still requires the documented go/no-go gates." }
+        subject = if ($isSigned) { $signatureSubject } else { $null }
+        thumbprint = if ($isSigned) { $signatureThumbprint } else { $null }
+        readinessReportSha256 = $readinessReportHash
+        transitionResultPath = if ($isSigned) { "SIGNING-RESULT.json" } else { $null }
+        transitionResultSha256 = if ($isSigned) { $signingResultHash } else { $null }
+        distributable = ($isSigned -and -not $dirty -and $releaseReport.source.dirty -eq $false)
+        note = if (-not $isSigned) { "Unsigned three-artifact Beta bundle; internal evaluation only and non-distributable." } elseif ($dirty) { "Signed runtime bundle came from a dirty packaging source; non-distributable." } else { "All runtime executables have one verified publisher identity; commercial release still requires the documented go/no-go gates." }
     }
     prerequisites = @("Windows 11 x64 (Beta-certified)", ".NET 8 Desktop Runtime", "Microsoft Edge WebView2 Runtime")
     unsupported = @("Mainnet", "Windows 10 certification", "Windows ARM64 certification", "Installer upgrade/uninstall semantics")
     rollback = [ordered]@{ strategy = "side-by-side portable directory"; preservePreviousVersion = $true; databaseDowngradeAllowed = $false }
     contents = [ordered]@{
         payloadFileCount = $manifest.Count
+        runtimeArtifacts = @($artifactStates | Sort-Object Label | ForEach-Object {
+            [ordered]@{
+                label = $_.Label
+                fileCount = $_.Facts.FileCount
+                treeSha256 = $_.Facts.TreeSha256
+                executable = $_.Executable.Name
+                executableSha256 = Get-Sha256 $_.Executable.FullName
+            }
+        })
         sbomComponentCount = $components.Count
         licenseAllowCount = $licenseReport.summary.allow
         licenseReviewCount = $licenseReport.summary.review
@@ -496,7 +511,7 @@ $metadata = [ordered]@{
         thirdPartyNoticePath = "license/THIRD-PARTY-NOTICES.txt"
         thirdPartyNoticeSha256 = $distributionNoticeHash
     }
-    exclusions = @("Debug symbol files (*.pdb) are retained in build artifacts but excluded from the portable distribution package.")
+    exclusions = @("Debug symbols and source files are prohibited from all three runtime artifact roots before packaging.")
 }
 $metadata | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $packageRoot "RELEASE-METADATA.json") -Encoding UTF8
 Copy-Item -LiteralPath $releaseReportPath -Destination (Join-Path $packageRoot "RELEASE-READINESS.json") -Force
@@ -513,8 +528,11 @@ $result = [ordered]@{
     productVersion = $projectVersion
     sha256 = $zipHash
     signingStatus = $signatureStatus
-    distributable = ($isSigned -and -not $dirty)
+    distributable = ($isSigned -and -not $dirty -and $releaseReport.source.dirty -eq $false)
     sourceDirty = $dirty
+    readinessReportSha256 = $readinessReportHash
+    signingResultSha256 = if ($isSigned) { $signingResultHash } else { $null }
+    runtimeArtifactCount = $artifactStates.Count
     fileCount = $manifest.Count
     sbomComponents = $components.Count
 }
