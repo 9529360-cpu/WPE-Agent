@@ -54,6 +54,12 @@ internal sealed record ExecutionSimulationSourceV1(
     int Leverage,
     DateTimeOffset ArtifactMarketCollectedAtUtc,
     string ArtifactMarketDataVersion,
+    bool StrategyQualificationAvailable,
+    string StrategyQualificationSha256,
+    byte[] StrategyQualificationCanonicalBytes,
+    string StrategyQualificationEvidenceSetSha256,
+    string StrategyQualificationPolicySha256,
+    DateTimeOffset? StrategyQualificationEvaluatedAtUtc,
     ExecutionSimulationSourceStateV1 State,
     DateTimeOffset SourceObservedAtUtc,
     DateTimeOffset MarketCollectedAtUtc,
@@ -82,17 +88,19 @@ internal static class ExecutionRealityCostAuthorityV1
 
 internal static class ExecutionSimulationSourceCanonicalizerV1
 {
-    internal const string Schema = "wpe.execution-simulation-source/1.0";
+    internal const string Schema = "wpe.execution-simulation-source/1.1";
     internal static readonly TimeSpan MaximumMarketAge = TimeSpan.FromSeconds(30);
 
     internal static ExecutionSimulationSourceV1 Create(
         DurableExecutionArtifactV2 artifact,
         DurableExecutionIntentSnapshotV1 intent,
+        AutomaticStrategyQualificationEvidenceV1 qualification,
         AutomaticExecutionSimulationObservationV1 observation,
         DateTimeOffset fallbackObservedAtUtc)
     {
         ArgumentNullException.ThrowIfNull(artifact);
         ArgumentNullException.ThrowIfNull(intent);
+        ArgumentNullException.ThrowIfNull(qualification);
         ArgumentNullException.ThrowIfNull(observation);
         if (!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid)
             throw new InvalidOperationException("Simulation source durable artifact is invalid.");
@@ -116,6 +124,19 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             ? artifact.Environment
             : observation.Environment;
 
+        var qualificationAvailable = qualification.Available
+            && string.Equals(qualification.StrategyId, artifact.StrategyId, StringComparison.Ordinal)
+            && string.Equals(qualification.StrategyVersion, artifact.StrategyVersion, StringComparison.Ordinal)
+            && string.Equals(qualification.Symbol, intent.Symbol, StringComparison.Ordinal)
+            && string.Equals(qualification.MarketProviderId, artifact.ProviderId, StringComparison.Ordinal)
+            && string.Equals(qualification.Environment, artifact.Environment, StringComparison.Ordinal)
+            && qualification.EvaluatedAtUtc <= artifact.CreatedAtUtc;
+        var qualificationCode = qualificationAvailable
+            ? "strategy-qualification-ready"
+            : qualification.Available
+                ? "strategy-qualification-identity-mismatch"
+                : qualification.Code;
+
         ExecutionSimulationSourceStateV1 state;
         DateTimeOffset marketAt;
         decimal marketPrice;
@@ -129,7 +150,8 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
         string venueRuleHash;
         string reason;
 
-        if (observation.Available
+        if (qualificationAvailable
+            && observation.Available
             && observation.Market is not null
             && observation.Rule is not null
             && string.Equals(providerId, artifact.ProviderId, StringComparison.Ordinal)
@@ -188,9 +210,11 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             step = tick = minQty = minNotional = 0;
             maxLeverage = 0;
             venueRuleHash = string.Empty;
-            reason = string.IsNullOrWhiteSpace(observation.Code)
-                ? "simulation-source-unavailable"
-                : observation.Code;
+            reason = !qualificationAvailable
+                ? qualificationCode
+                : string.IsNullOrWhiteSpace(observation.Code)
+                    ? "simulation-source-unavailable"
+                    : observation.Code;
         }
 
         var draft = new ExecutionSimulationSourceV1(
@@ -211,6 +235,12 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             artifact.Leverage,
             artifact.MarketCollectedAtUtc,
             artifact.MarketDataVersion,
+            qualificationAvailable,
+            qualificationAvailable ? qualification.CanonicalSha256 : string.Empty,
+            qualificationAvailable ? qualification.CanonicalBytes : [],
+            qualificationAvailable ? qualification.EvidenceSetSha256 : string.Empty,
+            qualificationAvailable ? qualification.PolicySha256 : string.Empty,
+            qualificationAvailable ? qualification.EvaluatedAtUtc : null,
             state,
             observedAt,
             marketAt,
@@ -257,9 +287,40 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             || string.IsNullOrWhiteSpace(value.ReasonCode))
             return false;
 
+        if (value.StrategyQualificationAvailable)
+        {
+            if (!LowerSha(value.StrategyQualificationSha256)
+                || value.StrategyQualificationCanonicalBytes.Length == 0
+                || !LowerSha(value.StrategyQualificationEvidenceSetSha256)
+                || !LowerSha(value.StrategyQualificationPolicySha256)
+                || value.StrategyQualificationEvaluatedAtUtc is null
+                || value.StrategyQualificationEvaluatedAtUtc.Value.Offset != TimeSpan.Zero
+                || value.StrategyQualificationEvaluatedAtUtc.Value > value.SourceObservedAtUtc
+                || !AutomaticStrategyQualificationEvidenceVerifierV1.TryParse(
+                    value.StrategyQualificationCanonicalBytes,
+                    value.StrategyQualificationSha256,
+                    out var qualification,
+                    out _)
+                || qualification is null
+                || !string.Equals(qualification.StrategyId,value.StrategyId,StringComparison.Ordinal)
+                || !string.Equals(qualification.StrategyVersion,value.StrategyVersion,StringComparison.Ordinal)
+                || !string.Equals(qualification.Symbol,value.Symbol,StringComparison.Ordinal)
+                || !string.Equals(qualification.EvidenceSetSha256,value.StrategyQualificationEvidenceSetSha256,StringComparison.Ordinal)
+                || !string.Equals(qualification.PolicySha256,value.StrategyQualificationPolicySha256,StringComparison.Ordinal)
+                || qualification.EvaluatedAtUtc!=value.StrategyQualificationEvaluatedAtUtc.Value)
+                return false;
+        }
+        else if (value.StrategyQualificationSha256.Length != 0
+                 || value.StrategyQualificationCanonicalBytes.Length != 0
+                 || value.StrategyQualificationEvidenceSetSha256.Length != 0
+                 || value.StrategyQualificationPolicySha256.Length != 0
+                 || value.StrategyQualificationEvaluatedAtUtc is not null)
+            return false;
+
         if (value.State == ExecutionSimulationSourceStateV1.Available)
         {
-            if (value.SourceObservedAtUtc - value.MarketCollectedAtUtc > MaximumMarketAge
+            if (!value.StrategyQualificationAvailable
+                || value.SourceObservedAtUtc - value.MarketCollectedAtUtc > MaximumMarketAge
                 || value.MarketPrice <= 0
                 || !LowerSha(value.MarketProvenanceSha256)
                 || value.MarketProvenanceCanonicalBytes.Length == 0
@@ -353,6 +414,14 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
                 root.GetProperty("leverage").GetInt32(),
                 DateTimeOffset.Parse(root.GetProperty("artifact_market_collected_at_utc").GetString() ?? string.Empty, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
                 root.GetProperty("artifact_market_data_version").GetString() ?? string.Empty,
+                root.GetProperty("strategy_qualification_available").GetBoolean(),
+                root.GetProperty("strategy_qualification_sha256").GetString() ?? string.Empty,
+                root.GetProperty("strategy_qualification_canonical_bytes").GetBytesFromBase64(),
+                root.GetProperty("strategy_qualification_evidence_set_sha256").GetString() ?? string.Empty,
+                root.GetProperty("strategy_qualification_policy_sha256").GetString() ?? string.Empty,
+                root.GetProperty("strategy_qualification_evaluated_at_utc").ValueKind==JsonValueKind.Null
+                    ? null
+                    : root.GetProperty("strategy_qualification_evaluated_at_utc").GetDateTimeOffset(),
                 Enum.Parse<ExecutionSimulationSourceStateV1>(root.GetProperty("state").GetString() ?? string.Empty, false),
                 DateTimeOffset.Parse(root.GetProperty("source_observed_at_utc").GetString() ?? string.Empty, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
                 DateTimeOffset.Parse(root.GetProperty("market_collected_at_utc").GetString() ?? string.Empty, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
@@ -443,6 +512,15 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             writer.WriteString("source_observed_at_utc", value.SourceObservedAtUtc.ToUniversalTime());
             writer.WriteString("state", value.State.ToString());
             writer.WriteNumber("step_size", value.StepSize);
+            writer.WriteBoolean("strategy_qualification_available", value.StrategyQualificationAvailable);
+            writer.WriteBase64String("strategy_qualification_canonical_bytes", value.StrategyQualificationCanonicalBytes);
+            if(value.StrategyQualificationEvaluatedAtUtc is null)
+                writer.WriteNull("strategy_qualification_evaluated_at_utc");
+            else
+                writer.WriteString("strategy_qualification_evaluated_at_utc", value.StrategyQualificationEvaluatedAtUtc.Value.ToUniversalTime());
+            writer.WriteString("strategy_qualification_evidence_set_sha256", value.StrategyQualificationEvidenceSetSha256);
+            writer.WriteString("strategy_qualification_policy_sha256", value.StrategyQualificationPolicySha256);
+            writer.WriteString("strategy_qualification_sha256", value.StrategyQualificationSha256);
             writer.WriteString("strategy_id", value.StrategyId);
             writer.WriteString("strategy_version", value.StrategyVersion);
             writer.WriteString("symbol", value.Symbol);
@@ -600,6 +678,14 @@ internal sealed class AutomaticExecutionRealityPipelineV1
             }
             else
             {
+                var qualification = await _store.GetAutomaticStrategyQualificationEvidenceAsync(
+                    artifact.StrategyId,
+                    artifact.StrategyVersion,
+                    intent.Symbol,
+                    artifact.ProviderId,
+                    artifact.Environment,
+                    artifact.CreatedAtUtc,
+                    ct);
                 AutomaticExecutionSimulationObservationV1 observation;
                 var now = _utcNow().ToUniversalTime();
                 if (_reader is null)
@@ -619,7 +705,7 @@ internal sealed class AutomaticExecutionRealityPipelineV1
                         observation = new(false,"simulation-source-query-failed",artifact.ProviderId,artifact.Environment,null,null,now);
                     }
                 }
-                source = ExecutionSimulationSourceCanonicalizerV1.Create(artifact,intent,observation,now);
+                source = ExecutionSimulationSourceCanonicalizerV1.Create(artifact,intent,qualification,observation,now);
                 await _store.SaveExecutionSimulationSourceAsync(source,ct);
             }
 
