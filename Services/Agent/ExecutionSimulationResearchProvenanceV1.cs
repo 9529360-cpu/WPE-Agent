@@ -154,7 +154,7 @@ public static class ExecutionSimulationResearchProvenanceCanonicalizerV1
             if (!string.Equals(hash, canonicalSha256, StringComparison.Ordinal))
                 return false;
 
-            using var document = JsonDocument.Parse(canonicalBytes);
+            using var document = JsonDocument.Parse(canonicalBytes.ToArray());
             var root = document.RootElement;
             value = new(
                 root.GetProperty("schema").GetString() ?? string.Empty,
