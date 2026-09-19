@@ -118,7 +118,7 @@ public sealed record HistoricalPostTradeReviewV1(
 
 public sealed record HistoricalReconciliationV1(
     string Kind,
-    string ReportId,
+    string TraceId,
     string Schema,
     DateTimeOffset ObservedAtUtc,
     DateTimeOffset EvaluatedAtUtc,
