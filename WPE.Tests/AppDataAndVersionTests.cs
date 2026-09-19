@@ -28,6 +28,43 @@ public sealed class AppDataAndVersionTests : IDisposable
     }
 
     [Fact]
+    public void LayoutRejectsExistingReparseComponents()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var target = Path.Combine(_root, "real-state");
+        var link = Path.Combine(_root, "redirected-state");
+        Directory.CreateDirectory(target);
+
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(link, target);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException or
+                IOException or
+                PlatformNotSupportedException)
+            {
+                return;
+            }
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                new AppDataLayout(Path.Combine(link, "WPE Agent")));
+
+            Assert.Contains("reparse", error.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+                Directory.Delete(link);
+            if (Directory.Exists(target))
+                Directory.Delete(target, true);
+        }
+    }
+
+    [Fact]
     public void DataRootResolution_DefaultsPerUserAndRejectsRelativeServiceOverride()
     {
         var localAppData=Path.Combine(_root,"local-app-data");
