@@ -119,11 +119,11 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
     {
         ThrowIfDisposed();
         var state = ServiceLocator.SystemState;
-        var heartbeat = state.RuntimeHeartbeatAtUtc is DateTime value
+        DateTimeOffset? heartbeat = state.RuntimeHeartbeatAtUtc is DateTime value
             ? new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc))
             : null;
         var recovery = string.IsNullOrWhiteSpace(state.RuntimeRecoveryStatus) ? "UNKNOWN" : state.RuntimeRecoveryStatus;
-        var accessChecked = state.LastAccessCheckAtUtc is DateTime access
+        DateTimeOffset? accessChecked = state.LastAccessCheckAtUtc is DateTime access
             ? new DateTimeOffset(DateTime.SpecifyKind(access, DateTimeKind.Utc))
             : null;
         return new(
