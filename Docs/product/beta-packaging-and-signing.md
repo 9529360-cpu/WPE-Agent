@@ -43,16 +43,25 @@ Do not create a self-signed certificate and present it as a production signature
 
 ```powershell
 $ProductVersion = ([xml](Get-Content -Raw .\币安量化机器人.csproj)).Project.PropertyGroup.Version
-Copy-Item .\artifacts\release-readiness\publish ".\artifacts\signing-staging\$ProductVersion" -Recurse
+$SigningRoot = ".\artifacts\signing-staging\$ProductVersion"
+Copy-Item .\artifacts\release-readiness\publish "$SigningRoot\desktop" -Recurse
+Copy-Item .\artifacts\release-readiness\headless "$SigningRoot\headless" -Recurse
+Copy-Item .\artifacts\release-readiness\maintenance "$SigningRoot\maintenance" -Recurse
 powershell -NoProfile -ExecutionPolicy Bypass -File .\eng\sign-beta.ps1 `
-  -PublishPath ".\artifacts\signing-staging\$ProductVersion" `
+  -PublishPath "$SigningRoot\desktop" `
+  -AdditionalPublishPaths @("$SigningRoot\headless", "$SigningRoot\maintenance") `
   -CertificateThumbprint '<40 hex characters>' `
   -ExpectedSubject 'CN=<approved legal publisher>'
+
+# Until the bundle packaging step is upgraded, package-beta.ps1 still consumes only the
+# Desktop staging directory and must not be described as a three-artifact distributable.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\eng\package-beta.ps1 `
-  -PublishPath ".\artifacts\signing-staging\$ProductVersion"
+  -PublishPath "$SigningRoot\desktop"
 ```
 
 Before distribution, independently verify the signature and timestamp with `signtool verify /pa /all /v`, verify the ZIP against `SHA256SUMS`, and record a release go/no-go decision. The signing script does not upload the artifact.
+
+The signing helper preflights every staging root before the first signature mutation. If signing or verification fails after mutation has begun, discard the entire signing staging tree and recreate it from the source-bound release-readiness artifacts; do not promote or package a partially signed tree.
 
 ## SmartScreen
 
