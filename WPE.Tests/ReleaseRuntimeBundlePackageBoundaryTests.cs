@@ -24,6 +24,9 @@ public sealed class ReleaseRuntimeBundlePackageBoundaryTests
         Assert.Contains("$maintenancePayloadRoot = Join-Path $packageRoot \"maintenance\"",source,StringComparison.Ordinal);
         Assert.Contains("Runtime bundle copy changed artifact bytes",source,StringComparison.Ordinal);
         Assert.Contains("SIGNING-RESULT.json",source,StringComparison.Ordinal);
+        Assert.Contains("SIGNING-RESULT.p7s",source,StringComparison.Ordinal);
+        Assert.Contains("Assert-DetachedSigningAttestation",source,StringComparison.Ordinal);
+        Assert.Contains("transitionSignatureSha256",source,StringComparison.Ordinal);
     }
 
     [Fact]
@@ -60,10 +63,14 @@ public sealed class ReleaseRuntimeBundlePackageBoundaryTests
         Assert.Contains("Runtime package signature states are mixed.",source,StringComparison.Ordinal);
         Assert.Contains("Runtime package executable timestamp is missing",source,StringComparison.Ordinal);
         Assert.Contains("TimeStamperCertificate",source,StringComparison.Ordinal);
-        Assert.Contains("wpe.runtime-bundle-signing/1.0",source,StringComparison.Ordinal);
+        Assert.Contains("wpe.runtime-bundle-signing/1.1",source,StringComparison.Ordinal);
         Assert.Contains("Signing transition artifact facts do not match package bytes",source,StringComparison.Ordinal);
         Assert.Contains("Signed runtime bundle verification requires the approved signer subject and thumbprint.",source,StringComparison.Ordinal);
         Assert.Contains("Unsigned runtime bundle must not contain a signing transition result.",source,StringComparison.Ordinal);
+        Assert.Contains("Runtime bundle signing attestation signature is invalid.",source,StringComparison.Ordinal);
+        Assert.Contains("Runtime bundle signing attestation identity does not match the approved publisher.",source,StringComparison.Ordinal);
+        Assert.Contains("Signing transition signature hash mismatch.",source,StringComparison.Ordinal);
+        Assert.Contains("Unsigned runtime bundle must not contain a signing transition signature.",source,StringComparison.Ordinal);
         Assert.Contains("runtimeArtifacts = $artifactStates.Count",source,StringComparison.Ordinal);
     }
 
