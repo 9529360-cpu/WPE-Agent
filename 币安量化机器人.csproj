@@ -1,9 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFramework>net8.0-windows</TargetFramework>
-		<OutputType>WinExe</OutputType>
-		<UseWPF>true</UseWPF>
+		<TargetFrameworks>net8.0;net8.0-windows</TargetFrameworks>
+		<OutputType Condition="'$(TargetFramework)' == 'net8.0'">Library</OutputType>
+		<OutputType Condition="'$(TargetFramework)' == 'net8.0-windows'">WinExe</OutputType>
+		<UseWPF Condition="'$(TargetFramework)' == 'net8.0-windows'">true</UseWPF>
 
 		<!-- 代码质量（按需留） -->
 		<Nullable>enable</Nullable>
@@ -25,9 +26,9 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<Content Include="WebUi\out\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-      <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
-      <PackageReference Include="ScottPlot.WPF" Version="5.0.56" />
+		<Content Include="WebUi\out\**\*" Condition="'$(TargetFramework)' == 'net8.0-windows'" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+      <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" Condition="'$(TargetFramework)' == 'net8.0-windows'" />
+      <PackageReference Include="ScottPlot.WPF" Version="5.0.56" Condition="'$(TargetFramework)' == 'net8.0-windows'" />
       <PackageReference Include="Binance.Net" Version="8.3.0" />
       <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.31" />
       <PackageReference Include="System.Text.Json" Version="8.0.6" />
@@ -37,6 +38,7 @@
       <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
       <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.1" />
       <PackageReference Include="CryptoExchange.Net" Version="8.0.0" />
+      <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" Condition="'$(TargetFramework)' == 'net8.0'" />
     </ItemGroup>
 
     <ItemGroup>
@@ -58,10 +60,22 @@
       </Content>
     </ItemGroup>
 
+    <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+      <!-- Portable runtime target: compile production kernel/services without WPF presentation sources. -->
+      <Compile Remove="**\*.xaml.cs" />
+      <Compile Remove="AssemblyInfo.cs" />
+      <Compile Remove="Modules\**\*.cs" />
+      <Compile Remove="Controls\**\*.cs" />
+      <Compile Remove="Converters\**\*.cs" />
+      <Compile Remove="Helpers\StackPanelHelper.cs" />
+      <Compile Remove="Services\Localization\WpfLocalizationBridge.cs" />
+    </ItemGroup>
+
     <ItemGroup>
       <!-- 旧占位测试保留在仓库中，但不再作为生产 WPF 源码编译。 -->
       <Compile Remove="Tests\**\*.cs" />
       <Compile Remove="WPE.Tests\**\*.cs" />
+      <Compile Remove="WPE.Maintenance\**\*.cs" />
       <None Remove="WPE.Tests\**\*" />
       <Compile Remove="Tools\WpeLicenseGenerator\**\*.cs" />
       <Compile Remove="Services\BinanceReadFacade.cs" />
@@ -75,7 +89,7 @@
       <Compile Remove="Services\Agent\AgentMemoryStore.cs" />
     </ItemGroup>
 
-    <ItemGroup>
+    <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
       <!-- Legacy Binance-bound desktop modules are migration references, not production UI. -->
       <Compile Remove="Modules\Account\AccountFundsView.xaml.cs" />
       <Compile Remove="Modules\AI\ModelHub.xaml.cs" />
