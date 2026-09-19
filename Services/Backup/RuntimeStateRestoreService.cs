@@ -14,6 +14,7 @@ public sealed class RuntimeStateRestoreService
     private readonly RuntimeStateBackupService _backupService;
     private readonly RuntimeStateBackupVerifier _verifier;
     private readonly Func<DateTimeOffset> _utcNow;
+    private readonly Func<RuntimeStateRestorePhase, CancellationToken, Task>? _phaseHook;
 
     public RuntimeStateRestoreService(
         AppDataLayout layout,
@@ -21,6 +22,17 @@ public sealed class RuntimeStateRestoreService
         Func<DateTimeOffset>? utcNow = null,
         Func<string>? deviceCode = null,
         string? productVersion = null)
+        : this(layout, keyProtector, utcNow, deviceCode, productVersion, null)
+    {
+    }
+
+    internal RuntimeStateRestoreService(
+        AppDataLayout layout,
+        IPlatformKeyProtector? keyProtector,
+        Func<DateTimeOffset>? utcNow,
+        Func<string>? deviceCode,
+        string? productVersion,
+        Func<RuntimeStateRestorePhase, CancellationToken, Task>? phaseHook)
     {
         _layout = layout ?? throw new ArgumentNullException(nameof(layout));
         _keyProtector = keyProtector ?? new WindowsCurrentUserKeyProtector();
@@ -29,8 +41,9 @@ public sealed class RuntimeStateRestoreService
         var version = string.IsNullOrWhiteSpace(productVersion)
             ? typeof(RuntimeStateRestoreService).Assembly.GetName().Version?.ToString() ?? "unknown"
             : productVersion;
-        _backupService = new(_layout, _keyProtector, _utcNow, () => device(), version);
-        _verifier = new(_keyProtector, _utcNow, () => device(), version);
+        _backupService = new(_layout, _keyProtector, _utcNow, device, version);
+        _verifier = new(_keyProtector, _utcNow, device, version);
+        _phaseHook = phaseHook;
     }
 
     public async Task<RuntimeStateRestoreResult> RestoreAsync(
@@ -82,6 +95,7 @@ public sealed class RuntimeStateRestoreService
             RuntimeStateRestoreRecovery.WriteJournal(
                 _layout, journal, _keyProtector);
             journalWritten = true;
+            await InvokePhaseHookAsync(journal.Phase, cancellationToken).ConfigureAwait(false);
 
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(rollback) || Directory.Exists(failed))
@@ -93,11 +107,13 @@ public sealed class RuntimeStateRestoreService
             journal = journal with { Phase = RuntimeStateRestorePhase.CurrentMovedToRollback };
             RuntimeStateRestoreRecovery.WriteJournal(
                 _layout, journal, _keyProtector);
+            await InvokePhaseHookAsync(journal.Phase, cancellationToken).ConfigureAwait(false);
 
             Directory.Move(stage, _layout.DataDirectory);
             journal = journal with { Phase = RuntimeStateRestorePhase.RestoredActivated };
             RuntimeStateRestoreRecovery.WriteJournal(
                 _layout, journal, _keyProtector);
+            await InvokePhaseHookAsync(journal.Phase, cancellationToken).ConfigureAwait(false);
 
             await _verifier.VerifyPlaintextDataDirectoryAsync(
                 verified.Descriptor,
@@ -107,6 +123,7 @@ public sealed class RuntimeStateRestoreService
             journal = journal with { Phase = RuntimeStateRestorePhase.Committed };
             RuntimeStateRestoreRecovery.WriteJournal(
                 _layout, journal, _keyProtector);
+            await InvokePhaseHookAsync(journal.Phase, cancellationToken).ConfigureAwait(false);
 
             TryCleanupCommitted(restoreId);
             return new(
@@ -140,6 +157,11 @@ public sealed class RuntimeStateRestoreService
             throw;
         }
     }
+
+    private Task InvokePhaseHookAsync(
+        RuntimeStateRestorePhase phase,
+        CancellationToken cancellationToken)
+        => _phaseHook is null ? Task.CompletedTask : _phaseHook(phase, cancellationToken);
 
     private bool HasAuthoritativeActiveState()
         => RuntimeStateBackupInventoryV1.AuthoritativeDatabases
