@@ -76,6 +76,8 @@
       <Compile Remove="Tests\**\*.cs" />
       <Compile Remove="WPE.Tests\**\*.cs" />
       <None Remove="WPE.Tests\**\*" />
+      <Compile Remove="WPE.Headless\**\*.cs" />
+      <None Remove="WPE.Headless\**\*" />
       <Compile Remove="Tools\WpeLicenseGenerator\**\*.cs" />
       <Compile Remove="Services\BinanceReadFacade.cs" />
       <Compile Remove="Services\AiForecastService.cs" />
