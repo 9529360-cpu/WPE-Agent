@@ -212,6 +212,18 @@ try{
         Throws {& $switch @concurrentArgs} 'operator.switch-in-progress'
         Assert (-not(Test-Path -LiteralPath (Join-Path $concurrentOperator 'current.json'))) 'concurrent switch wrote operator pointer'
     }finally{$heldLock.Dispose()}
+    $tamperedPointerOperator=Join-Path $root 'tampered-pointer-operator';New-Item -ItemType Directory -Path $tamperedPointerOperator -Force|Out-Null
+    [ordered]@{
+        root=[IO.Path]::GetFullPath($lkg.CandidateRoot)
+        manifestSha256=('0'*64)
+        soakEvidenceSha256=$acceptance.ExpectedSoakEvidenceHash
+        switchedUtc=[DateTimeOffset]::UtcNow.ToString('O')
+        previousRoot=[IO.Path]::GetFullPath($lkg.CandidateRoot)
+    }|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $tamperedPointerOperator 'current.json') -Encoding utf8
+    $tamperedPointerArgs=$switchArgs.Clone();$tamperedPointerArgs.OperatorRoot=$tamperedPointerOperator
+    Throws {& $switch @tamperedPointerArgs} 'lkg.manifest-does-not-match-current'
+    $tamperedPointer=Get-Content -Raw -LiteralPath (Join-Path $tamperedPointerOperator 'current.json')|ConvertFrom-Json
+    Assert ($tamperedPointer.manifestSha256 -eq ('0'*64)) 'failed LKG identity check rewrote current pointer'
     $switched=& $switch @switchArgs;Assert (Test-Path (Join-Path $operator 'current.json')) 'atomic pointer missing';Assert $switched.Valid 'switch validation failed';$current=Get-Content -Raw -LiteralPath (Join-Path $operator 'current.json')|ConvertFrom-Json;Assert ($current.soakEvidenceSha256 -eq $acceptance.ExpectedSoakEvidenceHash) 'atomic pointer omitted soak evidence identity'
     $mutableRoot=Join-Path $root 'bin';Copy-Item -LiteralPath $candidate.CandidateRoot -Destination $mutableRoot -Recurse;$bad=$acceptance.Clone();$bad.CandidateRoot=$mutableRoot;Throws {& $test @bad} 'candidate.mutable-root'
     $otherSource=Join-Path $root 'other-package';Copy-Item -LiteralPath $source -Destination $otherSource -Recurse
