@@ -65,6 +65,8 @@ try{
     $result=& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60
     Assert $result.Valid 'valid evidence rejected'
     Assert ($result.SampleCount -eq 54) 'sample count not verified'
+    Assert ($result.SourceIdentity -eq 'commit/test-candidate') 'source identity not returned'
+    Assert ($result.CandidateManifestSha256 -eq ('a'*64)) 'candidate manifest identity not returned'
 
 
     Write-Evidence @{}
@@ -91,6 +93,16 @@ try{
     Write-Evidence @{}
     Add-Content -LiteralPath $samplesPath -Value (($sample|ConvertTo-Json -Compress))
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.samples-hash-mismatch'
+
+    $notAcceptedJson=$sampleJson.Replace('"accepted":true','"accepted":false')
+    @(1..54|ForEach-Object{$notAcceptedJson})|Set-Content -LiteralPath $samplesPath -Encoding utf8
+    Write-Evidence @{}
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.sample-not-accepted'
+
+    $notReadyJson=$sampleJson.Replace('"processState":"ready"','"processState":"failed"')
+    @(1..54|ForEach-Object{$notReadyJson})|Set-Content -LiteralPath $samplesPath -Encoding utf8
+    Write-Evidence @{}
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.sample-runtime-not-ready'
 
     'PASS headless soak evidence verification'
 } finally {
