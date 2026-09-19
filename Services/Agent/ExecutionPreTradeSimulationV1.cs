@@ -68,6 +68,8 @@ internal sealed record ExecutionPreTradeSimulationProvenanceV1(
     string Environment,
     string ArtifactSha256,
     string IntentSha256,
+    string BacktestValidationSha256,
+    byte[] BacktestValidationCanonicalBytes,
     string TimelineSha256,
     string MarketProvenanceSha256,
     byte[] MarketProvenanceCanonicalBytes,
@@ -90,6 +92,7 @@ internal static class ExecutionPreTradeSimulationProvenanceCanonicalizerV1
         ExecutionIntent intent,
         ExecutionSimulationFillV1 fill,
         MarketEvidence market,
+        BacktestValidationFactV1 validationFact,
         StrategyExposureTimelineArtifactV1 timeline,
         ExecutionVenueRuleIdentityV1 venueRule,
         DateTimeOffset createdAtUtc)
@@ -98,6 +101,7 @@ internal static class ExecutionPreTradeSimulationProvenanceCanonicalizerV1
         ArgumentNullException.ThrowIfNull(intent);
         ArgumentNullException.ThrowIfNull(fill);
         ArgumentNullException.ThrowIfNull(market);
+        ArgumentNullException.ThrowIfNull(validationFact);
         ArgumentNullException.ThrowIfNull(timeline);
         ArgumentNullException.ThrowIfNull(venueRule);
 
@@ -123,6 +127,14 @@ internal static class ExecutionPreTradeSimulationProvenanceCanonicalizerV1
            ||!string.Equals(market.Symbol,intent.Symbol,StringComparison.Ordinal)
            ||new DateTimeOffset(market.CollectedAt)!=fill.MarketAsOfUtc)
             throw new InvalidOperationException("Pre-trade market provenance is invalid.");
+        if(!BacktestValidationCanonicalizerV1.IsCanonical(validationFact,createdAtUtc)
+           ||!validationFact.Approved
+           ||!validationFact.Promoted
+           ||validationFact.ValidatedAtUtc>new DateTimeOffset(market.CollectedAt)
+           ||!string.Equals(validationFact.StrategyId,artifact.StrategyId,StringComparison.Ordinal)
+           ||!string.Equals(validationFact.StrategyVersion,artifact.StrategyVersion,StringComparison.Ordinal)
+           ||!string.Equals(validationFact.Symbol,intent.Symbol,StringComparison.Ordinal))
+            throw new InvalidOperationException("Pre-trade historical validation provenance is invalid.");
         if(!StrategyExposureTimelineV1.IsCanonical(timeline)
            ||!string.Equals(timeline.StrategyId,artifact.StrategyId,StringComparison.Ordinal)
            ||!string.Equals(timeline.StrategyVersion,artifact.StrategyVersion,StringComparison.Ordinal)
@@ -143,6 +155,8 @@ internal static class ExecutionPreTradeSimulationProvenanceCanonicalizerV1
             artifact.Environment,
             hashes.ArtifactHash,
             hashes.IntentHash,
+            validationFact.CanonicalSha256,
+            validationFact.CanonicalBytes,
             timeline.CanonicalSha256,
             market.Provenance.CanonicalSha256,
             market.Provenance.CanonicalBytes,
@@ -170,6 +184,8 @@ internal static class ExecutionPreTradeSimulationProvenanceCanonicalizerV1
            ||value.CreatedAtUtc.Offset!=TimeSpan.Zero
            ||!Sha(value.ArtifactSha256)
            ||!Sha(value.IntentSha256)
+           ||!Sha(value.BacktestValidationSha256)
+           ||value.BacktestValidationCanonicalBytes.Length==0
            ||!Sha(value.TimelineSha256)
            ||!Sha(value.MarketProvenanceSha256)
            ||!Sha(value.CostModelSha256)
@@ -185,6 +201,9 @@ internal static class ExecutionPreTradeSimulationProvenanceCanonicalizerV1
         try
         {
             if(!CryptographicOperations.FixedTimeEquals(
+                   SHA256.HashData(value.BacktestValidationCanonicalBytes),
+                   Convert.FromHexString(value.BacktestValidationSha256))
+               ||!CryptographicOperations.FixedTimeEquals(
                    SHA256.HashData(value.MarketProvenanceCanonicalBytes),
                    Convert.FromHexString(value.MarketProvenanceSha256))
                ||!CryptographicOperations.FixedTimeEquals(
@@ -223,6 +242,7 @@ internal static class ExecutionPreTradeSimulationProvenanceCanonicalizerV1
         {
             writer.WriteStartObject();
             writer.WriteString("artifact_sha256",value.ArtifactSha256);
+            writer.WriteString("backtest_validation_sha256",value.BacktestValidationSha256);
             writer.WriteString("client_order_id",value.ClientOrderId);
             writer.WriteString("correlation_id",value.CorrelationId);
             writer.WriteString("cost_model_sha256",value.CostModelSha256);
@@ -266,6 +286,7 @@ internal static class ExecutionPreTradeSimulationV1
         IReadOnlyList<ExecutionIntent> intents,
         MarketEvidence market,
         TradingRule rule,
+        BacktestValidationFactV1 validationFact,
         StrategyExposureTimelineArtifactV1 timeline,
         DateTimeOffset simulatedAtUtc)
     {
@@ -273,6 +294,7 @@ internal static class ExecutionPreTradeSimulationV1
         ArgumentNullException.ThrowIfNull(intents);
         ArgumentNullException.ThrowIfNull(market);
         ArgumentNullException.ThrowIfNull(rule);
+        ArgumentNullException.ThrowIfNull(validationFact);
         ArgumentNullException.ThrowIfNull(timeline);
 
         var now=simulatedAtUtc.ToUniversalTime();
@@ -312,7 +334,7 @@ internal static class ExecutionPreTradeSimulationV1
                 if(!intent.ReduceOnly)reasons.Add("simulation.risk-increase-unsupported");
             }
             var provenance=ExecutionPreTradeSimulationProvenanceCanonicalizerV1.Create(
-                artifact,intent,fill,market,timeline,venueRule,now);
+                artifact,intent,fill,market,validationFact,timeline,venueRule,now);
             items.Add(new(fill,provenance));
         }
 
