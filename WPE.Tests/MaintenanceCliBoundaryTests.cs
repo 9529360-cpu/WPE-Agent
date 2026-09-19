@@ -18,6 +18,9 @@ public sealed class MaintenanceCliBoundaryTests
         Assert.Contains("OperatingSystem.IsWindows()", program, StringComparison.Ordinal);
         Assert.Contains("DeleteDirectoryOrFail(staging)", program, StringComparison.Ordinal);
         Assert.DoesNotContain("TryDeleteDirectory", program, StringComparison.Ordinal);
+        var cleanup = program.IndexOf("DeleteDirectoryOrFail(staging)", StringComparison.Ordinal);
+        var verifiedOutput = program.IndexOf("itemCount = result.Descriptor.Items.Count", cleanup, StringComparison.Ordinal);
+        Assert.True(cleanup >= 0 && verifiedOutput > cleanup);
         Assert.Contains("<TargetFramework>net8.0</TargetFramework>", project, StringComparison.Ordinal);
         Assert.Contains("..\\币安量化机器人.csproj", project, StringComparison.Ordinal);
         Assert.Contains("WPE.Maintenance\\\\**\\\\*.cs", mainProject, StringComparison.Ordinal);
