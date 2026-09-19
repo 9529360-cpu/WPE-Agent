@@ -5,7 +5,7 @@ WPE.Maintenance is an offline Windows-only maintenance executable for WPE runtim
 ## Preconditions
 
 - Run under the same Windows user that owns the WPE state and DPAPI material.
-- Use an explicit absolute WPE data root.
+- Use an explicit absolute WPE data root on the real fixed local volume. Existing symbolic-link, junction, or other reparse-point components are rejected for the managed root and its WPE state directories.
 - Stop every WPE desktop/headless process before backup or restore. When WPE runs as a Windows Service, stop `WPE Agent Headless` and wait for the process to exit before maintenance.
 - Keep backup output outside the active Data directory.
 - Treat backup files as sensitive encrypted state even though the payload is encrypted.
