@@ -56,8 +56,12 @@ public sealed class RuntimeStateBackupVerifier
             throw new InvalidOperationException("The platform backup key protector is unavailable.");
 
         var backupRoot = Path.GetFullPath(backupDirectory);
+        if (DataRootPathPolicy.ContainsExistingReparsePoint(backupRoot))
+            throw new InvalidDataException(
+                "Runtime-state backup path must not traverse reparse points.");
         if (!Directory.Exists(backupRoot))
             throw new DirectoryNotFoundException("The runtime-state backup directory does not exist.");
+        EnsureNoReparseEntries(backupRoot);
 
         var stagingRoot = Path.GetFullPath(stagingDataDirectory);
         if (Directory.Exists(stagingRoot) || File.Exists(stagingRoot))
@@ -405,6 +409,26 @@ public sealed class RuntimeStateBackupVerifier
         finally
         {
             CryptographicOperations.ZeroMemory(buffer);
+        }
+    }
+
+    private static void EnsureNoReparseEntries(string rootDirectory)
+    {
+        var pending = new Stack<string>();
+        pending.Push(Path.GetFullPath(rootDirectory));
+
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            foreach (var entry in Directory.EnumerateFileSystemEntries(current))
+            {
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException(
+                        "Runtime-state backup tree must not contain reparse points.");
+                if ((attributes & FileAttributes.Directory) != 0)
+                    pending.Push(entry);
+            }
         }
     }
 
