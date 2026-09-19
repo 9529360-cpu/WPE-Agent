@@ -134,7 +134,6 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             return new(DurableReviewReconciliationState.Failed,"review.reconcile-artifact-invalid");
 
         var completedCount=0;
-        var notSubmittedCount=0;
         foreach(var intent in artifact.Intents)
         {
             var journaled=await _db.HasExecutionSubmissionJournalAsync(intent.ClientOrderId,ct);
@@ -144,11 +143,8 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
 
             if(providerState==ProviderOrderLifecycleStateV1.TerminalNoFill)
                 return new(DurableReviewReconciliationState.Failed,"review.reconcile-order-terminal");
-            if(providerState==ProviderOrderLifecycleStateV1.NotSubmitted)
-            {
-                notSubmittedCount++;
-                continue;
-            }
+            // The submission journal is still a reserved read contract with no production writer.
+            // A missing provider order therefore cannot prove that submission never happened.
             if(providerState!=ProviderOrderLifecycleStateV1.Filled)
                 return new(DurableReviewReconciliationState.Unknown,"review.reconcile-manual-required");
 
@@ -159,8 +155,6 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             completedCount++;
         }
 
-        if(notSubmittedCount==artifact.Intents.Count)
-            return new(DurableReviewReconciliationState.NotSubmitted,"review.reconcile-not-submitted");
         if(completedCount!=artifact.Intents.Count)
             return new(DurableReviewReconciliationState.Unknown,"review.reconcile-manual-required");
         return new(DurableReviewReconciliationState.Succeeded,"review.reconcile-succeeded");
