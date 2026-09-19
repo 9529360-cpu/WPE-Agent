@@ -80,11 +80,14 @@ try{
 
     Write-ValidSamples
     Write-Evidence @{}
-    $result=& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60
+    $result=& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -ExpectedEvidenceSha256 (Hash $evidencePath) -MinimumDurationMinutes 60
     Assert $result.Valid 'valid evidence rejected'
     Assert ($result.SampleCount -eq 54) 'sample count not verified'
     Assert ($result.SourceIdentity -eq 'commit/test-candidate') 'source identity not returned'
     Assert ($result.CandidateManifestSha256 -eq ('a'*64)) 'candidate manifest identity not returned'
+
+    Write-Evidence @{}
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -ExpectedEvidenceSha256 ('0'*64) -MinimumDurationMinutes 60} 'soak.evidence-hash-mismatch'
 
     Write-Evidence @{}
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/other' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.source-identity-mismatch'
