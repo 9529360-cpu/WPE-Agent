@@ -22,7 +22,7 @@ public sealed class RuntimeStateBackupVerifierTests : IDisposable
     public async Task VerifiedBackupStagesAuthoritativeBytesAndValidSqlite()
     {
         await CreateDatabase(_layout.DataFile("agent.db"));
-        File.WriteAllText(_layout.DataFile("agent-settings.json"), "{"setup":true}");
+        File.WriteAllText(_layout.DataFile("agent-settings.json"), "{\"setup\":true}");
         File.WriteAllBytes(_layout.DataFile("ui-preferences.json"), []);
 
         var backup = await Backup().CreateAsync(Path.Combine(_root, "backups"));
