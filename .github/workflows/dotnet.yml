@@ -138,6 +138,10 @@ jobs:
       shell: pwsh
       run: ./eng/dogfood/tests/ReleaseSlots.Tests.ps1
 
+    - name: Verify V1 candidate gate
+      shell: pwsh
+      run: ./eng/dogfood/tests/V1CandidateGate.Tests.ps1
+
     - name: Publish maintenance candidate
       run: dotnet publish "WPE.Maintenance/WPE.Maintenance.csproj" --configuration Release --no-restore --output artifacts/maintenance
 
