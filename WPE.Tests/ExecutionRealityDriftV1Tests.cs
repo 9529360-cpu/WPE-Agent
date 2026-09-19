@@ -10,7 +10,7 @@ public sealed class ExecutionRealityDriftV1Tests
     public void FilledLongOpen_ComputesAdversePriceFeeAndLatencyDrift()
     {
         var expected = Expectation(PositionSide.Long, reduceOnly:false, expectedPrice:100m);
-        var observed = Observation(expected, "FILLED", 2m, 101m, .0808m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddSeconds(1));
+        var observed = Observation(expected, "FILLED", 2m, 101m, 0.0808m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddSeconds(1));
 
         var fact = ExecutionRealityDriftV1.Analyze(expected, observed);
 
@@ -52,7 +52,7 @@ public sealed class ExecutionRealityDriftV1Tests
     public void FilledShortOpen_FavorableHigherSellPriceIsNegativeSlippage()
     {
         var expected = Expectation(PositionSide.Short, reduceOnly:false, expectedPrice:100m);
-        var observed = Observation(expected, "FILLED", 2m, 101m, .0808m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddMilliseconds(500));
+        var observed = Observation(expected, "FILLED", 2m, 101m, 0.0808m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddMilliseconds(500));
 
         var fact = ExecutionRealityDriftV1.Analyze(expected, observed);
 
@@ -65,7 +65,7 @@ public sealed class ExecutionRealityDriftV1Tests
     public void ReduceLong_UsesSellSideSlippageDirection()
     {
         var expected = Expectation(PositionSide.Long, reduceOnly:true, expectedPrice:100m);
-        var observed = Observation(expected, "FILLED", 2m, 99m, .0792m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddMilliseconds(500));
+        var observed = Observation(expected, "FILLED", 2m, 99m, 0.0792m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddMilliseconds(500));
 
         var fact = ExecutionRealityDriftV1.Analyze(expected, observed);
 
@@ -76,7 +76,7 @@ public sealed class ExecutionRealityDriftV1Tests
     public void PartialFill_IsComparableButNotTerminalWhileExchangeIsOpen()
     {
         var expected = Expectation(PositionSide.Long, reduceOnly:false, expectedPrice:100m);
-        var observed = Observation(expected, "PARTIALLY_FILLED", .5m, 100.2m, .02004m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddMilliseconds(250));
+        var observed = Observation(expected, "PARTIALLY_FILLED", 0.5m, 100.2m, 0.02004m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddMilliseconds(250));
 
         var fact = ExecutionRealityDriftV1.Analyze(expected, observed);
 
@@ -84,7 +84,7 @@ public sealed class ExecutionRealityDriftV1Tests
         Assert.False(fact.Terminal);
         Assert.True(fact.Comparable);
         Assert.True(fact.FeeComparable);
-        Assert.Equal(.25m, fact.FillRatio);
+        Assert.Equal(0.25m, fact.FillRatio);
         Assert.Equal("partial-fill", fact.ReasonCode);
     }
 
@@ -123,7 +123,7 @@ public sealed class ExecutionRealityDriftV1Tests
     public void InvalidFilledQuantityFailsClosed()
     {
         var expected = Expectation(PositionSide.Long, reduceOnly:false, expectedPrice:100m);
-        var observed = Observation(expected, "FILLED", 1m, 100m, .04m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddMilliseconds(120));
+        var observed = Observation(expected, "FILLED", 1m, 100m, 0.04m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddMilliseconds(120));
 
         Assert.Throws<InvalidOperationException>(() => ExecutionRealityDriftV1.Analyze(expected, observed));
     }
@@ -133,7 +133,7 @@ public sealed class ExecutionRealityDriftV1Tests
     {
         var expected = Expectation(PositionSide.Long, reduceOnly:false, expectedPrice:100m);
         var observed = new ExecutionRealityObservationV1(
-            "different-order", "FILLED", 2m, 100m, .08m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis,
+            "different-order", "FILLED", 2m, 100m, 0.08m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis,
             IntendedAt.AddMilliseconds(100), IntendedAt.AddMilliseconds(120));
 
         Assert.Throws<InvalidOperationException>(() => ExecutionRealityDriftV1.Analyze(expected, observed));
@@ -143,7 +143,7 @@ public sealed class ExecutionRealityDriftV1Tests
     public void UnavailableFeeEvidenceCannotSmuggleObservedFee()
     {
         var expected = Expectation(PositionSide.Long, reduceOnly:false, expectedPrice:100m);
-        var observed = Observation(expected, "FILLED", 2m, 100m, .08m, ExecutionRealityDriftV1.UnavailableFeeBasis, IntendedAt.AddMilliseconds(120));
+        var observed = Observation(expected, "FILLED", 2m, 100m, 0.08m, ExecutionRealityDriftV1.UnavailableFeeBasis, IntendedAt.AddMilliseconds(120));
 
         Assert.Throws<InvalidOperationException>(() => ExecutionRealityDriftV1.Analyze(expected, observed));
     }
@@ -152,7 +152,7 @@ public sealed class ExecutionRealityDriftV1Tests
     public void CanonicalHashDetectsTampering()
     {
         var expected = Expectation(PositionSide.Long, reduceOnly:false, expectedPrice:100m);
-        var observed = Observation(expected, "FILLED", 2m, 100m, .08m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddMilliseconds(120));
+        var observed = Observation(expected, "FILLED", 2m, 100m, 0.08m, ExecutionRealityDriftV1.ExchangeReportedFeeBasis, IntendedAt.AddMilliseconds(120));
 
         var fact = ExecutionRealityDriftV1.Analyze(expected, observed);
         Assert.True(ExecutionRealityDriftV1.IsCanonical(fact));
@@ -189,7 +189,7 @@ public sealed class ExecutionRealityDriftV1Tests
         OrderType:ExecutionOrderType.Market,
         Quantity:2m,
         ExpectedPrice:expectedPrice,
-        ExpectedCommissionRate:.0004m,
-        ExpectedSlippageRate:.003m,
+        ExpectedCommissionRate:0.0004m,
+        ExpectedSlippageRate:0.003m,
         IntendedAtUtc:IntendedAt);
 }
