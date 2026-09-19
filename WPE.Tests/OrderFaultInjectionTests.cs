@@ -158,6 +158,74 @@ public sealed class OrderFaultInjectionTests : IDisposable
     }
 
     [Fact]
+    public async Task PartialOpeningFillWithoutTerminalCancelAck_RemainsRecoverableUntilTerminalObservation()
+    {
+        var exchange = new TimeoutExchange { InitialExecutedQuantity = 0.004m, RemainPartialAfterCancel = true };
+        var scheduler = new VirtualPollScheduler();
+        var (executor, store) = CreateExecutor(exchange, scheduler);
+        var intent = Opening("partial-open-unacked-cancel", 0.01m);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            executor.ExecuteAsync("cycle-1", intent, 10, true, CancellationToken.None));
+
+        var pending = Assert.Single(await store.GetRecoverableIntentsAsync(CancellationToken.None));
+        Assert.Equal("PROTECTED_PARTIAL_PENDING", pending.Status);
+        Assert.Single(exchange.ProtectionRequests);
+
+        var firstRecovery = await executor.RecoverPendingAsync(CancellationToken.None);
+        Assert.False(firstRecovery.Safe);
+        Assert.Equal("PROTECTED_PARTIAL_PENDING", Assert.Single(await store.GetRecoverableIntentsAsync(CancellationToken.None)).Status);
+        Assert.Single(exchange.ProtectionRequests);
+
+        exchange.RemainPartialAfterCancel = false;
+        var settled = await executor.RecoverPendingAsync(CancellationToken.None);
+
+        Assert.True(settled.Safe);
+        Assert.Empty(await store.GetRecoverableIntentsAsync(CancellationToken.None));
+        Assert.Equal(2, exchange.ProtectionRequests.Count);
+        Assert.Equal("PROTECTED_PARTIAL", await store.GetOrderIntentStatusAsync(intent.ClientOrderId, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task PartialCloseWithoutTerminalCancelAck_RemainsRecoverableAndDoesNotCancelProtection()
+    {
+        var exchange = new TimeoutExchange { InitialExecutedQuantity = 0.004m, RemainPartialAfterCancel = true };
+        var scheduler = new VirtualPollScheduler();
+        var (executor, store) = CreateExecutor(exchange, scheduler);
+        var intent = Opening("partial-close-unacked-cancel", 0.01m) with { ReduceOnly = true, Action = DecisionAction.CloseLong };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            executor.ExecuteAsync("cycle-1", intent, 10, true, CancellationToken.None));
+
+        var pending = Assert.Single(await store.GetRecoverableIntentsAsync(CancellationToken.None));
+        Assert.Equal("COMPLETED_PARTIAL_PENDING", pending.Status);
+        Assert.Empty(exchange.ProtectionRequests);
+
+        exchange.RemainPartialAfterCancel = false;
+        var settled = await executor.RecoverPendingAsync(CancellationToken.None);
+
+        Assert.False(settled.Safe);
+        Assert.Empty(await store.GetRecoverableIntentsAsync(CancellationToken.None));
+        Assert.Equal("COMPLETED_PARTIAL", await store.GetOrderIntentStatusAsync(intent.ClientOrderId, CancellationToken.None));
+        Assert.Empty(exchange.ProtectionRequests);
+    }
+
+    [Fact]
+    public async Task ReduceOnlyRecoveryPartialOpenNeverMasqueradesAsTerminalPartial()
+    {
+        var exchange = new TimeoutExchange { InitialExecutedQuantity = 0.004m, RemainPartialAfterCancel = true };
+        var scheduler = new VirtualPollScheduler();
+        var (executor, store) = CreateExecutor(exchange, scheduler);
+        var intent = Opening("recovery-partial-open", 0.01m) with { ReduceOnly = true, Action = DecisionAction.CloseLong, OrderType = ExecutionOrderType.Market };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            executor.ExecuteReduceOnlyRecoveryAsync("cycle-recovery", intent, CancellationToken.None));
+
+        var pending = Assert.Single(await store.GetRecoverableIntentsAsync(CancellationToken.None));
+        Assert.Equal("COMPLETED_PARTIAL_PENDING", pending.Status);
+    }
+
+    [Fact]
     public async Task CanceledObservation_FollowedByLateFill_IsHandledAsFilled()
     {
         var exchange = new TimeoutExchange { FillAfterFirstPostCancelQuery = true };
@@ -298,13 +366,16 @@ public sealed class OrderFaultInjectionTests : IDisposable
         private bool _cancelAttempted;
         public bool CancelFailure { get; init; }
         public bool FillAfterFirstPostCancelQuery { get; init; }
+        public decimal InitialExecutedQuantity { get; init; }
+        public bool RemainPartialAfterCancel { get; set; }
         public int CancelAttempts { get; private set; }
         public int PostCancelQueries { get; private set; }
         public List<string> ProtectionRequests { get; } = [];
 
         public override Task<ExchangeOrder> PlaceMarketAsync(string symbol,PositionSide side,decimal quantity,string clientOrderId,bool reduceOnly,CancellationToken ct)
         {
-            _order=new ExchangeOrder(symbol,"42",clientOrderId,"NEW",0,0,"MARKET",side,false,DateTime.UtcNow);return Task.FromResult(_order);
+            var partial=InitialExecutedQuantity>0;
+            _order=new ExchangeOrder(symbol,"42",clientOrderId,partial?"PARTIALLY_FILLED":"NEW",InitialExecutedQuantity,partial?50_000m:0m,"MARKET",side,false,DateTime.UtcNow);return Task.FromResult(_order);
         }
 
         public override Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct)
@@ -312,7 +383,8 @@ public sealed class OrderFaultInjectionTests : IDisposable
             if(_order is null)return Task.FromResult<ExchangeOrder?>(null);
             if(!_cancelAttempted)return Task.FromResult<ExchangeOrder?>(_order);
             PostCancelQueries++;
-            if(FillAfterFirstPostCancelQuery&&PostCancelQueries>=2)_order=_order with{Status="FILLED",ExecutedQuantity=0.01m};
+            if(FillAfterFirstPostCancelQuery&&PostCancelQueries>=2)_order=_order with{Status="FILLED",ExecutedQuantity=0.01m,AvgPrice=50_000m};
+            else if(RemainPartialAfterCancel)_order=_order with{Status="PARTIALLY_FILLED"};
             else if(!CancelFailure)_order=_order with{Status="CANCELED"};
             return Task.FromResult<ExchangeOrder?>(_order);
         }
