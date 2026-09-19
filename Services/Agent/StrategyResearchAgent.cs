@@ -126,7 +126,17 @@ public sealed class StrategyResearchAgent
             profile.MaxDrawdown = performance.MaxDrawdown; profile.FailureStreak = performance.FailureStreak; profile.QualityScore = performance.QualityScore;
             var previous=profile.Lifecycle;var next = _governor.NextLifecycle(profile);
             if(next==profile.Lifecycle&&_governor.ShouldRetireShadow(profile,_utcNow()))next=StrategyLifecycle.Retired;
-            if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = _utcNow(); profile.LastReason = next==StrategyLifecycle.Retired?$"shadow evaluation exhausted without qualification: {performance.Summary}":$"local performance: {performance.Summary}"; }
+            if(next!=profile.Lifecycle)
+            {
+                var changedAt=_utcNow().ToUniversalTime();
+                if(previous==StrategyLifecycle.Shadow&&next==StrategyLifecycle.Active)
+                    await PersistQualificationBeforeActivationAsync(profile,changedAt,ct);
+                profile.Lifecycle=next;
+                profile.StateChangedAtUtc=changedAt;
+                profile.LastReason=next==StrategyLifecycle.Retired
+                    ?$"shadow evaluation exhausted without qualification: {performance.Summary}"
+                    :$"local performance: {performance.Summary}";
+            }
             await _database.UpsertStrategyAsync(profile, ct);
             if(next!=previous)await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
         }
@@ -142,8 +152,10 @@ public sealed class StrategyResearchAgent
                 .ThenByDescending(x => x.Expectancy)
                 .FirstOrDefault();
             if (challenger is null) continue;
+            var changedAt=_utcNow().ToUniversalTime();
+            await PersistQualificationBeforeActivationAsync(challenger,changedAt,ct);
             challenger.Lifecycle = StrategyLifecycle.Active;
-            challenger.StateChangedAtUtc = _utcNow();
+            challenger.StateChangedAtUtc = changedAt;
             challenger.LastReason = "deterministic failover from degraded strategy";
             await _database.UpsertStrategyAsync(challenger, ct);
             await _database.RecordStrategyLifecycleAsync(challenger,StrategyLifecycle.Shadow,challenger.LastReason,ct);
@@ -153,6 +165,34 @@ public sealed class StrategyResearchAgent
 
     public StrategySignal GetSignal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
         => _schedulerHealthy ? _engine.Signal(profile, market, news) : new StrategySignal(profile.Id, profile.Symbol, 0, 0, "strategy research heartbeat is stale; hold", profile.Version);
+
+    private async Task PersistQualificationBeforeActivationAsync(
+        StrategyProfile profile,
+        DateTime changedAtUtc,
+        CancellationToken ct)
+    {
+        if(profile.Lifecycle!=StrategyLifecycle.Shadow)
+            throw new InvalidOperationException("Only a Shadow strategy can produce qualification evidence.");
+
+        var rows=await _database.GetCanonicalStrategyShadowObservationsAsync(
+            profile.Id,
+            profile.Version,
+            ct);
+        var qualifiedAt=new DateTimeOffset(DateTime.SpecifyKind(changedAtUtc.ToUniversalTime(),DateTimeKind.Utc));
+        var artifact=StrategyQualificationArtifactCanonicalizerV1.Create(rows,qualifiedAt);
+
+        if(artifact.ShadowObservationCount!=profile.ShadowObservations
+           ||artifact.Expectancy!=profile.Expectancy
+           ||artifact.MaxDrawdown!=profile.MaxDrawdown
+           ||artifact.QualityScore!=profile.QualityScore
+           ||artifact.FailureStreak!=profile.FailureStreak
+           ||!string.Equals(artifact.StrategyId,profile.Id,StringComparison.Ordinal)
+           ||!string.Equals(artifact.StrategyVersion,profile.Version,StringComparison.Ordinal)
+           ||!string.Equals(artifact.Symbol,profile.Symbol,StringComparison.Ordinal))
+            throw new InvalidOperationException("Strategy lifecycle state does not match canonical qualification evidence.");
+
+        await _database.SaveStrategyQualificationAsync(artifact,ct);
+    }
 
     private async Task<StrategyShadowObservationV1?> CreateShadowObservationAsync(
         StrategyProfile profile,
