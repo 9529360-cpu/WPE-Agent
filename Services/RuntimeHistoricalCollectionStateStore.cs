@@ -51,7 +51,7 @@ public sealed class RuntimeHistoricalCollectionStateStore
 
     public Task<HistoricalCollectionPageV1<HistoricalPostTradePnlDriftV1>> ReadPostTradePnlDriftAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default) =>
         ReadAsync(HistoricalCollectionKindV1.PostTradePnlDrift, request, "post_trade_pnl_drift", "compared_at", TimeSpan.FromDays(30),
-            "SELECT rowid,canonical_sha256,canonical_bytes FROM post_trade_pnl_drift ORDER BY compared_at DESC,rowid DESC LIMIT $limit OFFSET $offset",
+            "SELECT rowid,compared_at,canonical_sha256,canonical_bytes FROM post_trade_pnl_drift ORDER BY compared_at DESC,rowid DESC LIMIT $limit OFFSET $offset",
             MapPostTradePnlDrift, ct);
 
     private async Task<HistoricalCollectionPageV1<T>> ReadAsync<T>(HistoricalCollectionKindV1 kind, HistoricalCollectionRequestV1 request, string table, string timestampColumn, TimeSpan staleAfter, string sql, Func<SqliteDataReader,T> map, CancellationToken ct)
@@ -76,10 +76,12 @@ public sealed class RuntimeHistoricalCollectionStateStore
 
     private static HistoricalPostTradePnlDriftV1 MapPostTradePnlDrift(SqliteDataReader reader)
     {
-        var hash=reader.GetString(1);
-        if(reader[2] is not byte[] bytes
+        var comparedAt=Instant(reader.GetString(1));
+        var hash=reader.GetString(2);
+        if(reader[3] is not byte[] bytes
             || !PostTradePnlDriftCanonicalizerV1.TryDeserialize(bytes,hash,out var fact)
-            || fact is null)
+            || fact is null
+            || fact.ComparedAtUtc!=comparedAt)
             throw new InvalidOperationException("Persisted post-trade PnL drift failed canonical verification.");
         return new(
             reader.GetInt64(0),

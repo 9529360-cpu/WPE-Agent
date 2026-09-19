@@ -116,6 +116,19 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
         Assert.DoesNotContain(fact.CanonicalSha256,json);
 
         await ExecuteAsync(
+            "UPDATE post_trade_pnl_drift SET compared_at=$t WHERE canonical_sha256=$hash",
+            ("$t",Now.AddDays(1).ToString("O")),
+            ("$hash",fact.CanonicalSha256));
+        var metadataMismatch=await store.ReadPostTradePnlDriftAsync(new());
+        Assert.Equal(RuntimeCollectionState.Error,metadataMismatch.State);
+        Assert.Empty(metadataMismatch.Items);
+        Assert.Null(metadataMismatch.NextCursor);
+
+        await ExecuteAsync(
+            "UPDATE post_trade_pnl_drift SET compared_at=$t WHERE canonical_sha256=$hash",
+            ("$t",fact.ComparedAtUtc.ToString("O")),
+            ("$hash",fact.CanonicalSha256));
+        await ExecuteAsync(
             "UPDATE post_trade_pnl_drift SET canonical_bytes=$bytes WHERE canonical_sha256=$hash",
             ("$bytes",new byte[]{1,2,3}),
             ("$hash",fact.CanonicalSha256));
