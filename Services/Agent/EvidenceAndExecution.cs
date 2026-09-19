@@ -114,10 +114,19 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
                 await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",order.OrderId,ct);
                 throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));
             }
+            var providerState=ProviderLifecycle(intent,order);
             var partial=order.ExecutedQuantity<intent.Quantity;
+            if(providerState is not (ProviderOrderLifecycleStateV1.Filled or ProviderOrderLifecycleStateV1.TerminalPartialFill or ProviderOrderLifecycleStateV1.PartialOpen))
+            {
+                await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",order.OrderId,ct);
+                throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));
+            }
             await CaptureFeeEvidenceAsync(order,ct);await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);await _db.RecordExecutionAsync(cycle,intent with{Quantity=order.ExecutedQuantity},
                 partial?order with{Status="PARTIALLY_FILLED"}:order,"wpe-core-v2",ct);
-            await _db.SaveIntentAsync(cycle,intent,partial?"COMPLETED_PARTIAL":"COMPLETED",order.OrderId,ct);
+            var localStatus=providerState==ProviderOrderLifecycleStateV1.PartialOpen
+                ?"COMPLETED_PARTIAL_PENDING"
+                :partial?"COMPLETED_PARTIAL":"COMPLETED";
+            await _db.SaveIntentAsync(cycle,intent,localStatus,order.OrderId,ct);
             await NotifyExecutionAsync(cycle,intent,order,ct);
             if(partial)throw new InvalidOperationException(L("Execution.PartialClose",order.ExecutedQuantity,intent.Quantity));
             return L("Execution.CloseConfirmed");
@@ -197,19 +206,42 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",order.OrderId,ct);
             throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));
         }
-        var filledIntent=intent with{Quantity=order.ExecutedQuantity};var recordedOrder=order.ExecutedQuantity>0&&order.Status!="FILLED"?order with{Status="PARTIALLY_FILLED"}:order;await CaptureFeeEvidenceAsync(recordedOrder,ct);if(intent.ReduceOnly&&recordedOrder.Status=="FILLED")await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);await _db.RecordExecutionAsync(cycle,filledIntent,recordedOrder,"wpe-core-v2",ct);
+        var providerState=ProviderLifecycle(intent,order);
+        var filledIntent=intent with{Quantity=order.ExecutedQuantity};var recordedOrder=order.ExecutedQuantity>0&&order.Status!="FILLED"?order with{Status="PARTIALLY_FILLED"}:order;await CaptureFeeEvidenceAsync(recordedOrder,ct);if(intent.ReduceOnly&&providerState==ProviderOrderLifecycleStateV1.Filled)await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);await _db.RecordExecutionAsync(cycle,filledIntent,recordedOrder,"wpe-core-v2",ct);
         if(intent.ReduceOnly)
         {
-            if(IsFullClose(intent.Action)){await CancelProtectionOrdersAsync(intent.Symbol,intent.Side,ct);await _db.ClearLockedSideIfMatchesAsync(intent.Symbol,intent.Side,ct);}
-            if(intent.Action==DecisionAction.Unlock)await _db.ClearLockedSideAsync(intent.Symbol,ct);
-            var partial=order.ExecutedQuantity<intent.Quantity;await _db.SaveIntentAsync(cycle,intent,partial?"COMPLETED_PARTIAL":"COMPLETED",order.OrderId,ct);if(partial)throw new InvalidOperationException(L("Execution.PartialClose",order.ExecutedQuantity,intent.Quantity));await NotifyExecutionAsync(cycle,intent,order,ct);return L("Execution.CloseConfirmed");
+            if(providerState==ProviderOrderLifecycleStateV1.Filled)
+            {
+                if(IsFullClose(intent.Action)){await CancelProtectionOrdersAsync(intent.Symbol,intent.Side,ct);await _db.ClearLockedSideIfMatchesAsync(intent.Symbol,intent.Side,ct);}
+                if(intent.Action==DecisionAction.Unlock)await _db.ClearLockedSideAsync(intent.Symbol,ct);
+                await _db.SaveIntentAsync(cycle,intent,"COMPLETED",order.OrderId,ct);await NotifyExecutionAsync(cycle,intent,order,ct);return L("Execution.CloseConfirmed");
+            }
+            if(providerState==ProviderOrderLifecycleStateV1.TerminalPartialFill)
+            {
+                await _db.SaveIntentAsync(cycle,intent,"COMPLETED_PARTIAL",order.OrderId,ct);
+                throw new InvalidOperationException(L("Execution.PartialClose",order.ExecutedQuantity,intent.Quantity));
+            }
+            if(providerState==ProviderOrderLifecycleStateV1.PartialOpen)
+            {
+                await _db.SaveIntentAsync(cycle,intent,"COMPLETED_PARTIAL_PENDING",order.OrderId,ct);
+                throw new InvalidOperationException(L("Execution.PartialClose",order.ExecutedQuantity,intent.Quantity));
+            }
+            await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",order.OrderId,ct);
+            throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));
         }
         var partiallyFilled=order.ExecutedQuantity<intent.Quantity;
         try
         {
             await _ex.PlaceProtectionAsync(intent.Symbol,intent.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);
             if(intent.Action==DecisionAction.Lock)await _db.SetLockedSideAsync(intent.Symbol,intent.Side,ct);
-            var status=partiallyFilled?"PROTECTED_PARTIAL":"PROTECTED";await _db.SaveIntentAsync(cycle,intent,status,order.OrderId,ct);
+            var status=providerState switch
+            {
+                ProviderOrderLifecycleStateV1.Filled=>"PROTECTED",
+                ProviderOrderLifecycleStateV1.TerminalPartialFill=>"PROTECTED_PARTIAL",
+                ProviderOrderLifecycleStateV1.PartialOpen=>"PROTECTED_PARTIAL_PENDING",
+                _=>"PROTECTED_UNKNOWN"
+            };
+            await _db.SaveIntentAsync(cycle,intent,status,order.OrderId,ct);
             await NotifyExecutionAsync(cycle,intent,order,ct);
             await NotifyProtectionAsync(cycle,intent,NotificationEventKind.ProtectionPlaced,"protection confirmed",ct);
         }
@@ -224,7 +256,12 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             var safety=fullyClosed?L("Execution.ProtectionEmergencyClosed"):L("Execution.ProtectionEmergencyUnknown",close.Status);
             throw new InvalidOperationException($"{safety} · {SensitiveDataRedactor.ForLog(protectionError.Message,180)}",protectionError);
         }
-        if(partiallyFilled)throw new InvalidOperationException(L("Execution.PartialProtected",order.ExecutedQuantity,intent.Quantity));return L("Execution.Protected");
+        if(providerState!=ProviderOrderLifecycleStateV1.Filled)
+        {
+            if(partiallyFilled)throw new InvalidOperationException(L("Execution.PartialProtected",order.ExecutedQuantity,intent.Quantity));
+            throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));
+        }
+        return L("Execution.Protected");
     }
 
     private async Task CaptureFeeEvidenceAsync(ExchangeOrder order,CancellationToken ct)
@@ -334,10 +371,75 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             var order=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);if(order is null){await _db.SaveIntentAsync(saved.CycleId,intent,"UNKNOWN",saved.ExchangeOrderId,ct);safe=false;messages.Add(L("Execution.ExchangeUnknown",intent.ClientOrderId));continue;}
             if(order.Status is "NEW" or "PARTIALLY_FILLED"){EnsureTestnet();order=await WaitAndCancelOnTimeoutAsync(intent.Symbol,intent.ClientOrderId,order,ct);}
             await _db.SaveIntentAsync(saved.CycleId,intent,order.Status,order.OrderId,ct);
-            if(order.ExecutedQuantity>0&&!intent.ReduceOnly)try{EnsureTestnet();EnsureCapability(intent);await _ex.PlaceProtectionAsync(intent.Symbol,intent.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);await _db.SaveIntentAsync(saved.CycleId,intent,order.Status=="FILLED"?"PROTECTED":"PROTECTED_PARTIAL",order.OrderId,ct);messages.Add(L("Execution.ProtectionRecovered",intent.Symbol,intent.Side));}catch(Exception ex){await _db.SaveIntentAsync(saved.CycleId,intent,"PROTECTION_FAILED",order.OrderId,ct);safe=false;messages.Add(L("Execution.ProtectionRecoveryFailed",intent.Symbol,intent.Side,SensitiveDataRedactor.ForLog(ex.Message,180)));}
-            else if(order.Status=="FILLED"){await _db.SaveIntentAsync(saved.CycleId,intent,"COMPLETED",order.OrderId,ct);}
-            else if(order.ExecutedQuantity>0){await _db.SaveIntentAsync(saved.CycleId,intent,"COMPLETED_PARTIAL",order.OrderId,ct);safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));}
-            else if(!IsTerminal(order.Status)){await _db.SaveIntentAsync(saved.CycleId,intent,"UNKNOWN",order.OrderId,ct);safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));}
+            var providerState=ProviderLifecycle(intent,order);
+            if(order.ExecutedQuantity>0&&!intent.ReduceOnly)
+            {
+                var protectionAlreadyPlaced=saved.Status is "PROTECTED_PARTIAL_PENDING" or "PROTECTED_UNKNOWN";
+                if(providerState==ProviderOrderLifecycleStateV1.PartialOpen)
+                {
+                    try
+                    {
+                        EnsureTestnet();EnsureCapability(intent);
+                        if(!protectionAlreadyPlaced)await _ex.PlaceProtectionAsync(intent.Symbol,intent.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);
+                        await _db.SaveIntentAsync(saved.CycleId,intent,"PROTECTED_PARTIAL_PENDING",order.OrderId,ct);
+                    }
+                    catch(Exception ex)
+                    {
+                        await _db.SaveIntentAsync(saved.CycleId,intent,"PROTECTION_FAILED",order.OrderId,ct);
+                        messages.Add(L("Execution.ProtectionRecoveryFailed",intent.Symbol,intent.Side,SensitiveDataRedactor.ForLog(ex.Message,180)));
+                    }
+                    safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));continue;
+                }
+                if(providerState is ProviderOrderLifecycleStateV1.Filled or ProviderOrderLifecycleStateV1.TerminalPartialFill)
+                {
+                    try
+                    {
+                        EnsureTestnet();EnsureCapability(intent);
+                        if(protectionAlreadyPlaced)await CancelProtectionOrdersAsync(intent.Symbol,intent.Side,ct);
+                        await _ex.PlaceProtectionAsync(intent.Symbol,intent.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);
+                        await _db.SaveIntentAsync(saved.CycleId,intent,providerState==ProviderOrderLifecycleStateV1.Filled?"PROTECTED":"PROTECTED_PARTIAL",order.OrderId,ct);
+                        messages.Add(L("Execution.ProtectionRecovered",intent.Symbol,intent.Side));
+                    }
+                    catch(Exception ex)
+                    {
+                        await _db.SaveIntentAsync(saved.CycleId,intent,"PROTECTION_FAILED",order.OrderId,ct);
+                        safe=false;messages.Add(L("Execution.ProtectionRecoveryFailed",intent.Symbol,intent.Side,SensitiveDataRedactor.ForLog(ex.Message,180)));
+                    }
+                    continue;
+                }
+                try
+                {
+                    EnsureTestnet();EnsureCapability(intent);
+                    if(!protectionAlreadyPlaced)await _ex.PlaceProtectionAsync(intent.Symbol,intent.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);
+                    await _db.SaveIntentAsync(saved.CycleId,intent,"PROTECTED_UNKNOWN",order.OrderId,ct);
+                }
+                catch(Exception ex)
+                {
+                    await _db.SaveIntentAsync(saved.CycleId,intent,"PROTECTION_FAILED",order.OrderId,ct);
+                    messages.Add(L("Execution.ProtectionRecoveryFailed",intent.Symbol,intent.Side,SensitiveDataRedactor.ForLog(ex.Message,180)));
+                }
+                safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));continue;
+            }
+            if(intent.ReduceOnly)
+            {
+                if(providerState==ProviderOrderLifecycleStateV1.Filled)
+                {
+                    if(IsFullClose(intent.Action)){await CancelProtectionOrdersAsync(intent.Symbol,intent.Side,ct);await _db.ClearLockedSideIfMatchesAsync(intent.Symbol,intent.Side,ct);}
+                    if(intent.Action==DecisionAction.Unlock)await _db.ClearLockedSideAsync(intent.Symbol,ct);
+                    await _db.SaveIntentAsync(saved.CycleId,intent,"COMPLETED",order.OrderId,ct);continue;
+                }
+                if(providerState==ProviderOrderLifecycleStateV1.TerminalPartialFill)
+                {
+                    await _db.SaveIntentAsync(saved.CycleId,intent,"COMPLETED_PARTIAL",order.OrderId,ct);
+                    safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));continue;
+                }
+                if(providerState==ProviderOrderLifecycleStateV1.PartialOpen)
+                {
+                    await _db.SaveIntentAsync(saved.CycleId,intent,"COMPLETED_PARTIAL_PENDING",order.OrderId,ct);
+                    safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));continue;
+                }
+            }
+            if(!IsTerminal(order.Status)){await _db.SaveIntentAsync(saved.CycleId,intent,"UNKNOWN",order.OrderId,ct);safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));}
         }return new(safe,messages);
     }
 
@@ -369,6 +471,10 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         var observed=await _ex.FindOrderAsync(symbol,clientOrderId,ct)??order with{Status="UNKNOWN"};var postCancelDeadline=_poll.UtcNow+_poll.PostCancelWindow;while(_poll.UtcNow<postCancelDeadline){await _poll.DelayAsync(ct);var latest=await _ex.FindOrderAsync(symbol,clientOrderId,ct);if(latest is not null)observed=latest;}
         if(!IsTerminal(observed.Status)&&observed.Status!="FILLED")observed=observed with{Status=cancelFailed?"UNKNOWN":observed.Status};return observed;
     }
+    private static ProviderOrderLifecycleStateV1 ProviderLifecycle(ExecutionIntent intent,ExchangeOrder order)=>
+        ProviderOrderReconciliationServiceV1.ClassifyProviderState(
+            intent.Symbol,intent.ClientOrderId,intent.Quantity,true,order);
+
     private void EnsureMutationAllowed(ExecutionIntent intent)
     {
         EnsureTestnet();var status=global::币安量化机器人.Services.ServiceLocator.SystemState.Status;if(!intent.ReduceOnly&&status is AgentStatus.Degraded or AgentStatus.Stopped)throw new InvalidOperationException($"Risk increase is blocked while Agent status is {status}.");
