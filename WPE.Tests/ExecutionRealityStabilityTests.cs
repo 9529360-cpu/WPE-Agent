@@ -136,6 +136,33 @@ public sealed class ExecutionRealityStabilityTests : IDisposable
     }
 
     [Fact]
+    public async Task ForgedLatestCalibrationRowIsRejectedAtReadBoundary()
+    {
+        var store=new AgentSqliteStore(Database,()=>_now);
+        var fakeHash=new string('f',64);var linkHash=new string('a',64);var ledgerHash=new string('b',64);
+        var executionHash=new string('c',64);var driftHash=new string('d',64);
+        await using(var connection=new SqliteConnection($"Data Source={Database}"))
+        {
+            await connection.OpenAsync();await using var q=connection.CreateCommand();q.CommandText="""
+                INSERT INTO execution_reality_calibrations(
+                    canonical_sha256,schema,generated_at,source_position_link_id,source_position_link_sha256,
+                    source_execution_ledger_sha256,source_execution_trace_sha256,source_drift_trace_sha256,
+                    source_last_execution_event_id,source_drift_schema,minimum_samples_per_bucket,status,canonical_bytes)
+                VALUES($hash,$schema,$generated,$link,$linkHash,$ledger,$execution,$drift,1,$driftSchema,30,'Available',$bytes)
+                """;
+            q.Parameters.AddWithValue("$hash",fakeHash);q.Parameters.AddWithValue("$schema",ExecutionRealityCalibrationCanonicalizerV1.Schema);
+            q.Parameters.AddWithValue("$generated",_now.AddMinutes(1).ToString("O"));q.Parameters.AddWithValue("$link","execution-position-drift:"+linkHash);
+            q.Parameters.AddWithValue("$linkHash",linkHash);q.Parameters.AddWithValue("$ledger",ledgerHash);q.Parameters.AddWithValue("$execution",executionHash);
+            q.Parameters.AddWithValue("$drift",driftHash);q.Parameters.AddWithValue("$driftSchema",ExecutionDriftCanonicalizerV1.Schema);
+            q.Parameters.Add("$bytes",SqliteType.Blob).Value=new byte[]{1,2,3,4};
+            Assert.Equal(1,await q.ExecuteNonQueryAsync());
+        }
+
+        Assert.Null(await store.GetLatestExecutionRealityCalibrationReferenceAsync(default));
+        Assert.Null(await new ExecutionRealityStabilityServiceV1(store).BuildAsync(default));
+    }
+
+    [Fact]
     public async Task StabilityEvidenceCannotBePersistedAgainstNonexistentCalibration()
     {
         var store=new AgentSqliteStore(Database,()=>_now);
