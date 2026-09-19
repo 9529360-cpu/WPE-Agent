@@ -27,7 +27,7 @@ foreach($relative in $paths){
     $null=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
     if($errors.Count -gt 0){
         $details=@($errors|ForEach-Object{"$($_.Extent.StartLineNumber):$($_.Message)"}) -join '; '
-        throw "release-script.parse-failed:$relative:$details"
+        throw "release-script.parse-failed:${relative}:$details"
     }
 }
 
