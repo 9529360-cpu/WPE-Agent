@@ -6,18 +6,18 @@
 
 Run the service under the Windows account that owns the WPE DPAPI-protected runtime state. The Maintenance CLI used for backup/restore must run under that same account.
 
-For service mode, provide one explicit absolute local data root. The preferred deployment form is to include it in the service ImagePath:
+For service mode, provide one explicit absolute path on a fixed local drive. The preferred deployment form is to include it in the service ImagePath:
 
     "C:\Program Files\WPE\<version>\headless\WPE-Headless.exe" --data-root "D:\WPE-State"
 
-`WPE_AGENT_DATA_ROOT` remains supported. If both the command-line argument and environment variable are present, both must resolve to the same full path. A conflict fails closed before Host construction. Relative paths, UNC paths, duplicate `--data-root`, missing argument values, and invalid environment roots are rejected.
+`WPE_AGENT_DATA_ROOT` remains supported. If both the command-line argument and environment variable are present, both must resolve to the same full path. A conflict fails closed before Host construction. Relative paths, UNC paths, mapped/network or non-fixed drives, duplicate `--data-root`, missing argument values, and invalid environment roots are rejected. A drive root such as `D:\` remains a fully qualified root and is not normalized to the drive-relative form `D:`.
 
 Do not put account passwords, API keys, certificate secrets, or exchange credentials in the service command line or environment.
 
 ## Startup exit codes relevant to service deployment
 
 - `45`: service mode did not receive an explicit data root.
-- `46`: data-root configuration is invalid, duplicate, UNC, relative, or conflicts between argument and environment.
+- `46`: data-root configuration is invalid, duplicate, non-fixed/network-backed, UNC, relative, or conflicts between argument and environment.
 - Other Headless exit codes continue to represent platform/license/setup/access/runtime failures.
 
 The process sets the accepted root only in its own process environment before `AppDataPaths` is initialized. It does not modify machine/user environment variables.
