@@ -17,6 +17,7 @@ public sealed class HeadlessRuntimeBoundaryTests
         Assert.DoesNotContain("UseWPF",project,StringComparison.Ordinal);
         Assert.DoesNotContain("WebView2",project,StringComparison.Ordinal);
         Assert.DoesNotContain("ScottPlot",project,StringComparison.Ordinal);
+        Assert.DoesNotContain("Microsoft.Extensions.Hosting.WindowsServices",project,StringComparison.Ordinal);
         Assert.Contains("HeadlessRuntimeProcess.RunAsync(args)",program,StringComparison.Ordinal);
         Assert.Contains("WPE.Headless\\WPE.Headless.csproj",solution,StringComparison.Ordinal);
         Assert.Contains("<Compile Remove=\"WPE.Headless\\**\\*.cs\" />",product,StringComparison.Ordinal);
