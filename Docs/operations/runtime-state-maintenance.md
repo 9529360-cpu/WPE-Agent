@@ -50,9 +50,9 @@ Output is JSON and contains no stack trace. Failure does not imply the active da
 ## Windows Service maintenance sequence
 
 1. Confirm the service account and the absolute `WPE_AGENT_DATA_ROOT` value.
-2. Stop `WPE Agent Headless` and confirm the process has exited.
+2. Request graceful shutdown with `WPE-Headless.exe control shutdown --confirm shutdown-wpe-headless`, then confirm the Windows Service/process has exited. Windows Service Control Manager remains the start/restart authority.
 3. Run `verify` on the intended backup. Record the authenticated `backupId` from the JSON result.
 4. Run `backup` if a fresh pre-maintenance checkpoint is required.
 5. Run `restore` only with the exact verified `--confirm-backup-id`.
 6. Start `WPE Agent Headless` again. Startup recovery runs before the shared process lease is acquired; if an interrupted restore cannot be proven recoverable, startup fails closed instead of starting trading.
-7. Inspect `Runtime/headless-health-v1.json` and require a fresh `ready` state before treating the runtime as operational.
+7. Run `WPE-Headless.exe control health` under the same service account and require a successful fresh `ready` response with runtime ready, Agent running, access/heartbeat fresh, and no lease loss before treating the runtime as operational.
