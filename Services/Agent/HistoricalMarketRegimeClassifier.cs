@@ -32,7 +32,7 @@ internal static class HistoricalMarketRegimeClassifier
     private static double Return(IReadOnlyList<CandleEvidence> candles,int lookback)
     {
         if(candles.Count<=lookback)return double.NaN;
-        var previous=candles[^1-lookback].Close;
+        var previous=candles[candles.Count-1-lookback].Close;
         return previous<=0?double.NaN:(double)(candles[^1].Close/previous-1m);
     }
 }

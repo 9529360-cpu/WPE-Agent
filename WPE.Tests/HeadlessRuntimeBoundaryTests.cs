@@ -31,12 +31,13 @@ public sealed class HeadlessRuntimeBoundaryTests
         var source=File.ReadAllText(Path.Combine(Root(),"WPE.Headless","HeadlessRuntimeProcess.cs"));
         var platform=source.IndexOf("OperatingSystem.IsWindows()",StringComparison.Ordinal);
         var bootstrap=source.IndexOf("RuntimeProcessBootstrap.Initialize",StringComparison.Ordinal);
-        var license=source.IndexOf("new DeviceLicenseService().TryLoad()",StringComparison.Ordinal);
         var setup=source.IndexOf("!settings.SetupCompleted",StringComparison.Ordinal);
         var host=source.IndexOf("new TradingRuntimeHost(settings.ActiveUser)",StringComparison.Ordinal);
         var start=source.IndexOf("InitializeAsync(startAgentWhenReady: true)",StringComparison.Ordinal);
 
-        Assert.True(platform>=0&&bootstrap>platform&&license>bootstrap&&setup>license&&host>setup&&start>host);
+        Assert.True(platform>=0&&bootstrap>platform&&setup>bootstrap&&host>setup&&start>host);
+        Assert.DoesNotContain("new DeviceLicenseService().TryLoad()",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("headless.license-unavailable",source,StringComparison.Ordinal);
         Assert.Contains("settingsStore.LastLoadDiagnostic is not null",source,StringComparison.Ordinal);
         Assert.Contains("string.IsNullOrWhiteSpace(settings.ActiveUser)",source,StringComparison.Ordinal);
         Assert.Contains("new TradingRuntimeHost(settings.ActiveUser)",source,StringComparison.Ordinal);

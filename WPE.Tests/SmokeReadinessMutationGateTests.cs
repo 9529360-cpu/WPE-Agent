@@ -40,6 +40,17 @@ public sealed class SmokeReadinessMutationGateTests
         Assert.Equal(0,provider.OpenStepCount);Assert.Equal(0,provider.MutationCount);
     }
 
+    [Theory]
+    [InlineData("CFTC")]
+    [InlineData("SEC")]
+    [InlineData("BTCUSDT:liquidation_feed_missing")]
+    public async Task KnownDegradableResearchGaps_DoNotBlockBoundedTestnetSmoke(string source)
+    {
+        var provider=new RecordingProvider();var readiness=Ready() with{MissingSources=[source]};
+        var result=await Execute(readiness,provider);
+        Assert.True(result.Executed);Assert.Equal(1,provider.OpenStepCount);Assert.Equal(1,provider.MutationCount);
+    }
+
     [Fact]
     public async Task SourceMismatchAndMainnet_AreDeniedWithoutMutation()
     {

@@ -59,6 +59,23 @@ public sealed class ModelOffSignalAggregationDeterminismTests
         Assert.Equal("UNKNOWN",assessment.Symbol);Assert.False(assessment.EntryReady);Assert.Equal(DecisionAction.Hold,assessment.RecommendedAction);
     }
 
+    [Theory]
+    [InlineData(52000)]
+    [InlineData(48000)]
+    public void CanonicalBreakoutOrBreakdownRemainsValidMarket(decimal livePrice)
+    {
+        var bound=Market("BTCUSDT",Now.AddMinutes(-1).UtcDateTime);
+        var raw=bound with{Price=livePrice,Provenance=null};
+        var market=raw with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(raw,"test-provider","Testnet")};
+
+        var assessment=new SignalAggregationSkill().Analyze(Pack(market),Policy(),Now).Single();
+
+        Assert.True(assessment.Fresh);
+        Assert.NotEqual(MarketRegime.Unknown,assessment.Regime);
+        Assert.True(assessment.Signals.Count>=8);
+        Assert.DoesNotContain("signal.invalid-market-evidence",assessment.MissingConditions);
+    }
+
     [Fact]
     public void MarketMutationAfterCanonicalBindingFailsClosed()
     {
