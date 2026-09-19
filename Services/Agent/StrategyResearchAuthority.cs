@@ -54,6 +54,8 @@ internal sealed class StrategyResearchAuthority
         var fresh=completedAt<=now&&now-completedAt<=MaximumValidationAge;
         var qualified=string.Equals(backtest.Status,"PASSED",StringComparison.Ordinal)
                       &&validation.Passed
+                      &&validation.OosPurgeObservations==HistoricalResearchEngine.ProductionTemporalPolicy.OosPurgeObservations
+                      &&validation.OosEmbargoObservations==HistoricalResearchEngine.ProductionTemporalPolicy.OosEmbargoObservations
                       &&_governor.CanPromote(profile,validation);
         var approved=fresh&&qualified;
 
