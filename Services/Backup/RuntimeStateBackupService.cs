@@ -25,6 +25,7 @@ public sealed class RuntimeStateBackupService
     private static readonly string[] AuthoritativeFiles =
     [
         "agent-settings.json",
+        "agent-memory.json",
         "appsettings.json",
         "local-accounts.json",
         "device-license.dat",
