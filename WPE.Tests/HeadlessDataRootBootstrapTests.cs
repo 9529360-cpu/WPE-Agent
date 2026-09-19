@@ -67,6 +67,7 @@ public sealed class HeadlessDataRootBootstrapTests
     [InlineData("--data-root")]
     [InlineData("--data-root", "relative-state")]
     [InlineData("--data-root", @"\\server\share\wpe-state")]
+    [InlineData("--data-root", "//server/share/wpe-state")]
     [InlineData("--data-root", @"C:\one", "--data-root", @"C:\two")]
     public void InvalidOrDuplicateArgumentsFailClosed(params string[] args)
     {
@@ -95,5 +96,8 @@ public sealed class HeadlessDataRootBootstrapTests
         Assert.False(HeadlessDataRootBootstrap.Resolve(
             Array.Empty<string>(),
             @"\\server\share\wpe-state").Success);
+        Assert.False(HeadlessDataRootBootstrap.Resolve(
+            Array.Empty<string>(),
+            "//server/share/wpe-state").Success);
     }
 }
