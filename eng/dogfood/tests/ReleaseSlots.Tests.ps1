@@ -110,6 +110,19 @@ try{
     Throws {New-TestCandidate -SourceRoot $source -SlotsRoot (Join-Path $root 'reject-slots') -Version '0.9.6' -SourceIdentity 'commit/hash-mismatch' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build' -BadManifestHash} 'package.manifest-hash-mismatch'
     $lateSource=Join-Path $root 'late-package';Copy-Item $source $lateSource -Recurse
     Throws {New-TestCandidate -SourceRoot $lateSource -SlotsRoot (Join-Path $root 'late-slots') -Version '0.9.7' -SourceIdentity 'commit/late' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build' -AddUnmanifestedPayload} 'package.manifest-inventory-drift'
+    $overlapSlots=Join-Path $source 'nested-slots'
+    Throws {New-TestCandidate -SourceRoot $source -SlotsRoot $overlapSlots -Version '0.9.8' -SourceIdentity 'commit/overlap' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build'} 'source.slots-overlap'
+    Remove-Item -LiteralPath (Join-Path $source 'verification-0.9.8.json') -Force -ErrorAction SilentlyContinue
+
+    $reparseSource=Join-Path $root 'reparse-package';Copy-Item $source $reparseSource -Recurse
+    $reparseTarget=Join-Path $root 'reparse-target';New-Item -ItemType Directory -Path $reparseTarget -Force|Out-Null
+    $reparsePath=Join-Path $reparseSource 'linked'
+    try{
+        $null=New-Item -ItemType Junction -Path $reparsePath -Target $reparseTarget -ErrorAction Stop
+        Throws {New-TestCandidate -SourceRoot $reparseSource -SlotsRoot (Join-Path $root 'reparse-slots') -Version '0.9.9' -SourceIdentity 'commit/reparse' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build'} 'source.reparse-forbidden'
+    }catch{
+        if($_.Exception.Message -notlike '*source.reparse-forbidden*'){Write-Output 'ReleaseSlots.Tests: reparse regression SKIP (junction unavailable)'}
+    }
     $slots=Join-Path $root 'slots';$lkg=New-TestCandidate -SourceRoot $source -SlotsRoot $slots -Version '1.0.0' -SourceIdentity 'commit/aaa' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests'
     $candidate=New-TestCandidate -SourceRoot $source -SlotsRoot $slots -Version '1.0.1' -SourceIdentity 'commit/bbb' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests'
     Assert (@(Get-ChildItem -LiteralPath $candidate.CandidateRoot,$lkg.CandidateRoot -Recurse -File|Where-Object {-not $_.IsReadOnly}).Count -eq 0) 'candidate or LKG contains mutable staged files'
