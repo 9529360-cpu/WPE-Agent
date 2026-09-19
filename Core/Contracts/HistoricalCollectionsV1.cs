@@ -6,7 +6,9 @@ public enum HistoricalCollectionKindV1
     Equity,
     Backtests,
     SkillCalls,
-    AuditEvents
+    AuditEvents,
+    PostTradeReviews,
+    Reconciliations
 }
 
 public sealed record HistoricalCollectionRequestV1(int Limit = 50, string? Cursor = null)
@@ -80,3 +82,40 @@ public sealed record HistoricalAuditEventV1(
     string Source,
     string? CorrelationId,
     string Status);
+
+
+public sealed record HistoricalPostTradeReviewV1(
+    string Schema,
+    string ClientOrderId,
+    string CycleId,
+    string Symbol,
+    string Side,
+    decimal EntryPrice,
+    decimal ExitPrice,
+    decimal Quantity,
+    decimal Fees,
+    string FeeBasis,
+    decimal FeeRate,
+    decimal EntrySlippageAmount,
+    decimal ExitSlippageAmount,
+    decimal TotalSlippageAmount,
+    string SlippageBasis,
+    decimal FundingAmount,
+    string FundingBasis,
+    decimal NetPnl,
+    decimal ReturnPct,
+    string Outcome,
+    DateTimeOffset ClosedAtUtc,
+    string? StrategyId,
+    string StrategyVersion,
+    string AttributionBasis);
+
+public sealed record HistoricalReconciliationV1(
+    string Kind,
+    string ReportId,
+    string Schema,
+    DateTimeOffset ObservedAtUtc,
+    DateTimeOffset EvaluatedAtUtc,
+    string State,
+    bool AllowsRiskIncrease,
+    string CanonicalSha256);
