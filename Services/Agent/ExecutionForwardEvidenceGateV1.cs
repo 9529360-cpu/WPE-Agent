@@ -189,7 +189,12 @@ public static class ExecutionForwardEvidenceGateV1
 
     public static bool IsCanonical(ExecutionForwardEvidenceDecisionV1 value)
     {
-        if (value.Schema != Schema || value.CanonicalBytes.Length == 0 || value.CanonicalSha256.Length != 64)
+        if (value.Schema != Schema
+            || value.CanonicalBytes.Length == 0
+            || !IsLowerHexSha256(value.CanonicalSha256)
+            || !IsLowerHexSha256(value.PolicySha256)
+            || !IsLowerHexSha256(value.EvidenceSetSha256)
+            || value.CalibrationSha256 is not null && !IsLowerHexSha256(value.CalibrationSha256))
             return false;
         var bytes = Serialize(value);
         var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
@@ -198,6 +203,9 @@ public static class ExecutionForwardEvidenceGateV1
     }
 
     private static decimal Fraction(int numerator, int denominator) => denominator <= 0 ? 0 : (decimal)numerator / denominator;
+
+    private static bool IsLowerHexSha256(string value) =>
+        value.Length == 64 && value.All(ch => ch is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     private static void ValidatePolicy(ExecutionForwardEvidencePolicyV1 policy)
     {
