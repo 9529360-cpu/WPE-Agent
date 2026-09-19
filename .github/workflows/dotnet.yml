@@ -106,6 +106,15 @@ jobs:
       shell: pwsh
       run: ./eng/test.ps1 -Configuration Release
 
+    - name: Release tooling contract tests
+      shell: pwsh
+      run: |
+        & ./eng/test-release-readiness-preview-gate.ps1
+        & ./eng/test-license-gate.ps1
+        & ./eng/dogfood/tests/V1CandidateGate.Tests.ps1
+        & ./eng/dogfood/tests/ReleaseSlots.Tests.ps1
+        & ./eng/test-publish-runtime-restore.ps1
+
     - name: Publish candidate
       run: dotnet publish "币安量化机器人.csproj" --configuration Release --no-restore --output artifacts/publish
 
