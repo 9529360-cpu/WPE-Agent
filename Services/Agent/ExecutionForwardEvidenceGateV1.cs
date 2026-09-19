@@ -42,6 +42,7 @@ public sealed record ExecutionForwardEvidenceDecisionV1(
     DateTimeOffset LastObservedAtUtc,
     double ObservationWindowSeconds,
     DateTimeOffset EvaluatedAtUtc,
+    string EvidenceSetSha256,
     string? CalibrationSha256,
     IReadOnlyList<string> ReasonCodes,
     byte[] CanonicalBytes,
@@ -57,7 +58,8 @@ public static class ExecutionForwardEvidenceGateV1
         "evidence.cross-strategy",
         "evidence.cross-version",
         "evidence.cross-cost-model",
-        "evidence.future"
+        "evidence.future",
+        "evidence.duplicate"
     };
 
     private static readonly HashSet<string> RegressionReasons = new(StringComparer.Ordinal)
@@ -88,6 +90,7 @@ public static class ExecutionForwardEvidenceGateV1
         var policyHash = PolicyHash(policy);
         var reasons = new SortedSet<string>(StringComparer.Ordinal);
         var validFacts = new List<ExecutionRealityDriftFactV1>(facts.Count);
+        var seenCanonicalHashes = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var fact in facts)
         {
@@ -114,6 +117,11 @@ public static class ExecutionForwardEvidenceGateV1
             if (fact.ObservedAtUtc > evaluatedAtUtc)
             {
                 reasons.Add("evidence.future");
+                continue;
+            }
+            if (!seenCanonicalHashes.Add(fact.CanonicalSha256))
+            {
+                reasons.Add("evidence.duplicate");
                 continue;
             }
             validFacts.Add(fact);
@@ -144,6 +152,7 @@ public static class ExecutionForwardEvidenceGateV1
             if (Fraction(calibration.TerminalNoFillCount, calibration.ObservationCount) > policy.MaximumTerminalNoFillFraction) reasons.Add("quality.terminal-no-fill-rate");
         }
 
+        var evidenceSetHash = EvidenceSetHash(validFacts);
         var state = reasons.Overlaps(IntegrityReasons)
             ? ExecutionForwardEvidenceStateV1.Invalid
             : reasons.Overlaps(RegressionReasons)
@@ -168,6 +177,7 @@ public static class ExecutionForwardEvidenceGateV1
             last,
             Math.Max(0, window.TotalSeconds),
             evaluatedAtUtc,
+            evidenceSetHash,
             calibration?.CanonicalSha256,
             reasons.ToArray(),
             Array.Empty<byte>(),
@@ -208,6 +218,19 @@ public static class ExecutionForwardEvidenceGateV1
             throw new ArgumentOutOfRangeException(nameof(policy), "Execution state fractions must be between zero and one.");
     }
 
+    private static string EvidenceSetHash(IReadOnlyList<ExecutionRealityDriftFactV1> facts)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartArray();
+            foreach (var hash in facts.Select(x => x.CanonicalSha256).OrderBy(x => x, StringComparer.Ordinal))
+                writer.WriteStringValue(hash);
+            writer.WriteEndArray();
+        }
+        return Convert.ToHexString(SHA256.HashData(stream.ToArray())).ToLowerInvariant();
+    }
+
     private static string PolicyHash(ExecutionForwardEvidencePolicyV1 policy)
     {
         using var stream = new MemoryStream();
@@ -239,6 +262,7 @@ public static class ExecutionForwardEvidenceGateV1
             writer.WriteStartObject();
             writer.WriteString("calibration_sha256", value.CalibrationSha256);
             writer.WriteString("cost_model_version", value.CostModelVersion);
+            writer.WriteString("evidence_set_sha256", value.EvidenceSetSha256);
             writer.WriteBoolean("evidence_ready", value.EvidenceReady);
             writer.WriteString("evaluated_at_utc", value.EvaluatedAtUtc.ToUniversalTime());
             writer.WriteString("first_observed_at_utc", value.FirstObservedAtUtc.ToUniversalTime());
