@@ -244,7 +244,13 @@ internal sealed class HistoricalResearchEngine
     {
         var candles = market.Candles; if (candles.Count < profile.Parameters.SlowPeriod + 2) return new(profile.Id, market.Symbol, 0, 0, "insufficient candles");
         var p = profile.Parameters; var fast = candles.TakeLast(p.FastPeriod).Average(x => x.Close); var slow = candles.TakeLast(p.SlowPeriod).Average(x => x.Close); var direction = 0; var confidence = Math.Min(1, Math.Abs((double)(fast / slow - 1)) * 40);
-        if (profile.Family == StrategyFamily.TrendBreakout) direction = fast > slow && market.Price > candles.TakeLast(48).Max(x => x.High) * (decimal)(1 - p.BreakoutBuffer) ? 1 : fast < slow && market.Price < candles.TakeLast(48).Min(x => x.Low) * (decimal)(1 + p.BreakoutBuffer) ? -1 : 0;
+        if (profile.Family == StrategyFamily.TrendBreakout)
+        {
+            if(candles.Count<49)return new(profile.Id,market.Symbol,0,0,"insufficient confirmed breakout history");
+            var confirmedClose=candles[^1].Close;var prior=candles.Take(candles.Count-1).TakeLast(48).ToArray();var priorHigh=prior.Max(x=>x.High);var priorLow=prior.Min(x=>x.Low);
+            direction=fast>slow&&confirmedClose>priorHigh*(decimal)(1-p.BreakoutBuffer)?1:fast<slow&&confirmedClose<priorLow*(decimal)(1+p.BreakoutBuffer)?-1:0;
+            return new(profile.Id,market.Symbol,direction,direction==0?0:confidence,$"family=TrendBreakout; confirmed_close={confirmedClose}; prior48_high={priorHigh}; prior48_low={priorLow}; fast={fast:F4}; slow={slow:F4}");
+        }
         if (profile.Family == StrategyFamily.MeanReversion)
         {
             var state=MeanReversionRegimeAnalyzer.Analyze(candles,p);
