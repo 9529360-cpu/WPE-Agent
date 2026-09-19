@@ -85,9 +85,8 @@ public sealed record HistoricalAuditEventV1(
 
 
 public sealed record HistoricalPostTradeReviewV1(
+    string TraceId,
     string Schema,
-    string ClientOrderId,
-    string CycleId,
     string Symbol,
     string Side,
     decimal EntryPrice,
@@ -108,7 +107,14 @@ public sealed record HistoricalPostTradeReviewV1(
     DateTimeOffset ClosedAtUtc,
     string? StrategyId,
     string StrategyVersion,
-    string AttributionBasis);
+    string AttributionBasis,
+    string TraceState,
+    string RiskDecision,
+    string ExecutionStatus,
+    string ExecutionCode,
+    int? ExecutionAttempts,
+    DateTimeOffset? MarketCollectedAtUtc,
+    string? MarketDataVersion);
 
 public sealed record HistoricalReconciliationV1(
     string Kind,
