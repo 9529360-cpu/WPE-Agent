@@ -199,13 +199,26 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
     private readonly AgentSqliteStore _store;
     private readonly IAutomaticPreMutationAuthority? _authority;
     private readonly Func<DateTimeOffset> _utcNow;
+    private readonly IAutomaticExecutionSimulationProducerV1? _simulationProducer;
 
     public TradingAutomaticExecutionGateway(TradingExecutionGateway gateway,IExchangeAdapter exchange,AgentSqliteStore store)
-        :this(gateway,exchange,store,null,null){}
-    internal TradingAutomaticExecutionGateway(TradingExecutionGateway gateway,IExchangeAdapter exchange,AgentSqliteStore store,IAutomaticPreMutationAuthority? authority,Func<DateTimeOffset>? utcNow)
+        :this(gateway,exchange,store,null,null,null){}
+    public TradingAutomaticExecutionGateway(
+        TradingExecutionGateway gateway,
+        IExchangeAdapter exchange,
+        AgentSqliteStore store,
+        IAutomaticExecutionSimulationProducerV1 simulationProducer)
+        :this(gateway,exchange,store,null,null,simulationProducer){}
+    internal TradingAutomaticExecutionGateway(
+        TradingExecutionGateway gateway,
+        IExchangeAdapter exchange,
+        AgentSqliteStore store,
+        IAutomaticPreMutationAuthority? authority,
+        Func<DateTimeOffset>? utcNow,
+        IAutomaticExecutionSimulationProducerV1? simulationProducer=null)
     {
         _gateway=gateway??throw new ArgumentNullException(nameof(gateway));_exchange=exchange??throw new ArgumentNullException(nameof(exchange));_store=store??throw new ArgumentNullException(nameof(store));
-        _utcNow=utcNow??(()=>DateTimeOffset.UtcNow);_authority=authority??new PersistedAutomaticPreMutationAuthority(store,_utcNow);
+        _utcNow=utcNow??(()=>DateTimeOffset.UtcNow);_authority=authority??new PersistedAutomaticPreMutationAuthority(store,_utcNow);_simulationProducer=simulationProducer;
     }
 
     public bool IsTestnet=>_exchange.Environment==ExchangeEnvironment.Testnet;
@@ -224,6 +237,20 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
         catch{return new(AutomaticGatewayExecutionState.Rejected,"automatic.authority-unknown");}
         var authorityCode=AutomaticPreMutationAuthorityContractV1.Evaluate(authority,artifact,hashes,receipt,_utcNow());
         if(authorityCode!="automatic.authority-allowed")return new(AutomaticGatewayExecutionState.Rejected,authorityCode);
+        if(_simulationProducer is not null)
+        {
+            try
+            {
+                var simulated=await _simulationProducer.CaptureAsync(artifact,ct);
+                if(!simulated.Recorded||simulated.FillCount!=artifact.Intents.Count)
+                    return new(AutomaticGatewayExecutionState.Rejected,"automatic.simulation-evidence-unavailable");
+            }
+            catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+            catch
+            {
+                return new(AutomaticGatewayExecutionState.Rejected,"automatic.simulation-evidence-unavailable");
+            }
+        }
         var authorization=new TradingAuthorizationRequest(TradingAuthorizationMode.Auto,true,artifact.CorrelationId,hashes.IntentHash,"automatic","automatic","automatic",receipt,null);
         var result=await _gateway.ExecutePlanAsync(new(null,authorization,intents,artifact.Leverage,artifact.Isolated),ct);
         return result.Executed?new(AutomaticGatewayExecutionState.Succeeded,result.Code):new(AutomaticGatewayExecutionState.Rejected,result.Code);
