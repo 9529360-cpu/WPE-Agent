@@ -196,7 +196,8 @@ internal static class ExecutionPreTradeSimulationProvenanceCanonicalizerV1
            ||value.VenueRuleCanonicalBytes.Length==0
            ||value.CanonicalBytes.Length==0
            ||!string.Equals(value.CostModelVersion,ExecutionCostAuthorityV1.Version,StringComparison.Ordinal)
-           ||!string.Equals(value.CostModelSha256,ExecutionCostAuthorityV1.CanonicalSha256,StringComparison.Ordinal))
+           ||!string.Equals(value.CostModelSha256,ExecutionCostAuthorityV1.CanonicalSha256,StringComparison.Ordinal)
+           ||!string.Equals(value.VenueRuleVersion,"venue-rule-v1-"+value.VenueRuleSha256[..16],StringComparison.Ordinal))
             return false;
         try
         {
@@ -303,6 +304,10 @@ internal static class ExecutionPreTradeSimulationV1
         if(!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid
            ||artifact.Environment!="Testnet")
             throw new InvalidOperationException("Automatic execution artifact is not eligible for pre-trade simulation.");
+        if(intents.Count!=artifact.Intents.Count
+           ||intents.Select(x=>x.ClientOrderId).Distinct(StringComparer.Ordinal).Count()!=intents.Count
+           ||artifact.Intents.Any(x=>!intents.Any(y=>string.Equals(y.ClientOrderId,x.ClientOrderId,StringComparison.Ordinal))))
+            throw new InvalidOperationException("Runtime intent set does not match the durable automatic artifact.");
         if(!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)
            ||market.Provenance is null
            ||market.CollectedAt.Kind!=DateTimeKind.Utc
