@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WPE.Tests", "WPE.Tests\WPE.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WPE.Maintenance", "WPE.Maintenance\WPE.Maintenance.csproj", "{D91A3C6E-2B61-4E1A-97EE-5C4D6F7A8201}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WPE.Headless", "WPE.Headless\WPE.Headless.csproj", "{C9E35D77-3C8D-47C0-A31D-9E5A6BDF4F27}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,6 +29,10 @@ Global
 		{D91A3C6E-2B61-4E1A-97EE-5C4D6F7A8201}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D91A3C6E-2B61-4E1A-97EE-5C4D6F7A8201}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D91A3C6E-2B61-4E1A-97EE-5C4D6F7A8201}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C9E35D77-3C8D-47C0-A31D-9E5A6BDF4F27}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C9E35D77-3C8D-47C0-A31D-9E5A6BDF4F27}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C9E35D77-3C8D-47C0-A31D-9E5A6BDF4F27}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C9E35D77-3C8D-47C0-A31D-9E5A6BDF4F27}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
