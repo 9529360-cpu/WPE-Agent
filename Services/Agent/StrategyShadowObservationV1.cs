@@ -10,6 +10,7 @@ internal sealed record StrategyShadowObservationV1(
     string StrategyVersion,
     string Symbol,
     string Lifecycle,
+    DateTimeOffset ValidationAtUtc,
     DateTimeOffset ObservedAtUtc,
     DateTimeOffset MarketCollectedAtUtc,
     decimal MarketPrice,
@@ -64,6 +65,7 @@ internal static class StrategyShadowObservationCanonicalizerV1
            ||observed-marketAt>MaximumMarketAge)
             throw new InvalidOperationException("Shadow market evidence is stale or future.");
         if(!BacktestValidationCanonicalizerV1.IsCanonical(validation,observed)
+           ||validation.ValidatedAtUtc>marketAt
            ||!validation.Approved
            ||validation.Promoted!=(profile.Lifecycle==StrategyLifecycle.Active)
            ||!string.Equals(validation.StrategyId,profile.Id,StringComparison.Ordinal)
@@ -82,6 +84,7 @@ internal static class StrategyShadowObservationCanonicalizerV1
             profile.Version,
             profile.Symbol,
             profile.Lifecycle.ToString(),
+            validation.ValidatedAtUtc,
             observed,
             marketAt,
             market.Price,
@@ -104,8 +107,10 @@ internal static class StrategyShadowObservationCanonicalizerV1
         if(value is null
            ||value.Schema!=Schema
            ||value.Lifecycle is not ("Shadow" or "Active")
+           ||value.ValidationAtUtc.Offset!=TimeSpan.Zero
            ||value.ObservedAtUtc.Offset!=TimeSpan.Zero
            ||value.MarketCollectedAtUtc.Offset!=TimeSpan.Zero
+           ||value.ValidationAtUtc>value.MarketCollectedAtUtc
            ||value.MarketCollectedAtUtc>value.ObservedAtUtc
            ||value.ObservedAtUtc-value.MarketCollectedAtUtc>MaximumMarketAge
            ||value.MarketPrice<=0
@@ -153,6 +158,7 @@ internal static class StrategyShadowObservationCanonicalizerV1
             writer.WriteString("strategy_version",value.StrategyVersion);
             writer.WriteString("symbol",value.Symbol);
             writer.WriteString("timeline_sha256",value.TimelineSha256);
+            writer.WriteString("validation_at_utc",value.ValidationAtUtc.ToUniversalTime());
             writer.WriteEndObject();
         }
         return stream.ToArray();
