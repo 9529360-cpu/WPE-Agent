@@ -96,7 +96,7 @@ public sealed class RuntimeHistoricalCollectionStateStore
             foreach(var source in sources)
             {
                 var latest=await Latest(connection,source.Table,"evaluated_at",ct);
-                if(latest is not null&&(updatedAt is null||latest>updatedAt))updatedAt=latest;
+                if(latest is not null&&(updatedAt is null||latest.Value>updatedAt.Value))updatedAt=latest;
             }
 
             var union=string.Join(" UNION ALL ",sources.Select(source=>$"SELECT '{source.Kind}' AS kind,report_id,schema,observed_at,evaluated_at,state,allows_risk_increase,canonical_sha256 FROM {source.Table}"));
