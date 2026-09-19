@@ -153,8 +153,9 @@ internal static class ExecutionRealityStabilityCanonicalizerV1
         var observed=x.Folds.Count==RequiredFolds&&x.Folds.All(f=>f.CompleteSamples>=MinimumCompleteSamplesPerFold)
                      &&x.CompleteSamples>=RequiredFolds*MinimumCompleteSamplesPerFold;
         if(x.Status!=(observed?ExecutionRealityStabilityStatusV1.Observed:ExecutionRealityStabilityStatusV1.Unsupported))return false;
-        if(observed&&x.Folds.Select(f=>f.FoldIndex).OrderBy(i=>i).Where((v,i)=>v!=i).Any())return false;
-        foreach(var fold in x.Folds)
+        var ordered=x.Folds.OrderBy(f=>f.FoldIndex).ToArray();
+        if(observed&&ordered.Select(f=>f.FoldIndex).Where((v,i)=>v!=i).Any())return false;
+        foreach(var fold in ordered)
         {
             if(fold.StartUtc.Offset!=TimeSpan.Zero||fold.EndUtc.Offset!=TimeSpan.Zero||fold.EndUtc<fold.StartUtc||fold.CompleteSamples<1
                ||fold.PartialFillSamples<0||fold.PartialFillSamples>fold.CompleteSamples
@@ -164,15 +165,18 @@ internal static class ExecutionRealityStabilityCanonicalizerV1
                ||!double.IsFinite(fold.MedianSubmitToFirstExchangeMilliseconds)||fold.MedianSubmitToFirstExchangeMilliseconds<0
                ||!double.IsFinite(fold.MedianIntentToFinalMilliseconds)||fold.MedianIntentToFinalMilliseconds<0)return false;
         }
+        foreach(var pair in ordered.Zip(ordered.Skip(1)))if(pair.First.EndUtc>pair.Second.StartUtc)return false;
         foreach(var spread in new[]{x.MedianFillRatioSpread,x.MedianAdverseSlippageBpsSpread,x.MedianSubmitLatencyMillisecondsSpread,x.MedianIntentLatencyMillisecondsSpread})
             if(!double.IsFinite(spread)||spread<0)return false;
-        if(x.Folds.Count>0)
-        {
-            if(Math.Abs(x.MedianFillRatioSpread-Spread(x.Folds.Select(f=>f.MedianFillRatio)))>1e-12
-               ||Math.Abs(x.MedianAdverseSlippageBpsSpread-Spread(x.Folds.Select(f=>f.MedianAdverseSlippageBps)))>1e-12
-               ||Math.Abs(x.MedianSubmitLatencyMillisecondsSpread-Spread(x.Folds.Select(f=>f.MedianSubmitToFirstExchangeMilliseconds)))>1e-9
-               ||Math.Abs(x.MedianIntentLatencyMillisecondsSpread-Spread(x.Folds.Select(f=>f.MedianIntentToFinalMilliseconds)))>1e-9)return false;
-        }
+        if(ordered.Length==0)
+            return x.CompleteSamples<RequiredFolds*MinimumCompleteSamplesPerFold
+                   &&x.MedianFillRatioSpread==0&&x.MedianAdverseSlippageBpsSpread==0
+                   &&x.MedianSubmitLatencyMillisecondsSpread==0&&x.MedianIntentLatencyMillisecondsSpread==0;
+        if(ordered.Sum(f=>f.CompleteSamples)!=x.CompleteSamples)return false;
+        if(Math.Abs(x.MedianFillRatioSpread-Spread(ordered.Select(f=>f.MedianFillRatio)))>1e-12
+           ||Math.Abs(x.MedianAdverseSlippageBpsSpread-Spread(ordered.Select(f=>f.MedianAdverseSlippageBps)))>1e-12
+           ||Math.Abs(x.MedianSubmitLatencyMillisecondsSpread-Spread(ordered.Select(f=>f.MedianSubmitToFirstExchangeMilliseconds)))>1e-9
+           ||Math.Abs(x.MedianIntentLatencyMillisecondsSpread-Spread(ordered.Select(f=>f.MedianIntentToFinalMilliseconds)))>1e-9)return false;
         return true;
     }
 
