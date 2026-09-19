@@ -73,6 +73,110 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
     }
 
     [Fact]
+    public void TopOfBookDepthCapsMarketFillAndFeeToProvenQuantity()
+    {
+        var artifact=Artifact(ExecutionOrderType.Market);
+        var intent=artifact.Intents.Single();
+        var source=ExecutionSimulationSourceCanonicalizerV1.Create(
+            artifact,
+            intent,
+            Qualification(artifact),
+            Observation(_clock.Now,100m,bestAsk:101m,askQuantity:0.4m),
+            _clock.Now);
+
+        Assert.Equal("wpe.execution-simulation-source/1.2",source.Schema);
+        Assert.True(source.TopOfBookAvailable);
+        Assert.Equal(101m,source.BestAsk);
+        Assert.Equal(0.4m,source.AskQuantity);
+        Assert.True(ExecutionSimulationSourceCanonicalizerV1.IsCanonical(source));
+
+        var fill=AutomaticExecutionSimulationModelV1.CreateFill(source);
+        var costs=ExecutionRealityCostAuthorityV1.Current;
+        var expectedPrice=101m*(1m+costs.SlippageRate);
+
+        Assert.Equal("wpe.execution-simulation-model/1.1",fill.SimulationModelVersion);
+        Assert.Equal(ExecutionSimulationFillStateV1.Partial,fill.State);
+        Assert.Equal(0.4m,fill.ExecutedQuantity);
+        Assert.Equal(expectedPrice,fill.AveragePrice);
+        Assert.Equal(expectedPrice*0.4m*costs.CommissionRate,fill.FeeAmount);
+        Assert.Equal("top-of-book-partial-taker-cost-authority",fill.ReasonCode);
+    }
+
+    [Fact]
+    public void TopOfBookSellSideUsesBidAndZeroDepthDoesNotInventAFill()
+    {
+        var opening=Artifact(ExecutionOrderType.Market);
+        var shortIntent=opening.Intents.Single() with
+        {
+            Side="Short",
+            Action="OpenShort",
+            StopLoss=120m,
+            TakeProfit=90m
+        };
+        var shortArtifact=opening with { Intents=[shortIntent] };
+        var source=ExecutionSimulationSourceCanonicalizerV1.Create(
+            shortArtifact,
+            shortIntent,
+            Qualification(shortArtifact),
+            Observation(_clock.Now,100m,bestBid:99m,bestAsk:101m,bidQuantity:0.6m,askQuantity:5m),
+            _clock.Now);
+        var fill=AutomaticExecutionSimulationModelV1.CreateFill(source);
+        var costs=ExecutionRealityCostAuthorityV1.Current;
+
+        Assert.Equal(ExecutionSimulationFillStateV1.Partial,fill.State);
+        Assert.Equal(0.6m,fill.ExecutedQuantity);
+        Assert.Equal(99m*(1m-costs.SlippageRate),fill.AveragePrice);
+
+        var emptySource=ExecutionSimulationSourceCanonicalizerV1.Create(
+            opening,
+            opening.Intents.Single(),
+            Qualification(opening),
+            Observation(_clock.Now,100m,bestAsk:101m,askQuantity:0m),
+            _clock.Now);
+        var emptyFill=AutomaticExecutionSimulationModelV1.CreateFill(emptySource);
+
+        Assert.Equal(ExecutionSimulationFillStateV1.NotFilled,emptyFill.State);
+        Assert.Equal(0m,emptyFill.ExecutedQuantity);
+        Assert.Equal(0m,emptyFill.FeeAmount);
+        Assert.Equal(ExecutionSimulationFeeRoleV1.Unavailable,emptyFill.FeeRole);
+        Assert.Equal("top-of-book-zero-quantity",emptyFill.ReasonCode);
+    }
+
+    [Fact]
+    public void MissingOrStaleTopOfBookFailsClosedWithoutDiscardingQualifiedMarketEvidence()
+    {
+        var artifact=Artifact(ExecutionOrderType.Market);
+        var intent=artifact.Intents.Single();
+        var missing=ExecutionSimulationSourceCanonicalizerV1.Create(
+            artifact,
+            intent,
+            Qualification(artifact),
+            Observation(_clock.Now,100m) with { TopOfBook=null },
+            _clock.Now);
+
+        Assert.Equal(ExecutionSimulationSourceStateV1.Available,missing.State);
+        Assert.False(missing.TopOfBookAvailable);
+        Assert.Equal("top-of-book-unavailable",missing.TopOfBookReasonCode);
+        Assert.Equal(
+            ExecutionSimulationFillStateV1.Unsupported,
+            AutomaticExecutionSimulationModelV1.CreateFill(missing).State);
+
+        var stale=ExecutionSimulationSourceCanonicalizerV1.Create(
+            artifact,
+            intent,
+            Qualification(artifact),
+            Observation(_clock.Now,100m,topOfBookAt:_clock.Now.AddSeconds(-16)),
+            _clock.Now);
+
+        Assert.Equal(ExecutionSimulationSourceStateV1.Available,stale.State);
+        Assert.False(stale.TopOfBookAvailable);
+        Assert.Equal("top-of-book-invalid-or-stale",stale.TopOfBookReasonCode);
+        var staleFill=AutomaticExecutionSimulationModelV1.CreateFill(stale);
+        Assert.Equal(ExecutionSimulationFillStateV1.Unsupported,staleFill.State);
+        Assert.Equal("top-of-book-invalid-or-stale",staleFill.ReasonCode);
+    }
+
+    [Fact]
     public async Task LimitOrderSimulationFailsClosedAsUnsupportedButObservedComparisonStillPersists()
     {
         var store=Store();
@@ -403,7 +507,12 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
 
     private static AutomaticExecutionSimulationObservationV1 Observation(
         DateTimeOffset observedAt,
-        decimal price)
+        decimal price,
+        decimal bestBid=99m,
+        decimal bestAsk=100m,
+        decimal bidQuantity=5m,
+        decimal askQuantity=5m,
+        DateTimeOffset? topOfBookAt=null)
     {
         var collected=observedAt.AddSeconds(-1);
         var market=new MarketEvidence(
@@ -417,6 +526,20 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
         {
             Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,"binance","Testnet")
         };
+        var bookTime=topOfBookAt??collected;
+        var topOfBook=new RealtimeMarketSnapshot(
+            "BTCUSDT",
+            price,
+            bestBid,
+            bestAsk,
+            bidQuantity,
+            askQuantity,
+            10m,
+            9m,
+            2m,
+            bookTime.UtcDateTime,
+            10,
+            true);
         return new(
             true,
             "simulation.source-available",
@@ -424,6 +547,7 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
             "Testnet",
             market,
             new TradingRule("BTCUSDT",.001m,.1m,.001m,5m,20),
+            topOfBook,
             observedAt);
     }
 

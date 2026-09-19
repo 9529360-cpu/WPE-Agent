@@ -200,13 +200,14 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
     private readonly AgentSqliteStore _store;
     private readonly IAutomaticPreMutationAuthority? _authority;
     private readonly Func<DateTimeOffset> _utcNow;
+    private readonly IRealtimeMarketFeed? _realtime;
 
-    public TradingAutomaticExecutionGateway(TradingExecutionGateway gateway,IExchangeAdapter exchange,AgentSqliteStore store)
-        :this(gateway,exchange,store,null,null){}
-    internal TradingAutomaticExecutionGateway(TradingExecutionGateway gateway,IExchangeAdapter exchange,AgentSqliteStore store,IAutomaticPreMutationAuthority? authority,Func<DateTimeOffset>? utcNow)
+    public TradingAutomaticExecutionGateway(TradingExecutionGateway gateway,IExchangeAdapter exchange,AgentSqliteStore store,IRealtimeMarketFeed? realtime=null)
+        :this(gateway,exchange,store,null,null,realtime){}
+    internal TradingAutomaticExecutionGateway(TradingExecutionGateway gateway,IExchangeAdapter exchange,AgentSqliteStore store,IAutomaticPreMutationAuthority? authority,Func<DateTimeOffset>? utcNow,IRealtimeMarketFeed? realtime=null)
     {
         _gateway=gateway??throw new ArgumentNullException(nameof(gateway));_exchange=exchange??throw new ArgumentNullException(nameof(exchange));_store=store??throw new ArgumentNullException(nameof(store));
-        _utcNow=utcNow??(()=>DateTimeOffset.UtcNow);_authority=authority??new PersistedAutomaticPreMutationAuthority(store,_utcNow);
+        _utcNow=utcNow??(()=>DateTimeOffset.UtcNow);_authority=authority??new PersistedAutomaticPreMutationAuthority(store,_utcNow);_realtime=realtime;
     }
 
     public bool IsTestnet=>_exchange.Environment==ExchangeEnvironment.Testnet;
@@ -255,31 +256,34 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
         if(!IsTestnet
            ||!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid
            ||artifact.Environment!="Testnet")
-            return new(false,"simulation.testnet-or-artifact-invalid",artifact?.ProviderId??"unknown",artifact?.Environment??"unknown",null,null,observedAt);
+            return new(false,"simulation.testnet-or-artifact-invalid",artifact?.ProviderId??"unknown",artifact?.Environment??"unknown",null,null,null,observedAt);
 
         var providerId=_exchange is IExchangeProvider provider?provider.ProviderId:artifact.ProviderId;
         if(!string.Equals(providerId,artifact.ProviderId,StringComparison.Ordinal))
-            return new(false,"simulation.provider-mismatch",providerId,"Testnet",null,null,observedAt);
+            return new(false,"simulation.provider-mismatch",providerId,"Testnet",null,null,null,observedAt);
 
         try
         {
             var market=await _exchange.GetMarketAsync(intent.Symbol,ct);
             var rule=await _exchange.GetRulesAsync(intent.Symbol,ct);
+            RealtimeMarketSnapshot? topOfBook=null;
+            try{topOfBook=_realtime?.GetSnapshot(intent.Symbol);}catch{topOfBook=null;}
+            observedAt=_utcNow().ToUniversalTime();
             if(!string.Equals(market.Symbol,intent.Symbol,StringComparison.Ordinal)
                ||!string.Equals(rule.Symbol,intent.Symbol,StringComparison.Ordinal))
-                return new(false,"simulation.symbol-mismatch",providerId,"Testnet",null,null,observedAt);
+                return new(false,"simulation.symbol-mismatch",providerId,"Testnet",null,null,topOfBook,observedAt);
 
             if(market.Provenance is null)
                 market=market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,providerId,"Testnet")};
             else if(!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)
                     ||!string.Equals(market.Provenance.ProviderId,providerId,StringComparison.Ordinal)
                     ||!string.Equals(market.Provenance.Environment,"Testnet",StringComparison.Ordinal))
-                return new(false,"simulation.market-provenance-invalid",providerId,"Testnet",null,null,observedAt);
+                return new(false,"simulation.market-provenance-invalid",providerId,"Testnet",null,null,topOfBook,observedAt);
 
-            return new(true,"simulation.source-available",providerId,"Testnet",market,rule,observedAt);
+            return new(true,"simulation.source-available",providerId,"Testnet",market,rule,topOfBook,observedAt);
         }
         catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
-        catch{return new(false,"simulation.source-query-failed",providerId,"Testnet",null,null,observedAt);}
+        catch{return new(false,"simulation.source-query-failed",providerId,"Testnet",null,null,null,_utcNow().ToUniversalTime());}
     }
 
     public async Task<ExchangeOrder?> ObserveOrderAsync(

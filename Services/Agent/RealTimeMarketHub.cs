@@ -17,7 +17,7 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
     private sealed record TradePoint(DateTime Time,decimal Quantity,bool Buy);
     private sealed class SymbolState
     {
-        public readonly object Gate=new();public readonly Queue<TradePoint> Trades=new();public decimal LastPrice,PreviousMinutePrice,BestBid,BestAsk,BidQuantity,AskQuantity,LastMinuteVolume;public DateTime UpdatedAt;public long Messages;
+        public readonly object Gate=new();public readonly Queue<TradePoint> Trades=new();public decimal LastPrice,PreviousMinutePrice,BestBid,BestAsk,BidQuantity,AskQuantity,LastMinuteVolume;public DateTime UpdatedAt,BookUpdatedAt;public long Messages;
     }
     private readonly IReadOnlyList<string> _symbols;private readonly string _apiKey;private readonly AgentSqliteStore _db;private readonly ConcurrentDictionary<string,SymbolState> _states=new(StringComparer.OrdinalIgnoreCase);private readonly Channel<string> _triggers=Channel.CreateBounded<string>(new BoundedChannelOptions(1){FullMode=BoundedChannelFullMode.DropOldest});private CancellationTokenSource? _cts;private Task? _marketTask,_userTask;private volatile bool _marketConnected,_userConnected;private string _status="STOPPED";
     public RealTimeMarketHub(ExchangeEnvironment environment,IEnumerable<string> symbols,string apiKey,AgentSqliteStore db)
@@ -35,7 +35,7 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
     }
     public RealtimeMarketSnapshot? GetSnapshot(string symbol)
     {
-        if(!_states.TryGetValue(symbol,out var state))return null;lock(state.Gate){Prune(state);var buy=state.Trades.Where(x=>x.Buy).Sum(x=>x.Quantity);var sell=state.Trades.Where(x=>!x.Buy).Sum(x=>x.Quantity);return new(symbol,state.LastPrice,state.BestBid,state.BestAsk,state.BidQuantity,state.AskQuantity,buy,sell,state.LastMinuteVolume,state.UpdatedAt,state.Messages,_marketConnected);}
+        if(!_states.TryGetValue(symbol,out var state))return null;lock(state.Gate){Prune(state);var buy=state.Trades.Where(x=>x.Buy).Sum(x=>x.Quantity);var sell=state.Trades.Where(x=>!x.Buy).Sum(x=>x.Quantity);return new(symbol,state.LastPrice,state.BestBid,state.BestAsk,state.BidQuantity,state.AskQuantity,buy,sell,state.LastMinuteVolume,state.UpdatedAt,state.BookUpdatedAt,state.Messages,_marketConnected);}
     }
     public MarketEvidence Enrich(MarketEvidence market)
     {
@@ -64,7 +64,7 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
         using var document=JsonDocument.Parse(json);var data=document.RootElement.TryGetProperty("data",out var combined)?combined:document.RootElement;var eventType=S(data,"e");var symbol=S(data,"s");if(string.IsNullOrWhiteSpace(symbol)||!_states.TryGetValue(symbol,out var state))return;var receivedAt=DateTime.UtcNow;lock(state.Gate)
         {
             var accepted=false;
-            if(eventType=="bookTicker"){var bid=D(data,"b");var ask=D(data,"a");var bidQuantity=D(data,"B");var askQuantity=D(data,"A");if(bid>0&&ask>=bid&&bidQuantity>=0&&askQuantity>=0){state.BestBid=bid;state.BestAsk=ask;state.BidQuantity=bidQuantity;state.AskQuantity=askQuantity;accepted=true;}}
+            if(eventType=="bookTicker"){var bid=D(data,"b");var ask=D(data,"a");var bidQuantity=D(data,"B");var askQuantity=D(data,"A");if(bid>0&&ask>=bid&&bidQuantity>=0&&askQuantity>=0){state.BestBid=bid;state.BestAsk=ask;state.BidQuantity=bidQuantity;state.AskQuantity=askQuantity;state.BookUpdatedAt=receivedAt;accepted=true;}}
             else if(eventType=="aggTrade"){var price=D(data,"p");var quantity=D(data,"q");if(price>0&&quantity>0&&data.TryGetProperty("m",out var m)&&m.ValueKind is JsonValueKind.True or JsonValueKind.False){state.LastPrice=price;state.Trades.Enqueue(new(receivedAt,quantity,!m.GetBoolean()));Prune(state);accepted=true;}}
             else if(eventType=="kline"&&data.TryGetProperty("k",out var k)){var close=D(k,"c");var volume=D(k,"v");if(close>0&&volume>=0&&k.TryGetProperty("x",out var x)&&x.ValueKind is JsonValueKind.True or JsonValueKind.False){var closed=x.GetBoolean();state.LastMinuteVolume=volume;state.LastPrice=close;if(closed){var move=state.PreviousMinutePrice>0?Math.Abs((close-state.PreviousMinutePrice)/state.PreviousMinutePrice):0;state.PreviousMinutePrice=close;_triggers.Writer.TryWrite(move>=.005m?$"volatility:{symbol}":$"minute_close:{symbol}");}accepted=true;}}
             if(accepted){state.Messages++;state.UpdatedAt=receivedAt;}
@@ -80,7 +80,7 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
     private Task Audit(string type,string symbol,string status,string summary,string hash,CancellationToken ct)=>_db.RecordRealtimeEventAsync(new(
         SensitiveDataRedactor.ForLog(type,80),SensitiveDataRedactor.ForLog(symbol,80),SensitiveDataRedactor.ForLog(status,80),SensitiveDataRedactor.ForLog(summary,240),DateTime.UtcNow,SensitiveDataRedactor.ForLog(hash,120)),ct);
     private static void Prune(SymbolState state){var cutoff=DateTime.UtcNow.AddMinutes(-5);while(state.Trades.Count>0&&state.Trades.Peek().Time<cutoff)state.Trades.Dequeue();}
-    private static bool IsHealthy(SymbolState state){lock(state.Gate)return DateTime.UtcNow-state.UpdatedAt<TimeSpan.FromSeconds(30)&&state.LastPrice>0&&state.BestBid>0&&state.BestAsk>=state.BestBid;}
+    private static bool IsHealthy(SymbolState state){lock(state.Gate)return DateTime.UtcNow-state.UpdatedAt<TimeSpan.FromSeconds(30)&&DateTime.UtcNow-state.BookUpdatedAt<TimeSpan.FromSeconds(30)&&state.LastPrice>0&&state.BestBid>0&&state.BestAsk>=state.BestBid;}
     private static TimeSpan Backoff(int attempt)=>TimeSpan.FromSeconds(Math.Min(60,Math.Pow(2,Math.Min(5,attempt))));private static string S(JsonElement e,string name)=>e.TryGetProperty(name,out var p)?p.GetString()??string.Empty:string.Empty;private static decimal D(JsonElement e,string name)=>e.TryGetProperty(name,out var p)&&decimal.TryParse(p.GetString(),NumberStyles.Any,CultureInfo.InvariantCulture,out var value)?value:0;
     public async ValueTask DisposeAsync(){var runCts=Interlocked.Exchange(ref _cts,null);if(runCts is null)return;runCts.Cancel();try{if(_marketTask is not null)await _marketTask;if(_userTask is not null)await _userTask;}catch(OperationCanceledException){}finally{runCts.Dispose();_marketConnected=false;_userConnected=false;_status="STOPPED";}}
 }

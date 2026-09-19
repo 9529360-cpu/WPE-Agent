@@ -15,6 +15,7 @@ public sealed record AutomaticExecutionSimulationObservationV1(
     string Environment,
     MarketEvidence? Market,
     TradingRule? Rule,
+    RealtimeMarketSnapshot? TopOfBook,
     DateTimeOffset ObservedAtUtc);
 
 public interface IAutomaticExecutionRealityEvidenceReader
@@ -66,6 +67,15 @@ internal sealed record ExecutionSimulationSourceV1(
     decimal MarketPrice,
     string MarketProvenanceSha256,
     byte[] MarketProvenanceCanonicalBytes,
+    bool TopOfBookAvailable,
+    string TopOfBookReasonCode,
+    DateTimeOffset? TopOfBookUpdatedAtUtc,
+    decimal BestBid,
+    decimal BestAsk,
+    decimal BidQuantity,
+    decimal AskQuantity,
+    long TopOfBookMessages,
+    bool TopOfBookConnected,
     decimal StepSize,
     decimal TickSize,
     decimal MinQuantity,
@@ -88,8 +98,10 @@ internal static class ExecutionRealityCostAuthorityV1
 
 internal static class ExecutionSimulationSourceCanonicalizerV1
 {
-    internal const string Schema = "wpe.execution-simulation-source/1.1";
+    internal const string Schema = "wpe.execution-simulation-source/1.2";
+    internal const string LegacySchema = "wpe.execution-simulation-source/1.1";
     internal static readonly TimeSpan MaximumMarketAge = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan MaximumTopOfBookAge = TimeSpan.FromSeconds(15);
 
     internal static ExecutionSimulationSourceV1 Create(
         DurableExecutionArtifactV2 artifact,
@@ -135,6 +147,54 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             : qualification.Available
                 ? "strategy-qualification-identity-mismatch"
                 : qualification.Code;
+
+        var topOfBookAvailable = false;
+        var topOfBookReason = "top-of-book-unavailable";
+        DateTimeOffset? topOfBookAt = null;
+        decimal bestBid = 0m;
+        decimal bestAsk = 0m;
+        decimal bidQuantity = 0m;
+        decimal askQuantity = 0m;
+        long topOfBookMessages = 0;
+        var topOfBookConnected = false;
+        if (observation.TopOfBook is { } top)
+        {
+            if (!string.Equals(top.Symbol, intent.Symbol, StringComparison.Ordinal))
+            {
+                topOfBookReason = "top-of-book-symbol-mismatch";
+            }
+            else if (top.BookUpdatedAt.Kind != DateTimeKind.Utc)
+            {
+                topOfBookReason = "top-of-book-invalid-or-stale";
+            }
+            else
+            {
+                var candidateAt = new DateTimeOffset(top.BookUpdatedAt);
+                if (candidateAt > observedAt
+                    || observedAt - candidateAt > MaximumTopOfBookAge
+                    || top.BestBid <= 0
+                    || top.BestAsk < top.BestBid
+                    || top.BidQuantity < 0
+                    || top.AskQuantity < 0
+                    || top.Messages <= 0
+                    || !top.Connected)
+                {
+                    topOfBookReason = "top-of-book-invalid-or-stale";
+                }
+                else
+                {
+                    topOfBookAvailable = true;
+                    topOfBookReason = "top-of-book-available";
+                    topOfBookAt = candidateAt;
+                    bestBid = top.BestBid;
+                    bestAsk = top.BestAsk;
+                    bidQuantity = top.BidQuantity;
+                    askQuantity = top.AskQuantity;
+                    topOfBookMessages = top.Messages;
+                    topOfBookConnected = true;
+                }
+            }
+        }
 
         ExecutionSimulationSourceStateV1 state;
         DateTimeOffset marketAt;
@@ -246,6 +306,15 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             marketPrice,
             marketHash,
             marketBytes,
+            topOfBookAvailable,
+            topOfBookReason,
+            topOfBookAt,
+            bestBid,
+            bestAsk,
+            bidQuantity,
+            askQuantity,
+            topOfBookMessages,
+            topOfBookConnected,
             step,
             tick,
             minQty,
@@ -264,7 +333,7 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
     internal static bool IsCanonical(ExecutionSimulationSourceV1? value)
     {
         if (value is null
-            || value.Schema != Schema
+            || value.Schema is not (Schema or LegacySchema)
             || !LowerSha(value.ArtifactSha256)
             || !LowerSha(value.IntentSha256)
             || !LowerSha(value.CanonicalSha256)
@@ -283,6 +352,7 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             || value.MarketCollectedAtUtc.Offset != TimeSpan.Zero
             || value.MarketCollectedAtUtc > value.SourceObservedAtUtc
             || string.IsNullOrWhiteSpace(value.ArtifactMarketDataVersion)
+            || string.IsNullOrWhiteSpace(value.TopOfBookReasonCode)
             || string.IsNullOrWhiteSpace(value.ReasonCode))
             return false;
 
@@ -315,6 +385,34 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
                  || value.StrategyQualificationPolicySha256.Length != 0
                  || value.StrategyQualificationEvaluatedAtUtc is not null)
             return false;
+
+        if (value.TopOfBookAvailable)
+        {
+            if (!string.Equals(value.TopOfBookReasonCode,"top-of-book-available",StringComparison.Ordinal)
+                || value.TopOfBookUpdatedAtUtc is null
+                || value.TopOfBookUpdatedAtUtc.Value.Offset != TimeSpan.Zero
+                || value.TopOfBookUpdatedAtUtc.Value > value.SourceObservedAtUtc
+                || value.SourceObservedAtUtc - value.TopOfBookUpdatedAtUtc.Value > MaximumTopOfBookAge
+                || value.BestBid <= 0
+                || value.BestAsk < value.BestBid
+                || value.BidQuantity < 0
+                || value.AskQuantity < 0
+                || value.TopOfBookMessages <= 0
+                || !value.TopOfBookConnected)
+                return false;
+        }
+        else
+        {
+            if (value.TopOfBookReasonCode is not ("top-of-book-unavailable" or "top-of-book-symbol-mismatch" or "top-of-book-invalid-or-stale")
+                || value.TopOfBookUpdatedAtUtc is not null
+                || value.BestBid != 0
+                || value.BestAsk != 0
+                || value.BidQuantity != 0
+                || value.AskQuantity != 0
+                || value.TopOfBookMessages != 0
+                || value.TopOfBookConnected)
+                return false;
+        }
 
         if (value.State == ExecutionSimulationSourceStateV1.Available)
         {
@@ -395,8 +493,12 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
 
             using var document = JsonDocument.Parse(bytes.ToArray());
             var root = document.RootElement;
+            var schema = root.GetProperty("schema").GetString() ?? string.Empty;
+            if (schema is not (Schema or LegacySchema))
+                return false;
+            var legacy = string.Equals(schema,LegacySchema,StringComparison.Ordinal);
             value = new(
-                root.GetProperty("schema").GetString() ?? string.Empty,
+                schema,
                 root.GetProperty("correlation_id").GetString() ?? string.Empty,
                 root.GetProperty("client_order_id").GetString() ?? string.Empty,
                 root.GetProperty("artifact_sha256").GetString() ?? string.Empty,
@@ -427,6 +529,17 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
                 root.GetProperty("market_price").GetDecimal(),
                 root.GetProperty("market_provenance_sha256").GetString() ?? string.Empty,
                 root.GetProperty("market_provenance_canonical_bytes").GetBytesFromBase64(),
+                legacy ? false : root.GetProperty("top_of_book_available").GetBoolean(),
+                legacy ? "top-of-book-unavailable" : root.GetProperty("top_of_book_reason_code").GetString() ?? string.Empty,
+                legacy || root.GetProperty("top_of_book_updated_at_utc").ValueKind==JsonValueKind.Null
+                    ? null
+                    : root.GetProperty("top_of_book_updated_at_utc").GetDateTimeOffset(),
+                legacy ? 0m : root.GetProperty("best_bid").GetDecimal(),
+                legacy ? 0m : root.GetProperty("best_ask").GetDecimal(),
+                legacy ? 0m : root.GetProperty("bid_quantity").GetDecimal(),
+                legacy ? 0m : root.GetProperty("ask_quantity").GetDecimal(),
+                legacy ? 0L : root.GetProperty("top_of_book_messages").GetInt64(),
+                legacy ? false : root.GetProperty("top_of_book_connected").GetBoolean(),
                 root.GetProperty("step_size").GetDecimal(),
                 root.GetProperty("tick_size").GetDecimal(),
                 root.GetProperty("min_quantity").GetDecimal(),
@@ -499,6 +612,21 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             writer.WriteString("market_collected_at_utc", value.MarketCollectedAtUtc.ToUniversalTime());
             writer.WriteBase64String("market_provenance_canonical_bytes", value.MarketProvenanceCanonicalBytes);
             writer.WriteString("market_provenance_sha256", value.MarketProvenanceSha256);
+            if(value.Schema==Schema)
+            {
+                writer.WriteNumber("best_ask", value.BestAsk);
+                writer.WriteNumber("best_bid", value.BestBid);
+                writer.WriteNumber("ask_quantity", value.AskQuantity);
+                writer.WriteNumber("bid_quantity", value.BidQuantity);
+                writer.WriteBoolean("top_of_book_available", value.TopOfBookAvailable);
+                writer.WriteBoolean("top_of_book_connected", value.TopOfBookConnected);
+                writer.WriteNumber("top_of_book_messages", value.TopOfBookMessages);
+                writer.WriteString("top_of_book_reason_code", value.TopOfBookReasonCode);
+                if(value.TopOfBookUpdatedAtUtc is null)
+                    writer.WriteNull("top_of_book_updated_at_utc");
+                else
+                    writer.WriteString("top_of_book_updated_at_utc", value.TopOfBookUpdatedAtUtc.Value.ToUniversalTime());
+            }
             writer.WriteNumber("max_leverage", value.MaxLeverage);
             writer.WriteNumber("min_notional", value.MinNotional);
             writer.WriteNumber("min_quantity", value.MinQuantity);
@@ -536,7 +664,7 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
 
 internal static class AutomaticExecutionSimulationModelV1
 {
-    internal const string Version = "wpe.execution-simulation-model/1.0";
+    internal const string Version = "wpe.execution-simulation-model/1.1";
 
     internal static ExecutionSimulationFillV1 CreateFill(ExecutionSimulationSourceV1 source)
     {
@@ -554,23 +682,63 @@ internal static class AutomaticExecutionSimulationModelV1
         if (source.OrderType != ExecutionOrderType.Market)
             return Unsupported(source, costs.Version, venueVersion, "simulation-order-type-unsupported");
 
-        if (source.Leverage > source.MaxLeverage
-            || source.IntendedQuantity < source.MinQuantity
-            || source.IntendedQuantity != RoundQuantity(source.IntendedQuantity, source.StepSize)
-            || source.MarketPrice * source.IntendedQuantity < source.MinNotional)
-            return Unsupported(source, costs.Version, venueVersion, "simulation-venue-rule-unsupported");
+        if (!source.TopOfBookAvailable || source.TopOfBookUpdatedAtUtc is null)
+            return Unsupported(source, costs.Version, venueVersion, source.TopOfBookReasonCode);
 
         var buy = source.Side == PositionSide.Long
             ? !source.ReduceOnly
             : source.ReduceOnly;
+        var quotedPrice = buy ? source.BestAsk : source.BestBid;
+        if (source.Leverage > source.MaxLeverage
+            || source.IntendedQuantity < source.MinQuantity
+            || source.IntendedQuantity != RoundQuantity(source.IntendedQuantity, source.StepSize)
+            || quotedPrice * source.IntendedQuantity < source.MinNotional)
+            return Unsupported(source, costs.Version, venueVersion, "simulation-venue-rule-unsupported");
+
+        var rawAvailableQuantity = buy ? source.AskQuantity : source.BidQuantity;
+        var availableQuantity = RoundQuantity(rawAvailableQuantity, source.StepSize);
+        if (availableQuantity <= 0)
+        {
+            return ExecutionSimulationFillCanonicalizerV1.Create(
+                source.CorrelationId,
+                source.ClientOrderId,
+                source.StrategyId,
+                source.StrategyVersion,
+                costs.Version,
+                Version,
+                venueVersion,
+                source.Symbol,
+                source.Side,
+                source.ReduceOnly,
+                source.OrderType,
+                source.IntendedQuantity,
+                ExecutionSimulationFillStateV1.NotFilled,
+                0m,
+                0m,
+                0m,
+                ExecutionSimulationFeeRoleV1.Unavailable,
+                latencyModeled:false,
+                simulatedLatencyMs:0,
+                source.TopOfBookUpdatedAtUtc.Value,
+                source.SourceObservedAtUtc,
+                "top-of-book-zero-quantity");
+        }
+
+        var executedQuantity = Math.Min(source.IntendedQuantity, availableQuantity);
         var adverseMultiplier = buy
             ? 1m + costs.SlippageRate
             : 1m - costs.SlippageRate;
-        var averagePrice = source.MarketPrice * adverseMultiplier;
+        var averagePrice = quotedPrice * adverseMultiplier;
         if (averagePrice <= 0)
             return Unsupported(source, costs.Version, venueVersion, "simulation-price-invalid");
 
-        var fee = averagePrice * source.IntendedQuantity * costs.CommissionRate;
+        var fee = averagePrice * executedQuantity * costs.CommissionRate;
+        var state = executedQuantity == source.IntendedQuantity
+            ? ExecutionSimulationFillStateV1.Filled
+            : ExecutionSimulationFillStateV1.Partial;
+        var reason = state == ExecutionSimulationFillStateV1.Filled
+            ? "top-of-book-full-taker-cost-authority"
+            : "top-of-book-partial-taker-cost-authority";
         return ExecutionSimulationFillCanonicalizerV1.Create(
             source.CorrelationId,
             source.ClientOrderId,
@@ -584,16 +752,16 @@ internal static class AutomaticExecutionSimulationModelV1
             source.ReduceOnly,
             source.OrderType,
             source.IntendedQuantity,
-            ExecutionSimulationFillStateV1.Filled,
-            source.IntendedQuantity,
+            state,
+            executedQuantity,
             averagePrice,
             fee,
             ExecutionSimulationFeeRoleV1.Taker,
             latencyModeled:false,
             simulatedLatencyMs:0,
-            source.MarketCollectedAtUtc,
+            source.TopOfBookUpdatedAtUtc.Value,
             source.SourceObservedAtUtc,
-            "market-full-taker-cost-authority");
+            reason);
     }
 
     private static ExecutionSimulationFillV1 Unsupported(
@@ -673,6 +841,16 @@ internal sealed class AutomaticExecutionRealityPipelineV1
             if (existing is not null)
             {
                 source = existing;
+                var existingFill = await _store.GetExecutionSimulationFillAsync(
+                    artifact.CorrelationId,
+                    intent.ClientOrderId,
+                    ct);
+                if (existingFill is not null)
+                {
+                    simulated++;
+                    skipped++;
+                    continue;
+                }
                 skipped++;
             }
             else
@@ -686,7 +864,7 @@ internal sealed class AutomaticExecutionRealityPipelineV1
                 AutomaticExecutionSimulationObservationV1 observation;
                 var now = _utcNow().ToUniversalTime();
                 if (_reader is null)
-                    observation = new(false,"simulation-reader-unavailable",artifact.ProviderId,artifact.Environment,null,null,now);
+                    observation = new(false,"simulation-reader-unavailable",artifact.ProviderId,artifact.Environment,null,null,null,now);
                 else
                 {
                     try
@@ -699,7 +877,7 @@ internal sealed class AutomaticExecutionRealityPipelineV1
                     }
                     catch
                     {
-                        observation = new(false,"simulation-source-query-failed",artifact.ProviderId,artifact.Environment,null,null,now);
+                        observation = new(false,"simulation-source-query-failed",artifact.ProviderId,artifact.Environment,null,null,null,now);
                     }
                 }
                 source = ExecutionSimulationSourceCanonicalizerV1.Create(artifact,intent,qualification,observation,now);
