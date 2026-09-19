@@ -67,6 +67,47 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RestoreSourceThroughReparsePointFailsBeforeLeaseOrMutation()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var source = Layout("reparse-source");
+        var target = Layout("reparse-target");
+        await CreateDatabase(source.DataFile("agent.db"), "new");
+        await CreateDatabase(target.DataFile("agent.db"), "old");
+        var backup = await Backup(source).CreateAsync(Path.Combine(_root, "reparse-backups"));
+        var link = Path.Combine(_root, "backup-link");
+
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(link, backup.Directory);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException or
+                IOException or
+                PlatformNotSupportedException)
+            {
+                return;
+            }
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                Restore(target).RestoreAsync(link));
+
+            Assert.Contains("reparse", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("old", await ReadDatabase(target.DataFile("agent.db")));
+            Assert.False(File.Exists(target.RuntimeFile(RuntimeStateRestoreRecovery.JournalFileName)));
+            Assert.Empty(Directory.EnumerateDirectories(target.BackupsDirectory));
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+                Directory.Delete(link);
+        }
+    }
+
+    [Fact]
     public async Task RestoreCommitsSecurityStorageEvidenceBeforeGenerationCommit()
     {
         var source = Layout("security-source");
