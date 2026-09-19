@@ -20,6 +20,8 @@ try {
     $runtimeHash = Write-JsonFixture $runtimePath ([ordered]@{ proofId='runtime-1'; sourceIdentity='trusted-bridge'; status='passed'; fresh=$true; environment='Testnet'; gateEvidenceRefs=@('authority','freshness') })
     $suitePath = Join-Path $root 'suite.json'
     $suiteHash = Write-JsonFixture $suitePath ([ordered]@{ status='passed'; configuration='Release'; total=1522; failed=0 })
+    $soakPath = Join-Path $root 'soak.json'
+    $soakHash = Write-JsonFixture $soakPath ([ordered]@{ schemaVersion='wpe.headless-soak-evidence/1.0'; status='passed' })
     $verdictPaths = @(); $verdictHashes = @()
     foreach ($id in @('SEC-0027','DOR-0005','CLI-0009')) {
         $path = Join-Path $root "$id.json"; $verdictPaths += $path
@@ -33,6 +35,7 @@ try {
         LastKnownGoodRoot=$lkg.FullName; ExpectedLastKnownGoodManifestHash=$lkgHash
         TrustedRuntimeProofPath=$runtimePath; ExpectedTrustedRuntimeProofHash=$runtimeHash
         ExpectedRuntimeProofId='runtime-1'; ExpectedRuntimeSourceIdentity='trusted-bridge'; ExpectedEvidenceGateRefs=@('authority','freshness')
+        SoakEvidencePath=$soakPath; ExpectedSoakEvidenceHash=$soakHash; MinimumSoakDurationMinutes=1440
         FullReleaseEvidencePath=$suitePath; ExpectedFullReleaseEvidenceHash=$suiteHash
         ProducerVerdictPaths=$verdictPaths; ExpectedProducerVerdictHashes=$verdictHashes
         AuthorizedProviderFixtureRoot=$providerRoot.FullName; ProviderFixturePath=$providerPath; ExpectedProviderFixtureHash=$providerHash
@@ -44,6 +47,14 @@ try {
     Assert-Equal 9 $plan.commands.Count 'default command count'
     Assert-Equal 'full-dotnet-release-tests' $plan.commands[3].id 'full suite order'
     Assert-Equal 'release-readiness' $plan.commands[4].id 'downstream order'
+    $readiness = @($plan.commands | Where-Object id -eq 'release-readiness')
+    if ($readiness[0].arguments -contains '-Configuration') { throw 'release-readiness received unsupported Configuration parameter' }
+    Assert-Equal '-Runtime' $readiness[0].arguments[0] 'release-readiness runtime parameter'
+    Assert-Equal 'win-x64' $readiness[0].arguments[1] 'release-readiness runtime'
+    $dogfood = @($plan.commands | Where-Object id -eq 'dogfood-install-start-restart-rollback')
+    foreach ($required in @('-ExpectedEvidenceGateRefs','authority','freshness','-SoakEvidencePath',$soakPath,'-ExpectedSoakEvidenceHash',$soakHash,'-MinimumSoakDurationMinutes','1440')) {
+        if ($dogfood[0].arguments -cnotcontains $required) { throw "dogfood command missing argument: $required" }
+    }
     Assert-Equal $false $plan.mutationEnabled 'mutation default'
     if (@($plan.commands.id) -contains 'testnet-mutation-smoke') { throw 'default mutation command present' }
     $customer = @($plan.commands | Where-Object id -eq 'playwright-customer-routes')
