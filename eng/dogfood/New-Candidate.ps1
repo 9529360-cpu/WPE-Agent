@@ -14,8 +14,34 @@ param(
 )
 $ErrorActionPreference='Stop'
 function Full([string]$p){[IO.Path]::GetFullPath($p).TrimEnd([IO.Path]::DirectorySeparatorChar)}
+function Is-SameOrDescendant([string]$Path,[string]$Root){
+    $pathFull=Full $Path
+    $rootFull=Full $Root
+    if($pathFull.Equals($rootFull,[StringComparison]::OrdinalIgnoreCase)){return $true}
+    $prefix=$rootFull+[IO.Path]::DirectorySeparatorChar
+    $pathFull.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)
+}
+function Assert-NoReparsePath([string]$Path,[string]$Code){
+    $full=[IO.Path]::GetFullPath($Path)
+    $root=[IO.Path]::GetPathRoot($full)
+    $current=$root
+    $relative=$full.Substring($root.Length)
+    foreach($part in $relative.Split([IO.Path]::DirectorySeparatorChar,[StringSplitOptions]::RemoveEmptyEntries)){
+        $current=Join-Path $current $part
+        if(Test-Path -LiteralPath $current){
+            $item=Get-Item -LiteralPath $current -Force
+            if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw $Code}
+        }
+    }
+}
 $source=Full $SourceRoot;$slots=Full $SlotsRoot
 if(-not(Test-Path -LiteralPath $source -PathType Container)){throw 'source.missing'}
+if((Is-SameOrDescendant $source $slots) -or (Is-SameOrDescendant $slots $source)){throw 'source.slots-overlap'}
+Assert-NoReparsePath $source 'source.reparse-forbidden'
+Assert-NoReparsePath $slots 'slots.reparse-forbidden'
+if(@(Get-ChildItem -LiteralPath $source -Recurse -Force | Where-Object {
+    ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+}).Count -gt 0){throw 'source.reparse-forbidden'}
 if($source -match '(?i)[\\/](bin|obj|debug|release|\.artifacts)([\\/]|$)'){throw 'source.mutable-output-forbidden'}
 if($source -match '(?i)[\\/]artifacts([\\/]|$)' -and $source -notmatch '(?i)[\\/]artifacts[\\/]beta-packages[\\/]'){throw 'source.unverified-artifact-root'}
 if($SourceIdentity -notmatch '^[0-9A-Za-z][0-9A-Za-z._/-]{0,127}$'){throw 'source.identity-invalid'}
