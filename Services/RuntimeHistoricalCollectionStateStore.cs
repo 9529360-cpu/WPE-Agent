@@ -101,11 +101,14 @@ public sealed class RuntimeHistoricalCollectionStateStore
             var queueAvailable=await TableExists(connection,"automatic_execution_queue",ct);
             var eventsAvailable=await TableExists(connection,"automatic_execution_events",ct);
             var evidenceAvailable=await TableExists(connection,"model_off_canonical_audits",ct);
+            var cycleIds=raw.Select(row=>row.CycleId).Distinct(StringComparer.Ordinal).ToArray();
+            var traces=await ReadPostTradeTracesAsync(connection,cycleIds,queueAvailable,eventsAvailable,ct);
+            var evidenceByCycle=await ReadModelOffEvidenceBatchAsync(connection,cycleIds,evidenceAvailable,ct);
             var items=new List<HistoricalPostTradeReviewV1>(raw.Count);
             foreach(var row in raw)
             {
-                var trace=await ReadPostTradeTraceAsync(connection,row.CycleId,queueAvailable,eventsAvailable,ct);
-                var evidence=await ReadModelOffEvidenceAsync(connection,row.CycleId,evidenceAvailable,ct);
+                var trace=traces[row.CycleId];
+                var evidence=evidenceByCycle[row.CycleId];
                 items.Add(new(
                     trace.TraceId,
                     "wpe.post-trade-review/1.4",
@@ -122,72 +125,129 @@ public sealed class RuntimeHistoricalCollectionStateStore
         catch{return Page<HistoricalPostTradeReviewV1>(kind,RuntimeCollectionState.Error,[],null,null,"The SQLite post-trade reviews could not be read.");}
     }
 
-    private async Task<PostTradeExecutionTrace> ReadPostTradeTraceAsync(SqliteConnection connection,string cycleId,bool queueAvailable,bool eventsAvailable,CancellationToken ct)
+    private async Task<IReadOnlyDictionary<string,PostTradeExecutionTrace>> ReadPostTradeTracesAsync(SqliteConnection connection,IReadOnlyList<string> cycleIds,bool queueAvailable,bool eventsAvailable,CancellationToken ct)
     {
-        var traceId=SensitiveDataRedactor.MaskIdentifier(cycleId,"trade");
-        if(!queueAvailable)return new(traceId,"legacy","Unavailable","Unavailable","trace.queue-unavailable",null,null,null);
-        var rows=new List<(string Id,string Status,string Code,int Attempts,DateTimeOffset? MarketAt,string? MarketVersion)>(2);
+        var result=new Dictionary<string,PostTradeExecutionTrace>(StringComparer.Ordinal);
+        if(cycleIds.Count==0)return result;
+        if(!queueAvailable)
+        {
+            foreach(var cycleId in cycleIds)result[cycleId]=new(SensitiveDataRedactor.MaskIdentifier(cycleId,"trade"),"legacy","Unavailable","Unavailable","trace.queue-unavailable",null,null,null);
+            return result;
+        }
+
+        var queueRows=new Dictionary<string,List<ExecutionTraceRow>>(StringComparer.Ordinal);
         await using(var command=connection.CreateCommand())
         {
-            command.CommandText="SELECT execution_id,status,last_code,attempt_count,market_collected_at,market_data_version FROM automatic_execution_queue WHERE correlation_id=$cycle ORDER BY updated_at DESC,execution_id DESC LIMIT 2";
-            command.Parameters.AddWithValue("$cycle",cycleId);
+            var placeholders=AddListParameters(command,"cycle",cycleIds);
+            command.CommandText=$"SELECT correlation_id,execution_id,status,last_code,attempt_count,market_collected_at,market_data_version FROM automatic_execution_queue WHERE correlation_id IN ({placeholders}) ORDER BY correlation_id,updated_at DESC,execution_id DESC";
             await using var reader=await command.ExecuteReaderAsync(ct);
             while(await reader.ReadAsync(ct))
             {
-                var attempts=reader.GetInt32(3);if(attempts<0)throw new InvalidOperationException("Execution attempt count is invalid.");
-                var marketAt=reader.IsDBNull(4)?null:Instant(reader.GetString(4));
-                rows.Add((reader.GetString(0),Safe(reader.GetString(1),40),Safe(reader.GetString(2),120),attempts,marketAt,Text(reader,5,80)));
+                var cycleId=reader.GetString(0);if(!cycleIds.Contains(cycleId,StringComparer.Ordinal))throw new InvalidOperationException("Execution correlation is outside the requested batch.");
+                var attempts=reader.GetInt32(4);if(attempts<0)throw new InvalidOperationException("Execution attempt count is invalid.");
+                if(!queueRows.TryGetValue(cycleId,out var rows)){rows=[];queueRows[cycleId]=rows;}
+                rows.Add(new(reader.GetString(1),Safe(reader.GetString(2),40),Safe(reader.GetString(3),120),attempts,reader.IsDBNull(5)?null:Instant(reader.GetString(5)),Text(reader,6,80)));
             }
         }
-        if(rows.Count==0)return new(traceId,"legacy","Unavailable","Unavailable","trace.execution-unavailable",null,null,null);
-        if(rows.Count!=1)return new(traceId,"ambiguous","Ambiguous","Ambiguous","trace.multiple-executions",null,null,null);
-        var row=rows[0];
-        var risk="Unavailable";
-        if(eventsAvailable)
+
+        var uniqueExecutions=queueRows.Where(pair=>pair.Value.Count==1).Select(pair=>pair.Value[0].Id).Distinct(StringComparer.Ordinal).ToArray();
+        var riskByExecution=new Dictionary<string,(int Approved,int Blocked)>(StringComparer.Ordinal);
+        if(eventsAvailable&&uniqueExecutions.Length>0)
         {
-            var approved=0;var blocked=0;
             await using var command=connection.CreateCommand();
-            command.CommandText="SELECT to_status,COUNT(*) FROM automatic_execution_events WHERE execution_id=$id AND to_status IN ('RiskApproved','RiskBlocked') GROUP BY to_status";
-            command.Parameters.AddWithValue("$id",row.Id);
+            var placeholders=AddListParameters(command,"execution",uniqueExecutions);
+            command.CommandText=$"SELECT execution_id,to_status,COUNT(*) FROM automatic_execution_events WHERE execution_id IN ({placeholders}) AND to_status IN ('RiskApproved','RiskBlocked') GROUP BY execution_id,to_status";
             await using var reader=await command.ExecuteReaderAsync(ct);
             while(await reader.ReadAsync(ct))
             {
-                var count=reader.GetInt32(1);if(count<0)throw new InvalidOperationException("Risk event count is invalid.");
-                if(string.Equals(reader.GetString(0),"RiskApproved",StringComparison.Ordinal))approved+=count;
-                else if(string.Equals(reader.GetString(0),"RiskBlocked",StringComparison.Ordinal))blocked+=count;
+                var executionId=reader.GetString(0);var count=reader.GetInt32(2);if(count<0)throw new InvalidOperationException("Risk event count is invalid.");
+                riskByExecution.TryGetValue(executionId,out var counts);
+                if(string.Equals(reader.GetString(1),"RiskApproved",StringComparison.Ordinal))counts.Approved+=count;
+                else if(string.Equals(reader.GetString(1),"RiskBlocked",StringComparison.Ordinal))counts.Blocked+=count;
+                riskByExecution[executionId]=counts;
             }
-            risk=approved>0&&blocked==0?"Approved":blocked>0&&approved==0?"Blocked":approved==0&&blocked==0?"Unavailable":"Conflicting";
         }
-        return new(traceId,"available",risk,row.Status,row.Code,row.Attempts,row.MarketAt,row.MarketVersion);
+
+        foreach(var cycleId in cycleIds)
+        {
+            var traceId=SensitiveDataRedactor.MaskIdentifier(cycleId,"trade");
+            if(!queueRows.TryGetValue(cycleId,out var rows)||rows.Count==0)
+            {
+                result[cycleId]=new(traceId,"legacy","Unavailable","Unavailable","trace.execution-unavailable",null,null,null);
+                continue;
+            }
+            if(rows.Count!=1)
+            {
+                result[cycleId]=new(traceId,"ambiguous","Ambiguous","Ambiguous","trace.multiple-executions",null,null,null);
+                continue;
+            }
+            var row=rows[0];var risk="Unavailable";
+            if(eventsAvailable)
+            {
+                riskByExecution.TryGetValue(row.Id,out var counts);
+                risk=counts.Approved>0&&counts.Blocked==0?"Approved":counts.Blocked>0&&counts.Approved==0?"Blocked":counts.Approved==0&&counts.Blocked==0?"Unavailable":"Conflicting";
+            }
+            result[cycleId]=new(traceId,"available",risk,row.Status,row.Code,row.Attempts,row.MarketAt,row.MarketVersion);
+        }
+        return result;
     }
 
     private static readonly string[] EvidenceStages=["market","research","strategy","risk"];
 
-    private async Task<PostTradeEvidenceTrace> ReadModelOffEvidenceAsync(SqliteConnection connection,string cycleId,bool tableAvailable,CancellationToken ct)
+    private async Task<IReadOnlyDictionary<string,PostTradeEvidenceTrace>> ReadModelOffEvidenceBatchAsync(SqliteConnection connection,IReadOnlyList<string> cycleIds,bool tableAvailable,CancellationToken ct)
     {
-        if(!tableAvailable)return new("unavailable",[]);
-        var links=new List<HistoricalEvidenceLinkV1>(EvidenceStages.Length);
-        var seen=new HashSet<string>(StringComparer.Ordinal);
-        await using var command=connection.CreateCommand();
-        command.CommandText="SELECT output_kind,status,canonical_sha256,as_of_utc,canonical_bytes FROM model_off_canonical_audits WHERE cycle_id=$cycle AND output_kind IN ('market','research','strategy','risk') ORDER BY as_of_utc,output_kind,output_id";
-        command.Parameters.AddWithValue("$cycle",cycleId);
-        await using var reader=await command.ExecuteReaderAsync(ct);
-        while(await reader.ReadAsync(ct))
+        var result=new Dictionary<string,PostTradeEvidenceTrace>(StringComparer.Ordinal);
+        if(cycleIds.Count==0)return result;
+        if(!tableAvailable)
         {
-            var stage=Safe(reader.GetString(0),20).ToLowerInvariant();
-            if(!EvidenceStages.Contains(stage,StringComparer.Ordinal)||!seen.Add(stage))return new("ambiguous",[]);
-            var status=Safe(reader.GetString(1),40);
-            var hash=Hash(reader.GetString(2)).ToLowerInvariant();
-            if(reader.IsDBNull(4))return new("invalid",[]);
-            var bytes=(byte[])reader[4];
-            if(bytes.Length is 0 or > 262144)return new("invalid",[]);
-            var computed=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-            if(!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(hash),Convert.FromHexString(computed)))return new("invalid",[]);
-            links.Add(new(stage,status,hash,Instant(reader.GetString(3))));
+            foreach(var cycleId in cycleIds)result[cycleId]=new("unavailable",[]);
+            return result;
         }
-        if(links.Count==0)return new("legacy",[]);
-        var ordered=EvidenceStages.Select(stage=>links.SingleOrDefault(link=>link.Stage==stage)).Where(link=>link is not null).Cast<HistoricalEvidenceLinkV1>().ToArray();
-        return new(ordered.Length==EvidenceStages.Length?"available":"partial",ordered);
+
+        var linksByCycle=new Dictionary<string,List<HistoricalEvidenceLinkV1>>(StringComparer.Ordinal);
+        var invalidCycles=new HashSet<string>(StringComparer.Ordinal);
+        var ambiguousCycles=new HashSet<string>(StringComparer.Ordinal);
+        await using(var command=connection.CreateCommand())
+        {
+            var placeholders=AddListParameters(command,"evidenceCycle",cycleIds);
+            command.CommandText=$"SELECT cycle_id,output_kind,status,canonical_sha256,as_of_utc,canonical_bytes FROM model_off_canonical_audits WHERE cycle_id IN ({placeholders}) AND output_kind IN ('market','research','strategy','risk') ORDER BY cycle_id,as_of_utc,output_kind,output_id";
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var cycleId=reader.GetString(0);if(!cycleIds.Contains(cycleId,StringComparer.Ordinal))throw new InvalidOperationException("Canonical evidence correlation is outside the requested batch.");
+                if(invalidCycles.Contains(cycleId)||ambiguousCycles.Contains(cycleId))continue;
+                var stage=Safe(reader.GetString(1),20).ToLowerInvariant();
+                if(!EvidenceStages.Contains(stage,StringComparer.Ordinal)){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                if(!linksByCycle.TryGetValue(cycleId,out var links)){links=[];linksByCycle[cycleId]=links;}
+                if(links.Any(link=>string.Equals(link.Stage,stage,StringComparison.Ordinal))){ambiguousCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                var status=Safe(reader.GetString(2),40);
+                var hash=Hash(reader.GetString(3)).ToLowerInvariant();
+                if(reader.IsDBNull(5)){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                var bytes=(byte[])reader[5];
+                if(bytes.Length is 0 or > 262144){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                var computed=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                if(!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(hash),Convert.FromHexString(computed))){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                links.Add(new(stage,status,hash,Instant(reader.GetString(4))));
+            }
+        }
+
+        foreach(var cycleId in cycleIds)
+        {
+            if(ambiguousCycles.Contains(cycleId)){result[cycleId]=new("ambiguous",[]);continue;}
+            if(invalidCycles.Contains(cycleId)){result[cycleId]=new("invalid",[]);continue;}
+            if(!linksByCycle.TryGetValue(cycleId,out var links)||links.Count==0){result[cycleId]=new("legacy",[]);continue;}
+            var ordered=EvidenceStages.Select(stage=>links.SingleOrDefault(link=>link.Stage==stage)).Where(link=>link is not null).Cast<HistoricalEvidenceLinkV1>().ToArray();
+            result[cycleId]=new(ordered.Length==EvidenceStages.Length?"available":"partial",ordered);
+        }
+        return result;
+    }
+
+    private static string AddListParameters(SqliteCommand command,string prefix,IReadOnlyList<string> values)
+    {
+        if(values.Count==0)throw new ArgumentException("At least one value is required.",nameof(values));
+        var names=new string[values.Count];
+        for(var i=0;i<values.Count;i++){names[i]=$"$"+prefix+i.ToString(CultureInfo.InvariantCulture);command.Parameters.AddWithValue(names[i],values[i]);}
+        return string.Join(",",names);
     }
 
     public async Task<HistoricalCollectionPageV1<HistoricalReconciliationV1>> ReadReconciliationsAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default)
@@ -288,6 +348,7 @@ public sealed class RuntimeHistoricalCollectionStateStore
         string CycleId,string Symbol,string Side,decimal EntryPrice,decimal ExitPrice,decimal Quantity,decimal Fees,string FeeBasis,decimal FeeRate,
         decimal EntrySlippageAmount,decimal ExitSlippageAmount,decimal TotalSlippageAmount,string SlippageBasis,decimal FundingAmount,string FundingBasis,
         decimal NetPnl,decimal ReturnPct,string Outcome,DateTimeOffset ClosedAtUtc,string? StrategyId,string StrategyVersion,string AttributionBasis);
+    private sealed record ExecutionTraceRow(string Id,string Status,string Code,int Attempts,DateTimeOffset? MarketAt,string? MarketVersion);
     private sealed record PostTradeExecutionTrace(
         string TraceId,string TraceState,string RiskDecision,string ExecutionStatus,string ExecutionCode,int? ExecutionAttempts,DateTimeOffset? MarketCollectedAtUtc,string? MarketDataVersion);
 
