@@ -6,11 +6,13 @@ WPE.Maintenance is an offline Windows-only maintenance executable for WPE runtim
 
 - Run under the same Windows user that owns the WPE state and DPAPI material.
 - Use an explicit absolute WPE data root.
-- Stop every WPE desktop/headless process before backup or restore.
+- Stop every WPE desktop/headless process before backup or restore. When WPE runs as a Windows Service, stop `WPE Agent Headless` and wait for the process to exit before maintenance.
 - Keep backup output outside the active Data directory.
 - Treat backup files as sensitive encrypted state even though the payload is encrypted.
 
-The backup and restore commands acquire the exclusive data-root maintenance lease. If any normal WPE process still owns the shared lease, the operation fails closed.
+The backup and restore commands acquire the exclusive data-root maintenance lease. If any normal WPE process still owns the shared lease, the operation fails closed. The Windows Service and the maintenance CLI must point at the same absolute root: configure the service with `WPE_AGENT_DATA_ROOT`, then pass that exact path as `--data-root` to maintenance.
+
+Because backup encryption and restore journals use Windows current-user DPAPI, run the service and maintenance CLI under the same Windows account. Moving only the data directory to another account is not a supported recovery path.
 
 ## Backup
 
@@ -44,3 +46,13 @@ An interrupted uncommitted swap is recovered before normal process bootstrap. A 
 - 4: maintenance operation rejected or failed.
 
 Output is JSON and contains no stack trace. Failure does not imply the active data generation was changed; restore mutation begins only after backup verification, explicit id confirmation, and exclusive maintenance ownership.
+
+## Windows Service maintenance sequence
+
+1. Confirm the service account and the absolute `WPE_AGENT_DATA_ROOT` value.
+2. Stop `WPE Agent Headless` and confirm the process has exited.
+3. Run `verify` on the intended backup. Record the authenticated `backupId` from the JSON result.
+4. Run `backup` if a fresh pre-maintenance checkpoint is required.
+5. Run `restore` only with the exact verified `--confirm-backup-id`.
+6. Start `WPE Agent Headless` again. Startup recovery runs before the shared process lease is acquired; if an interrupted restore cannot be proven recoverable, startup fails closed instead of starting trading.
+7. Inspect `Runtime/headless-health-v1.json` and require a fresh `ready` state before treating the runtime as operational.
