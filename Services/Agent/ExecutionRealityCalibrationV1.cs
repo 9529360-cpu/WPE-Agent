@@ -170,11 +170,18 @@ internal static class ExecutionRealityCalibrationCanonicalizerV1
     private static bool Sha(string value)=>value is{Length:64}&&value.All(Uri.IsHexDigit);
 }
 
+internal sealed record ExecutionRealityTimedSummaryV1(
+    ExecutionDriftSummaryV1 Summary,
+    DateTimeOffset CompletedAtUtc);
+
 internal sealed record ExecutionRealityCalibrationObservationSetV1(
     bool SourceTraceMatches,
     string CurrentExecutionTraceSha256,
     string CurrentDriftTraceSha256,
-    IReadOnlyList<ExecutionDriftSummaryV1> Summaries);
+    IReadOnlyList<ExecutionRealityTimedSummaryV1> TimedSummaries)
+{
+    internal IReadOnlyList<ExecutionDriftSummaryV1> Summaries=>TimedSummaries.Select(x=>x.Summary).ToArray();
+}
 
 internal sealed class ExecutionRealityCalibrationServiceV1(AgentSqliteStore store)
 {
@@ -380,7 +387,7 @@ public sealed partial class AgentSqliteStore
         }
     }
 
-    private static ExecutionDriftSummaryV1? SummarizeFrozenDrift(IReadOnlyList<ExecutionDriftObservationV1> values)
+    private static ExecutionRealityTimedSummaryV1? SummarizeFrozenDrift(IReadOnlyList<ExecutionDriftObservationV1> values)
     {
         if(values.Count==0||values.Select(x=>x.Sequence).Distinct().Count()!=values.Count)return null;
         var first=values[0];
@@ -405,11 +412,12 @@ public sealed partial class AgentSqliteStore
             var direction=final.Side==PositionSide.Long?1m:-1m;
             adverse=(double)(direction*(final.ObservedAveragePrice-final.ExpectedPrice)/final.ExpectedPrice*10000m);
         }
-        return new(final.ClientOrderId,first.ProviderId,first.Environment,first.Symbol,first.Side,first.ReduceOnly,first.OrderType,first.LimitPrice,
+        var summary=new ExecutionDriftSummaryV1(final.ClientOrderId,first.ProviderId,first.Environment,first.Symbol,first.Side,first.ReduceOnly,first.OrderType,first.LimitPrice,
             values.Count,exchange.Length,exchange.Count(x=>x.ObservedExecutedQuantity>0&&x.ObservedExecutedQuantity<x.RequestedQuantity),
             final.RequestedQuantity,final.ObservedExecutedQuantity,fillRatio,final.ExpectedPrice,final.ObservedAveragePrice,
             preflight?.ObservedAveragePrice,preflight?.SpreadBps,preflight?.LiquidityScore,preflight?.AtrPercent,
             submitMs,endMs,adverse,final.ProviderStatus);
+        return new(summary,final.ObservedAtUtc);
     }
 
     internal async Task<bool> SaveExecutionRealityCalibrationAsync(ExecutionRealityCalibrationReportV1 value,CancellationToken ct)
