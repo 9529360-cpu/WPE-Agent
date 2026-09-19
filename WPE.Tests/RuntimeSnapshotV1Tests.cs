@@ -316,7 +316,7 @@ public sealed class RuntimeSnapshotV1Tests
                 HistoricalCollectionPageV1<HistoricalReconciliationV1>.CurrentContractVersion,
                 HistoricalCollectionKindV1.Reconciliations,
                 RuntimeCollectionState.Available,
-                [new("position","position-1","wpe.position-reconciliation/1.0",now,now,"Confirmed",true,new string('a',64))],
+                [new("position","reconciliation#ABCDEF123456","wpe.position-reconciliation/1.0",now,now,"Confirmed",true,new string('a',64))],
                 null,now,"local-agent-sqlite")
         };
 
@@ -325,7 +325,7 @@ public sealed class RuntimeSnapshotV1Tests
         var review=Assert.Single(snapshot.HistoricalPostTradeReviews.Items);
         Assert.Equal("trend-alpha",review.StrategyId);Assert.Equal(10.95m,review.NetPnl);Assert.Equal("trade#ABCDEF123456",review.TraceId);Assert.Equal("Approved",review.RiskDecision);Assert.Equal("Succeeded",review.ExecutionStatus);
         var reconciliation=Assert.Single(snapshot.HistoricalReconciliations.Items);
-        Assert.Equal("position",reconciliation.Kind);Assert.True(reconciliation.AllowsRiskIncrease);
+        Assert.Equal("position",reconciliation.Kind);Assert.Equal("reconciliation#ABCDEF123456",reconciliation.TraceId);Assert.True(reconciliation.AllowsRiskIncrease);
     }
 
     [Fact]
