@@ -156,7 +156,7 @@ foreach ($entry in $manifest) {
     $path = [System.IO.Path]::GetFullPath((Join-Path $packageRoot $relative))
     if (-not $path.StartsWith($packagePrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
         -not (Test-Path -LiteralPath $path -PathType Leaf) -or
-        (Get-Item -LiteralPath $path).Length -ne [long]$entry.length -or
+        (Get-Item -LiteralPath $path).Length -ne [long]$entry.size -or
         (Get-Sha256 $path) -ne [string]$entry.sha256) {
         $manifestFailures.Add([string]$entry.path)
     }
