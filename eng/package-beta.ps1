@@ -187,6 +187,11 @@ foreach ($runtimeInput in @(
 if (-not (Test-Path -LiteralPath $releaseReportPath -PathType Leaf)) { throw "Release-readiness report is missing." }
 if ($projectFiles.Count -ne 1) { throw "Expected exactly one application project file; found $($projectFiles.Count)." }
 $projectFile = $projectFiles[0].FullName
+$headlessProject = Join-Path $root "WPE.Headless/WPE.Headless.csproj"
+$maintenanceProject = Join-Path $root "WPE.Maintenance/WPE.Maintenance.csproj"
+foreach ($dependencyProject in @($projectFile, $headlessProject, $maintenanceProject)) {
+    if (-not (Test-Path -LiteralPath $dependencyProject -PathType Leaf)) { throw "Runtime bundle project is missing: $dependencyProject" }
+}
 $evidenceFile = Resolve-InRoot $LicenseEvidencePath
 $script:LicenseEvidence = @{}
 $evidenceDocument = Get-Content -Raw -LiteralPath $evidenceFile | ConvertFrom-Json
@@ -309,30 +314,47 @@ $safeVersion = $PackageVersion.Replace('+', '-').Replace('/', '-').Replace('\', 
 $packageName = "WPE-Agent-$safeVersion-$Runtime-portable"
 $packageRoot = Join-Path $output $packageName
 $payloadRoot = Join-Path $packageRoot "app"
+$headlessPayloadRoot = Join-Path $packageRoot "headless"
+$maintenancePayloadRoot = Join-Path $packageRoot "maintenance"
 $zipPath = Join-Path $output "$packageName.zip"
 
 if (Test-Path -LiteralPath $packageRoot) { Remove-Item -LiteralPath $packageRoot -Recurse -Force }
 if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
-New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
-Copy-Item -Path (Join-Path $publish "*") -Destination $payloadRoot -Recurse -Force
-# Portable Beta packages exclude debug symbols; the verified publish directory remains unchanged.
-Get-ChildItem -LiteralPath $payloadRoot -Recurse -Force -File -Filter "*.pdb" | Remove-Item -Force
-
-$signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $payloadRoot $exe[0].Name)
-$isSigned = $signature.Status -eq [System.Management.Automation.SignatureStatus]::Valid
-$signatureStatus = if ($isSigned) { "valid" } elseif ($signature.Status -eq [System.Management.Automation.SignatureStatus]::NotSigned) { "unsigned" } else { "invalid:$($signature.Status)" }
-
-$payloadFiles = @(Get-ChildItem -LiteralPath $payloadRoot -Recurse -Force -File | Sort-Object FullName)
-$payloadPrefix = $payloadRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
-$manifest = @($payloadFiles | ForEach-Object {
-    [ordered]@{
-        path = $_.FullName.Substring($payloadPrefix.Length).Replace('\', '/')
-        size = [long]$_.Length
-        sha256 = Get-Sha256 $_.FullName
+foreach ($directory in @($payloadRoot, $headlessPayloadRoot, $maintenancePayloadRoot)) {
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+}
+$copyPlan = @(
+    [pscustomobject]@{ Label = "desktop"; Source = $publish; Destination = $payloadRoot },
+    [pscustomobject]@{ Label = "headless"; Source = $headlessPublish; Destination = $headlessPayloadRoot },
+    [pscustomobject]@{ Label = "maintenance"; Source = $maintenancePublish; Destination = $maintenancePayloadRoot }
+)
+foreach ($copy in $copyPlan) {
+    Copy-Item -Path (Join-Path $copy.Source "*") -Destination $copy.Destination -Recurse -Force
+    $sourceState = @($artifactStates | Where-Object { $_.Label -eq $copy.Label })[0]
+    $copiedFacts = Get-ArtifactTreeFacts $copy.Destination
+    if ($copiedFacts.TreeSha256 -ne $sourceState.Facts.TreeSha256 -or $copiedFacts.FileCount -ne $sourceState.Facts.FileCount) {
+        throw "Runtime bundle copy changed artifact bytes: $($copy.Label)"
     }
-})
+}
+if ($null -ne $signingResultInput) {
+    Copy-Item -LiteralPath $signingResultInput -Destination (Join-Path $packageRoot "SIGNING-RESULT.json") -Force
+}
+
+$manifest = @()
+foreach ($copy in $copyPlan) {
+    $prefix = $copy.Destination.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $manifest += @(Get-ChildItem -LiteralPath $copy.Destination -Recurse -Force -File | Sort-Object FullName | ForEach-Object {
+        $relative = $_.FullName.Substring($prefix.Length).Replace('\', '/')
+        [ordered]@{
+            path = (if ($copy.Label -eq "desktop") { "app/$relative" } else { "$($copy.Label)/$relative" })
+            size = [long]$_.Length
+            sha256 = Get-Sha256 $_.FullName
+        }
+    })
+}
+$manifest = @($manifest | Sort-Object path)
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $packageRoot "FILE-MANIFEST.json") -Encoding UTF8
-$manifest | ForEach-Object { "$($_.sha256)  app/$($_.path)" } | Set-Content -LiteralPath (Join-Path $packageRoot "PAYLOAD-SHA256SUMS") -Encoding ASCII
+$manifest | ForEach-Object { "$($_.sha256)  $($_.path)" } | Set-Content -LiteralPath (Join-Path $packageRoot "PAYLOAD-SHA256SUMS") -Encoding ASCII
 
 $components = @{}
 $runtimeLibraries = @{}
