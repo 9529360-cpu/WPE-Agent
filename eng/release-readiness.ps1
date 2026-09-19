@@ -302,13 +302,16 @@ if ($StaticGatesOnly) {
 function Write-Reports {
     New-Item -ItemType Directory -Path $reportPath -Force | Out-Null
     $finishedAt = [DateTimeOffset]::UtcNow
-    $files = if (Test-Path -LiteralPath $outputPath) { @(Get-ChildItem -LiteralPath $outputPath -Recurse -Force -File) } else { @() }
+    $desktopArtifact = Get-ArtifactFacts $outputPath
+    $headlessArtifact = Get-ArtifactFacts $headlessOutputPath
+    $maintenanceArtifact = Get-ArtifactFacts $maintenanceOutputPath
     $report = [ordered]@{
         schemaVersion = "wpe.release-readiness.v1"
         status = $overallStatus
         configuration = "Release"
         runtime = $Runtime
         productVersion = $productVersion
+        source = [ordered]@{ commit = $sourceCommit; dirty = $sourceDirty }
         startedAtUtc = $startedAt.ToString("O")
         finishedAtUtc = $finishedAt.ToString("O")
         durationSeconds = [Math]::Round(($finishedAt - $startedAt).TotalSeconds, 3)
@@ -336,9 +339,13 @@ function Write-Reports {
     $lines.Add("- Status: **$($overallStatus.ToUpperInvariant())**")
     $lines.Add("- Configuration/runtime: Release / $Runtime")
     $lines.Add("- Product version (project/assembly): $productVersion")
+    $lines.Add("- Source commit: $sourceCommit")
+    $lines.Add("- Source dirty: $sourceDirty")
     $lines.Add("- Testnet-only: yes; Mainnet enabled: no")
     $lines.Add("- Deployment/upload performed: no")
-    $lines.Add("- Artifact files: $($files.Count)")
+    $lines.Add("- Desktop files/tree: $($desktopArtifact.fileCount) / $($desktopArtifact.treeSha256)")
+    $lines.Add("- Headless files/tree: $($headlessArtifact.fileCount) / $($headlessArtifact.treeSha256)")
+    $lines.Add("- Maintenance files/tree: $($maintenanceArtifact.fileCount) / $($maintenanceArtifact.treeSha256)")
     $lines.Add("")
     $lines.Add("## Checks")
     $lines.Add("")
