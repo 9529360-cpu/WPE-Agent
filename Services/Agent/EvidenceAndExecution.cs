@@ -370,8 +370,27 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             }
             var order=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);if(order is null){await _db.SaveIntentAsync(saved.CycleId,intent,"UNKNOWN",saved.ExchangeOrderId,ct);safe=false;messages.Add(L("Execution.ExchangeUnknown",intent.ClientOrderId));continue;}
             if(order.Status is "NEW" or "PARTIALLY_FILLED"){EnsureTestnet();order=await WaitAndCancelOnTimeoutAsync(intent.Symbol,intent.ClientOrderId,order,ct);}
-            await _db.SaveIntentAsync(saved.CycleId,intent,order.Status,order.OrderId,ct);
             var providerState=ProviderLifecycle(intent,order);
+            if(providerState==ProviderOrderLifecycleStateV1.TerminalNoFill)
+            {
+                await _db.SaveIntentAsync(saved.CycleId,intent,order.Status,order.OrderId,ct);
+                continue;
+            }
+            if(order.ExecutedQuantity>0&&providerState is ProviderOrderLifecycleStateV1.Filled or ProviderOrderLifecycleStateV1.TerminalPartialFill)
+            {
+                var recoveredOrder=providerState==ProviderOrderLifecycleStateV1.Filled
+                    ?order with{Status="FILLED"}
+                    :order with{Status="PARTIALLY_FILLED"};
+                await CaptureFeeEvidenceAsync(recoveredOrder,ct);
+                if(intent.ReduceOnly&&providerState==ProviderOrderLifecycleStateV1.Filled)
+                    await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);
+                await _db.RecordExecutionAsync(
+                    saved.CycleId,
+                    intent with{Quantity=order.ExecutedQuantity},
+                    recoveredOrder,
+                    "wpe-core-v2",
+                    ct);
+            }
             if(order.ExecutedQuantity>0&&!intent.ReduceOnly)
             {
                 var protectionAlreadyPlaced=saved.Status is "PROTECTED_PARTIAL_PENDING" or "PROTECTED_UNKNOWN";
@@ -439,7 +458,8 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
                     safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));continue;
                 }
             }
-            if(!IsTerminal(order.Status)){await _db.SaveIntentAsync(saved.CycleId,intent,"UNKNOWN",order.OrderId,ct);safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));}
+            await _db.SaveIntentAsync(saved.CycleId,intent,"UNKNOWN",order.OrderId,ct);
+            safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));
         }return new(safe,messages);
     }
 

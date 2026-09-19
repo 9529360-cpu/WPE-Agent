@@ -160,7 +160,12 @@ public sealed class OrderFaultInjectionTests : IDisposable
     [Fact]
     public async Task PartialOpeningFillWithoutTerminalCancelAck_RemainsRecoverableUntilTerminalObservation()
     {
-        var exchange = new TimeoutExchange { InitialExecutedQuantity = 0.004m, RemainPartialAfterCancel = true };
+        var exchange = new TimeoutExchange
+        {
+            InitialExecutedQuantity = 0.004m,
+            RemainPartialAfterCancel = true,
+            TerminalExecutedQuantity = 0.006m
+        };
         var scheduler = new VirtualPollScheduler();
         var (executor, store) = CreateExecutor(exchange, scheduler);
         var intent = Opening("partial-open-unacked-cancel", 0.01m);
@@ -184,6 +189,8 @@ public sealed class OrderFaultInjectionTests : IDisposable
         Assert.Empty(await store.GetRecoverableIntentsAsync(CancellationToken.None));
         Assert.Equal(2, exchange.ProtectionRequests.Count);
         Assert.Equal("PROTECTED_PARTIAL", await store.GetOrderIntentStatusAsync(intent.ClientOrderId, CancellationToken.None));
+        var position=Assert.Single(await store.GetExecutionPositionLedgerAsync(CancellationToken.None));
+        Assert.Equal(0.006m,position.Quantity);
     }
 
     [Fact]
@@ -367,6 +374,7 @@ public sealed class OrderFaultInjectionTests : IDisposable
         public bool CancelFailure { get; init; }
         public bool FillAfterFirstPostCancelQuery { get; init; }
         public decimal InitialExecutedQuantity { get; init; }
+        public decimal TerminalExecutedQuantity { get; init; }
         public bool RemainPartialAfterCancel { get; set; }
         public int CancelAttempts { get; private set; }
         public int PostCancelQueries { get; private set; }
@@ -385,7 +393,12 @@ public sealed class OrderFaultInjectionTests : IDisposable
             PostCancelQueries++;
             if(FillAfterFirstPostCancelQuery&&PostCancelQueries>=2)_order=_order with{Status="FILLED",ExecutedQuantity=0.01m,AvgPrice=50_000m};
             else if(RemainPartialAfterCancel)_order=_order with{Status="PARTIALLY_FILLED"};
-            else if(!CancelFailure)_order=_order with{Status="CANCELED"};
+            else if(!CancelFailure)_order=_order with
+            {
+                Status="CANCELED",
+                ExecutedQuantity=TerminalExecutedQuantity>0?TerminalExecutedQuantity:_order.ExecutedQuantity,
+                AvgPrice=TerminalExecutedQuantity>0?50_000m:_order.AvgPrice
+            };
             return Task.FromResult<ExchangeOrder?>(_order);
         }
 
