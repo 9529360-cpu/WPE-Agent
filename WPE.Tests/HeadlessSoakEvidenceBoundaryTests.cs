@@ -14,6 +14,10 @@ public sealed class HeadlessSoakEvidenceBoundaryTests
         Assert.Contains("wpe.headless-soak-sample/1.0",watcher,StringComparison.Ordinal);
         Assert.Contains("soak.output-inside-authoritative-data-forbidden",watcher,StringComparison.Ordinal);
         Assert.Contains("Get-FileHash",watcher,StringComparison.Ordinal);
+        Assert.Contains("sourceIdentity = $SourceIdentity",watcher,StringComparison.Ordinal);
+        Assert.Contains("candidateManifestSha256 = $CandidateManifestSha256.ToLowerInvariant()",watcher,StringComparison.Ordinal);
+        Assert.Contains("soak.source-identity-mismatch",verifier,StringComparison.Ordinal);
+        Assert.Contains("soak.candidate-manifest-mismatch",verifier,StringComparison.Ordinal);
         Assert.Contains("samples-hash-mismatch",verifier,StringComparison.Ordinal);
         Assert.Contains("duration-insufficient",verifier,StringComparison.Ordinal);
 
