@@ -138,6 +138,10 @@ jobs:
       shell: pwsh
       run: ./eng/dogfood/tests/ReleaseSlots.Tests.ps1
 
+    - name: Verify V1 candidate gate
+      shell: pwsh
+      run: ./eng/dogfood/tests/V1CandidateGate.Tests.ps1
+
     - name: Verify runtime bundle release scripts
       shell: pwsh
       run: ./eng/release/tests/RuntimeBundleScripts.Tests.ps1
