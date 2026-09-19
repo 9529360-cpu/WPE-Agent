@@ -33,8 +33,11 @@ public sealed partial class AgentSqliteStore
             || string.IsNullOrWhiteSpace(item.ArtifactHash)
             || string.IsNullOrWhiteSpace(item.IntentHash))
             return DenyIntent("automatic-artifact-canonical-evidence-missing");
+        if (!item.RiskReceiptValid || item.RiskReceipt is null)
+            return DenyIntent("automatic-risk-receipt-invalid");
 
         var artifact = item.Artifact;
+        var receipt = item.RiskReceipt;
         if (!string.Equals(artifact.CorrelationId, correlationId, StringComparison.Ordinal))
             return DenyIntent("automatic-artifact-correlation-mismatch");
         if (!string.Equals(artifact.Environment, "Testnet", StringComparison.Ordinal))
@@ -62,6 +65,18 @@ public sealed partial class AgentSqliteStore
             return DenyIntent("automatic-executing-event-conflict");
         if (executing[0].OccurredAtUtc < artifact.CreatedAtUtc)
             return DenyIntent("automatic-executing-event-time-invalid");
+        if (!receipt.Approved
+            || receipt.RevokedAtUtc is not null
+            || !string.Equals(receipt.CorrelationId, artifact.CorrelationId, StringComparison.Ordinal)
+            || !string.Equals(receipt.IntentHash, item.IntentHash, StringComparison.Ordinal)
+            || receipt.ArtifactHash is null
+            || !string.Equals(receipt.ArtifactHash, item.ArtifactHash, StringComparison.Ordinal))
+            return DenyIntent("automatic-risk-receipt-mismatch");
+        if (receipt.IssuedAtUtc.Offset != TimeSpan.Zero
+            || receipt.ExpiresAtUtc.Offset != TimeSpan.Zero
+            || receipt.IssuedAtUtc > executing[0].OccurredAtUtc
+            || receipt.ExpiresAtUtc <= executing[0].OccurredAtUtc)
+            return DenyIntent("automatic-risk-receipt-time-invalid");
 
         return new(
             true,
