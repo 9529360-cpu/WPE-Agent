@@ -113,6 +113,30 @@ public sealed class ExecutionRealityCalibrationTests : IDisposable
     }
 
     [Fact]
+    public async Task EmergencyCloseWithInheritedExpectedPriceIsNotCalibrationSample()
+    {
+        var store=new AgentSqliteStore(Database,()=>_now);
+        var intent=Intent("emergency-close-E");
+        await Drift(store,intent,ExecutionDriftPhaseV1.IntentAccepted,ExecutionDriftSourceV1.Local,"INTENT",0,0,null);
+        _now=_now.AddMilliseconds(5);
+        await Drift(store,intent,ExecutionDriftPhaseV1.SubmissionAttempted,ExecutionDriftSourceV1.Local,"SUBMISSION_ATTEMPTED",0,0,null);
+        _now=_now.AddMilliseconds(5);
+        await Drift(store,intent,ExecutionDriftPhaseV1.ProviderObserved,ExecutionDriftSourceV1.Exchange,"FILLED",1m,100m,_now);
+        await Drift(store,intent,ExecutionDriftPhaseV1.ExecutionRecorded,ExecutionDriftSourceV1.Exchange,"FILLED",1m,100m,_now);
+        await store.RecordExecutionAsync("cycle-emergency",intent,Order(intent,"FILLED",1m,100m),"strategy-v1",default);
+
+        var snapshot=await store.GetExecutionPositionLedgerSnapshotAsync(default);
+        var position=PositionReconciliationServiceV1.Reconcile(snapshot.Legs,[Position("BTCUSDT",PositionSide.Long,1m)],_now,_now);
+        Assert.True(await store.PersistExecutionPositionDriftEvidenceSafelyAsync(snapshot,position,default));
+
+        var report=await new ExecutionRealityCalibrationServiceV1(store).BuildAsync(default);
+        Assert.NotNull(report);
+        Assert.Equal(ExecutionRealityCalibrationStatusV1.Unsupported,report!.Status);
+        Assert.Empty(report.Buckets);
+        Assert.Contains("execution-calibration.no-current-schema-samples",report.ReasonCodes);
+    }
+
+    [Fact]
     public async Task CalibrationAuditIsAppendOnlyAndObservationOnly()
     {
         var store=new AgentSqliteStore(Database,()=>_now);
