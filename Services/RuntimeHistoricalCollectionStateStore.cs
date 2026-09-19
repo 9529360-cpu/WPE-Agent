@@ -8,6 +8,15 @@ using 币安量化机器人.Services;
 
 namespace WpeAgent.RuntimeServices;
 
+internal sealed record HistoricalCollectionChangeVector(
+    string Orders,
+    string Equity,
+    string Backtests,
+    string SkillCalls,
+    string AuditEvents,
+    string PostTradeReviews,
+    string Reconciliations);
+
 /// <summary>Bounded, read-only projections of facts already persisted in the local agent SQLite database.</summary>
 public sealed class RuntimeHistoricalCollectionStateStore
 {
@@ -22,6 +31,59 @@ public sealed class RuntimeHistoricalCollectionStateStore
         if (string.IsNullOrWhiteSpace(databasePath)) throw new ArgumentException("A database path is required.", nameof(databasePath));
         _connectionString = new SqliteConnectionStringBuilder { DataSource = databasePath, Mode = SqliteOpenMode.ReadOnly }.ToString();
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
+    }
+
+    private static readonly (string Table,string Timestamp)[] ChangeSources=
+    [
+        ("execution_events","occurred_at"),
+        ("equity_snapshots","observed_at"),
+        ("backtest_runs","completed_at"),
+        ("runtime_skill_calls","occurred_at"),
+        ("runtime_events","occurred_at"),
+        ("trade_outcomes","closed_at"),
+        ("automatic_execution_queue","updated_at"),
+        ("automatic_execution_events","occurred_at"),
+        ("model_off_canonical_audits","recorded_at_utc"),
+        ("position_reconciliation_audits","evaluated_at"),
+        ("protection_reconciliation_audits","evaluated_at"),
+        ("external_position_isolation_audits","evaluated_at")
+    ];
+
+    internal async Task<HistoricalCollectionChangeVector> ReadChangeVectorAsync(CancellationToken ct=default)
+    {
+        await using var connection=new SqliteConnection(_connectionString);await connection.OpenAsync(ct);
+        var existing=new HashSet<string>(StringComparer.Ordinal);
+        await using(var tables=connection.CreateCommand())
+        {
+            var names=AddListParameters(tables,"changeTable",ChangeSources.Select(source=>source.Table).Distinct(StringComparer.Ordinal).ToArray());
+            tables.CommandText=$"SELECT name FROM sqlite_master WHERE type='table' AND name IN ({names})";
+            await using var reader=await tables.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))existing.Add(reader.GetString(0));
+        }
+
+        var stamps=ChangeSources.ToDictionary(source=>source.Table,_=>"missing",StringComparer.Ordinal);
+        var present=ChangeSources.Where(source=>existing.Contains(source.Table)).ToArray();
+        if(present.Length>0)
+        {
+            await using var command=connection.CreateCommand();
+            command.CommandText=string.Join(" UNION ALL ",present.Select(source=>$"SELECT '{source.Table}',COALESCE(MAX(rowid),0),COALESCE(MAX({source.Timestamp}),'') FROM {source.Table}"));
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var table=reader.GetString(0);
+                stamps[table]=$"{reader.GetInt64(1).ToString(CultureInfo.InvariantCulture)}:{reader.GetString(2)}";
+            }
+        }
+
+        static string Join(Dictionary<string,string> values,params string[] names)=>string.Join("|",names.Select(name=>$"{name}={values[name]}"));
+        return new(
+            stamps["execution_events"],
+            stamps["equity_snapshots"],
+            stamps["backtest_runs"],
+            stamps["runtime_skill_calls"],
+            stamps["runtime_events"],
+            Join(stamps,"trade_outcomes","automatic_execution_queue","automatic_execution_events","model_off_canonical_audits"),
+            Join(stamps,"position_reconciliation_audits","protection_reconciliation_audits","external_position_isolation_audits"));
     }
 
     public Task<HistoricalCollectionPageV1<HistoricalOrderV1>> ReadOrdersAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default) =>
