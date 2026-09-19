@@ -173,14 +173,14 @@ public sealed class OrderFaultInjectionTests : IDisposable
         Assert.Single(exchange.ProtectionRequests);
 
         var firstRecovery = await executor.RecoverPendingAsync(CancellationToken.None);
-        Assert.False(firstRecovery.Safe);
+        Assert.False(firstRecovery.SafeToIncreaseRisk);
         Assert.Equal("PROTECTED_PARTIAL_PENDING", Assert.Single(await store.GetRecoverableIntentsAsync(CancellationToken.None)).Status);
         Assert.Single(exchange.ProtectionRequests);
 
         exchange.RemainPartialAfterCancel = false;
         var settled = await executor.RecoverPendingAsync(CancellationToken.None);
 
-        Assert.True(settled.Safe);
+        Assert.True(settled.SafeToIncreaseRisk);
         Assert.Empty(await store.GetRecoverableIntentsAsync(CancellationToken.None));
         Assert.Equal(2, exchange.ProtectionRequests.Count);
         Assert.Equal("PROTECTED_PARTIAL", await store.GetOrderIntentStatusAsync(intent.ClientOrderId, CancellationToken.None));
@@ -204,7 +204,7 @@ public sealed class OrderFaultInjectionTests : IDisposable
         exchange.RemainPartialAfterCancel = false;
         var settled = await executor.RecoverPendingAsync(CancellationToken.None);
 
-        Assert.False(settled.Safe);
+        Assert.False(settled.SafeToIncreaseRisk);
         Assert.Empty(await store.GetRecoverableIntentsAsync(CancellationToken.None));
         Assert.Equal("COMPLETED_PARTIAL", await store.GetOrderIntentStatusAsync(intent.ClientOrderId, CancellationToken.None));
         Assert.Empty(exchange.ProtectionRequests);
