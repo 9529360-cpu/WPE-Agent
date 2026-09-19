@@ -29,7 +29,9 @@ public static class RuntimeProcessBootstrap
         {
             if (_current is not null) return _current;
 
-            var leasePath = AppDataPaths.RuntimeFile(DataRootMaintenanceLease.LeaseFileName);
+            var layout = new AppDataLayout(AppDataPaths.RootDirectory);
+            RuntimeStateRestoreRecovery.RecoverIfNeeded(layout);
+            var leasePath = layout.RuntimeFile(DataRootMaintenanceLease.LeaseFileName);
             _dataRootLease = DataRootMaintenanceLease.AcquireProcessLease(leasePath);
             try
             {
