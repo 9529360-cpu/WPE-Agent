@@ -304,6 +304,70 @@ internal static class StrategyShadowQualificationV1
         catch{return false;}
     }
 
+    internal static bool TryDeserializeCanonical(
+        ReadOnlySpan<byte> canonicalBytes,
+        string canonicalSha256,
+        out StrategyShadowQualificationDecisionV1? value)
+    {
+        value=null;
+        if(canonicalBytes.Length==0||!LowerSha(canonicalSha256))return false;
+        try
+        {
+            if(!CryptographicOperations.FixedTimeEquals(
+                SHA256.HashData(canonicalBytes),
+                Convert.FromHexString(canonicalSha256)))
+                return false;
+            using var document=JsonDocument.Parse(canonicalBytes);
+            var root=document.RootElement;
+            if(!Enum.TryParse<StrategyShadowQualificationStateV1>(
+                root.GetProperty("state").GetString(),true,out var state))
+                return false;
+            var evidence=root.GetProperty("evidence_sha256")
+                .EnumerateArray()
+                .Select(x=>x.GetString()??string.Empty)
+                .ToArray();
+            var reasons=root.GetProperty("reason_codes")
+                .EnumerateArray()
+                .Select(x=>x.GetString()??string.Empty)
+                .ToArray();
+            value=new(
+                root.GetProperty("schema").GetString()??string.Empty,
+                root.GetProperty("strategy_id").GetString()??string.Empty,
+                root.GetProperty("strategy_version").GetString()??string.Empty,
+                root.GetProperty("symbol").GetString()??string.Empty,
+                root.GetProperty("market_provider_id").GetString()??string.Empty,
+                root.GetProperty("environment").GetString()??string.Empty,
+                root.GetProperty("backtest_validation_sha256").GetString()??string.Empty,
+                root.GetProperty("timeline_sha256").GetString()??string.Empty,
+                root.GetProperty("policy_version").GetString()??string.Empty,
+                root.GetProperty("policy_sha256").GetString()??string.Empty,
+                state,
+                root.GetProperty("qualified").GetBoolean(),
+                root.GetProperty("observation_count").GetInt32(),
+                root.GetProperty("first_market_at_utc").GetDateTimeOffset(),
+                root.GetProperty("last_market_at_utc").GetDateTimeOffset(),
+                root.GetProperty("observation_window_seconds").GetDouble(),
+                root.GetProperty("expectancy").GetDouble(),
+                root.GetProperty("max_drawdown").GetDouble(),
+                root.GetProperty("quality_score").GetDouble(),
+                root.GetProperty("failure_streak").GetInt32(),
+                evidence,
+                root.GetProperty("evidence_set_sha256").GetString()??string.Empty,
+                root.GetProperty("evaluated_at_utc").GetDateTimeOffset(),
+                reasons,
+                canonicalBytes.ToArray(),
+                canonicalSha256);
+            if(IsCanonical(value))return true;
+            value=null;
+            return false;
+        }
+        catch
+        {
+            value=null;
+            return false;
+        }
+    }
+
     internal static string PolicyHash(StrategyShadowQualificationPolicyV1 policy)
     {
         ValidatePolicy(policy);
