@@ -13,6 +13,7 @@ public sealed class RuntimeStateRestoreService
     private readonly IPlatformKeyProtector _keyProtector;
     private readonly RuntimeStateBackupService _backupService;
     private readonly RuntimeStateBackupVerifier _verifier;
+    private readonly RuntimeStateSecurityStorageRestoreEvidence _securityRestoreEvidence;
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly Func<RuntimeStateRestorePhase, CancellationToken, Task>? _phaseHook;
 
@@ -43,6 +44,7 @@ public sealed class RuntimeStateRestoreService
             : productVersion;
         _backupService = new(_layout, _keyProtector, _utcNow, device, version);
         _verifier = new(_keyProtector, _utcNow, device, version);
+        _securityRestoreEvidence = new(_keyProtector, _utcNow);
         _phaseHook = phaseHook;
     }
 
@@ -72,9 +74,16 @@ public sealed class RuntimeStateRestoreService
             backupRoot, stage, cancellationToken).ConfigureAwait(false);
 
         RuntimeStateBackupResult? safetyBackup = null;
+        RuntimeStateSecurityStorageRestorePlan? securityRestorePlan = null;
         var journalWritten = false;
         try
         {
+            securityRestorePlan = await _securityRestoreEvidence.PrepareAsync(
+                verified.Descriptor,
+                stage,
+                restoreId,
+                cancellationToken).ConfigureAwait(false);
+
             if (HasAuthoritativeActiveState())
             {
                 safetyBackup = await _backupService.CreateUnderExclusiveLeaseAsync(
@@ -120,6 +129,11 @@ public sealed class RuntimeStateRestoreService
                 _layout.DataDirectory,
                 cancellationToken).ConfigureAwait(false);
 
+            var securityStorageStatus = await _securityRestoreEvidence.CommitAsync(
+                securityRestorePlan,
+                _layout.DataDirectory,
+                cancellationToken).ConfigureAwait(false);
+
             journal = journal with { Phase = RuntimeStateRestorePhase.Committed };
             RuntimeStateRestoreRecovery.WriteJournal(
                 _layout, journal, _keyProtector);
@@ -133,7 +147,8 @@ public sealed class RuntimeStateRestoreService
                 safetyBackup?.Directory,
                 _utcNow().ToUniversalTime(),
                 verified.Descriptor.Items.Count,
-                verified.Descriptor.ItemsSha256);
+                verified.Descriptor.ItemsSha256,
+                securityStorageStatus?.EvidenceSha256);
         }
         catch
         {
