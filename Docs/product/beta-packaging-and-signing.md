@@ -63,7 +63,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\eng\package-beta.ps1 `
 
 Before distribution, independently verify the signature and timestamp with `signtool verify /pa /all /v`, verify the ZIP against `SHA256SUMS`, and record a release go/no-go decision. The signing script does not upload the artifact.
 
-The signing helper preflights every staging root before the first signature mutation. If signing or verification fails after mutation has begun, discard the entire signing staging tree and recreate it from the source-bound release-readiness artifacts; do not promote or package a partially signed tree. In bundle mode, `signing-result.json` additionally binds the readiness-report SHA-256 and exact source commit to each pre-sign tree hash and verified post-sign tree/executable hash. The later package verifier must consume this transition record rather than comparing signed bytes directly to pre-sign readiness hashes.
+The signing helper preflights every staging root before the first signature mutation. If signing or verification fails after mutation has begun, discard the entire signing staging tree and recreate it from the source-bound release-readiness artifacts; do not promote or package a partially signed tree. In bundle mode, `signing-result.json` binds the readiness-report SHA-256 and exact source commit to each pre-sign tree hash and verified post-sign tree/executable hash. `sign-beta.ps1` also writes `signing-result.p7s`, a detached SHA-256 CMS signature over the exact JSON bytes using the same approved publisher certificate. Consumers must verify that detached signature before trusting the recorded runtime-tree hashes; the executable Authenticode signatures alone do not authenticate neighboring DLL/resource bytes.
 
 ## SmartScreen
 
