@@ -88,6 +88,69 @@ public sealed class TradingExecutionGatewayTests:IDisposable
         Assert.Equal(0,evidence.FoundCount);Assert.Equal(before,setup.Exchange.MutationCount);
     }
 
+    [Theory]
+    [InlineData("NEW", 0, 0)]
+    [InlineData("PARTIALLY_FILLED", 0.0005, 50000)]
+    [InlineData("EXPIRED", 0.0005, 50000)]
+    public async Task AutomaticReconciliationDoesNotTreatOpenOrPartialOrderAsSucceeded(
+        string status,
+        double executed,
+        double averagePrice)
+    {
+        var setup=Setup(TradingAuthorizationMode.Auto);
+        setup.Exchange.ObservedOrder=new(
+            "BTCUSDT","order-observed","client-1",status,
+            (decimal)executed,(decimal)averagePrice,"MARKET",PositionSide.Long,false,Now.UtcDateTime);
+
+        var result=await new TradingAutomaticExecutionGateway(setup.Gateway,setup.Exchange,setup.Store)
+            .ReconcileAsync(AutomaticArtifact(),CancellationToken.None);
+
+        Assert.Equal(AutomaticGatewayReconciliationState.Unknown,result.State);
+        Assert.Equal("automatic.reconcile-unknown",result.Code);
+    }
+
+    [Fact]
+    public async Task AutomaticReconciliationRequiresExactFilledQuantityForSuccess()
+    {
+        var setup=Setup(TradingAuthorizationMode.Auto);
+        setup.Exchange.ObservedOrder=new(
+            "BTCUSDT","order-observed","client-1","FILLED",
+            .001m,50_000m,"MARKET",PositionSide.Long,false,Now.UtcDateTime);
+
+        var result=await new TradingAutomaticExecutionGateway(setup.Gateway,setup.Exchange,setup.Store)
+            .ReconcileAsync(AutomaticArtifact(),CancellationToken.None);
+
+        Assert.Equal(AutomaticGatewayReconciliationState.Succeeded,result.State);
+        Assert.Equal("automatic.reconcile-succeeded",result.Code);
+    }
+
+    [Fact]
+    public async Task AutomaticReconciliationZeroFillTerminalIsFailed()
+    {
+        var setup=Setup(TradingAuthorizationMode.Auto);
+        setup.Exchange.ObservedOrder=new(
+            "BTCUSDT","order-observed","client-1","CANCELED",
+            0m,0m,"MARKET",PositionSide.Long,false,Now.UtcDateTime);
+
+        var result=await new TradingAutomaticExecutionGateway(setup.Gateway,setup.Exchange,setup.Store)
+            .ReconcileAsync(AutomaticArtifact(),CancellationToken.None);
+
+        Assert.Equal(AutomaticGatewayReconciliationState.Failed,result.State);
+        Assert.Equal("automatic.reconcile-order-terminal",result.Code);
+    }
+
+    [Fact]
+    public async Task ReviewReconciliationJournaledMissingOrderIsUnknownNotNotSubmitted()
+    {
+        var setup=Setup(TradingAuthorizationMode.Review);
+        await InsertSubmissionJournal("client-1");
+
+        var result=await setup.Executor.ReconcileAsync(ReviewArtifact(),CancellationToken.None);
+
+        Assert.Equal(DurableReviewReconciliationState.Unknown,result.State);
+        Assert.Equal("review.reconcile-manual-required",result.Code);
+    }
+
     [Fact]
     public async Task Review_ConsumesPersistedApprovalBeforeCallingReliableExecutor()
     {
@@ -371,6 +434,10 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     private static DurableExecutionArtifactV2 AutomaticArtifact()=>new(2,"correlation-1",
         [new(0,"BTCUSDT","Long",.001m,false,49_000m,51_000m,"client-1","strategy.entry","OpenLong","Market",0,50_000m)],
         5,true,"binance","Testnet","strategy","v1",Now.AddSeconds(-20),"market-v1",Now.AddSeconds(-10),Now.AddMinutes(2));
+    private static DurableReviewExecutionArtifactV1 ReviewArtifact()=>new(
+        DurableReviewExecutionArtifactV1.Version,
+        [new(0,"BTCUSDT","Long",.001m,false,49_000m,51_000m,"client-1","strategy.entry","OpenLong","Market",0,50_000m)],
+        5,true,"binance","Testnet","strategy","v1",Now.AddSeconds(-20),"market-v1",Now.AddSeconds(-10),Now.AddMinutes(2));
     private static string IntentHash()=>TradingExecutionGateway.ComputeIntentHash([Intent()],5,true);
     private static ManualEmergencyConfirmation Confirmation(DateTimeOffset? confirmedAt=null)=>new("confirmation-1","emergency-correlation","user-1","device-1","session-1",confirmedAt??Now.AddMinutes(-1));
     private static EmergencyReductionCommand EmergencyCommand()=>new(Confirmation(),new("BTCUSDT",PositionSide.Long,.01m,49_000m,50_000m,10m,5m,true,20_000m),new("BTCUSDT",PositionSide.Long,.01m,true,0,0,"emergency-client-1","manual emergency close",DecisionAction.CloseLong,ExpectedPrice:50_000m),5,true);
@@ -379,6 +446,18 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     private static TestnetSmokeCommand SmokeCleanupCommand(TestnetSmokeAuthorization authorization){var position=new ManagedPosition("BTCUSDT",PositionSide.Long,.001m,50_000m,50_000m,0,10,true,20_000m);var intent=new ExecutionIntent("BTCUSDT",PositionSide.Long,.001m,true,0,0,"smoke-close-1","testnet smoke cleanup",DecisionAction.CloseLong,ExpectedPrice:50_000m);return new(authorization,intent,10,true,ObservedPosition:position);}
     private async Task<string?> ExecutionCorrelation(){await using var connection=new SqliteConnection($"Data Source={DatabasePath}");await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText="SELECT cycle_id FROM execution_events ORDER BY id DESC LIMIT 1";return (await command.ExecuteScalarAsync())?.ToString();}
     private async Task<int> ApprovalCount(string table,string condition){await using var connection=new SqliteConnection($"Data Source={DatabasePath}");await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText=$"SELECT COUNT(*) FROM {table} WHERE {condition}";return Convert.ToInt32(await command.ExecuteScalarAsync());}
+    private async Task InsertSubmissionJournal(string clientOrderId)
+    {
+        await using var connection=new SqliteConnection($"Data Source={DatabasePath}");
+        await connection.OpenAsync();
+        await using var command=connection.CreateCommand();
+        command.CommandText="INSERT INTO execution_submission_journal(submission_id,client_order_id,provider_id,environment,submitted_at,result_code,result_hash) VALUES($submission,$client,'binance','Testnet',$at,'unknown',$hash)";
+        command.Parameters.AddWithValue("$submission","submission-"+clientOrderId);
+        command.Parameters.AddWithValue("$client",clientOrderId);
+        command.Parameters.AddWithValue("$at",Now.ToString("O"));
+        command.Parameters.AddWithValue("$hash",new string('a',64));
+        await command.ExecuteNonQueryAsync();
+    }
     public void Dispose(){ServiceLocator.SystemState.Status=_originalStatus;SqliteConnection.ClearAllPools();if(Directory.Exists(_directory))Directory.Delete(_directory,true);}
     private sealed record SetupResult(AgentSqliteStore Store,RecordingExchange Exchange,ReliableOrderExecutor Executor,TradingExecutionGateway Gateway);
 

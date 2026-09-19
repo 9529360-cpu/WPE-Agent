@@ -296,73 +296,81 @@ public static class ProviderOrderReconciliationServiceV1
         }
     }
 
-    private static ProviderOrderReconciliationLegV1 Classify(ProviderOrderReconciliationInputV1 input)
+    private static ProviderOrderReconciliationLegV1 Classify(ProviderOrderReconciliationInputV1 input) =>
+        Leg(
+            input,
+            ClassifyProviderState(
+                input.Symbol,
+                input.ClientOrderId,
+                input.IntendedQuantity,
+                input.SubmissionJournaled,
+                input.ExchangeOrder,
+                input.QueryFailed),
+            input.ExchangeOrder);
+
+    internal static ProviderOrderLifecycleStateV1 ClassifyProviderState(
+        string symbol,
+        string clientOrderId,
+        decimal intendedQuantity,
+        bool submissionJournaled,
+        ExchangeOrder? order,
+        bool queryFailed = false)
     {
-        if (input.QueryFailed)
-            return Leg(input, ProviderOrderLifecycleStateV1.QueryFailed, null);
-
-        var order = input.ExchangeOrder;
+        if (queryFailed)
+            return ProviderOrderLifecycleStateV1.QueryFailed;
         if (order is null)
-            return Leg(
-                input,
-                input.SubmissionJournaled
-                    ? ProviderOrderLifecycleStateV1.MissingUnknown
-                    : ProviderOrderLifecycleStateV1.NotSubmitted,
-                null);
+            return submissionJournaled
+                ? ProviderOrderLifecycleStateV1.MissingUnknown
+                : ProviderOrderLifecycleStateV1.NotSubmitted;
 
-        if (!string.Equals(order.Symbol, input.Symbol, StringComparison.Ordinal)
-            || !string.Equals(order.ClientOrderId, input.ClientOrderId, StringComparison.Ordinal)
+        if (!string.Equals(order.Symbol, symbol, StringComparison.Ordinal)
+            || !string.Equals(order.ClientOrderId, clientOrderId, StringComparison.Ordinal)
             || string.IsNullOrWhiteSpace(order.OrderId)
             || string.IsNullOrWhiteSpace(order.Status)
             || order.UpdatedAt == default
             || order.UpdatedAt.Kind != DateTimeKind.Utc
+            || intendedQuantity <= 0
             || order.ExecutedQuantity < 0
-            || order.ExecutedQuantity > input.IntendedQuantity)
-            return Leg(input, ProviderOrderLifecycleStateV1.Conflicting, order);
+            || order.ExecutedQuantity > intendedQuantity)
+            return ProviderOrderLifecycleStateV1.Conflicting;
 
         var status = order.Status.Trim().ToUpperInvariant();
         var executed = order.ExecutedQuantity;
 
         if (executed == 0 && order.AvgPrice != 0)
-            return Leg(input, ProviderOrderLifecycleStateV1.Conflicting, order);
+            return ProviderOrderLifecycleStateV1.Conflicting;
         if (executed > 0 && order.AvgPrice <= 0)
-            return Leg(input, ProviderOrderLifecycleStateV1.Conflicting, order);
+            return ProviderOrderLifecycleStateV1.Conflicting;
 
         if (status == "FILLED")
-            return Leg(
-                input,
-                executed == input.IntendedQuantity
-                    ? ProviderOrderLifecycleStateV1.Filled
-                    : ProviderOrderLifecycleStateV1.Conflicting,
-                order);
+            return executed == intendedQuantity
+                ? ProviderOrderLifecycleStateV1.Filled
+                : ProviderOrderLifecycleStateV1.Conflicting;
 
         if (status == "PARTIALLY_FILLED")
-            return Leg(
-                input,
-                executed > 0 && executed < input.IntendedQuantity
-                    ? ProviderOrderLifecycleStateV1.PartialOpen
-                    : ProviderOrderLifecycleStateV1.Conflicting,
-                order);
+            return executed > 0 && executed < intendedQuantity
+                ? ProviderOrderLifecycleStateV1.PartialOpen
+                : ProviderOrderLifecycleStateV1.Conflicting;
 
         if (TerminalStatuses.Contains(status))
         {
             if (executed == 0)
-                return Leg(input, ProviderOrderLifecycleStateV1.TerminalNoFill, order);
-            if (executed < input.IntendedQuantity)
-                return Leg(input, ProviderOrderLifecycleStateV1.TerminalPartialFill, order);
-            return Leg(input, ProviderOrderLifecycleStateV1.Conflicting, order);
+                return ProviderOrderLifecycleStateV1.TerminalNoFill;
+            if (executed < intendedQuantity)
+                return ProviderOrderLifecycleStateV1.TerminalPartialFill;
+            return ProviderOrderLifecycleStateV1.Conflicting;
         }
 
         if (OpenStatuses.Contains(status))
         {
             if (executed == 0)
-                return Leg(input, ProviderOrderLifecycleStateV1.Open, order);
-            if (executed < input.IntendedQuantity)
-                return Leg(input, ProviderOrderLifecycleStateV1.PartialOpen, order);
-            return Leg(input, ProviderOrderLifecycleStateV1.Conflicting, order);
+                return ProviderOrderLifecycleStateV1.Open;
+            if (executed < intendedQuantity)
+                return ProviderOrderLifecycleStateV1.PartialOpen;
+            return ProviderOrderLifecycleStateV1.Conflicting;
         }
 
-        return Leg(input, ProviderOrderLifecycleStateV1.Unknown, order);
+        return ProviderOrderLifecycleStateV1.Unknown;
     }
 
     private static ProviderOrderReconciliationLegV1 Leg(
