@@ -422,8 +422,8 @@ public sealed class RuntimeStateBackupVerifier
     private static bool IsSafeRelativePath(string value)
         => !string.IsNullOrWhiteSpace(value) &&
            !Path.IsPathRooted(value) &&
+           !value.Contains("..", StringComparison.Ordinal) &&
            !value.Contains((char)92);
-           !value.Contains('\');
 
     private static bool FixedHexEquals(string left, string right)
     {
