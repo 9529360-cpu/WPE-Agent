@@ -11,7 +11,7 @@ $gates = @(
     [ordered]@{ Name = "Authorization UI"; Classes = @("TradingAuthorizationUiBoundaryTests") },
     [ordered]@{ Name = "Authorization policy"; Classes = @("AutoTradingAuthorizationBoundaryTests", "TradingAuthorizationPolicyTests", "TradingAuthorizationSettingsTests") },
     [ordered]@{ Name = "Approval service and stores"; Classes = @("TradingReviewApprovalServiceTests", "TradingApprovalStoreTests", "TradingReviewQueueStoreTests") },
-    [ordered]@{ Name = "Runtime authorization projection"; Classes = @("RuntimeAuthorizationProjectionTests", "DesktopRuntimeHostTests") },
+    [ordered]@{ Name = "Runtime authorization projection"; Classes = @("RuntimeAuthorizationProjectionTests", "TradingRuntimeHostTests") },
     [ordered]@{ Name = "Review execution worker"; Classes = @("TradingReviewExecutionWorkerTests") },
     [ordered]@{ Name = "Review execution processor"; Classes = @("TradingReviewExecutionProcessorTests") },
     [ordered]@{ Name = "Execution gateway and Risk Gate"; Classes = @("TradingExecutionGatewayTests", "ExecutionMutationBoundaryTests", "RiskGateTests") },
