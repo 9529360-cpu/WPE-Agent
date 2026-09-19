@@ -49,7 +49,7 @@ foreach($required in @(
     'Archive must contain exactly one top-level package directory.',
     'PAYLOAD-SHA256SUMS does not match FILE-MANIFEST.json.',
     '$expectedSumLine = "$zipHash  $([System.IO.Path]::GetFileName($zip))"',
-    '(Get-Item -LiteralPath $path).Length -ne [long]$entry.length',
+    '(Get-Item -LiteralPath $path).Length -ne [long]$entry.size',
     'Runtime package signature states are mixed.',
     'Runtime package executable timestamp is missing',
     'Signed runtime bundle verification requires the approved signer subject and thumbprint.'
