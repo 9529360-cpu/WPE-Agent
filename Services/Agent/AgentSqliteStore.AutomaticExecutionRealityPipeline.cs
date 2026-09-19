@@ -23,11 +23,15 @@ public sealed partial class AgentSqliteStore
             insert.CommandText = """
                 INSERT OR IGNORE INTO execution_simulation_sources(
                     canonical_sha256,correlation_id,client_order_id,artifact_sha256,intent_sha256,
-                    provider_id,environment,strategy_id,strategy_version,symbol,state,source_observed_at,
+                    provider_id,environment,strategy_id,strategy_version,symbol,
+                    strategy_qualification_available,strategy_qualification_sha256,
+                    strategy_qualification_evidence_set_sha256,strategy_qualification_policy_sha256,
+                    strategy_qualification_evaluated_at,state,source_observed_at,
                     market_provenance_sha256,venue_rule_sha256,canonical_bytes)
                 VALUES(
                     $hash,$correlation,$client,$artifact,$intent,$provider,$environment,$strategy,$version,
-                    $symbol,$state,$observed,$marketHash,$ruleHash,$bytes);
+                    $symbol,$qualificationAvailable,$qualificationHash,$qualificationEvidence,$qualificationPolicy,
+                    $qualificationAt,$state,$observed,$marketHash,$ruleHash,$bytes);
                 SELECT changes();
                 """;
             insert.Parameters.AddWithValue("$hash",source.CanonicalSha256);
@@ -40,6 +44,14 @@ public sealed partial class AgentSqliteStore
             insert.Parameters.AddWithValue("$strategy",source.StrategyId);
             insert.Parameters.AddWithValue("$version",source.StrategyVersion);
             insert.Parameters.AddWithValue("$symbol",source.Symbol);
+            insert.Parameters.AddWithValue("$qualificationAvailable",source.StrategyQualificationAvailable?1:0);
+            insert.Parameters.AddWithValue("$qualificationHash",source.StrategyQualificationSha256);
+            insert.Parameters.AddWithValue("$qualificationEvidence",source.StrategyQualificationEvidenceSetSha256);
+            insert.Parameters.AddWithValue("$qualificationPolicy",source.StrategyQualificationPolicySha256);
+            insert.Parameters.AddWithValue("$qualificationAt",
+                source.StrategyQualificationEvaluatedAtUtc is null
+                    ? DBNull.Value
+                    : source.StrategyQualificationEvaluatedAtUtc.Value.ToString("O"));
             insert.Parameters.AddWithValue("$state",source.State.ToString());
             insert.Parameters.AddWithValue("$observed",source.SourceObservedAtUtc.ToString("O"));
             insert.Parameters.AddWithValue("$marketHash",source.MarketProvenanceSha256);
@@ -77,7 +89,10 @@ public sealed partial class AgentSqliteStore
         await using var query = connection.CreateCommand();
         query.CommandText = """
             SELECT canonical_sha256,artifact_sha256,intent_sha256,provider_id,environment,
-                   strategy_id,strategy_version,symbol,state,source_observed_at,
+                   strategy_id,strategy_version,symbol,
+                   strategy_qualification_available,strategy_qualification_sha256,
+                   strategy_qualification_evidence_set_sha256,strategy_qualification_policy_sha256,
+                   strategy_qualification_evaluated_at,state,source_observed_at,
                    market_provenance_sha256,venue_rule_sha256,canonical_bytes
             FROM execution_simulation_sources
             WHERE correlation_id=$correlation AND client_order_id=$client
@@ -97,11 +112,18 @@ public sealed partial class AgentSqliteStore
         var strategy=reader.GetString(5);
         var version=reader.GetString(6);
         var symbol=reader.GetString(7);
-        var state=reader.GetString(8);
-        var observed=DateTimeOffset.Parse(reader.GetString(9),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind);
-        var marketHash=reader.GetString(10);
-        var ruleHash=reader.GetString(11);
-        var bytes=(byte[])reader[12];
+        var qualificationAvailable=reader.GetInt32(8)==1;
+        var qualificationHash=reader.GetString(9);
+        var qualificationEvidence=reader.GetString(10);
+        var qualificationPolicy=reader.GetString(11);
+        DateTimeOffset? qualificationAt=reader.IsDBNull(12)
+            ?null
+            :DateTimeOffset.Parse(reader.GetString(12),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind);
+        var state=reader.GetString(13);
+        var observed=DateTimeOffset.Parse(reader.GetString(14),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind);
+        var marketHash=reader.GetString(15);
+        var ruleHash=reader.GetString(16);
+        var bytes=(byte[])reader[17];
         if (await reader.ReadAsync(ct))
             throw new InvalidOperationException("Multiple execution simulation sources exist for one execution intent.");
 
@@ -116,6 +138,11 @@ public sealed partial class AgentSqliteStore
             || !string.Equals(source.StrategyId,strategy,StringComparison.Ordinal)
             || !string.Equals(source.StrategyVersion,version,StringComparison.Ordinal)
             || !string.Equals(source.Symbol,symbol,StringComparison.Ordinal)
+            || source.StrategyQualificationAvailable!=qualificationAvailable
+            || !string.Equals(source.StrategyQualificationSha256,qualificationHash,StringComparison.Ordinal)
+            || !string.Equals(source.StrategyQualificationEvidenceSetSha256,qualificationEvidence,StringComparison.Ordinal)
+            || !string.Equals(source.StrategyQualificationPolicySha256,qualificationPolicy,StringComparison.Ordinal)
+            || source.StrategyQualificationEvaluatedAtUtc!=qualificationAt
             || !string.Equals(source.State.ToString(),state,StringComparison.Ordinal)
             || source.SourceObservedAtUtc!=observed
             || !string.Equals(source.MarketProvenanceSha256,marketHash,StringComparison.Ordinal)
@@ -183,6 +210,11 @@ public sealed partial class AgentSqliteStore
                 strategy_id TEXT NOT NULL,
                 strategy_version TEXT NOT NULL,
                 symbol TEXT NOT NULL,
+                strategy_qualification_available INTEGER NOT NULL CHECK(strategy_qualification_available IN (0,1)),
+                strategy_qualification_sha256 TEXT NOT NULL,
+                strategy_qualification_evidence_set_sha256 TEXT NOT NULL,
+                strategy_qualification_policy_sha256 TEXT NOT NULL,
+                strategy_qualification_evaluated_at TEXT NULL,
                 state TEXT NOT NULL,
                 source_observed_at TEXT NOT NULL,
                 market_provenance_sha256 TEXT NOT NULL,
