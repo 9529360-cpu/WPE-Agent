@@ -3,15 +3,17 @@ namespace WPE.Tests;
 public sealed class PublicMarketRuntimeWiringTests
 {
     [Fact]
-    public void App_StartsPublicMarketBeforeSetupAndStopsItOnExit()
+    public void RuntimeHost_StartsPublicMarketBeforeAccessReadinessAndOwnsShutdown()
     {
-        var source = ReadSource("App.xaml.cs");
-        var start = source.IndexOf("_ = StartPublicMarketAsync();", StringComparison.Ordinal);
-        var setup = source.IndexOf("if (!settings.SetupCompleted)", StringComparison.Ordinal);
+        var host = ReadSource(Path.Combine("Services", "TradingRuntimeHost.cs"));
+        var app = ReadSource("App.xaml.cs");
+        var start = host.IndexOf("_publicMarketStarted = await StartPublicMarketAsync()", StringComparison.Ordinal);
+        var access = host.IndexOf("var ready = await RefreshAccessAsync()", StringComparison.Ordinal);
 
-        Assert.True(start >= 0 && start < setup, "Public market runtime must start independently of setup/access readiness.");
-        Assert.Contains("await ServiceLocator.PublicMarket.StartAsync()", source, StringComparison.Ordinal);
-        Assert.Contains("await ServiceLocator.DisposeAsync();", source, StringComparison.Ordinal);
+        Assert.True(start >= 0 && start < access, "Public market runtime must start before access readiness is evaluated.");
+        Assert.Contains("await ServiceLocator.PublicMarket.StartAsync()", host, StringComparison.Ordinal);
+        Assert.Contains("await ServiceLocator.DisposeAsync()", host, StringComparison.Ordinal);
+        Assert.DoesNotContain("ServiceLocator.PublicMarket.StartAsync()", app, StringComparison.Ordinal);
     }
 
     [Fact]
