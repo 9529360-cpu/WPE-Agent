@@ -2,8 +2,24 @@ $ErrorActionPreference='Stop'
 function Assert($condition,[string]$message){if(-not $condition){throw "ASSERT: $message"}}
 function Throws([scriptblock]$action,[string]$contains){try{& $action|Out-Null;throw "expected:$contains"}catch{if($_.Exception.Message -notlike "*$contains*"){throw}}}
 function Hash([string]$path){(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+function TextHash([string]$value){
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try{
+        $bytes=[Text.Encoding]::UTF8.GetBytes($value)
+        ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()
+    }finally{$sha.Dispose()}
+}
+function TreeFacts([string]$path){
+    $root=[IO.Path]::GetFullPath($path).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $prefix=$root+[IO.Path]::DirectorySeparatorChar
+    $lines=@(Get-ChildItem -LiteralPath $root -Recurse -Force -File|Sort-Object FullName|ForEach-Object{
+        $relative=$_.FullName.Substring($prefix.Length).Replace('\\','/')
+        "$relative|$($_.Length)|$(Hash $_.FullName)"
+    })
+    [pscustomobject]@{FileCount=$lines.Count;TreeSha256=TextHash ($lines -join [Environment]::NewLine)}
+}
 function New-TestCandidate {
-    param([string]$SourceRoot,[string]$SlotsRoot,[string]$Version,[string]$SourceIdentity,[string]$ConfigurationSchema,[string]$MigrationVersion,[string[]]$Gates,[switch]$Dirty,[switch]$Unsigned,[switch]$ReviewRequired,[switch]$NotDistributable,[switch]$BadVerificationHash,[switch]$BadManifestHash,[switch]$AddUnmanifestedPayload)
+    param([string]$SourceRoot,[string]$SlotsRoot,[string]$Version,[string]$SourceIdentity,[string]$ConfigurationSchema,[string]$MigrationVersion,[string[]]$Gates,[switch]$Dirty,[switch]$Unsigned,[switch]$ReviewRequired,[switch]$NotDistributable,[switch]$BadVerificationHash,[switch]$BadManifestHash,[switch]$BadVerificationTree,[switch]$AddUnmanifestedPayload)
     $signedStatus=if($Unsigned){'unsigned'}else{'Valid'};$licenseStatus=if($ReviewRequired){'review_required'}else{'passed'};$licenseReview=if($ReviewRequired){1}else{0}
     $metadata=[ordered]@{source=[ordered]@{dirty=[bool]$Dirty};signing=[ordered]@{status=$signedStatus;distributable=(-not $NotDistributable)};contents=[ordered]@{licenseGateStatus=$licenseStatus;licenseReviewCount=$licenseReview}}
     $metadata|ConvertTo-Json -Depth 6|Set-Content (Join-Path $SourceRoot 'RELEASE-METADATA.json') -Encoding utf8
@@ -11,7 +27,9 @@ function New-TestCandidate {
     $manifest|ConvertTo-Json -Depth 4|Set-Content (Join-Path $SourceRoot 'FILE-MANIFEST.json') -Encoding utf8
     if($AddUnmanifestedPayload){'late-payload'|Set-Content -LiteralPath (Join-Path $SourceRoot 'late-extra.bin') -Encoding ascii}
     $verification=Join-Path (Split-Path $SlotsRoot -Parent) ("verification-$Version.json")
-    [ordered]@{schemaVersion='wpe.beta-package-verification.v1';status='passed';distributable=(-not $NotDistributable);signingStatus=$signedStatus;licenseGateStatus=$licenseStatus;licenseReview=$licenseReview;manifestFailures=0;forbiddenFiles=0}|ConvertTo-Json|Set-Content $verification -Encoding utf8
+    $tree=TreeFacts $SourceRoot
+    $verificationTreeHash=if($BadVerificationTree){'0'*64}else{$tree.TreeSha256}
+    [ordered]@{schemaVersion='wpe.beta-package-verification.v1';status='passed';distributable=(-not $NotDistributable);signingStatus=$signedStatus;licenseGateStatus=$licenseStatus;licenseReview=$licenseReview;manifestFailures=0;forbiddenFiles=0;packageTreeSha256=$verificationTreeHash;packageFileCount=$tree.FileCount}|ConvertTo-Json|Set-Content $verification -Encoding utf8
     $manifestHash=if($BadManifestHash){'0'*64}else{Hash (Join-Path $SourceRoot 'FILE-MANIFEST.json')};$verificationHash=if($BadVerificationHash){'0'*64}else{Hash $verification}
     & $script:new -SourceRoot $SourceRoot -SlotsRoot $SlotsRoot -Version $Version -SourceIdentity $SourceIdentity -ConfigurationSchema $ConfigurationSchema -MigrationVersion $MigrationVersion -Gates $Gates -ExpectedSourceManifestHash $manifestHash -PackageVerificationPath $verification -ExpectedPackageVerificationHash $verificationHash
 }
@@ -114,6 +132,7 @@ try{
     Throws {New-TestCandidate -SourceRoot $source -SlotsRoot (Join-Path $root 'reject-slots') -Version '0.9.4' -SourceIdentity 'commit/nondistributable' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build' -NotDistributable} 'package.verification-not-distributable'
     Throws {New-TestCandidate -SourceRoot $source -SlotsRoot (Join-Path $root 'reject-slots') -Version '0.9.5' -SourceIdentity 'commit/unanchored' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build' -BadVerificationHash} 'package.verification-hash-mismatch'
     Throws {New-TestCandidate -SourceRoot $source -SlotsRoot (Join-Path $root 'reject-slots') -Version '0.9.6' -SourceIdentity 'commit/hash-mismatch' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build' -BadManifestHash} 'package.manifest-hash-mismatch'
+    Throws {New-TestCandidate -SourceRoot $source -SlotsRoot (Join-Path $root 'reject-slots') -Version '0.9.6-tree' -SourceIdentity 'commit/tree-replay' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build' -BadVerificationTree} 'package.verification-source-mismatch'
     $lateSource=Join-Path $root 'late-package';Copy-Item $source $lateSource -Recurse
     Throws {New-TestCandidate -SourceRoot $lateSource -SlotsRoot (Join-Path $root 'late-slots') -Version '0.9.7' -SourceIdentity 'commit/late' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build' -AddUnmanifestedPayload} 'package.manifest-inventory-drift'
     $overlapSlots=Join-Path $source 'nested-slots'
