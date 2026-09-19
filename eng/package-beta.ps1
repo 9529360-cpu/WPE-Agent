@@ -3,6 +3,9 @@ param(
     [string]$HeadlessPublishPath = "artifacts/release-readiness/headless",
     [string]$MaintenancePublishPath = "artifacts/release-readiness/maintenance",
     [string]$SigningResultPath,
+    [string]$ExpectedSignerSubject,
+    [ValidatePattern('^[A-Fa-f0-9]{40}$')]
+    [string]$ExpectedSignerThumbprint,
     [string]$OutputDirectory = "artifacts/beta-packages",
     [ValidatePattern('^[A-Za-z0-9.-]+$')]
     [string]$Channel = "beta",
@@ -265,6 +268,9 @@ $signingResultHash = $null
 $signatureSubject = $null
 $signatureThumbprint = $null
 if ($allSigned) {
+    if ([string]::IsNullOrWhiteSpace($ExpectedSignerSubject) -or [string]::IsNullOrWhiteSpace($ExpectedSignerThumbprint)) {
+        throw "A signed runtime bundle requires the approved signer subject and thumbprint."
+    }
     if ($null -eq $signingResultInput -or -not (Test-Path -LiteralPath $signingResultInput -PathType Leaf)) {
         throw "A signed runtime bundle requires SigningResultPath."
     }
@@ -280,6 +286,9 @@ if ($allSigned) {
     $signatureThumbprint = ([string]$signingResult.certificateThumbprint).ToUpperInvariant()
     if ([string]::IsNullOrWhiteSpace($signatureSubject) -or $signatureThumbprint -notmatch '^[A-F0-9]{40}$') {
         throw "Runtime bundle signing identity is invalid."
+    }
+    if ($signatureSubject -ne $ExpectedSignerSubject -or $signatureThumbprint -ne $ExpectedSignerThumbprint.ToUpperInvariant()) {
+        throw "Runtime bundle signer identity does not match the approved publisher."
     }
     if (@($signingResult.artifacts).Count -ne 3) { throw "Runtime bundle signing result must contain exactly three artifacts." }
     foreach ($state in $artifactStates) {
@@ -301,6 +310,9 @@ if ($allSigned) {
     }
 } else {
     if ($null -ne $signingResultInput) { throw "Unsigned runtime bundle must not consume a signing result." }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSignerSubject) -or -not [string]::IsNullOrWhiteSpace($ExpectedSignerThumbprint)) {
+        throw "Unsigned runtime bundle must not declare an approved signer."
+    }
     foreach ($state in $artifactStates) {
         if ($state.Facts.TreeSha256 -ne [string]$state.Readiness.treeSha256 -or
             $state.Facts.FileCount -ne [int]$state.Readiness.fileCount) {
