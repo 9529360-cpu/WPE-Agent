@@ -1,4 +1,8 @@
 using Microsoft.Data.Sqlite;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using 币安量化机器人.Services.Agent;
 
 namespace WPE.Tests;
@@ -8,91 +12,130 @@ public sealed class ExecutionSimulationResearchProvenanceTests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "wpe-sim-research-prov-" + Guid.NewGuid().ToString("N"));
     private string Database => Path.Combine(_directory, "agent.db");
 
-    private static readonly DateTimeOffset TimelineAt = new(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset ValidationAt = new(2026, 9, 18, 11, 0, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset ShadowAt = new(2026, 9, 18, 11, 30, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset MarketAt = new(2026, 9, 18, 11, 59, 59, TimeSpan.Zero);
-    private static readonly DateTimeOffset SimulatedAt = new(2026, 9, 18, 12, 0, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset BoundAt = new(2026, 9, 18, 12, 0, 1, TimeSpan.Zero);
-
     [Fact]
     public void CanonicalResearchProvenanceIsDeterministicAndRoundTrips()
     {
-        var fill = Fill("order-a");
-        var first = Provenance(fill);
-        var second = Provenance(fill);
+        var fill = ExecutionSimulationResearchProvenanceFixture.Fill("order-a");
+        var first = ExecutionSimulationResearchProvenanceFixture.Create(fill);
+        var second = ExecutionSimulationResearchProvenanceFixture.Create(fill);
 
         Assert.True(ExecutionSimulationResearchProvenanceCanonicalizerV1.IsCanonical(first));
         Assert.Equal(first.CanonicalSha256, second.CanonicalSha256);
         Assert.Equal(first.CanonicalBytes, second.CanonicalBytes);
         Assert.Equal(fill.CanonicalSha256, first.SimulatedFillCanonicalSha256);
+        Assert.Equal(fill.MarketAsOfUtc, first.MarketCollectedAtUtc);
         Assert.Equal(fill.MarketAsOfUtc, first.MarketAsOfUtc);
-        Assert.Equal(fill.SimulatedAtUtc, first.SimulatedAtUtc);
 
         Assert.True(ExecutionSimulationResearchProvenanceCanonicalizerV1.TryDeserialize(
             first.CanonicalBytes,
             first.CanonicalSha256,
             out var parsed));
         Assert.NotNull(parsed);
-        Assert.Equal(first, parsed);
+        Assert.Equal(first.CanonicalSha256, parsed!.CanonicalSha256);
+        Assert.Equal(first.BacktestValidationSha256, parsed.BacktestValidationSha256);
+        Assert.Equal(first.TimelineSha256, parsed.TimelineSha256);
+        Assert.Equal(first.ShadowObservationSha256, parsed.ShadowObservationSha256);
+        Assert.Equal(first.MarketProvenanceSha256, parsed.MarketProvenanceSha256);
+        Assert.Equal(first.CanonicalBytes, parsed.CanonicalBytes);
     }
 
     [Fact]
     public void ResearchProvenanceChronologyFailsClosed()
     {
-        var fill = Fill("order-a");
+        var fill = ExecutionSimulationResearchProvenanceFixture.Fill("order-a");
 
         Assert.Throws<InvalidOperationException>(() =>
-            Create(fill, TimelineAt.AddHours(2), ValidationAt, ShadowAt, BoundAt));
+            ExecutionSimulationResearchProvenanceFixture.Create(
+                fill,
+                timelineAt:ExecutionSimulationResearchProvenanceFixture.ValidationAt.AddMinutes(1)));
+
         Assert.Throws<InvalidOperationException>(() =>
-            Create(fill, TimelineAt, ShadowAt.AddMinutes(1), ShadowAt, BoundAt));
+            ExecutionSimulationResearchProvenanceFixture.Create(
+                fill,
+                validationAt:fill.MarketAsOfUtc.AddMinutes(1)));
+
         Assert.Throws<InvalidOperationException>(() =>
-            Create(fill, TimelineAt, ValidationAt, MarketAt.AddSeconds(1), BoundAt));
+            ExecutionSimulationResearchProvenanceFixture.Create(
+                fill,
+                shadowAt:fill.MarketAsOfUtc.AddMinutes(-1)));
+
         Assert.Throws<InvalidOperationException>(() =>
-            Create(fill, TimelineAt, ValidationAt, ShadowAt, SimulatedAt.AddMilliseconds(-1)));
+            ExecutionSimulationResearchProvenanceFixture.Create(
+                fill,
+                shadowAt:fill.SimulatedAtUtc.AddMilliseconds(1)));
+
+        Assert.Throws<InvalidOperationException>(() =>
+            ExecutionSimulationResearchProvenanceFixture.Create(
+                fill,
+                boundAt:fill.SimulatedAtUtc.AddMilliseconds(-1)));
     }
 
     [Fact]
-    public void HashOrFillTamperingCannotProduceCanonicalResearchProvenance()
+    public void MissingMalformedOrTamperedSourceBytesFailClosed()
     {
-        var fill = Fill("order-a");
-        var provenance = Provenance(fill);
+        var fill = ExecutionSimulationResearchProvenanceFixture.Fill("order-a");
+        var bundle = ExecutionSimulationResearchProvenanceFixture.Bundle(fill);
 
         Assert.Throws<InvalidOperationException>(() =>
             ExecutionSimulationResearchProvenanceCanonicalizerV1.Create(
                 fill,
-                "bad",
-                TimelineHash,
-                ShadowHash,
-                MarketHash,
-                TimelineAt,
-                ValidationAt,
-                ShadowAt,
-                BoundAt));
+                Array.Empty<byte>(),
+                bundle.Timeline,
+                bundle.Shadow,
+                bundle.Market,
+                ExecutionSimulationResearchProvenanceFixture.BoundAt));
 
-        Assert.Throws<InvalidOperationException>(() =>
+        var malformed = bundle.Backtest.ToArray();
+        malformed[0] = (byte)'x';
+        Assert.ThrowsAny<Exception>(() =>
             ExecutionSimulationResearchProvenanceCanonicalizerV1.Create(
-                fill with { AveragePrice = 999m },
-                ValidationHash,
-                TimelineHash,
-                ShadowHash,
-                MarketHash,
-                TimelineAt,
-                ValidationAt,
-                ShadowAt,
-                BoundAt));
+                fill,
+                malformed,
+                bundle.Timeline,
+                bundle.Shadow,
+                bundle.Market,
+                ExecutionSimulationResearchProvenanceFixture.BoundAt));
 
+        var provenance = ExecutionSimulationResearchProvenanceFixture.Create(fill);
         Assert.False(ExecutionSimulationResearchProvenanceCanonicalizerV1.IsCanonical(
-            provenance with { TimelineSha256 = ValidationHash }));
+            provenance with { TimelineCanonicalBytes = provenance.MarketProvenanceCanonicalBytes }));
         Assert.False(ExecutionSimulationResearchProvenanceCanonicalizerV1.IsCanonical(
             provenance with { CanonicalSha256 = new string('0', 64) }));
     }
 
     [Fact]
-    public async Task PersistenceRequiresTheCanonicalSimulatedFillAndSurvivesRestart()
+    public void CrossStrategyOrDifferentMarketSourceCannotBindToSimulatedFill()
     {
-        var fill = Fill("order-a");
-        var provenance = Provenance(fill);
+        var fill = ExecutionSimulationResearchProvenanceFixture.Fill("order-a");
+        var wrongIdentity = ExecutionSimulationResearchProvenanceFixture.Bundle(fill, strategyId:"strategy-b");
+
+        Assert.Throws<InvalidOperationException>(() =>
+            ExecutionSimulationResearchProvenanceCanonicalizerV1.Create(
+                fill,
+                wrongIdentity.Backtest,
+                wrongIdentity.Timeline,
+                wrongIdentity.Shadow,
+                wrongIdentity.Market,
+                ExecutionSimulationResearchProvenanceFixture.BoundAt));
+
+        var differentMarket = ExecutionSimulationResearchProvenanceFixture.Bundle(
+            fill,
+            marketAt:fill.MarketAsOfUtc.AddMilliseconds(-1));
+        Assert.Throws<InvalidOperationException>(() =>
+            ExecutionSimulationResearchProvenanceCanonicalizerV1.Create(
+                fill,
+                differentMarket.Backtest,
+                differentMarket.Timeline,
+                differentMarket.Shadow,
+                differentMarket.Market,
+                ExecutionSimulationResearchProvenanceFixture.BoundAt));
+    }
+
+    [Fact]
+    public async Task PersistenceRequiresCanonicalSimulatedFillAndSurvivesRestart()
+    {
+        var fill = ExecutionSimulationResearchProvenanceFixture.Fill("order-a");
+        var provenance = ExecutionSimulationResearchProvenanceFixture.Create(fill);
         var store = new AgentSqliteStore(Database);
 
         var missing = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -114,26 +157,22 @@ public sealed class ExecutionSimulationResearchProvenanceTests : IDisposable
         Assert.Equal(provenance.CanonicalSha256, loaded!.CanonicalSha256);
         Assert.Equal(provenance.CanonicalBytes, loaded.CanonicalBytes);
         Assert.Equal(provenance.ShadowObservationSha256, loaded.ShadowObservationSha256);
+        Assert.Equal(provenance.ShadowObservationCanonicalBytes, loaded.ShadowObservationCanonicalBytes);
     }
 
     [Fact]
     public async Task OneSimulatedFillCannotBeReboundToConflictingResearchHistory()
     {
-        var fill = Fill("order-a");
+        var fill = ExecutionSimulationResearchProvenanceFixture.Fill("order-a");
         var store = new AgentSqliteStore(Database);
         await store.SaveExecutionSimulationFillAsync(fill, default);
-        await store.SaveExecutionSimulationResearchProvenanceAsync(Provenance(fill), default);
+        await store.SaveExecutionSimulationResearchProvenanceAsync(
+            ExecutionSimulationResearchProvenanceFixture.Create(fill),
+            default);
 
-        var conflicting = ExecutionSimulationResearchProvenanceCanonicalizerV1.Create(
+        var conflicting = ExecutionSimulationResearchProvenanceFixture.Create(
             fill,
-            new string('e', 64),
-            TimelineHash,
-            ShadowHash,
-            MarketHash,
-            TimelineAt,
-            ValidationAt,
-            ShadowAt,
-            BoundAt);
+            validationAt:ExecutionSimulationResearchProvenanceFixture.ValidationAt.AddMinutes(1));
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             store.SaveExecutionSimulationResearchProvenanceAsync(conflicting, default));
@@ -143,10 +182,12 @@ public sealed class ExecutionSimulationResearchProvenanceTests : IDisposable
     [Fact]
     public async Task ProvenanceLedgerIsAppendOnly()
     {
-        var fill = Fill("order-a");
+        var fill = ExecutionSimulationResearchProvenanceFixture.Fill("order-a");
         var store = new AgentSqliteStore(Database);
         await store.SaveExecutionSimulationFillAsync(fill, default);
-        await store.SaveExecutionSimulationResearchProvenanceAsync(Provenance(fill), default);
+        await store.SaveExecutionSimulationResearchProvenanceAsync(
+            ExecutionSimulationResearchProvenanceFixture.Create(fill),
+            default);
 
         await using var connection = new SqliteConnection($"Data Source={Database}");
         await connection.OpenAsync();
@@ -166,8 +207,8 @@ public sealed class ExecutionSimulationResearchProvenanceTests : IDisposable
     [Fact]
     public async Task MetadataAndCanonicalBytesMismatchFailsClosedOnRead()
     {
-        var fill = Fill("order-a");
-        var provenance = Provenance(fill);
+        var fill = ExecutionSimulationResearchProvenanceFixture.Fill("order-a");
+        var provenance = ExecutionSimulationResearchProvenanceFixture.Create(fill);
         var store = new AgentSqliteStore(Database);
         await store.SaveExecutionSimulationFillAsync(fill, default);
 
@@ -209,27 +250,76 @@ public sealed class ExecutionSimulationResearchProvenanceTests : IDisposable
             store.GetExecutionSimulationResearchProvenanceAsync(fill.CanonicalSha256, default));
     }
 
-    private static ExecutionSimulationResearchProvenanceV1 Provenance(ExecutionSimulationFillV1 fill) =>
-        Create(fill, TimelineAt, ValidationAt, ShadowAt, BoundAt);
+    public void Dispose()
+    {
+        SqliteConnection.ClearAllPools();
+        if (Directory.Exists(_directory)) Directory.Delete(_directory, true);
+    }
+}
 
-    private static ExecutionSimulationResearchProvenanceV1 Create(
+internal static class ExecutionSimulationResearchProvenanceFixture
+{
+    internal static readonly DateTimeOffset TimelineAt = new(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
+    internal static readonly DateTimeOffset ValidationAt = new(2026, 9, 18, 11, 0, 0, TimeSpan.Zero);
+    internal static readonly DateTimeOffset MarketAt = new(2026, 9, 18, 11, 59, 59, TimeSpan.Zero);
+    internal static readonly DateTimeOffset ShadowAt = MarketAt.AddMilliseconds(500);
+    internal static readonly DateTimeOffset SimulatedAt = new(2026, 9, 18, 12, 0, 0, TimeSpan.Zero);
+    internal static readonly DateTimeOffset BoundAt = SimulatedAt.AddSeconds(1);
+
+    internal sealed record SourceBundle(byte[] Backtest, byte[] Timeline, byte[] Shadow, byte[] Market);
+
+    internal static ExecutionSimulationResearchProvenanceV1 Create(
         ExecutionSimulationFillV1 fill,
-        DateTimeOffset timelineAt,
-        DateTimeOffset validationAt,
-        DateTimeOffset shadowAt,
-        DateTimeOffset boundAt) =>
-        ExecutionSimulationResearchProvenanceCanonicalizerV1.Create(
+        DateTimeOffset? timelineAt = null,
+        DateTimeOffset? validationAt = null,
+        DateTimeOffset? marketAt = null,
+        DateTimeOffset? shadowAt = null,
+        DateTimeOffset? boundAt = null,
+        string? strategyId = null)
+    {
+        var bundle = Bundle(fill, timelineAt, validationAt, marketAt, shadowAt, strategyId);
+        return ExecutionSimulationResearchProvenanceCanonicalizerV1.Create(
             fill,
-            ValidationHash,
-            TimelineHash,
-            ShadowHash,
-            MarketHash,
-            timelineAt,
-            validationAt,
-            shadowAt,
-            boundAt);
+            bundle.Backtest,
+            bundle.Timeline,
+            bundle.Shadow,
+            bundle.Market,
+            boundAt ?? BoundAt);
+    }
 
-    private static ExecutionSimulationFillV1 Fill(string orderId) =>
+    internal static SourceBundle Bundle(
+        ExecutionSimulationFillV1 fill,
+        DateTimeOffset? timelineAt = null,
+        DateTimeOffset? validationAt = null,
+        DateTimeOffset? marketAt = null,
+        DateTimeOffset? shadowAt = null,
+        string? strategyId = null)
+    {
+        var sid = strategyId ?? fill.StrategyId;
+        var timeline = timelineAt ?? TimelineAt;
+        var validation = validationAt ?? ValidationAt;
+        var market = marketAt ?? fill.MarketAsOfUtc;
+        var shadow = shadowAt ?? ShadowAt;
+
+        var backtest = BacktestBytes(sid, fill.StrategyVersion, fill.Symbol, validation);
+        var timelineBytes = TimelineBytes(sid, fill.StrategyVersion, fill.Symbol, timeline);
+        var marketBytes = MarketBytes(fill.Symbol, market, fill.AveragePrice > 0 ? fill.AveragePrice : 100m);
+        var shadowBytes = ShadowBytes(
+            sid,
+            fill.StrategyVersion,
+            fill.Symbol,
+            validation,
+            market,
+            shadow,
+            fill.AveragePrice > 0 ? fill.AveragePrice : 100m,
+            Hash(backtest),
+            Hash(timelineBytes),
+            Hash(marketBytes));
+
+        return new(backtest, timelineBytes, shadowBytes, marketBytes);
+    }
+
+    internal static ExecutionSimulationFillV1 Fill(string orderId) =>
         ExecutionSimulationFillCanonicalizerV1.Create(
             correlationId:"cycle-" + orderId,
             clientOrderId:orderId,
@@ -254,14 +344,157 @@ public sealed class ExecutionSimulationResearchProvenanceTests : IDisposable
             simulatedAtUtc:SimulatedAt,
             reasonCode:"modeled");
 
-    private static string ValidationHash => new('a', 64);
-    private static string TimelineHash => new('b', 64);
-    private static string ShadowHash => new('c', 64);
-    private static string MarketHash => new('d', 64);
-
-    public void Dispose()
+    private static byte[] BacktestBytes(
+        string strategyId,
+        string strategyVersion,
+        string symbol,
+        DateTimeOffset validatedAt)
     {
-        SqliteConnection.ClearAllPools();
-        if (Directory.Exists(_directory)) Directory.Delete(_directory, true);
+        var values = new[]
+        {
+            "wpe.backtest-validation/1.1",
+            symbol,
+            strategyId,
+            strategyVersion,
+            validatedAt.ToString("O", CultureInfo.InvariantCulture),
+            "800",
+            "120",
+            "40",
+            "365",
+            "0.55",
+            "1.4",
+            "0.01",
+            "0.12",
+            "1.1",
+            "0.08",
+            "0.7",
+            "0.2",
+            "0.8",
+            "true",
+            "false"
+        };
+        return Encoding.UTF8.GetBytes(string.Join('|', values));
     }
+
+    private static byte[] TimelineBytes(
+        string strategyId,
+        string strategyVersion,
+        string symbol,
+        DateTimeOffset tradableAt)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("decision_count", 1);
+            writer.WritePropertyName("decisions");
+            writer.WriteStartArray();
+            writer.WriteStartObject();
+            writer.WriteString("evidence_available_at_utc", tradableAt.AddMinutes(-5));
+            writer.WriteNumber("execution_close_price", 100m);
+            writer.WriteNumber("execution_open_price", 99.5m);
+            writer.WriteNumber("execution_volume", 1000m);
+            writer.WriteNumber("sequence", 0);
+            writer.WriteString("signal_generated_at_utc", tradableAt.AddMinutes(-4));
+            writer.WriteString("source_candle_open_time_utc", tradableAt.AddMinutes(-10));
+            writer.WriteString("strategy_id", strategyId);
+            writer.WriteString("strategy_version", strategyVersion);
+            writer.WriteString("symbol", symbol);
+            writer.WriteNumber("target_exposure", 1);
+            writer.WriteString("tradable_at_utc", tradableAt);
+            writer.WriteEndObject();
+            writer.WriteEndArray();
+            writer.WriteString("first_tradable_at_utc", tradableAt);
+            writer.WriteString("last_tradable_at_utc", tradableAt);
+            writer.WriteString("schema", "wpe.strategy-exposure-timeline/1.0");
+            writer.WriteString("strategy_id", strategyId);
+            writer.WriteString("strategy_version", strategyVersion);
+            writer.WriteString("symbol", symbol);
+            writer.WriteEndObject();
+        }
+        return stream.ToArray();
+    }
+
+    private static byte[] MarketBytes(string symbol, DateTimeOffset collectedAt, decimal price)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("candle_count", 2);
+            writer.WriteString("collected_at_utc", collectedAt);
+            writer.WriteString("environment", "Testnet");
+            writer.WriteNumber("price", price);
+            writer.WriteString("provider_id", "binance-futures");
+            writer.WriteNumber("resistance", price + 2m);
+            writer.WriteNumber("rsi", 55d);
+            writer.WriteString("schema", "wpe.market-evidence-provenance/1.0");
+            writer.WriteNumber("support", price - 2m);
+            writer.WriteNumber("trend_15m", .1d);
+            writer.WriteNumber("trend_1h", .2d);
+            writer.WriteNumber("trend_4h", .3d);
+            writer.WritePropertyName("candles");
+            writer.WriteStartArray();
+            WriteCandle(writer, collectedAt.AddHours(-1), price - 1m);
+            WriteCandle(writer, collectedAt.AddMinutes(-30), price - .5m);
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+        return stream.ToArray();
+    }
+
+    private static byte[] ShadowBytes(
+        string strategyId,
+        string strategyVersion,
+        string symbol,
+        DateTimeOffset validationAt,
+        DateTimeOffset marketAt,
+        DateTimeOffset observedAt,
+        decimal marketPrice,
+        string validationHash,
+        string timelineHash,
+        string marketHash)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("backtest_validation_sha256", validationHash);
+            writer.WriteNumber("confidence", .6d);
+            writer.WriteNumber("direction", 1);
+            writer.WriteString("environment", "Testnet");
+            writer.WriteString("lifecycle", "Shadow");
+            writer.WriteString("market_collected_at_utc", marketAt);
+            writer.WriteNumber("market_price", marketPrice);
+            writer.WriteString("market_provenance_sha256", marketHash);
+            writer.WriteString("market_provider_id", "binance-futures");
+            writer.WriteString("observed_at_utc", observedAt);
+            writer.WriteString("schema", "wpe.strategy-shadow-observation/1.0");
+            writer.WriteString("strategy_id", strategyId);
+            writer.WriteString("strategy_version", strategyVersion);
+            writer.WriteString("symbol", symbol);
+            writer.WriteString("timeline_sha256", timelineHash);
+            writer.WriteString("validation_at_utc", validationAt);
+            writer.WriteEndObject();
+        }
+        return stream.ToArray();
+    }
+
+    private static void WriteCandle(Utf8JsonWriter writer, DateTimeOffset time, decimal price)
+    {
+        writer.WriteStartArray();
+        writer.WriteStringValue(time);
+        writer.WriteNumberValue(price);
+        writer.WriteNumberValue(price + 1m);
+        writer.WriteNumberValue(price - 1m);
+        writer.WriteNumberValue(price + .2m);
+        writer.WriteNumberValue(1000m);
+        writer.WriteNumberValue(100000m);
+        writer.WriteNumberValue(100m);
+        writer.WriteNumberValue(500m);
+        writer.WriteEndArray();
+    }
+
+    private static string Hash(byte[] bytes) =>
+        Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 }
