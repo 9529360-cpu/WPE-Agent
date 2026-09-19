@@ -40,6 +40,28 @@ public sealed class HeadlessWindowsServiceBoundaryTests
     }
 
     [Fact]
+    public void ServiceDeploymentPreflightRequiresVerifiedImmutablePackageTree()
+    {
+        var preflight=File.ReadAllText(Path.Combine(
+            Root(),"eng","ops","Test-HeadlessServiceDeployment.ps1"));
+
+        Assert.Contains("[string]$PackageVerificationPath",preflight,StringComparison.Ordinal);
+        Assert.Contains("[string]$ExpectedPackageVerificationHash",preflight,StringComparison.Ordinal);
+        Assert.Contains("wpe.headless-service-deployment-preflight/1.1",preflight,StringComparison.Ordinal);
+        Assert.Contains("package.verification-hash-mismatch",preflight,StringComparison.Ordinal);
+        Assert.Contains("candidate.package-tree-mismatch",preflight,StringComparison.Ordinal);
+        Assert.Contains("candidate.tree-reparse-forbidden",preflight,StringComparison.Ordinal);
+        Assert.Contains("packageVerificationSha256 = $verificationHash",preflight,StringComparison.Ordinal);
+        Assert.Contains("candidateTreeSha256 = $candidateTree.TreeSha256",preflight,StringComparison.Ordinal);
+
+        foreach(var forbidden in new[]{
+            "New-Service","Set-Service","Start-Service","Stop-Service","Restart-Service",
+            "sc.exe","Invoke-WebRequest","Invoke-RestMethod"
+        })
+            Assert.DoesNotContain(forbidden,preflight,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void WindowsServiceWorkerCannotBecomeATradingAuthority()
     {
         var worker=File.ReadAllText(Path.Combine(Root(),"WPE.Headless","HeadlessRuntimeWorker.cs"));
