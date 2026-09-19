@@ -47,6 +47,20 @@ public sealed class TradeHypothesisEngineTests
     }
 
     [Fact]
+    public void PersistentlySupportiveOrderBookCanConfirmScoutWithoutNeedingImpossibleFurtherImprovement()
+    {
+        var first=Market(81117.2m,80906m,81715.8m,26.5,-.34,-.23,5.13,.99);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var next=Market(81120m,80906m,81715.8m,27,-.33,-.22,5.10,.82);
+
+        var scout=TradeHypothesisEngine.EvaluateMarket(next,watching,[],Now.AddMinutes(1));
+
+        Assert.Equal(TradeHypothesisStage.ScoutReady,scout.Stage);
+        Assert.True(scout.Actionable);
+        Assert.Equal(.18,scout.RiskBudgetMultiplier,10);
+    }
+
+    [Fact]
     public async Task ScoutCanBecomeConfirmedButExistingPositionPreventsRepeatedEntryDecision()
     {
         var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);

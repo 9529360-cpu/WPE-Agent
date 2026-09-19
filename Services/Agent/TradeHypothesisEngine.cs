@@ -178,6 +178,9 @@ public sealed class TradeHypothesisEngine
         var bookImproved = longSide
             ? market.Quality.OrderBookImbalance > previous.LastOrderBookImbalance + .20
             : market.Quality.OrderBookImbalance < previous.LastOrderBookImbalance - .20;
+        var bookPersistentlySupportive = longSide
+            ? previous.LastOrderBookImbalance >= .35 && market.Quality.OrderBookImbalance >= .35
+            : previous.LastOrderBookImbalance <= -.35 && market.Quality.OrderBookImbalance <= -.35;
 
         var takerAvailable = market.Derivatives.TakerBuySellRatio > 0;
         var takerReclaimed = takerAvailable && (longSide
@@ -196,7 +199,7 @@ public sealed class TradeHypothesisEngine
         if (!sameSidePosition)
         {
             if (previous.Stage == TradeHypothesisStage.Watching &&
-                (trendImproved || bookImproved) &&
+                (trendImproved || bookImproved || bookPersistentlySupportive) &&
                 microstructureNoLongerHostile)
                 nextStage = TradeHypothesisStage.ScoutReady;
             else if (previous.Stage == TradeHypothesisStage.ScoutReady &&
