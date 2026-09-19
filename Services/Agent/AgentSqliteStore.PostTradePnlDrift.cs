@@ -138,16 +138,20 @@ public sealed partial class AgentSqliteStore
 
         foreach (var item in proof.Events.OrderBy(x => x.Sequence))
         {
-            var fill = await GetExecutionSimulationFillAsync(item.CycleId, item.ClientOrderId, ct);
-            if (!SimulationMatchesActualLedgerEvent(fill, actual, side, item))
+            var evidence = await GetVerifiedSimulationEvidenceAsync(item.CycleId, item.ClientOrderId, ct);
+            if (evidence is null
+                || !SimulationMatchesActualLedgerEvent(evidence.Value.Fill, actual, side, item))
                 return null;
+            var source = evidence.Value.Source;
+            var fill = evidence.Value.Fill;
 
             sourceRefs.Add(new(
                 item.Sequence,
                 item.CycleId,
                 item.ClientOrderId,
                 item.ReduceOnly,
-                fill!.CanonicalSha256));
+                source.CanonicalSha256,
+                fill.CanonicalSha256));
 
             if (!item.ReduceOnly)
             {
@@ -180,9 +184,12 @@ public sealed partial class AgentSqliteStore
             || simulatedOpenCost <= 0)
             return null;
 
-        var closeFill = await GetExecutionSimulationFillAsync(actual.CloseCycleId, actual.CloseClientOrderId, ct);
-        if (closeFill is null
-            || closeFill.State is not (ExecutionSimulationFillStateV1.Filled or ExecutionSimulationFillStateV1.Partial)
+        var closeEvidence = await GetVerifiedSimulationEvidenceAsync(actual.CloseCycleId, actual.CloseClientOrderId, ct);
+        if (closeEvidence is null)
+            return null;
+        var closeSource = closeEvidence.Value.Source;
+        var closeFill = closeEvidence.Value.Fill;
+        if (closeFill.State is not (ExecutionSimulationFillStateV1.Filled or ExecutionSimulationFillStateV1.Partial)
             || !string.Equals(closeFill.CorrelationId, actual.CloseCycleId, StringComparison.Ordinal)
             || !string.Equals(closeFill.ClientOrderId, actual.CloseClientOrderId, StringComparison.Ordinal)
             || !string.Equals(closeFill.StrategyId, actual.StrategyId, StringComparison.Ordinal)
@@ -213,6 +220,7 @@ public sealed partial class AgentSqliteStore
             actual.Quantity,
             proof.CanonicalSha256,
             sourceRefs,
+            closeSource.CanonicalSha256,
             closeFill.CanonicalSha256,
             actual.EntryPrice,
             actual.ExitPrice,
@@ -227,6 +235,38 @@ public sealed partial class AgentSqliteStore
             simulatedFeeEvidenceComplete,
             simulatedFees,
             actual.ClosedAtUtc);
+    }
+
+    private async Task<(ExecutionSimulationSourceV1 Source,ExecutionSimulationFillV1 Fill)?> GetVerifiedSimulationEvidenceAsync(
+        string correlationId,
+        string clientOrderId,
+        CancellationToken ct)
+    {
+        var source = await GetExecutionSimulationSourceAsync(correlationId, clientOrderId, ct);
+        var fill = await GetExecutionSimulationFillAsync(correlationId, clientOrderId, ct);
+        if (source is null
+            || fill is null
+            || !string.Equals(source.Schema,ExecutionSimulationSourceCanonicalizerV1.Schema,StringComparison.Ordinal)
+            || source.State != ExecutionSimulationSourceStateV1.Available
+            || !source.TopOfBookAvailable
+            || !string.Equals(fill.SimulationModelVersion,AutomaticExecutionSimulationModelV1.Version,StringComparison.Ordinal))
+            return null;
+
+        ExecutionSimulationFillV1 replay;
+        try
+        {
+            replay = AutomaticExecutionSimulationModelV1.CreateFill(source);
+        }
+        catch
+        {
+            return null;
+        }
+
+        if (!string.Equals(replay.CanonicalSha256,fill.CanonicalSha256,StringComparison.Ordinal)
+            || !CryptographicOperations.FixedTimeEquals(replay.CanonicalBytes,fill.CanonicalBytes))
+            return null;
+
+        return (source,fill);
     }
 
     private static bool SimulationMatchesActualLedgerEvent(
