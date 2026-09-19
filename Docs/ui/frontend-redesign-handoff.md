@@ -48,7 +48,7 @@ No other Web-to-host command is supported. In particular, the Web UI cannot save
 - Contract version: `1.0`.
 - Canonical TypeScript contract and validation: `WebUi/components/runtime-bridge.tsx`.
 - Canonical C# contract: `Core/Contracts/RuntimeSnapshotV1.cs`.
-- Host composition: `Services/RuntimeSnapshotFactory.cs` and `Services/DesktopRuntimeHost.cs`.
+- Host composition: `Services/RuntimeSnapshotFactory.cs` and `Services/TradingRuntimeHost.cs`.
 - A snapshot is accepted only when the runtime bridge's trust and freshness checks succeed.
 - The runtime bridge replaces the previous snapshot atomically; it must never merge fresh fields into stale or preview state.
 
