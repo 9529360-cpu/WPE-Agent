@@ -23,6 +23,7 @@ export function projectRuntimeHistory(runtime: WpeRuntimeState): HistoryProjecti
   const backtests = runtime.historicalBacktests
   const skillCalls = runtime.historicalSkillCalls
   const auditEvents = runtime.historicalAuditEvents
+  const postTradePnlDrift = runtime.historicalPostTradePnlDrift
 
   return {
     orders: orders ? { ...pageMetadata(orders), items: orders.state === 'available' ? orders.items.map(({ sequence, occurredAtUtc, symbol, side, action, quantity, averagePrice, status }) => ({ sequence, occurredAtUtc, symbol, side, action, quantity, averagePrice, status })) : [] } : unsupportedHistoryProjection.orders,
@@ -30,6 +31,7 @@ export function projectRuntimeHistory(runtime: WpeRuntimeState): HistoryProjecti
     backtests: backtests ? { ...pageMetadata(backtests), items: backtests.state === 'available' ? backtests.items.map(({ backtestId, completedAtUtc, strategyId, strategyVersion, symbol, status, coverageDays, trades, outOfSampleReturn, maxDrawdown, sharpe }) => ({ backtestId, completedAtUtc: completedAtUtc!, strategyId, strategyVersion, symbol, status, coverageDays, trades, outOfSampleReturn, maxDrawdown, sharpe })) : [] } : unsupportedHistoryProjection.backtests,
     skillCalls: skillCalls ? { ...pageMetadata(skillCalls), items: skillCalls.state === 'available' ? skillCalls.items.map(({ id, occurredAtUtc, skill, status, durationMs, mode, remoteLlmUsed, tokens, costUsd }) => ({ id, occurredAtUtc, skill, status, durationMs, mode, remoteLlmUsed, tokens, costUsd })) : [] } : unsupportedHistoryProjection.skillCalls,
     auditEvents: auditEvents ? { ...pageMetadata(auditEvents), items: auditEvents.state === 'available' ? auditEvents.items.map(({ id, occurredAtUtc, category, source, status }) => ({ id, occurredAtUtc, category, source, status })) : [] } : unsupportedHistoryProjection.auditEvents,
+    postTradePnlDrift: postTradePnlDrift ? { ...pageMetadata(postTradePnlDrift), items: postTradePnlDrift.state === 'available' ? postTradePnlDrift.items.map(({ sequence, comparedAtUtc, strategyId, strategyVersion, symbol, side, closingQuantity, state, actualGrossPnl, simulatedGrossPnl, observedMinusSimulatedGrossPnl, feeAdjustedPnlComparable, observedMinusSimulatedFeeAdjustedPnl, netPnlComparable, reasonCode }) => ({ sequence, comparedAtUtc, strategyId, strategyVersion, symbol, side, closingQuantity, state, actualGrossPnl, simulatedGrossPnl, observedMinusSimulatedGrossPnl, feeAdjustedPnlComparable, observedMinusSimulatedFeeAdjustedPnl, netPnlComparable, reasonCode })) : [] } : unsupportedHistoryProjection.postTradePnlDrift,
   }
 }
 
