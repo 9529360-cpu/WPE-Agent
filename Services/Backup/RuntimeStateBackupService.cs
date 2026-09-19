@@ -14,25 +14,6 @@ public sealed class RuntimeStateBackupService
     public const string DescriptorFileName = "backup-descriptor-v1.json";
     public const string AuthenticationFileName = "manifest-auth-v1.wpeenv.json";
 
-    private static readonly string[] AuthoritativeDatabases =
-    [
-        "agent.db",
-        "trading.db",
-        "notification-outbox.db",
-        "security-storage.db"
-    ];
-
-    private static readonly string[] AuthoritativeFiles =
-    [
-        "agent-settings.json",
-        "appsettings.json",
-        "local-accounts.json",
-        "device-license.dat",
-        "ui-settings.json",
-        "ui-preferences.json",
-        "llm-calls.jsonl"
-    ];
-
     private static readonly HashSet<string> LegacyPlaintextSecretFields = new(StringComparer.OrdinalIgnoreCase)
     {
         "TelegramBotToken",
@@ -104,7 +85,7 @@ public sealed class RuntimeStateBackupService
             var encryptedFiles = new List<EncryptedBackupFile>();
             var ordinal = 0;
 
-            foreach (var database in AuthoritativeDatabases)
+            foreach (var database in RuntimeStateBackupInventoryV1.AuthoritativeDatabases)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var source = _layout.DataFile(database);
@@ -115,7 +96,7 @@ public sealed class RuntimeStateBackupService
                     stagingDirectory, ordinal++, encryptedFiles, cancellationToken).ConfigureAwait(false));
             }
 
-            foreach (var file in AuthoritativeFiles)
+            foreach (var file in RuntimeStateBackupInventoryV1.AuthoritativeFiles)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var source = _layout.DataFile(file);
