@@ -125,6 +125,17 @@ public sealed class StrategyResearchAgent
             profile.ShadowObservations = performance.Observations; profile.Expectancy = performance.Expectancy;
             profile.MaxDrawdown = performance.MaxDrawdown; profile.FailureStreak = performance.FailureStreak; profile.QualityScore = performance.QualityScore;
             var previous=profile.Lifecycle;var next = _governor.NextLifecycle(profile);
+            if(previous==StrategyLifecycle.Shadow&&next==StrategyLifecycle.Active)
+            {
+                var qualification=await CreateShadowQualificationAsync(profile,ct);
+                if(qualification is null)
+                {
+                    next=StrategyLifecycle.Shadow;
+                    profile.LastReason="canonical shadow qualification unavailable";
+                }
+                else
+                    await _database.SaveStrategyShadowQualificationAsync(qualification,ct);
+            }
             if(next==profile.Lifecycle&&_governor.ShouldRetireShadow(profile,_utcNow()))next=StrategyLifecycle.Retired;
             if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = _utcNow(); profile.LastReason = next==StrategyLifecycle.Retired?$"shadow evaluation exhausted without qualification: {performance.Summary}":$"local performance: {performance.Summary}"; }
             await _database.UpsertStrategyAsync(profile, ct);
@@ -142,9 +153,12 @@ public sealed class StrategyResearchAgent
                 .ThenByDescending(x => x.Expectancy)
                 .FirstOrDefault();
             if (challenger is null) continue;
+            var qualification=await CreateShadowQualificationAsync(challenger,ct);
+            if(qualification is null)continue;
+            await _database.SaveStrategyShadowQualificationAsync(qualification,ct);
             challenger.Lifecycle = StrategyLifecycle.Active;
             challenger.StateChangedAtUtc = _utcNow();
-            challenger.LastReason = "deterministic failover from degraded strategy";
+            challenger.LastReason = "deterministic failover from canonically qualified shadow strategy";
             await _database.UpsertStrategyAsync(challenger, ct);
             await _database.RecordStrategyLifecycleAsync(challenger,StrategyLifecycle.Shadow,challenger.LastReason,ct);
         }
@@ -153,6 +167,25 @@ public sealed class StrategyResearchAgent
 
     public StrategySignal GetSignal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
         => _schedulerHealthy ? _engine.Signal(profile, market, news) : new StrategySignal(profile.Id, profile.Symbol, 0, 0, "strategy research heartbeat is stale; hold", profile.Version);
+
+    private async Task<StrategyShadowQualificationDecisionV1?> CreateShadowQualificationAsync(
+        StrategyProfile profile,
+        CancellationToken ct)
+    {
+        if(profile.Lifecycle!=StrategyLifecycle.Shadow)return null;
+        var now=_utcNow().ToUniversalTime();
+        var evaluatedAt=new DateTimeOffset(DateTime.SpecifyKind(now,DateTimeKind.Utc));
+        var evidence=await _database.GetStrategyShadowObservationsAsync(profile.Id,profile.Version,ct);
+        var decision=StrategyShadowQualificationV1.Evaluate(
+            profile.Id,
+            profile.Version,
+            profile.Symbol,
+            evidence,
+            evaluatedAt);
+        return StrategyShadowQualificationV1.IsCanonical(decision)&&decision.Qualified
+            ?decision
+            :null;
+    }
 
     private async Task<StrategyShadowObservationV1?> CreateShadowObservationAsync(
         StrategyProfile profile,
