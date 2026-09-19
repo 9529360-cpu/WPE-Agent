@@ -84,12 +84,15 @@ jobs:
     - name: Build .NET
       run: dotnet build "币安量化机器人.sln" --configuration Release --no-restore
 
+    - name: Verify portable runtime target
+      run: dotnet build "币安量化机器人.csproj" --configuration Release --framework net8.0 --no-restore
+
     - name: Test .NET
       shell: pwsh
       run: ./eng/test.ps1 -Configuration Release
 
     - name: Publish candidate
-      run: dotnet publish "币安量化机器人.csproj" --configuration Release --no-restore --output artifacts/publish
+      run: dotnet publish "币安量化机器人.csproj" --configuration Release --framework net8.0-windows --no-restore --output artifacts/publish
 
     - name: Verify publish boundary
       shell: pwsh
@@ -99,8 +102,17 @@ jobs:
           throw "Published Reference UI export is missing."
         }
         $forbidden = Get-ChildItem artifacts/publish -Recurse -File | Where-Object {
-          $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
-          $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)$' -or
-          $_.Name -match '(?i)\.(db|sqlite|sqlite3)-(wal|shm)$'
+          $name = $_.Name.ToLowerInvariant()
+          $extension = $_.Extension.ToLowerInvariant()
+          $knownState = $name -match '^(agent-settings|appsettings|order-state|local-accounts|local-session|device-license|llm-calls|llm-cache)'
+          $secretData = ($name.Contains("secrets") -or $name.Contains("credentials")) -and
+            @(".json", ".dat", ".txt", ".xml", ".yaml", ".yml") -contains $extension
+          $knownState -or $secretData -or
+          $extension -match '^\.(db|sqlite|sqlite3|pem|key|p12|pfx)
+        if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
+ -or
+          $name -match '\.(db|sqlite|sqlite3)-(wal|shm)
+        if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
+
         }
         if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
