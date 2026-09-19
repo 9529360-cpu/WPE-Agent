@@ -32,7 +32,8 @@ public sealed class RealtimeMarketIntegrityTests : IDisposable
     public async Task TradeMessagesCannotRefreshBookFreshness()
     {
         await using var hub=Hub();
-        await hub.HandleMarketAsync("{\"data\":{\"e\":\"bookTicker\",\"s\":\"BTCUSDT\",\"b\":\"99\",\"a\":\"101\",\"B\":\"2\",\"A\":\"3\"}}",default);
+        var bookMs=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        await hub.HandleMarketAsync($"{{\"data\":{{\"e\":\"bookTicker\",\"E\":{bookMs},\"T\":{bookMs},\"s\":\"BTCUSDT\",\"b\":\"99\",\"a\":\"101\",\"B\":\"2\",\"A\":\"3\"}}}}",default);
         var book=Assert.IsType<RealtimeMarketSnapshot>(hub.GetSnapshot("BTCUSDT"));
         Assert.NotEqual(default,book.BookUpdatedAt);
 
@@ -45,10 +46,42 @@ public sealed class RealtimeMarketIntegrityTests : IDisposable
     }
 
     [Fact]
+    public async Task BookTickerUsesExchangeTimeAndRejectsMissingFutureOrOlderSnapshots()
+    {
+        await using var hub=Hub();
+        var now=DateTimeOffset.UtcNow;
+        var freshMs=now.AddSeconds(-1).ToUnixTimeMilliseconds();
+        await hub.HandleMarketAsync($"{{\"data\":{{\"e\":\"bookTicker\",\"E\":{freshMs},\"T\":{freshMs},\"s\":\"BTCUSDT\",\"b\":\"99\",\"a\":\"101\",\"B\":\"2\",\"A\":\"3\"}}}}",default);
+        var fresh=Assert.IsType<RealtimeMarketSnapshot>(hub.GetSnapshot("BTCUSDT"));
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(freshMs).UtcDateTime,fresh.BookUpdatedAt);
+        Assert.Equal(1,fresh.Messages);
+
+        await hub.HandleMarketAsync("{\"data\":{\"e\":\"bookTicker\",\"s\":\"BTCUSDT\",\"b\":\"98\",\"a\":\"102\",\"B\":\"4\",\"A\":\"5\"}}",default);
+        var missing=Assert.IsType<RealtimeMarketSnapshot>(hub.GetSnapshot("BTCUSDT"));
+        Assert.Equal(fresh.BookUpdatedAt,missing.BookUpdatedAt);
+        Assert.Equal(fresh.BestBid,missing.BestBid);
+        Assert.Equal(1,missing.Messages);
+
+        var futureMs=now.AddMinutes(1).ToUnixTimeMilliseconds();
+        await hub.HandleMarketAsync($"{{\"data\":{{\"e\":\"bookTicker\",\"E\":{futureMs},\"T\":{futureMs},\"s\":\"BTCUSDT\",\"b\":\"98\",\"a\":\"102\",\"B\":\"4\",\"A\":\"5\"}}}}",default);
+        var future=Assert.IsType<RealtimeMarketSnapshot>(hub.GetSnapshot("BTCUSDT"));
+        Assert.Equal(fresh.BookUpdatedAt,future.BookUpdatedAt);
+        Assert.Equal(1,future.Messages);
+
+        var olderMs=now.AddSeconds(-5).ToUnixTimeMilliseconds();
+        await hub.HandleMarketAsync($"{{\"data\":{{\"e\":\"bookTicker\",\"E\":{olderMs},\"T\":{olderMs},\"s\":\"BTCUSDT\",\"b\":\"97\",\"a\":\"103\",\"B\":\"6\",\"A\":\"7\"}}}}",default);
+        var older=Assert.IsType<RealtimeMarketSnapshot>(hub.GetSnapshot("BTCUSDT"));
+        Assert.Equal(fresh.BookUpdatedAt,older.BookUpdatedAt);
+        Assert.Equal(fresh.BestBid,older.BestBid);
+        Assert.Equal(1,older.Messages);
+    }
+
+    [Fact]
     public async Task ValidKnownEventsAloneAdvanceMessageCount()
     {
         await using var hub=Hub();
-        await hub.HandleMarketAsync("{\"data\":{\"e\":\"bookTicker\",\"s\":\"BTCUSDT\",\"b\":\"99\",\"a\":\"101\",\"B\":\"2\",\"A\":\"3\"}}",default);
+        var bookMs=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        await hub.HandleMarketAsync($"{{\"data\":{{\"e\":\"bookTicker\",\"E\":{bookMs},\"T\":{bookMs},\"s\":\"BTCUSDT\",\"b\":\"99\",\"a\":\"101\",\"B\":\"2\",\"A\":\"3\"}}}}",default);
         await hub.HandleMarketAsync("{\"data\":{\"e\":\"aggTrade\",\"s\":\"BTCUSDT\",\"p\":\"100\",\"q\":\"1\",\"m\":false}}",default);
         var snapshot=Assert.IsType<RealtimeMarketSnapshot>(hub.GetSnapshot("BTCUSDT"));
         Assert.Equal(2,snapshot.Messages);Assert.Equal(100,snapshot.LastPrice);Assert.Equal(99,snapshot.BestBid);Assert.Equal(101,snapshot.BestAsk);Assert.NotEqual(default,snapshot.UpdatedAt);Assert.NotEqual(default,snapshot.BookUpdatedAt);
