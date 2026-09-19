@@ -148,7 +148,7 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
     {
         await InitializeAsync();
         await ExecuteAsync("INSERT INTO trade_outcomes(client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,fees,fee_basis,fee_rate,entry_slippage_amount,exit_slippage_amount,total_slippage_amount,slippage_basis,funding_amount,funding_basis,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis) VALUES('close-1','cycle-1','BTCUSDT','Long','100','110','1','.05','exchange-reported-usdt','0','.10','.20','.30','intent-expected-vs-fill','1.25','exchange-reported-window','11.20','.112',$t,'trend-alpha','2.1.0','automatic-artifact')",("$t",Now.AddYears(-2).ToString("O")));
-        var hash=new string('a',64);
+        var hash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(new byte[]{1})).ToLowerInvariant();
         foreach(var row in new[]{("position_reconciliation_audits","Confirmed",1),("protection_reconciliation_audits","Protected",1),("external_position_isolation_audits","Clear",1)})
             await ExecuteAsync($"INSERT INTO {row.Item1}(report_id,schema,observed_at,evaluated_at,state,allows_risk_increase,canonical_sha256,canonical_bytes) VALUES($id,'schema/1.0',$t,$t,$state,$allows,$hash,X'01')",("$id",row.Item1),("$t",Now.ToString("O")),("$state",row.Item2),("$allows",row.Item3),("$hash",hash));
 
@@ -162,7 +162,7 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
         Assert.Matches("^trade#[A-F0-9]{12}$",review.TraceId);Assert.Equal("legacy",review.TraceState);Assert.Equal("Unavailable",review.RiskDecision);Assert.Equal("Unavailable",review.ExecutionStatus);Assert.Equal("trace.execution-unavailable",review.ExecutionCode);Assert.Null(review.ExecutionAttempts);Assert.Equal("unavailable",review.EvidenceState);Assert.Empty(review.EvidenceChain);
         Assert.Equal(.05m,review.Fees);Assert.Equal(1.25m,review.FundingAmount);Assert.Equal(.30m,review.TotalSlippageAmount);Assert.Equal(11.20m,review.NetPnl);Assert.Equal("win",review.Outcome);
         var reviewJson=System.Text.Json.JsonSerializer.Serialize(reviews);Assert.DoesNotContain("close-1",reviewJson,StringComparison.Ordinal);Assert.DoesNotContain("cycle-1",reviewJson,StringComparison.Ordinal);
-        Assert.Equal(RuntimeCollectionState.Available,reconciliations.State);Assert.Equal(3,reconciliations.Items.Count);Assert.All(reconciliations.Items,item=>Assert.True(item.AllowsRiskIncrease));
+        Assert.Equal(RuntimeCollectionState.Available,reconciliations.State);Assert.Equal(3,reconciliations.Items.Count);Assert.All(reconciliations.Items,item=>Assert.True(item.AllowsRiskIncrease));Assert.All(reconciliations.Items,item=>Assert.Equal(hash,item.CanonicalSha256));
         Assert.Equal(new[]{"externalIsolation","position","protection"},reconciliations.Items.Select(item=>item.Kind).OrderBy(value=>value,StringComparer.Ordinal).ToArray());
         var json=System.Text.Json.JsonSerializer.Serialize(reconciliations);Assert.DoesNotContain("canonical_bytes",json,StringComparison.OrdinalIgnoreCase);Assert.DoesNotContain("AQ==",json,StringComparison.Ordinal);
     }
@@ -251,6 +251,18 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
         var review=Assert.Single((await new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now).ReadPostTradeReviewsAsync(new())).Items);
 
         Assert.Equal("ambiguous",review.TraceState);Assert.Equal("Ambiguous",review.RiskDecision);Assert.Equal("Ambiguous",review.ExecutionStatus);Assert.Equal("trace.multiple-executions",review.ExecutionCode);Assert.Null(review.ExecutionAttempts);Assert.Null(review.MarketCollectedAtUtc);Assert.Null(review.MarketDataVersion);
+    }
+
+    [Fact]
+    public async Task TamperedReconciliationCanonicalPayloadFailsClosed()
+    {
+        await InitializeAsync();
+        var hash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(new byte[]{1})).ToLowerInvariant();
+        await ExecuteAsync("INSERT INTO protection_reconciliation_audits(report_id,schema,observed_at,evaluated_at,state,allows_risk_increase,canonical_sha256,canonical_bytes) VALUES('tampered','schema/1.0',$t,$t,'Protected',1,$hash,X'02')",("$t",Now.ToString("O")),("$hash",hash));
+
+        var page=await new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now).ReadReconciliationsAsync(new());
+
+        Assert.Equal(RuntimeCollectionState.Error,page.State);Assert.Empty(page.Items);Assert.Null(page.NextCursor);
     }
 
     [Fact]

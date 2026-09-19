@@ -365,16 +365,24 @@ public sealed class RuntimeHistoricalCollectionStateStore
                 if(latest is not null&&(updatedAt is null||latest.Value>updatedAt.Value))updatedAt=latest;
             }
 
-            var union=string.Join(" UNION ALL ",sources.Select(source=>$"SELECT '{source.Kind}' AS kind,report_id,schema,observed_at,evaluated_at,state,allows_risk_increase,canonical_sha256 FROM {source.Table}"));
+            var union=string.Join(" UNION ALL ",sources.Select(source=>$"SELECT '{source.Kind}' AS kind,report_id,schema,observed_at,evaluated_at,state,allows_risk_increase,canonical_sha256,length(canonical_bytes) AS canonical_length,canonical_bytes FROM {source.Table}"));
             var items=new List<HistoricalReconciliationV1>(limit+1);
             await using var command=connection.CreateCommand();
-            command.CommandText=$"SELECT kind,report_id,schema,observed_at,evaluated_at,state,allows_risk_increase,canonical_sha256 FROM ({union}) ORDER BY evaluated_at DESC,report_id DESC LIMIT $limit OFFSET $offset";
+            command.CommandText=$"SELECT kind,report_id,schema,observed_at,evaluated_at,state,allows_risk_increase,canonical_sha256,canonical_length,canonical_bytes FROM ({union}) ORDER BY evaluated_at DESC,report_id DESC LIMIT $limit OFFSET $offset";
             command.Parameters.AddWithValue("$limit",limit+1);command.Parameters.AddWithValue("$offset",offset);
             await using var reader=await command.ExecuteReaderAsync(ct);
             while(await reader.ReadAsync(ct))
             {
                 var allows=reader.GetInt32(6);
                 if(allows is not 0 and not 1)throw new InvalidOperationException("Reconciliation risk flag is invalid.");
+                var hash=Hash(reader.GetString(7)).ToLowerInvariant();
+                if(reader.IsDBNull(8)||reader.IsDBNull(9))throw new InvalidOperationException("Reconciliation canonical payload is unavailable.");
+                var byteLength=reader.GetInt64(8);
+                if(byteLength is <=0 or >262144)throw new InvalidOperationException("Reconciliation canonical payload size is invalid.");
+                var bytes=(byte[])reader[9];
+                if(bytes.LongLength!=byteLength)throw new InvalidOperationException("Reconciliation canonical payload length is inconsistent.");
+                var computed=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                if(!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(hash),Convert.FromHexString(computed)))throw new InvalidOperationException("Reconciliation canonical payload hash mismatch.");
                 items.Add(new(
                     Safe(reader.GetString(0),40),
                     SensitiveDataRedactor.MaskIdentifier(reader.GetString(1),"reconciliation"),
@@ -383,7 +391,7 @@ public sealed class RuntimeHistoricalCollectionStateStore
                     Instant(reader.GetString(4)),
                     Safe(reader.GetString(5),40),
                     allows==1,
-                    Hash(reader.GetString(7))));
+                    hash));
             }
             var hasMore=items.Count>limit;if(hasMore)items.RemoveAt(items.Count-1);
             return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count):null,updatedAt,null);
