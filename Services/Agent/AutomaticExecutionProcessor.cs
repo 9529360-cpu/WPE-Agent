@@ -167,6 +167,9 @@ public sealed class AutomaticExecutionProcessor
 
     internal async Task<ModelOffExecutionBackfillResultV1> BackfillObservationsAsync(CancellationToken ct)
     {
+        try{await _store.BackfillMissingPostTradePnlDriftAsync(BackfillPageSize,ct);}
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch(Exception ex){try{await _store.RecordErrorAsync("PostTradePnlDriftBackfill",ex,CancellationToken.None);}catch{}}
         var examined=0;var written=0;var skipped=0;var failed=0;
         var cursorText=await _store.GetStateAsync(BackfillCursorKey,ct);
         var cursor=long.TryParse(cursorText,System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out var parsed)&&parsed>=0?parsed:0;
