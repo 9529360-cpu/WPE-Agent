@@ -232,7 +232,10 @@ public sealed class TradingExecutionGatewayTests:IDisposable
         var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
         var source=File.ReadAllText(Path.Combine(root,"Services","AutoTradingAgent.cs"));
 
+        Assert.Contains("var executionRealityRecorder=new ExecutionRealityRecorderV1(Db);",source,StringComparison.Ordinal);
         Assert.Contains("var executor=new ReliableOrderExecutor(",source,StringComparison.Ordinal);
+        Assert.Contains("realityRecorder:executionRealityRecorder",source,StringComparison.Ordinal);
+        Assert.Contains("realityCosts:TradingRealityCostAuthorityV1.Execution",source,StringComparison.Ordinal);
         Assert.Contains("capabilitySnapshot,",source,StringComparison.Ordinal);
         Assert.Contains("capabilityRefresh",source,StringComparison.Ordinal);
         Assert.Contains("ProviderCapabilityProbe",source,StringComparison.Ordinal);
