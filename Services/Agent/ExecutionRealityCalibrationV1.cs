@@ -145,6 +145,23 @@ internal static class ExecutionRealityCalibrationCanonicalizerV1
                     x.P90SubmitToFirstExchangeMilliseconds,x.MedianIntentToFinalMilliseconds,x.P90IntentToFinalMilliseconds,
                     x.MedianSpreadBps,x.MedianLiquidityScore,x.MedianAtrPercent})
             if(v is { } number&&!double.IsFinite(number))return false;
+        if(Math.Abs(x.PartialFillRate-x.PartialFillCount/(double)x.SampleCount)>1e-12||x.P10FillRatio>x.MedianFillRatio)return false;
+        if((x.SlippageSampleCount==0)!=(x.MedianAdverseSlippageBps is null)|| (x.SlippageSampleCount==0)!=(x.P90AdverseSlippageBps is null))return false;
+        if(x.MedianAdverseSlippageBps is { } slipMedian&&x.P90AdverseSlippageBps is { } slipP90&&slipP90<slipMedian)return false;
+        if((x.SubmitLatencySampleCount==0)!=(x.MedianSubmitToFirstExchangeMilliseconds is null)
+           ||(x.SubmitLatencySampleCount==0)!=(x.P90SubmitToFirstExchangeMilliseconds is null))return false;
+        if(x.MedianSubmitToFirstExchangeMilliseconds is { } submitMedian&&x.P90SubmitToFirstExchangeMilliseconds is { } submitP90
+           &&(submitMedian<0||submitP90<submitMedian))return false;
+        if((x.IntentLatencySampleCount==0)!=(x.MedianIntentToFinalMilliseconds is null)
+           ||(x.IntentLatencySampleCount==0)!=(x.P90IntentToFinalMilliseconds is null))return false;
+        if(x.MedianIntentToFinalMilliseconds is { } endMedian&&x.P90IntentToFinalMilliseconds is { } endP90
+           &&(endMedian<0||endP90<endMedian))return false;
+        if((x.PreflightContextSampleCount==0)!=(x.MedianSpreadBps is null)
+           ||(x.PreflightContextSampleCount==0)!=(x.MedianLiquidityScore is null)
+           ||(x.PreflightContextSampleCount==0)!=(x.MedianAtrPercent is null))return false;
+        if(x.MedianSpreadBps is { } spread&&spread<0)return false;
+        if(x.MedianLiquidityScore is { } liquidity&&liquidity is<0 or>1)return false;
+        if(x.MedianAtrPercent is { } atr&&atr<0)return false;
         var qualified=x.SampleCount>=minimum&&x.SlippageSampleCount>=minimum
             &&x.SubmitLatencySampleCount>=minimum&&x.IntentLatencySampleCount>=minimum;
         return x.Qualified==qualified;
@@ -278,7 +295,7 @@ public sealed partial class AgentSqliteStore
         if(source.LastExecutionEventId<1)return new(false,new string('0',64),new string('0',64),[]);
 
         var events=new List<(long Id,string ClientOrderId,string Symbol,PositionSide Side,bool ReduceOnly,decimal Quantity,string Status,string OccurredAt,string? ExchangeUpdatedAt)>();
-        var driftRows=new List<(string Schema,string ClientOrderId,int Sequence,string Phase,string CanonicalSha256)>();
+        var driftValues=new List<ExecutionDriftObservationV1>();
         await using(var c=new SqliteConnection(_cs))
         {
             await c.OpenAsync(ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
@@ -296,7 +313,7 @@ public sealed partial class AgentSqliteStore
                 {
                     if(!Enum.TryParse<PositionSide>(r.GetString(3),true,out var side)
                        ||!decimal.TryParse(r.GetString(5),NumberStyles.Number,CultureInfo.InvariantCulture,out var quantity)||quantity<0)
-                        continue;
+                        return new(false,new string('0',64),new string('0',64),[]);
                     var id=r.GetInt64(0);var clientOrderId=r.IsDBNull(1)?$"legacy-event:{id}":r.GetString(1);
                     events.Add((id,clientOrderId,r.GetString(2),side,r.GetInt32(4)==1,quantity,r.GetString(6),
                         r.IsDBNull(7)?"unknown":r.GetString(7),r.IsDBNull(8)?null:r.GetString(8)));
@@ -305,46 +322,92 @@ public sealed partial class AgentSqliteStore
             await using(var q=c.CreateCommand())
             {
                 q.Transaction=tx;q.CommandText="""
-                    SELECT d.schema,d.client_order_id,d.sequence,d.phase,d.canonical_sha256,d.canonical_bytes
+                    SELECT d.schema,d.cycle_id,d.client_order_id,d.sequence,d.phase,d.source,d.observed_at,d.exchange_updated_at,
+                           d.provider_id,d.environment,d.symbol,d.side,d.reduce_only,d.order_type,d.requested_quantity,d.limit_price,
+                           d.observed_executed_quantity,d.expected_price,d.observed_average_price,d.provider_status,
+                           d.spread_bps,d.liquidity_score,d.atr_percent,d.canonical_sha256,d.canonical_bytes
                     FROM execution_drift_observations d
                     JOIN execution_events e ON e.client_order_id=d.client_order_id
-                    WHERE e.id<=$cursor AND e.status IN ('FILLED','PARTIALLY_FILLED')
+                    WHERE e.id<=$cursor AND e.status IN ('FILLED','PARTIALLY_FILLED') AND d.schema=$schema
                     ORDER BY d.client_order_id,d.sequence
                     """;
-                q.Parameters.AddWithValue("$cursor",source.LastExecutionEventId);
+                q.Parameters.AddWithValue("$cursor",source.LastExecutionEventId);q.Parameters.AddWithValue("$schema",ExecutionDriftCanonicalizerV1.Schema);
                 await using var r=await q.ExecuteReaderAsync(ct);
                 while(await r.ReadAsync(ct))
                 {
-                    var schema=r.GetString(0);if(!string.Equals(schema,ExecutionDriftCanonicalizerV1.Schema,StringComparison.Ordinal))continue;
-                    var hash=r.GetString(4);var bytes=(byte[])r[5];
-                    if(hash.Length!=64||!string.Equals(Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),hash,StringComparison.Ordinal))
+                    if(!Enum.TryParse<ExecutionDriftPhaseV1>(r.GetString(4),out var phase)
+                       ||!Enum.TryParse<ExecutionDriftSourceV1>(r.GetString(5),out var driftSource)
+                       ||!Enum.TryParse<PositionSide>(r.GetString(11),out var side)
+                       ||!Enum.TryParse<ExecutionOrderType>(r.GetString(13),out var orderType))
                         return new(false,new string('0',64),new string('0',64),[]);
-                    driftRows.Add((schema,r.GetString(1),r.GetInt32(2),r.GetString(3),hash));
+                    var value=new ExecutionDriftObservationV1(
+                        r.GetString(0),r.GetString(1),r.GetString(2),r.GetInt32(3),phase,driftSource,
+                        DateTimeOffset.Parse(r.GetString(6),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind).ToUniversalTime(),
+                        r.IsDBNull(7)?null:DateTimeOffset.Parse(r.GetString(7),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind).ToUniversalTime(),
+                        r.GetString(8),r.GetString(9),r.GetString(10),side,r.GetInt32(12)==1,orderType,
+                        decimal.Parse(r.GetString(14),CultureInfo.InvariantCulture),decimal.Parse(r.GetString(15),CultureInfo.InvariantCulture),
+                        decimal.Parse(r.GetString(16),CultureInfo.InvariantCulture),decimal.Parse(r.GetString(17),CultureInfo.InvariantCulture),
+                        decimal.Parse(r.GetString(18),CultureInfo.InvariantCulture),r.GetString(19),
+                        double.Parse(r.GetString(20),CultureInfo.InvariantCulture),double.Parse(r.GetString(21),CultureInfo.InvariantCulture),
+                        double.Parse(r.GetString(22),CultureInfo.InvariantCulture),r.GetString(23),(byte[])r[24]);
+                    if(!ExecutionDriftCanonicalizerV1.IsCanonical(value))
+                        return new(false,new string('0',64),new string('0',64),[]);
+                    driftValues.Add(value);
                 }
             }
+
+            var eventTraceBytes=JsonSerializer.SerializeToUtf8Bytes(events.Select(x=>new
+            {
+                x.Id,x.ClientOrderId,x.Symbol,side=x.Side.ToString(),x.ReduceOnly,
+                quantity=x.Quantity.ToString("G29",CultureInfo.InvariantCulture),x.Status,x.OccurredAt,x.ExchangeUpdatedAt
+            }));
+            var driftTraceBytes=JsonSerializer.SerializeToUtf8Bytes(driftValues.Select(x=>new
+            {
+                x.Schema,x.ClientOrderId,x.Sequence,Phase=x.Phase.ToString(),x.CanonicalSha256
+            }));
+            var eventHash=Convert.ToHexString(SHA256.HashData(eventTraceBytes)).ToLowerInvariant();
+            var driftHash=Convert.ToHexString(SHA256.HashData(driftTraceBytes)).ToLowerInvariant();
+            var matches=string.Equals(eventHash,source.ExecutionTraceSha256,StringComparison.Ordinal)
+                        &&string.Equals(driftHash,source.DriftTraceSha256,StringComparison.Ordinal);
+            if(!matches){await tx.CommitAsync(ct);return new(false,eventHash,driftHash,[]);}
+
+            var summaries=driftValues.GroupBy(x=>x.ClientOrderId,StringComparer.Ordinal)
+                .Select(group=>SummarizeFrozenDrift(group.OrderBy(x=>x.Sequence).ToArray()))
+                .Where(x=>x is not null).Select(x=>x!).ToArray();
             await tx.CommitAsync(ct);
+            return new(true,eventHash,driftHash,summaries);
         }
+    }
 
-        var eventTraceBytes=JsonSerializer.SerializeToUtf8Bytes(events.Select(x=>new
+    private static ExecutionDriftSummaryV1? SummarizeFrozenDrift(IReadOnlyList<ExecutionDriftObservationV1> values)
+    {
+        if(values.Count==0||values.Select(x=>x.Sequence).Distinct().Count()!=values.Count)return null;
+        var first=values[0];
+        if(values.Any(x=>!string.Equals(x.ProviderId,first.ProviderId,StringComparison.Ordinal)
+                         ||!string.Equals(x.Environment,first.Environment,StringComparison.Ordinal)
+                         ||!string.Equals(x.Symbol,first.Symbol,StringComparison.Ordinal)
+                         ||x.Side!=first.Side||x.ReduceOnly!=first.ReduceOnly||x.OrderType!=first.OrderType
+                         ||x.RequestedQuantity!=first.RequestedQuantity||x.ExpectedPrice!=first.ExpectedPrice||x.LimitPrice!=first.LimitPrice))
+            return null;
+        var exchange=values.Where(x=>x.Source==ExecutionDriftSourceV1.Exchange).ToArray();
+        var final=values.LastOrDefault(x=>x.Phase==ExecutionDriftPhaseV1.ExecutionRecorded)??values[^1];
+        var submit=values.FirstOrDefault(x=>x.Phase==ExecutionDriftPhaseV1.SubmissionAttempted);
+        var firstExchange=exchange.FirstOrDefault();
+        var preflight=values.LastOrDefault(x=>x.Phase==ExecutionDriftPhaseV1.PreflightQuote);
+        var fillRatio=final.RequestedQuantity>0?final.ObservedExecutedQuantity/final.RequestedQuantity:0;
+        double? submitMs=submit is not null&&firstExchange is not null?(firstExchange.ObservedAtUtc-submit.ObservedAtUtc).TotalMilliseconds:null;
+        var endMs=(final.ObservedAtUtc-first.ObservedAtUtc).TotalMilliseconds;
+        double? adverse=null;
+        if(final.ExpectedPrice>0&&final.ObservedAveragePrice>0)
         {
-            x.Id,x.ClientOrderId,x.Symbol,side=x.Side.ToString(),x.ReduceOnly,
-            quantity=x.Quantity.ToString("G29",CultureInfo.InvariantCulture),x.Status,x.OccurredAt,x.ExchangeUpdatedAt
-        }));
-        var driftTraceBytes=JsonSerializer.SerializeToUtf8Bytes(driftRows.Select(x=>new{x.Schema,x.ClientOrderId,x.Sequence,x.Phase,x.CanonicalSha256}));
-        var eventHash=Convert.ToHexString(SHA256.HashData(eventTraceBytes)).ToLowerInvariant();
-        var driftHash=Convert.ToHexString(SHA256.HashData(driftTraceBytes)).ToLowerInvariant();
-        var matches=string.Equals(eventHash,source.ExecutionTraceSha256,StringComparison.Ordinal)
-                    &&string.Equals(driftHash,source.DriftTraceSha256,StringComparison.Ordinal);
-        if(!matches)return new(false,eventHash,driftHash,[]);
-
-        var result=new List<ExecutionDriftSummaryV1>();
-        foreach(var id in events.Select(x=>x.ClientOrderId).Distinct(StringComparer.Ordinal))
-        {
-            ct.ThrowIfCancellationRequested();
-            var summary=await GetExecutionDriftSummaryAsync(id,ct);
-            if(summary is not null)result.Add(summary);
+            var direction=final.Side==PositionSide.Long?1m:-1m;
+            adverse=(double)(direction*(final.ObservedAveragePrice-final.ExpectedPrice)/final.ExpectedPrice*10000m);
         }
-        return new(true,eventHash,driftHash,result);
+        return new(final.ClientOrderId,first.ProviderId,first.Environment,first.Symbol,first.Side,first.ReduceOnly,first.OrderType,first.LimitPrice,
+            values.Count,exchange.Length,exchange.Count(x=>x.ObservedExecutedQuantity>0&&x.ObservedExecutedQuantity<x.RequestedQuantity),
+            final.RequestedQuantity,final.ObservedExecutedQuantity,fillRatio,final.ExpectedPrice,final.ObservedAveragePrice,
+            preflight?.ObservedAveragePrice,preflight?.SpreadBps,preflight?.LiquidityScore,preflight?.AtrPercent,
+            submitMs,endMs,adverse,final.ProviderStatus);
     }
 
     internal async Task<bool> SaveExecutionRealityCalibrationAsync(ExecutionRealityCalibrationReportV1 value,CancellationToken ct)
