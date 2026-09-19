@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using WpeAgent.RuntimeContracts;
+using 币安量化机器人.Services.Agent;
 
 namespace WpeAgent.RuntimeServices;
 
@@ -48,6 +49,11 @@ public sealed class RuntimeHistoricalCollectionStateStore
             "SELECT event_id,occurred_at,event_type,source,correlation_id FROM runtime_events ORDER BY occurred_at DESC,sequence DESC LIMIT $limit OFFSET $offset",
             r => new HistoricalAuditEventV1(Safe(r.GetString(0),120), Instant(r.GetString(1)), Safe(r.GetString(2),80), Safe(r.GetString(3),80), Text(r,4,120), "RECORDED"), ct);
 
+    public Task<HistoricalCollectionPageV1<HistoricalPostTradePnlDriftV1>> ReadPostTradePnlDriftAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default) =>
+        ReadAsync(HistoricalCollectionKindV1.PostTradePnlDrift, request, "post_trade_pnl_drift", "compared_at", TimeSpan.FromDays(30),
+            "SELECT rowid,canonical_sha256,canonical_bytes FROM post_trade_pnl_drift ORDER BY compared_at DESC,rowid DESC LIMIT $limit OFFSET $offset",
+            MapPostTradePnlDrift, ct);
+
     private async Task<HistoricalCollectionPageV1<T>> ReadAsync<T>(HistoricalCollectionKindV1 kind, HistoricalCollectionRequestV1 request, string table, string timestampColumn, TimeSpan staleAfter, string sql, Func<SqliteDataReader,T> map, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -66,6 +72,31 @@ public sealed class RuntimeHistoricalCollectionStateStore
         }
         catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
         catch{return Page<T>(kind,RuntimeCollectionState.Error,[],null,null,"The SQLite collection could not be read.");}
+    }
+
+    private static HistoricalPostTradePnlDriftV1 MapPostTradePnlDrift(SqliteDataReader reader)
+    {
+        var hash=reader.GetString(1);
+        if(reader[2] is not byte[] bytes
+            || !PostTradePnlDriftCanonicalizerV1.TryDeserialize(bytes,hash,out var fact)
+            || fact is null)
+            throw new InvalidOperationException("Persisted post-trade PnL drift failed canonical verification.");
+        return new(
+            reader.GetInt64(0),
+            fact.ComparedAtUtc,
+            Safe(fact.StrategyId,120),
+            Safe(fact.StrategyVersion,80),
+            Safe(fact.Symbol,80),
+            fact.Side.ToString(),
+            fact.ClosingQuantity,
+            fact.State.ToString(),
+            fact.ActualGrossPnl,
+            fact.SimulatedGrossPnl,
+            fact.ObservedMinusSimulatedGrossPnl,
+            fact.FeeAdjustedPnlComparable,
+            fact.ObservedMinusSimulatedFeeAdjustedPnl,
+            fact.NetPnlComparable,
+            Safe(fact.ReasonCode,120));
     }
 
     private static HistoricalCollectionPageV1<T> Page<T>(HistoricalCollectionKindV1 kind,RuntimeCollectionState state,IReadOnlyList<T> items,string? cursor,DateTimeOffset? updated,string? message)=>new(HistoricalCollectionPageV1<T>.CurrentContractVersion,kind,state,items,cursor,updated,SourceName,message);
