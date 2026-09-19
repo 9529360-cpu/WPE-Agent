@@ -216,6 +216,8 @@ public sealed class StrategyResearchAgent
 
         var validation=persistedValidation.Validation;
         if(!validation.Passed
+           ||validation.OosPurgeObservations!=HistoricalResearchEngine.ProductionTemporalPolicy.OosPurgeObservations
+           ||validation.OosEmbargoObservations!=HistoricalResearchEngine.ProductionTemporalPolicy.OosEmbargoObservations
            ||!_governor.CanPromote(profile,validation)
            ||string.IsNullOrWhiteSpace(validation.TimelineSha256))
             return null;
