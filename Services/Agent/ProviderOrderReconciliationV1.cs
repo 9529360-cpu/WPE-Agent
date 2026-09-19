@@ -313,6 +313,8 @@ public static class ProviderOrderReconciliationServiceV1
             || !string.Equals(order.ClientOrderId, input.ClientOrderId, StringComparison.Ordinal)
             || string.IsNullOrWhiteSpace(order.OrderId)
             || string.IsNullOrWhiteSpace(order.Status)
+            || order.UpdatedAt == default
+            || order.UpdatedAt.Kind != DateTimeKind.Utc
             || order.ExecutedQuantity < 0
             || order.ExecutedQuantity > input.IntendedQuantity)
             return Leg(input, ProviderOrderLifecycleStateV1.Conflicting, order);
@@ -380,7 +382,7 @@ public static class ProviderOrderReconciliationServiceV1
             order?.AvgPrice ?? 0m,
             order is null
                 ? null
-                : new DateTimeOffset(DateTime.SpecifyKind(order.UpdatedAt, DateTimeKind.Utc)));
+                : new DateTimeOffset(order.UpdatedAt));
 
     private static object Row(ProviderOrderReconciliationLegV1 value) => new
     {
