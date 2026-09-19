@@ -207,6 +207,8 @@ public sealed partial class AgentSqliteStore
         if(value.ValidationAtUtc!=completedAt
            ||(persistedValidation.CreatedAtUtc-completedAt).Duration()>StrategyResearchAuthority.MaximumEvidencePairSkew
            ||!validation.Passed
+           ||validation.OosPurgeObservations!=HistoricalResearchEngine.ProductionTemporalPolicy.OosPurgeObservations
+           ||validation.OosEmbargoObservations!=HistoricalResearchEngine.ProductionTemporalPolicy.OosEmbargoObservations
            ||!string.Equals(validation.TimelineSha256,value.TimelineSha256,StringComparison.Ordinal))
             throw new InvalidOperationException("Strategy shadow observation source validation conflicts with durable evidence.");
 
