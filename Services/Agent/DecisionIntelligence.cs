@@ -51,7 +51,7 @@ public sealed class SignalAggregationSkill
         var maximumAge=TimeSpan.FromMinutes(policy.MaximumEvidenceAgeMinutes);
         var fresh=maximumAge>=TimeSpan.Zero&&market.CollectedAt.Kind==DateTimeKind.Utc&&market.CollectedAt<=evaluationTimeUtc.UtcDateTime&&evaluationTimeUtc.UtcDateTime-market.CollectedAt<=maximumAge;
         var confidence=Math.Clamp((Math.Abs(score)*.72+agreement*.28)*(completeness/100d)*(market.Quality.QualityScore/100d)*(fresh?1:.25),0,1);
-        var regime=DetectRegime(market);
+        var regime=MarketRegimeClassifier.Detect(market);
         var missing=new List<string>();
         if(!fresh)missing.Add(L("Decision.Stale",policy.MaximumEvidenceAgeMinutes));
         if(completeness<policy.MinimumEvidenceCompleteness)missing.Add(L("Decision.Completeness",policy.MinimumEvidenceCompleteness));
@@ -81,16 +81,6 @@ public sealed class SignalAggregationSkill
         Symbol=string.IsNullOrWhiteSpace(symbol)?"UNKNOWN":symbol,Regime=MarketRegime.Unknown,Fresh=false,EntryReady=false,
         RecommendedAction=DecisionAction.Hold,MissingConditions=["signal.invalid-market-evidence"],Summary="signal.invalid-market-evidence"
     };
-
-    private static MarketRegime DetectRegime(MarketEvidence m)
-    {
-        if(m.Quality.AtrPercent>=.05||m.Quality.LiquidationIntensity>=.80)return MarketRegime.Extreme;
-        var one=Math.Sign(m.Trend1h);var four=Math.Sign(m.Trend4h);var aligned=one!=0&&one==four&&Math.Abs(m.Trend1h)>=.003&&Math.Abs(m.Trend4h)>=.006;
-        if(aligned&&Math.Sign(m.Trend15m)==one)return MarketRegime.Trending;
-        if(aligned)return MarketRegime.Transition;
-        if(Math.Abs(m.Trend1h)<.004&&Math.Abs(m.Trend4h)<.008)return MarketRegime.Ranging;
-        return MarketRegime.Transition;
-    }
 
     private static double Quality(MarketDecisionAssessment x)=>Math.Abs(x.NetScore)*(1-x.ConflictRatio)+(x.Fresh?.05:0);
     private static string L(string key,params object?[] args)=>LocalizationService.Current.T(key,args);
