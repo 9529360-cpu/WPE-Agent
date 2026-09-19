@@ -305,7 +305,74 @@ public static class AutoTradingAgent
                         if(activeStrategy is null||proposedMarket is null||!settings.Risk.Isolated){result="automatic.artifact-context-invalid";state.ExecutionApprovalStatus="BLOCKED";}
                         else
                         {
-                            var created=DateTimeOffset.UtcNow;var expires=created.AddMinutes(2);var durableIntents=intents.Select((value,index)=>new DurableExecutionIntentSnapshotV1(index,value.Symbol,value.Side.ToString(),value.Quantity,value.ReduceOnly,value.StopLoss,value.TakeProfit,value.ClientOrderId,"automatic.risk-approved",value.Action.ToString(),value.OrderType.ToString(),value.LimitPrice,value.ExpectedPrice)).ToArray();var marketCollected=new DateTimeOffset(DateTime.SpecifyKind(proposedMarket.CollectedAt,DateTimeKind.Utc));var artifact=new DurableExecutionArtifactV2(DurableExecutionArtifactV2.Version,cycle,durableIntents,leverage,true,exchange.ProviderId,"Testnet",decision.StrategyId,decision.StrategyVersion,marketCollected,"provider-market-v1",created,expires);var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);var saved=await Db.SaveAutomaticExecutionAsync(cycle,artifact,ct);if(!saved.Succeeded){result=saved.Code;state.ExecutionApprovalStatus="BLOCKED";}else{var receipt=new DeterministicRiskReceipt("risk-"+cycle,cycle,hashes.IntentHash,true,created,expires,null,hashes.ArtifactHash);var approved=await Db.RecordAutomaticRiskDecisionAsync(cycle,receipt,ct);result=approved.Succeeded?"automatic.risk-approved":approved.Code;state.ExecutionApprovalStatus=approved.Succeeded?"RISK_APPROVED":"BLOCKED";}
+                            var freshMarket=await exchange.GetMarketAsync(decision.Instrument,ct);
+                            freshMarket=freshMarket with
+                            {
+                                CollectedAt=DateTime.SpecifyKind(freshMarket.CollectedAt.ToUniversalTime(),DateTimeKind.Utc),
+                                Provenance=null
+                            };
+                            freshMarket=freshMarket with
+                            {
+                                Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(
+                                    freshMarket,exchange.ProviderId,"Testnet")
+                            };
+                            var freshRule=await exchange.GetRulesAsync(decision.Instrument,ct);
+                            var created=DateTimeOffset.UtcNow;
+                            var expires=created.AddMinutes(2);
+                            var durableIntents=intents.Select((value,index)=>new DurableExecutionIntentSnapshotV1(
+                                index,value.Symbol,value.Side.ToString(),value.Quantity,value.ReduceOnly,
+                                value.StopLoss,value.TakeProfit,value.ClientOrderId,"automatic.risk-approved",
+                                value.Action.ToString(),value.OrderType.ToString(),value.LimitPrice,value.ExpectedPrice)).ToArray();
+                            var marketCollected=new DateTimeOffset(freshMarket.CollectedAt);
+                            var marketVersion="provider-market-v1:"+freshMarket.Provenance!.CanonicalSha256;
+                            var executionLeverage=Math.Min(leverage,freshRule.MaxLeverage);
+                            var artifact=new DurableExecutionArtifactV2(
+                                DurableExecutionArtifactV2.Version,cycle,durableIntents,executionLeverage,true,
+                                exchange.ProviderId,"Testnet",activeStrategy.Id,activeStrategy.Version,
+                                marketCollected,marketVersion,created,expires);
+                            var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);
+                            var saved=await Db.SaveAutomaticExecutionAsync(cycle,artifact,ct);
+                            if(!saved.Succeeded)
+                            {
+                                result=saved.Code;
+                                state.ExecutionApprovalStatus="BLOCKED";
+                            }
+                            else
+                            {
+                                try
+                                {
+                                    var simulation=await new ExecutionPreTradeSimulationServiceV1(Db)
+                                        .PrepareAndPersistAsync(artifact,intents,freshMarket,freshRule,ct);
+                                    if(!simulation.EligibleForRiskApproval)
+                                    {
+                                        result="automatic.pretrade-simulation-unsupported";
+                                        await Db.BlockAutomaticExecutionBeforeRiskAsync(cycle,result,ct);
+                                        state.RiskApprovalStatus="BLOCKED";
+                                        state.ExecutionApprovalStatus="BLOCKED";
+                                        state.CircuitBreakerActive=true;
+                                        state.RiskSummary=result;
+                                    }
+                                    else
+                                    {
+                                        var receipt=new DeterministicRiskReceipt(
+                                            "risk-"+cycle,cycle,hashes.IntentHash,true,created,expires,null,hashes.ArtifactHash);
+                                        var approved=await Db.RecordAutomaticRiskDecisionAsync(cycle,receipt,ct);
+                                        result=approved.Succeeded?"automatic.risk-approved":approved.Code;
+                                        state.ExecutionApprovalStatus=approved.Succeeded?"RISK_APPROVED":"BLOCKED";
+                                    }
+                                }
+                                catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
+                                catch(Exception ex)
+                                {
+                                    result="automatic.pretrade-simulation-unavailable";
+                                    await Db.BlockAutomaticExecutionBeforeRiskAsync(cycle,result,ct);
+                                    await Db.RecordErrorAsync("PRETRADE_SIMULATION",ex,CancellationToken.None);
+                                    state.RiskApprovalStatus="BLOCKED";
+                                    state.ExecutionApprovalStatus="BLOCKED";
+                                    state.CircuitBreakerActive=true;
+                                    state.RiskSummary=result;
+                                }
+                            }
                         }
                     }
                     else if(settings.AuthorizationMode==TradingAuthorizationMode.Research){result="authorization.research-read-only";state.ExecutionApprovalStatus="RESEARCH_ONLY";}
