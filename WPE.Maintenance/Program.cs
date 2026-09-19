@@ -22,6 +22,7 @@ internal static class Program
             var parsed = Parse(args);
             operation = parsed.Operation;
             var dataRoot = RequireAbsolutePath(parsed.Options, "data-root");
+            ValidateOperationArguments(parsed);
             var layout = new AppDataLayout(dataRoot);
 
             return operation switch
@@ -104,10 +105,7 @@ internal static class Program
     {
         RequireOnly(options, "data-root", "backup", "confirm-backup-id");
         var backup = RequireAbsolutePath(options, "backup");
-        var expectedBackupId = Require(options, "confirm-backup-id");
-        if (!expectedBackupId.StartsWith("wpe-state-", StringComparison.Ordinal) ||
-            expectedBackupId.Length > 96)
-            throw new ArgumentException("A valid exact --confirm-backup-id is required.");
+        var expectedBackupId = RequireConfirmedBackupId(options);
 
         var result = await new RuntimeStateRestoreService(layout)
             .RestoreAsync(backup, expectedBackupId)
@@ -153,6 +151,38 @@ internal static class Program
         }
 
         return new(operation, options);
+    }
+
+    private static void ValidateOperationArguments(ParsedCommand parsed)
+    {
+        switch (parsed.Operation)
+        {
+            case "backup":
+                RequireOnly(parsed.Options, "data-root", "destination");
+                _ = RequireAbsolutePath(parsed.Options, "destination");
+                break;
+            case "verify":
+                RequireOnly(parsed.Options, "data-root", "backup");
+                _ = RequireAbsolutePath(parsed.Options, "backup");
+                break;
+            case "restore":
+                RequireOnly(parsed.Options, "data-root", "backup", "confirm-backup-id");
+                _ = RequireAbsolutePath(parsed.Options, "backup");
+                _ = RequireConfirmedBackupId(parsed.Options);
+                break;
+            default:
+                throw new ArgumentException(Usage());
+        }
+    }
+
+    private static string RequireConfirmedBackupId(
+        IReadOnlyDictionary<string, string> options)
+    {
+        var expectedBackupId = Require(options, "confirm-backup-id");
+        if (!expectedBackupId.StartsWith("wpe-state-", StringComparison.Ordinal) ||
+            expectedBackupId.Length > 96)
+            throw new ArgumentException("A valid exact --confirm-backup-id is required.");
+        return expectedBackupId;
     }
 
     private static string RequireAbsolutePath(
