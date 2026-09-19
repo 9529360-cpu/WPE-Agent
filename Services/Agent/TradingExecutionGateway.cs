@@ -235,7 +235,6 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
         if(!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid)return new(AutomaticGatewayReconciliationState.Failed,"automatic.reconcile-artifact-invalid");
 
         var filledCount=0;
-        var notSubmittedCount=0;
         foreach(var intent in artifact.Intents)
         {
             var journaled=await _store.HasExecutionSubmissionJournalAsync(intent.ClientOrderId,ct);
@@ -245,11 +244,8 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
 
             if(providerState==ProviderOrderLifecycleStateV1.TerminalNoFill)
                 return new(AutomaticGatewayReconciliationState.Failed,"automatic.reconcile-order-terminal");
-            if(providerState==ProviderOrderLifecycleStateV1.NotSubmitted)
-            {
-                notSubmittedCount++;
-                continue;
-            }
+            // The submission journal is still a reserved read contract with no production writer.
+            // A missing provider order therefore cannot prove that submission never happened.
             if(providerState!=ProviderOrderLifecycleStateV1.Filled)
                 return new(AutomaticGatewayReconciliationState.Unknown,"automatic.reconcile-unknown");
             filledCount++;
@@ -257,8 +253,6 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
 
         if(filledCount==artifact.Intents.Count)
             return new(AutomaticGatewayReconciliationState.Succeeded,"automatic.reconcile-succeeded");
-        if(notSubmittedCount==artifact.Intents.Count)
-            return new(AutomaticGatewayReconciliationState.NotSubmitted,"automatic.reconcile-not-submitted");
         return new(AutomaticGatewayReconciliationState.Unknown,"automatic.reconcile-unknown");
     }
 
