@@ -15,11 +15,11 @@ public sealed class ExecutionSimulationComparisonV1Tests
             ExecutionSimulationFillStateV1.Filled,
             executed:1m,
             price:100m,
-            fee:.04m,
+            fee:0.04m,
             feeRole:ExecutionSimulationFeeRoleV1.Taker,
             latencyModeled:true,
             latencyMs:500);
-        var observed = Observed("FILLED", 1m, 100m, .04m, feeAvailable:true, latencyMs:500);
+        var observed = Observed("FILLED", 1m, 100m, 0.04m, feeAvailable:true, latencyMs:500);
 
         var comparison = ExecutionSimulationComparisonCanonicalizerV1.Create(simulated, observed, ObservedAt.AddSeconds(1));
 
@@ -44,11 +44,11 @@ public sealed class ExecutionSimulationComparisonV1Tests
             ExecutionSimulationFillStateV1.Filled,
             executed:1m,
             price:100m,
-            fee:.04m,
+            fee:0.04m,
             feeRole:ExecutionSimulationFeeRoleV1.Taker,
             latencyModeled:true,
             latencyMs:300);
-        var observed = Observed("FILLED", 1m, 101m, .0404m, feeAvailable:true, latencyMs:800);
+        var observed = Observed("FILLED", 1m, 101m, 0.0404m, feeAvailable:true, latencyMs:800);
 
         var comparison = ExecutionSimulationComparisonCanonicalizerV1.Create(simulated, observed, ObservedAt.AddSeconds(1));
 
@@ -63,20 +63,20 @@ public sealed class ExecutionSimulationComparisonV1Tests
     {
         var simulated = Simulated(
             ExecutionSimulationFillStateV1.Partial,
-            executed:.5m,
+            executed:0.5m,
             price:100m,
-            fee:.02m,
+            fee:0.02m,
             feeRole:ExecutionSimulationFeeRoleV1.Taker,
             latencyModeled:false,
             latencyMs:0);
-        var observed = Observed("FILLED", 1m, 100m, .04m, feeAvailable:true, latencyMs:900);
+        var observed = Observed("FILLED", 1m, 100m, 0.04m, feeAvailable:true, latencyMs:900);
 
         var comparison = ExecutionSimulationComparisonCanonicalizerV1.Create(simulated, observed, ObservedAt.AddSeconds(1));
 
         Assert.False(comparison.StateMatch);
-        Assert.Equal(.5m, comparison.SimulatedFillRatio);
+        Assert.Equal(0.5m, comparison.SimulatedFillRatio);
         Assert.Equal(1m, comparison.ObservedFillRatio);
-        Assert.Equal(.5m, comparison.FillRatioDelta);
+        Assert.Equal(0.5m, comparison.FillRatioDelta);
         Assert.False(comparison.LatencyComparable);
         Assert.Null(comparison.LatencyDriftMs);
         Assert.Equal("fill-state-drift", comparison.ReasonCode);
@@ -93,7 +93,7 @@ public sealed class ExecutionSimulationComparisonV1Tests
             feeRole:ExecutionSimulationFeeRoleV1.Unavailable,
             latencyModeled:true,
             latencyMs:500);
-        var observed = Observed("FILLED", 1m, 100.5m, .0402m, feeAvailable:true, latencyMs:500);
+        var observed = Observed("FILLED", 1m, 100.5m, 0.0402m, feeAvailable:true, latencyMs:500);
 
         var comparison = ExecutionSimulationComparisonCanonicalizerV1.Create(simulated, observed, ObservedAt.AddSeconds(1));
 
@@ -118,7 +118,7 @@ public sealed class ExecutionSimulationComparisonV1Tests
             latencyModeled:false,
             latencyMs:0,
             reason:"venue-rule-unsupported");
-        var observed = Observed("FILLED", 1m, 100m, .04m, feeAvailable:true, latencyMs:500);
+        var observed = Observed("FILLED", 1m, 100m, 0.04m, feeAvailable:true, latencyMs:500);
 
         var comparison = ExecutionSimulationComparisonCanonicalizerV1.Create(simulated, observed, ObservedAt.AddSeconds(1));
 
@@ -162,12 +162,12 @@ public sealed class ExecutionSimulationComparisonV1Tests
             ExecutionSimulationFillStateV1.Filled,
             executed:1m,
             price:100m,
-            fee:.04m,
+            fee:0.04m,
             feeRole:ExecutionSimulationFeeRoleV1.Taker,
             latencyModeled:true,
             latencyMs:500);
         var observed = Observed(
-            "FILLED", 1m, 100m, .04m, feeAvailable:true, latencyMs:500,
+            "FILLED", 1m, 100m, 0.04m, feeAvailable:true, latencyMs:500,
             strategyVersion:"different-version");
 
         Assert.True(ExecutionRealityDriftV1.IsCanonical(observed));
@@ -182,7 +182,7 @@ public sealed class ExecutionSimulationComparisonV1Tests
             ExecutionSimulationFillCanonicalizerV1.Create(
                 "cycle-1","order-1","strategy-a","v7","research-cost-v1","sim-v1","binance-testnet-rules-v1",
                 "BTCUSDT",PositionSide.Long,false,ExecutionOrderType.Market,1m,
-                ExecutionSimulationFillStateV1.Filled,1m,100m,.04m,ExecutionSimulationFeeRoleV1.Taker,
+                ExecutionSimulationFillStateV1.Filled,1m,100m,0.04m,ExecutionSimulationFeeRoleV1.Taker,
                 true,500,SimulatedAt.AddSeconds(1),SimulatedAt,"future-market"));
 
         Assert.Throws<InvalidOperationException>(() =>
@@ -204,7 +204,7 @@ public sealed class ExecutionSimulationComparisonV1Tests
             ExecutionSimulationFillStateV1.Filled,
             executed:1m,
             price:100m,
-            fee:.04m,
+            fee:0.04m,
             feeRole:ExecutionSimulationFeeRoleV1.Taker,
             latencyModeled:true,
             latencyMs:500);
@@ -213,10 +213,10 @@ public sealed class ExecutionSimulationComparisonV1Tests
 
         var comparison = ExecutionSimulationComparisonCanonicalizerV1.Create(
             simulated,
-            Observed("FILLED",1m,100m,.04m,true,500),
+            Observed("FILLED",1m,100m,0.04m,true,500),
             ObservedAt.AddSeconds(1));
         Assert.True(ExecutionSimulationComparisonCanonicalizerV1.IsCanonical(comparison));
-        Assert.False(ExecutionSimulationComparisonCanonicalizerV1.IsCanonical(comparison with { FillRatioDelta = .5m }));
+        Assert.False(ExecutionSimulationComparisonCanonicalizerV1.IsCanonical(comparison with { FillRatioDelta = 0.5m }));
     }
 
     private static ExecutionSimulationFillV1 Simulated(
@@ -263,7 +263,7 @@ public sealed class ExecutionSimulationComparisonV1Tests
     {
         var expectation = new ExecutionRealityExpectationV1(
             "cycle-1","order-1","strategy-a",strategyVersion,"research-cost-v1","BTCUSDT",
-            PositionSide.Long,false,ExecutionOrderType.Market,1m,100m,.0004m,.001m,SimulatedAt);
+            PositionSide.Long,false,ExecutionOrderType.Market,1m,100m,0.0004m,0.001m,SimulatedAt);
         var observedAt = SimulatedAt.AddMilliseconds(latencyMs);
         var observation = new ExecutionRealityObservationV1(
             "order-1",
