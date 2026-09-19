@@ -2,6 +2,7 @@ using System.IO;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
+using WpeAgent.CrossAssetResearch;
 using 币安量化机器人.Core.Strategy;
 
 namespace 币安量化机器人.Services.Agent;
@@ -236,8 +237,10 @@ internal static class StrategyExposureTimelineV1
           &&Utc(value.SignalGeneratedAtUtc)
           &&Utc(value.TradableAtUtc)
           &&value.SourceCandleOpenTimeUtc<value.EvidenceAvailableAtUtc
-          &&value.EvidenceAvailableAtUtc<=value.SignalGeneratedAtUtc
-          &&value.SignalGeneratedAtUtc<=value.TradableAtUtc;
+          &&!ResearchTemporalIsolationV1.HasLookAhead(
+              value.TradableAtUtc,
+              value.EvidenceAvailableAtUtc,
+              value.SignalGeneratedAtUtc);
 
     private static bool Utc(DateTimeOffset value)=>value!=default&&value.Offset==TimeSpan.Zero;
 }
