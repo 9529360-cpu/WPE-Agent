@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using WpeAgent.TradingAuthorization;
 using WpeAgent.CrossAssetResearch;
+using 币安量化机器人.Core.Strategy;
 using 币安量化机器人.Services.Agent;
 
 namespace WPE.Tests;
