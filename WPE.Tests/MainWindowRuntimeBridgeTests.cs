@@ -1,6 +1,6 @@
 namespace WPE.Tests;
 
-public sealed class DesktopRuntimeHostTests
+public sealed class TradingRuntimeHostTests
 {
     [Fact]
     public void BuildRuntimeJson_IsReadOnlyMemoryProjection()
@@ -20,8 +20,8 @@ public sealed class DesktopRuntimeHostTests
         var pump = Method("private async Task RunRuntimeSnapshotPumpAsync(", "private async Task RefreshRuntimeSnapshotAsync(");
 
         Assert.Contains("Task.Run(() => RunRuntimeSnapshotPumpAsync", source, StringComparison.Ordinal);
-        Assert.Contains("await RefreshRuntimeSnapshotAsync(ct);", pump, StringComparison.Ordinal);
-        Assert.Contains("await Task.Delay(SnapshotRefreshInterval, ct);", pump, StringComparison.Ordinal);
+        Assert.Contains("await RefreshRuntimeSnapshotAsync(ct)", pump, StringComparison.Ordinal);
+        Assert.Contains("await Task.Delay(SnapshotRefreshInterval, ct)", pump, StringComparison.Ordinal);
         Assert.DoesNotContain("Task.WhenAll", pump, StringComparison.Ordinal);
     }
 
@@ -117,6 +117,27 @@ public sealed class DesktopRuntimeHostTests
         Assert.Contains("ServiceLocator.RuntimeTeacher.Read()", method, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void RuntimeHost_IsUiNeutralAndOwnsNormalKernelLifecycle()
+    {
+        var source = Source();
+        var app = File.ReadAllText(Path.Combine(Root(), "App.xaml.cs"));
+
+        foreach (var forbidden in new[] { "System.Windows", "ReferenceUiWindow", "SetupWindow", "ActivationWindow" })
+            Assert.DoesNotContain(forbidden, source, StringComparison.Ordinal);
+
+        Assert.Contains("ServiceLocator.PublicMarket.StartAsync()", source, StringComparison.Ordinal);
+        Assert.Contains("AutoTradingAgent.StartDefault()", source, StringComparison.Ordinal);
+        Assert.Contains("await AutoTradingAgent.StopAsync().ConfigureAwait(false);", source, StringComparison.Ordinal);
+        Assert.Contains("await ServiceLocator.DisposeAsync().ConfigureAwait(false);", source, StringComparison.Ordinal);
+
+        Assert.Contains("new TradingRuntimeHost(localIdentity)", app, StringComparison.Ordinal);
+        Assert.DoesNotContain("new DesktopRuntimeHost", app, StringComparison.Ordinal);
+        Assert.DoesNotContain("AutoTradingAgent.StartDefault()", app, StringComparison.Ordinal);
+        Assert.DoesNotContain("AutoTradingAgent.StopAsync()", app, StringComparison.Ordinal);
+        Assert.DoesNotContain("ServiceLocator.PublicMarket.StartAsync()", app, StringComparison.Ordinal);
+    }
+
     private static int Count(string value, string token) =>
         (value.Length - value.Replace(token, string.Empty, StringComparison.Ordinal).Length) / token.Length;
 
@@ -135,7 +156,7 @@ public sealed class DesktopRuntimeHostTests
 
     private static string Source()
     {
-        return File.ReadAllText(Path.Combine(Root(), "Services", "DesktopRuntimeHost.cs"));
+        return File.ReadAllText(Path.Combine(Root(), "Services", "TradingRuntimeHost.cs"));
     }
 
     private static string Root() =>
