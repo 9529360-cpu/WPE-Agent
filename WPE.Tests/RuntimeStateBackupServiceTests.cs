@@ -67,6 +67,7 @@ public sealed class RuntimeStateBackupServiceTests : IDisposable
 
         await AssertAuthentication(result);
         await AssertDatabaseRoundTrip(result, "agent.db");
+        await AssertFileRoundTrip(result, "agent-memory.json", _layout.DataFile("agent-memory.json"));
     }
 
     [Fact]
@@ -123,6 +124,42 @@ public sealed class RuntimeStateBackupServiceTests : IDisposable
             $"{result.Descriptor.DeviceCodeSha256}|{result.Descriptor.ItemsSha256}|{result.Descriptor.Manifest.ManifestSha256}";
         Assert.Equal(expected, Encoding.UTF8.GetString(plaintext));
         CryptographicOperations.ZeroMemory(plaintext);
+    }
+
+    private async Task AssertFileRoundTrip(
+        RuntimeStateBackupResult result,
+        string logicalName,
+        string sourcePath)
+    {
+        var item = Assert.Single(result.Descriptor.Items.Where(x => x.LogicalName == logicalName));
+        using var output = new MemoryStream();
+        for (var index = 0; index < item.EncryptedChunks.Count; index++)
+        {
+            var path = Path.Combine(
+                result.Directory,
+                item.EncryptedChunks[index].Replace('/', Path.DirectorySeparatorChar));
+            var envelope = JsonSerializer.Deserialize<EncryptedEnvelope>(await File.ReadAllBytesAsync(path))!;
+            var plaintext = new VersionedEnvelopeEncryptionService(_protector).Decrypt(
+                envelope,
+                new EnvelopeAssociatedData(
+                    "runtime-state-backup-chunk",
+                    $"{result.BackupId}:{logicalName}:{index}",
+                    1));
+            try
+            {
+                await output.WriteAsync(plaintext);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(plaintext);
+            }
+        }
+
+        var restored = output.ToArray();
+        Assert.Equal(File.ReadAllBytes(sourcePath), restored);
+        Assert.Equal(item.PlaintextLength, restored.LongLength);
+        Assert.Equal(item.PlaintextSha256, Hash(restored), ignoreCase: true);
+        CryptographicOperations.ZeroMemory(restored);
     }
 
     private async Task AssertDatabaseRoundTrip(RuntimeStateBackupResult result, string logicalName)
