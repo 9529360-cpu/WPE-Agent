@@ -22,28 +22,37 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
     }
 
     [Fact]
-    public async Task HistoricalSnapshotStoreThrottlesSuccessfulRefreshes()
+    public async Task HistoricalSnapshotStoreRefreshesChangedCollectionsAndPeriodicallyRevalidatesUnchangedOnes()
     {
         await InitializeAsync();
         var clock=Now;
         await ExecuteAsync("INSERT INTO execution_events(cycle_id,client_order_id,symbol,side,action,reduce_only,quantity,avg_price,status,occurred_at) VALUES('cycle-1','order-1','BTCUSDT','Long','OPEN',0,'1','100','FILLED',$t)",("$t",Now.ToString("O")));
+        await ExecuteAsync("INSERT INTO equity_snapshots(observed_at,equity,available_balance,environment,provider_id) VALUES($t,'10','9','Testnet','binance')",("$t",Now.ToString("O")));
         var store=new RuntimeHistoricalCollectionsSnapshotStore(DatabasePath,()=>clock);
 
         await store.RefreshAsync(default);
         Assert.Single(store.Read().Orders.Items);
+        Assert.Equal(10m,Assert.Single(store.Read().Equity.Items).Equity);
 
+        // Production historical writers append/replace with a new row/time. This direct in-place edit deliberately
+        // keeps the lightweight vector unchanged so the test can prove unchanged collections are not fully reread.
+        await ExecuteAsync("UPDATE equity_snapshots SET equity='not-decimal' WHERE observed_at=$t",("$t",Now.ToString("O")));
         await ExecuteAsync("INSERT INTO execution_events(cycle_id,client_order_id,symbol,side,action,reduce_only,quantity,avg_price,status,occurred_at) VALUES('cycle-2','order-2','ETHUSDT','Long','OPEN',0,'1','200','FILLED',$t)",("$t",Now.AddSeconds(1).ToString("O")));
-        clock=Now.AddSeconds(5);
+        clock=Now.AddSeconds(2);
         await store.RefreshAsync(default);
-        Assert.Single(store.Read().Orders.Items);
 
-        clock=Now.Add(RuntimeHistoricalCollectionsSnapshotStore.MinimumRefreshInterval).AddMilliseconds(1);
-        await store.RefreshAsync(default);
         Assert.Equal(2,store.Read().Orders.Items.Count);
+        Assert.Equal(RuntimeCollectionState.Available,store.Read().Equity.State);
+        Assert.Equal(10m,Assert.Single(store.Read().Equity.Items).Equity);
+
+        clock=Now.Add(RuntimeHistoricalCollectionsSnapshotStore.FullRevalidationInterval).AddMilliseconds(1);
+        await store.RefreshAsync(default);
+        Assert.Equal(RuntimeCollectionState.Error,store.Read().Equity.State);
+        Assert.Empty(store.Read().Equity.Items);
     }
 
     [Fact]
-    public async Task HistoricalSnapshotStoreRetriesErrorBeforeThrottleWindowExpires()
+    public async Task HistoricalSnapshotStoreRetriesErrorEvenWhenChangeVectorIsUnchanged()
     {
         await InitializeAsync();
         var clock=Now;
@@ -56,8 +65,9 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
         await ExecuteAsync("UPDATE equity_snapshots SET equity='10' WHERE observed_at=$t",("$t",Now.ToString("O")));
         clock=Now.AddSeconds(2);
         await store.RefreshAsync(default);
+
         Assert.Equal(RuntimeCollectionState.Available,store.Read().Equity.State);
-        Assert.Single(store.Read().Equity.Items);
+        Assert.Equal(10m,Assert.Single(store.Read().Equity.Items).Equity);
     }
 
     [Fact]
