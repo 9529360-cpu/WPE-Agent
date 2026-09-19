@@ -416,7 +416,26 @@ public sealed partial class AgentSqliteStore
     {
         ArgumentNullException.ThrowIfNull(value);
         if(!ExecutionRealityCalibrationCanonicalizerV1.IsCanonical(value))throw new InvalidOperationException("Execution reality calibration canonical identity is invalid.");
-        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+        await using(var source=c.CreateCommand())
+        {
+            source.Transaction=tx;source.CommandText="""
+                SELECT COUNT(*)
+                FROM execution_position_drift_reconciliations l
+                JOIN execution_position_ledger_snapshots s ON s.canonical_sha256=l.execution_ledger_sha256
+                WHERE l.link_id=$link AND l.canonical_sha256=$linkHash AND l.execution_ledger_sha256=$ledger
+                  AND s.execution_trace_sha256=$trace AND s.drift_trace_sha256=$driftTrace
+                  AND s.last_execution_event_id=$cursor AND l.linked_at=$generated
+                  AND l.position_state='Confirmed' AND l.allows_risk_increase=1 AND l.calibratable=1
+                """;
+            source.Parameters.AddWithValue("$link",value.SourcePositionLinkId);source.Parameters.AddWithValue("$linkHash",value.SourcePositionLinkSha256);
+            source.Parameters.AddWithValue("$ledger",value.SourceExecutionLedgerSha256);source.Parameters.AddWithValue("$trace",value.SourceExecutionTraceSha256);
+            source.Parameters.AddWithValue("$driftTrace",value.SourceDriftTraceSha256);source.Parameters.AddWithValue("$cursor",value.SourceLastExecutionEventId);
+            source.Parameters.AddWithValue("$generated",value.GeneratedAtUtc.ToString("O",CultureInfo.InvariantCulture));
+            if(Convert.ToInt32(await source.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)!=1)
+                throw new InvalidOperationException("Execution reality calibration source binding is invalid.");
+        }
+        await using var q=c.CreateCommand();q.Transaction=tx;q.CommandText="""
             INSERT OR IGNORE INTO execution_reality_calibrations(
                 canonical_sha256,schema,generated_at,source_position_link_id,source_position_link_sha256,
                 source_execution_ledger_sha256,source_execution_trace_sha256,source_drift_trace_sha256,source_last_execution_event_id,
@@ -431,6 +450,7 @@ public sealed partial class AgentSqliteStore
         q.Parameters.AddWithValue("$driftTrace",value.SourceDriftTraceSha256);q.Parameters.AddWithValue("$cursor",value.SourceLastExecutionEventId);q.Parameters.AddWithValue("$driftSchema",value.SourceDriftSchema);
         q.Parameters.AddWithValue("$minimum",value.MinimumSamplesPerBucket);q.Parameters.AddWithValue("$status",value.Status.ToString());
         q.Parameters.Add("$bytes",SqliteType.Blob).Value=value.CanonicalBytes;
-        return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1;
+        var inserted=Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1;
+        await tx.CommitAsync(ct);return inserted;
     }
 }
