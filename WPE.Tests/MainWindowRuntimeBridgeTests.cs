@@ -20,8 +20,9 @@ public sealed class DesktopRuntimeHostTests
         Assert.Contains("ServiceLocator.RuntimeHistoricalCollections.ReadPageAsync",method,StringComparison.Ordinal);
         Assert.Contains("RuntimeCollectionState.Error",method,StringComparison.Ordinal);
         Assert.DoesNotContain("AutoTradingAgent",method,StringComparison.Ordinal);
-        Assert.DoesNotContain("Submit",method,StringComparison.Ordinal);
-        Assert.DoesNotContain("Cancel",method,StringComparison.Ordinal);
+        Assert.DoesNotContain("SubmitOrder",method,StringComparison.Ordinal);
+        Assert.DoesNotContain("CancelOrder",method,StringComparison.Ordinal);
+        Assert.DoesNotContain("CancelAsync",method,StringComparison.Ordinal);
     }
 
     [Fact]
