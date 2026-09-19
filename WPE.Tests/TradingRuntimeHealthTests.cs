@@ -31,6 +31,21 @@ public sealed class TradingRuntimeHealthTests
         Assert.False(missing.Ready);
     }
 
+    [Fact]
+    public void RuntimeRefreshesAccessBeforeFreshnessWindowExpires()
+    {
+        Assert.True(TradingRuntimeHost.AccessRefreshInterval<TradingRuntimeHealthV1.MaximumAccessAge);
+        Assert.Equal(TimeSpan.FromMinutes(10),TradingRuntimeHost.AccessRefreshInterval);
+
+        var source=File.ReadAllText(Path.Combine(
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..","..")),
+            "Services",
+            "TradingRuntimeHost.cs"));
+        Assert.Contains("if (now >= _nextAccessRefreshAtUtc)",source,StringComparison.Ordinal);
+        Assert.Contains("await RefreshAccessAsync().ConfigureAwait(false)",source,StringComparison.Ordinal);
+        Assert.Contains("Periodic access readiness refresh failed.",source,StringComparison.Ordinal);
+    }
+
     private static TradingRuntimeHealthV1 Health(DateTimeOffset access,DateTimeOffset heartbeat,bool agentRunning,bool leaseLost)=>
         new(TradingRuntimeHealthV1.CurrentSchema,Now,true,access,agentRunning,"Running","run",heartbeat,leaseLost?"LEASE_LOST":"CLEAN_START",1,leaseLost);
 }

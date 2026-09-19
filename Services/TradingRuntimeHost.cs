@@ -36,6 +36,7 @@ public sealed record TradingRuntimeHealthV1(
 public sealed class TradingRuntimeHost : IAsyncDisposable
 {
     private static readonly TimeSpan SnapshotRefreshInterval = TimeSpan.FromSeconds(2);
+    internal static readonly TimeSpan AccessRefreshInterval = TimeSpan.FromMinutes(10);
     private static readonly JsonSerializerOptions SnapshotJsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -49,6 +50,7 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
     private readonly Task _snapshotPumpTask;
     private string _runtimeJson;
     private bool _publicMarketStarted;
+    private DateTimeOffset _nextAccessRefreshAtUtc = DateTimeOffset.MinValue;
     private int _accessReady;
     private int _disposed;
 
@@ -98,6 +100,7 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
         settings.LastAccessCheckAtUtc = report.CheckedAtUtc;
         _settingsStore.Save(settings);
         Volatile.Write(ref _accessReady, report.Ready ? 1 : 0);
+        _nextAccessRefreshAtUtc = DateTimeOffset.UtcNow + AccessRefreshInterval;
         return report.Ready;
     }
 
@@ -231,6 +234,20 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
 
     private async Task RefreshRuntimeSnapshotAsync(CancellationToken ct)
     {
+        var now = DateTimeOffset.UtcNow;
+        if (now >= _nextAccessRefreshAtUtc)
+        {
+            _nextAccessRefreshAtUtc = now + AccessRefreshInterval;
+            try
+            {
+                await RefreshAccessAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Periodic access readiness refresh failed.");
+            }
+        }
+
         await ServiceLocator.RuntimeAudit.RefreshAsync(ct);
         await ServiceLocator.RuntimeEquity.RefreshAsync(ct);
         await ServiceLocator.RuntimeStrategyRegistry.RefreshAsync(ct);
