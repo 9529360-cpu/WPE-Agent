@@ -21,9 +21,11 @@ public static class StrategyLifecycleTestRunner
         profile.Lifecycle = StrategyLifecycle.Active; profile.FailureStreak = 3;
         Check("连续失效自动降级", governor.NextLifecycle(profile) == StrategyLifecycle.Degraded, "active -> degraded");
         var candles = Enumerable.Range(0, 700).Select(i => { var close = 100m + i * .08m + (decimal)Math.Sin(i / 12d); return new CandleEvidence(DateTime.UtcNow.AddHours(-700 + i), close - 1, close + 1, close - 1.5m, close, 100, 10000, 10, 50); }).ToArray();
-        var engine = new HistoricalResearchEngine();
-        var result = engine.Validate(new StrategyProfile { Id = "TEST-ENGINE", Symbol = "BTCUSDT", Family = StrategyFamily.TrendBreakout, Parameters = LocalStrategyParameters.For(StrategyFamily.TrendBreakout, 0) }, candles, Array.Empty<NewsFeature>(), new RiskLimits { MinimumBacktestTrades = 10 });
-        Check("本地回测输出可审计指标", result.SampleSize == 700 && double.IsFinite(result.QualityScore) && double.IsFinite(result.WalkForwardScore) && result.MonteCarloLossProbability is >= 0 and <= 1, result.Summary);
+        var registry = new DeterministicStrategyRegistry();
+        var engine = new HistoricalResearchEngine(strategies:registry);
+        var engineProfile = new StrategyProfile { Id = "TEST-ENGINE", Version = registry.BindProfileVersion(StrategyFamily.TrendBreakout,"lifecycle-runner"), Symbol = "BTCUSDT", Family = StrategyFamily.TrendBreakout, Parameters = LocalStrategyParameters.For(StrategyFamily.TrendBreakout, 0) };
+        var result = engine.Validate(engineProfile, candles, Array.Empty<NewsFeature>(), new RiskLimits { MinimumBacktestTrades = 10 });
+        Check("本地回测输出可审计指标", result.SampleSize == 700 && double.IsFinite(result.QualityScore) && double.IsFinite(result.WalkForwardScore) && result.MonteCarloLossProbability is >= 0 and <= 1 && result.Summary.Contains("strategy_impl=trend-breakout-v1",StringComparison.Ordinal), result.Summary);
         var statePath = Path.Combine(Path.GetTempPath(), $"wpe-strategy-state-{Guid.NewGuid():N}.db");
         var stateValue = "{\"status\":\"WAITING\",\"nextRunAtUtc\":\"" + DateTime.UtcNow.AddHours(1).ToString("O") + "\"}";
         var stateStore = new AgentSqliteStore(statePath);

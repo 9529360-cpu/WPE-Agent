@@ -65,15 +65,15 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
     [Fact]
     public async Task QualifiedParentProducesBoundedHashedDraftChildren()
     {
-        var store=new AgentSqliteStore(DatabasePath);var parentParameters=LocalStrategyParameters.For(StrategyFamily.TrendBreakout,0);
-        var parent=new StrategyProfile{Id="BTCUSDT-TrendBreakout-parent",Version="trend-parent-1",Symbol="BTCUSDT",Family=StrategyFamily.TrendBreakout,Parameters=parentParameters,ParametersHash=LocalStrategyParameters.Hash(parentParameters),Lifecycle=StrategyLifecycle.Active,QualityScore=.8,Expectancy=.01,ValidationTrades=50,ShadowObservations=30};
+        var store=new AgentSqliteStore(DatabasePath);var registry=new DeterministicStrategyRegistry();var parentParameters=LocalStrategyParameters.For(StrategyFamily.TrendBreakout,0);
+        var parent=new StrategyProfile{Id="BTCUSDT-TrendBreakout-parent",Version=registry.BindProfileVersion(StrategyFamily.TrendBreakout,"trend-parent-1"),Symbol="BTCUSDT",Family=StrategyFamily.TrendBreakout,Parameters=parentParameters,ParametersHash=LocalStrategyParameters.Hash(parentParameters),Lifecycle=StrategyLifecycle.Active,QualityScore=.8,Expectancy=.01,ValidationTrades=50,ShadowObservations=30};
         await store.UpsertStrategyAsync(parent,CancellationToken.None);
-        for(var variant=0;variant<2;variant++)await store.UpsertStrategyAsync(new StrategyProfile{Id=$"BTCUSDT-TrendBreakout-{variant}",Version=$"retired-{variant}",Symbol="BTCUSDT",Family=StrategyFamily.TrendBreakout,Parameters=LocalStrategyParameters.For(StrategyFamily.TrendBreakout,variant),Lifecycle=StrategyLifecycle.Retired},CancellationToken.None);
+        for(var variant=0;variant<2;variant++)await store.UpsertStrategyAsync(new StrategyProfile{Id=registry.CandidateId("BTCUSDT",StrategyFamily.TrendBreakout,variant.ToString()),Version=registry.BindProfileVersion(StrategyFamily.TrendBreakout,$"retired-{variant}"),Symbol="BTCUSDT",Family=StrategyFamily.TrendBreakout,Parameters=LocalStrategyParameters.For(StrategyFamily.TrendBreakout,variant),Lifecycle=StrategyLifecycle.Retired},CancellationToken.None);
 
         await new StrategyResearchAgent(store).RunOnceAsync(["BTCUSDT"],new RiskLimits(),CancellationToken.None);
         var children=(await store.GetStrategiesAsync(CancellationToken.None)).Where(x=>x.ParentStrategyId==parent.Id).ToArray();
 
-        Assert.Single(children);Assert.All(children,x=>{Assert.Equal(StrategyLifecycle.Retired,x.Lifecycle);Assert.Equal(parent.Version,x.ParentStrategyVersion);Assert.Equal(1,x.Generation);Assert.Equal(LocalStrategyParameters.Hash(x.Parameters),x.ParametersHash);Assert.Equal(StrategyLineage.Hash(x.Symbol,x.Family,x.ParentStrategyId,x.ParentStrategyVersion,x.Generation,x.ParametersHash),x.LineageHash);Assert.NotEqual(parent.Parameters,x.Parameters);});
+        Assert.Single(children);Assert.All(children,x=>{Assert.Equal(StrategyLifecycle.Retired,x.Lifecycle);Assert.Equal(parent.Version,x.ParentStrategyVersion);Assert.Equal(1,x.Generation);Assert.Equal(LocalStrategyParameters.Hash(x.Parameters),x.ParametersHash);Assert.Equal(StrategyLineage.Hash(x.Symbol,x.Family,x.ParentStrategyId,x.ParentStrategyVersion,x.Generation,x.ParametersHash),x.LineageHash);Assert.NotEqual(parent.Parameters,x.Parameters);Assert.True(registry.IsProfileCompatible(x));});
         Assert.True(children.Length<=StrategyResearchAgent.TargetConcurrentCandidatesPerFamily);
     }
 
@@ -113,15 +113,16 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
     [Fact]
     public async Task ExhaustedBaseLadderCreatesOneBudgetedExplorationCandidatePerFamily()
     {
-        var now=DateTime.UtcNow;var old=now-StrategyResearchAgent.ExplorationCooldown-TimeSpan.FromMinutes(1);var store=new AgentSqliteStore(DatabasePath);
+        var now=DateTime.UtcNow;var old=now-StrategyResearchAgent.ExplorationCooldown-TimeSpan.FromMinutes(1);var store=new AgentSqliteStore(DatabasePath);var registry=new DeterministicStrategyRegistry();
         foreach(var family in Enum.GetValues<StrategyFamily>())
         for(var variant=0;variant<StrategyResearchAgent.MaximumVariantsPerFamily;variant++)
         {
             var parameters=family==StrategyFamily.MeanReversion
                 ?new LocalStrategyParameters(12+variant*4,48+variant*8,0,1.4+variant*.2,0)
                 :LocalStrategyParameters.For(family,variant);
-            var id=$"BTCUSDT-{family}-{variant}";
-            await store.UpsertStrategyAsync(new StrategyProfile{Id=id,Version=$"retired-{variant}",Symbol="BTCUSDT",Family=family,Parameters=parameters,Lifecycle=StrategyLifecycle.Retired,CreatedAtUtc=old,StateChangedAtUtc=old},CancellationToken.None);
+            var id=registry.CandidateId("BTCUSDT",family,variant.ToString());
+            var version=registry.BindProfileVersion(family,$"retired-{variant}");
+            await store.UpsertStrategyAsync(new StrategyProfile{Id=id,Version=version,Symbol="BTCUSDT",Family=family,Parameters=parameters,Lifecycle=StrategyLifecycle.Retired,CreatedAtUtc=old,StateChangedAtUtc=old},CancellationToken.None);
             var legacyJson=System.Text.Json.JsonSerializer.Serialize(new{parameters.FastPeriod,parameters.SlowPeriod,parameters.BreakoutBuffer,parameters.MeanReversionZ,parameters.NewsSentimentThreshold});
             var legacyHash=LocalStrategyParameters.LegacyHash(parameters);var legacyLineage=StrategyLineage.Hash("BTCUSDT",family,null,null,0,legacyHash);
             await using var connection=new SqliteConnection($"Data Source={DatabasePath}");await connection.OpenAsync();await using var command=connection.CreateCommand();
@@ -135,6 +136,7 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
 
         Assert.Equal(Enum.GetValues<StrategyFamily>().Length,explored.Length);
         Assert.All(Enum.GetValues<StrategyFamily>(),family=>Assert.Single(explored,x=>x.Family==family));
+        Assert.All(explored,x=>Assert.True(registry.IsProfileCompatible(x)));
         Assert.All(Enum.GetValues<StrategyFamily>(),family=>
         {
             var familyRows=rows.Where(x=>x.Family==family).ToArray();
