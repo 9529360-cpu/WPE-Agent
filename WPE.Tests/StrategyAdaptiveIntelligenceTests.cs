@@ -21,8 +21,30 @@ public sealed class StrategyAdaptiveIntelligenceTests : IDisposable
         var performance=await store.GetStrategyObservationPerformanceAsync("hold-only",CancellationToken.None);
 
         Assert.Equal(0,performance.Observations);
+        Assert.Equal(40,performance.RawObservations);
         Assert.Equal(0,performance.Expectancy);
         Assert.Contains("actionable",performance.Summary,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SilentShadowCanRetireWithoutCountingHoldsAsQualification()
+    {
+        var now=DateTime.UtcNow;
+        var profile=new StrategyProfile
+        {
+            Lifecycle=StrategyLifecycle.Shadow,
+            ShadowObservations=0,
+            QualityScore=.8,
+            Expectancy=.01,
+            MaxDrawdown=.05,
+            StateChangedAtUtc=now-StrategyGovernor.MinimumShadowEvaluationTime-TimeSpan.FromMinutes(1)
+        };
+
+        Assert.True(new StrategyGovernor().ShouldRetireShadow(
+            profile,
+            now,
+            StrategyGovernor.MaximumUnqualifiedShadowObservations));
+        Assert.False(new StrategyGovernor().CanActivateFromShadow(profile));
     }
 
     [Fact]
