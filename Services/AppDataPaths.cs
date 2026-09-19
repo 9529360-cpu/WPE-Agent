@@ -58,6 +58,7 @@ public static class DataRootPathPolicy
 
         var candidate = value.Trim();
         if (candidate.StartsWith(@"\\", StringComparison.Ordinal) ||
+            candidate.StartsWith("//", StringComparison.Ordinal) ||
             !Path.IsPathFullyQualified(candidate))
             return false;
 
@@ -66,7 +67,8 @@ public static class DataRootPathPolicy
             var full = Path.GetFullPath(candidate);
             var root = Path.GetPathRoot(full);
             if (string.IsNullOrWhiteSpace(root) ||
-                root.StartsWith(@"\\", StringComparison.Ordinal))
+                root.StartsWith(@"\\", StringComparison.Ordinal) ||
+                root.StartsWith("//", StringComparison.Ordinal))
                 return false;
 
             if (OperatingSystem.IsWindows() &&
