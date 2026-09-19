@@ -10,6 +10,8 @@ public sealed class ReleaseRuntimeBundleReadinessTests
         Assert.Contains("[string]$HeadlessOutput",source,StringComparison.Ordinal);
         Assert.Contains("[string]$MaintenanceOutput",source,StringComparison.Ordinal);
         Assert.Contains("$sourceCommit = (& git -C $root rev-parse HEAD).Trim()",source,StringComparison.Ordinal);
+        Assert.Contains("Release readiness requires a clean source tree",source,StringComparison.Ordinal);
+        Assert.Contains("source = [ordered]@{ commit = $sourceCommit; dirty = $sourceDirty }",source,StringComparison.Ordinal);
         Assert.Contains("artifacts = [ordered]@{",source,StringComparison.Ordinal);
         Assert.Contains("desktop = $desktopArtifact",source,StringComparison.Ordinal);
         Assert.Contains("headless = $headlessArtifact",source,StringComparison.Ordinal);
@@ -21,6 +23,9 @@ public sealed class ReleaseRuntimeBundleReadinessTests
         Assert.Contains("Invoke-Step \"Desktop release publish\"",source,StringComparison.Ordinal);
         Assert.Contains("-p:Version=$productVersion",source,StringComparison.Ordinal);
         Assert.Contains("-p:FileVersion=$assemblyVersion",source,StringComparison.Ordinal);
+        Assert.Contains("Headless binary version does not match product Version",source,StringComparison.Ordinal);
+        Assert.Contains("Maintenance binary version does not match product Version",source,StringComparison.Ordinal);
+        Assert.Contains("Published binary version",source,StringComparison.Ordinal);
     }
 
     [Fact]
