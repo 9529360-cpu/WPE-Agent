@@ -102,10 +102,6 @@ jobs:
     - name: Build .NET
       run: dotnet build "币安量化机器人.sln" --configuration Release --no-restore
 
-    - name: Test .NET
-      shell: pwsh
-      run: ./eng/test.ps1 -Configuration Release
-
     - name: Release tooling contract tests
       shell: pwsh
       run: |
@@ -118,6 +114,10 @@ jobs:
           & $test.FullName
         }
         & ./eng/test-publish-runtime-restore.ps1
+
+    - name: Test .NET
+      shell: pwsh
+      run: ./eng/test.ps1 -Configuration Release
 
     - name: Publish candidate
       run: dotnet publish "币安量化机器人.csproj" --configuration Release --no-restore --output artifacts/publish
