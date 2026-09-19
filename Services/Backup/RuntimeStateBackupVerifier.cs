@@ -255,7 +255,7 @@ public sealed class RuntimeStateBackupVerifier
 
         var observed = Directory
             .EnumerateFiles(backupRoot, "*", SearchOption.AllDirectories)
-            .Select(path => Path.GetRelativePath(backupRoot, path).Replace('\', '/'))
+            .Select(path => Path.GetRelativePath(backupRoot, path).Replace((char)92, '/'))
             .ToHashSet(StringComparer.Ordinal);
 
         if (!expected.SetEquals(observed))
@@ -386,7 +386,7 @@ public sealed class RuntimeStateBackupVerifier
         => !string.IsNullOrWhiteSpace(value) &&
            !Path.IsPathRooted(value) &&
            !value.Contains("..", StringComparison.Ordinal) &&
-           !value.Contains('\');
+           !value.Contains((char)92);
 
     private static bool FixedHexEquals(string left, string right)
     {
