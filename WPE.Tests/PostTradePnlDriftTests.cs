@@ -171,9 +171,9 @@ public sealed class PostTradePnlDriftTests : IDisposable
             "Testnet",
             StrategyId,
             StrategyVersion,
-            Now.AddMinutes(-10),
+            Now.AddSeconds(-20),
             "market-v1",
-            Now.AddMinutes(-9),
+            Now.AddSeconds(-10),
             Now.AddMinutes(5));
         Assert.True((await store.SaveAutomaticExecutionAsync(cycle,artifact,default)).Succeeded);
     }
