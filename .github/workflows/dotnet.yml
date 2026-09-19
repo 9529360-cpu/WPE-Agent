@@ -87,6 +87,74 @@ jobs:
     - name: Verify portable runtime target
       run: dotnet build "币安量化机器人.csproj" --configuration Release --framework net8.0 --no-restore
 
+    - name: Publish headless candidate
+      run: dotnet publish "WPE.Headless/WPE.Headless.csproj" --configuration Release --framework net8.0 --no-restore --output artifacts/headless
+
+    - name: Verify headless boundary
+      shell: pwsh
+      run: |
+        if (-not (Test-Path -LiteralPath "artifacts/headless/WPE-Headless.dll" -PathType Leaf)) {
+          throw "Headless runtime assembly is missing."
+        }
+        if (-not (Test-Path -LiteralPath "artifacts/headless/Resources/i18n/zh_CN.json" -PathType Leaf)) {
+          throw "Headless localization resources are missing."
+        }
+        if (Test-Path -LiteralPath "artifacts/headless/WebUi") {
+          throw "Desktop Web UI entered the headless artifact."
+        }
+        $deps = Get-Content -Raw -LiteralPath "artifacts/headless/WPE-Headless.deps.json"
+        foreach ($forbiddenDependency in @("Microsoft.WindowsDesktop.App", "Microsoft.Web.WebView2", "ScottPlot.WPF", "PresentationFramework")) {
+          if ($deps.Contains($forbiddenDependency, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Headless artifact contains forbidden presentation dependency: $forbiddenDependency"
+          }
+        }
+        $forbidden = Get-ChildItem artifacts/headless -Recurse -File | Where-Object {
+          $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
+          $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)
+      shell: pwsh
+      run: ./eng/test.ps1 -Configuration Release
+
+    - name: Publish candidate
+      run: dotnet publish "币安量化机器人.csproj" --configuration Release --framework net8.0-windows --no-restore --output artifacts/publish
+
+    - name: Verify publish boundary
+      shell: pwsh
+      run: |
+        if (-not (Get-ChildItem artifacts/publish -Filter *.exe)) { throw "Published executable is missing." }
+        if (-not (Test-Path -LiteralPath "artifacts/publish/WebUi/out/index.html" -PathType Leaf)) {
+          throw "Published Reference UI export is missing."
+        }
+        $forbidden = Get-ChildItem artifacts/publish -Recurse -File | Where-Object {
+          $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
+          $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)$' -or
+          $_.Name -match '(?i)\.(db|sqlite|sqlite3)-(wal|shm)$'
+        }
+        if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
+ -or
+          $_.Name -match '(?i)\.(db|sqlite|sqlite3)-(wal|shm)
+      shell: pwsh
+      run: ./eng/test.ps1 -Configuration Release
+
+    - name: Publish candidate
+      run: dotnet publish "币安量化机器人.csproj" --configuration Release --framework net8.0-windows --no-restore --output artifacts/publish
+
+    - name: Verify publish boundary
+      shell: pwsh
+      run: |
+        if (-not (Get-ChildItem artifacts/publish -Filter *.exe)) { throw "Published executable is missing." }
+        if (-not (Test-Path -LiteralPath "artifacts/publish/WebUi/out/index.html" -PathType Leaf)) {
+          throw "Published Reference UI export is missing."
+        }
+        $forbidden = Get-ChildItem artifacts/publish -Recurse -File | Where-Object {
+          $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
+          $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)$' -or
+          $_.Name -match '(?i)\.(db|sqlite|sqlite3)-(wal|shm)$'
+        }
+        if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
+
+        }
+        if ($forbidden) { throw "Forbidden runtime or secret files entered headless output: $($forbidden.FullName -join ', ')" }
+
     - name: Test .NET
       shell: pwsh
       run: ./eng/test.ps1 -Configuration Release
