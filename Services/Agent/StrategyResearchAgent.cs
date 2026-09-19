@@ -89,7 +89,8 @@ public sealed class StrategyResearchAgent
             var market = evidence.Markets.GetValueOrDefault(profile.Symbol);
             if (market is null) continue;
             var signal = _engine.Signal(profile, market, evidence.News);
-            await _database.RecordStrategyObservationAsync(profile.Id, profile.Symbol, signal.Direction, market.Price, signal.Confidence, ct);
+            var regime = MarketRegimeClassifier.Detect(market);
+            await _database.RecordStrategyObservationAsync(profile.Id, profile.Symbol, signal.Direction, market.Price, signal.Confidence, regime, ct);
             var performance = await _database.GetStrategyObservationPerformanceAsync(profile.Id, ct);
             profile.ShadowObservations = performance.Observations; profile.Expectancy = performance.Expectancy;
             profile.MaxDrawdown = performance.MaxDrawdown; profile.FailureStreak = performance.FailureStreak; profile.QualityScore = performance.QualityScore;
@@ -122,6 +123,39 @@ public sealed class StrategyResearchAgent
 
     public StrategySignal GetSignal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
         => _schedulerHealthy ? _engine.Signal(profile, market, news) : new StrategySignal(profile.Id, profile.Symbol, 0, 0, "strategy research heartbeat is stale; hold");
+
+    public async Task<StrategySignal> GetAdaptiveSignalAsync(
+        StrategyProfile profile,
+        MarketEvidence market,
+        IReadOnlyList<NewsEvidence> news,
+        CancellationToken ct)
+    {
+        var raw = GetSignal(profile, market, news);
+        if (raw.Direction == 0 || raw.Confidence <= 0)
+            return raw;
+
+        var regime = MarketRegimeClassifier.Detect(market);
+        var performance = await _database.GetStrategyObservationPerformanceAsync(profile.Id, ct);
+        var regimePerformance = performance.Regimes?.FirstOrDefault(value =>
+            string.Equals(value.Regime, regime.ToString(), StringComparison.Ordinal));
+
+        if (regimePerformance is null ||
+            regimePerformance.Observations < StrategyGovernor.MinimumRegimeCalibrationObservations)
+            return raw with
+            {
+                Reason = $"{raw.Reason}; regime={regime}; calibration=pending"
+            };
+
+        var reliabilityMultiplier = Math.Clamp(.55 + .45 * regimePerformance.CalibrationScore, .55, 1);
+        var expectancyMultiplier = regimePerformance.Expectancy < 0 ? .75 : 1d;
+        var calibratedConfidence = Math.Clamp(raw.Confidence * reliabilityMultiplier * expectancyMultiplier, 0, 1);
+
+        return raw with
+        {
+            Confidence = calibratedConfidence,
+            Reason = $"{raw.Reason}; regime={regime}; calibration={regimePerformance.CalibrationScore:F2}; regime_expectancy={regimePerformance.Expectancy:P2}; raw_confidence={raw.Confidence:F2}"
+        };
+    }
 
     private async Task<IReadOnlyList<StrategyProfile>> EnsureCandidatesAsync(IReadOnlyList<string> symbols, CancellationToken ct)
     {
