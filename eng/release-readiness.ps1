@@ -136,6 +136,114 @@ function Invoke-Step([string]$Name, [scriptblock]$Action) {
     }
 }
 
+
+function Reset-ArtifactDirectory([string]$Path) {
+    if (Test-Path -LiteralPath $Path) {
+        $resolved = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $Path).Path)
+        if (-not $resolved.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or $resolved -eq $root) {
+            throw "Refusing to clean unsafe release artifact path: $resolved"
+        }
+        Remove-Item -LiteralPath $resolved -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+}
+
+function Get-TextSha256([string]$Value) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-ArtifactFacts([string]$Path) {
+    $relativePath = $Path.Substring($rootPrefix.Length).Replace('\', '/')
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        return [ordered]@{ relativePath = $relativePath; exists = $false; fileCount = 0; totalBytes = 0; treeSha256 = $null }
+    }
+    $prefix = $Path.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -File | Sort-Object FullName)
+    $lines = @($files | ForEach-Object {
+        $relative = $_.FullName.Substring($prefix.Length).Replace('\', '/')
+        $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$relative|$($_.Length)|$hash"
+    })
+    return [ordered]@{
+        relativePath = $relativePath
+        exists = $true
+        fileCount = $files.Count
+        totalBytes = [long](($files | Measure-Object -Property Length -Sum).Sum)
+        treeSha256 = Get-TextSha256 ($lines -join [Environment]::NewLine)
+    }
+}
+
+function Assert-NoRuntimeStateOrSecrets([string]$Path, [string]$Label) {
+    $forbiddenExtensions = @(".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12", ".pfx", ".env", ".pdb", ".cs", ".csproj", ".sln", ".ps1")
+    $forbiddenSuffixes = @(".db-wal", ".db-shm", ".sqlite-wal", ".sqlite-shm", ".sqlite3-wal", ".sqlite3-shm")
+    $forbidden = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -File | Where-Object {
+        $name = $_.Name.ToLowerInvariant()
+        $extension = $_.Extension.ToLowerInvariant()
+        $knownState = $name -match '^(agent-settings|appsettings|order-state|local-accounts|local-session|device-license|llm-calls|llm-cache)'
+        $secretData = ($name.Contains("secrets") -or $name.Contains("credentials")) -and
+            @(".json", ".dat", ".txt", ".xml", ".yaml", ".yml") -contains $extension
+        $knownState -or $secretData -or
+        $forbiddenExtensions -contains $extension -or
+        ($forbiddenSuffixes | Where-Object { $name.EndsWith($_) })
+    })
+    if ($forbidden.Count -gt 0) {
+        throw "$Label artifact contains forbidden runtime, source, debug, or secret files: $($forbidden.FullName -join ', ')"
+    }
+}
+
+function Assert-HeadlessArtifact {
+    if (-not (Test-Path -LiteralPath $headlessOutputPath -PathType Container)) { throw "Headless artifact directory is missing." }
+    foreach ($required in @("WPE-Headless.exe", "WPE-Headless.dll", "WPE-Headless.deps.json")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $headlessOutputPath $required) -PathType Leaf)) {
+            throw "Headless artifact is missing $required."
+        }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $headlessOutputPath "Resources/i18n/zh_CN.json") -PathType Leaf)) {
+        throw "Headless localization resources are missing."
+    }
+    if (Test-Path -LiteralPath (Join-Path $headlessOutputPath "WebUi")) { throw "Desktop Web UI entered the headless artifact." }
+    $deps = Get-Content -Raw -LiteralPath (Join-Path $headlessOutputPath "WPE-Headless.deps.json")
+    foreach ($forbiddenDependency in @("Microsoft.WindowsDesktop.App", "Microsoft.Web.WebView2", "ScottPlot.WPF", "PresentationFramework")) {
+        if ($deps.Contains($forbiddenDependency, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Headless artifact contains forbidden presentation dependency: $forbiddenDependency"
+        }
+    }
+    $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $headlessOutputPath "WPE-Headless.exe")).FileVersion
+    $parsed = [Version]$fileVersion
+    if ("$($parsed.Major).$($parsed.Minor).$($parsed.Build)" -ne $productVersion) {
+        throw "Headless binary version does not match product Version $productVersion."
+    }
+    Assert-NoRuntimeStateOrSecrets $headlessOutputPath "Headless"
+}
+
+function Assert-MaintenanceArtifact {
+    if (-not (Test-Path -LiteralPath $maintenanceOutputPath -PathType Container)) { throw "Maintenance artifact directory is missing." }
+    foreach ($required in @("WPE.Maintenance.exe", "WPE.Maintenance.dll", "WPE.Maintenance.deps.json")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $maintenanceOutputPath $required) -PathType Leaf)) {
+            throw "Maintenance artifact is missing $required."
+        }
+    }
+    if (Test-Path -LiteralPath (Join-Path $maintenanceOutputPath "WebUi")) { throw "Desktop Web UI entered the maintenance artifact." }
+    $deps = Get-Content -Raw -LiteralPath (Join-Path $maintenanceOutputPath "WPE.Maintenance.deps.json")
+    foreach ($forbiddenDependency in @("Microsoft.WindowsDesktop.App", "Microsoft.Web.WebView2", "ScottPlot.WPF", "PresentationFramework")) {
+        if ($deps.Contains($forbiddenDependency, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Maintenance artifact contains forbidden presentation dependency: $forbiddenDependency"
+        }
+    }
+    $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $maintenanceOutputPath "WPE.Maintenance.exe")).FileVersion
+    $parsed = [Version]$fileVersion
+    if ("$($parsed.Major).$($parsed.Minor).$($parsed.Build)" -ne $productVersion) {
+        throw "Maintenance binary version does not match product Version $productVersion."
+    }
+    Assert-NoRuntimeStateOrSecrets $maintenanceOutputPath "Maintenance"
+}
+
 function Assert-FileContains([string]$RelativePath, [string]$Pattern, [string]$Rule) {
     $path = Join-Path $root $RelativePath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or -not (Select-String -LiteralPath $path -Pattern $Pattern -Quiet)) {
