@@ -49,8 +49,8 @@ internal static class StrategyShadowObservationCanonicalizerV1
         var observed=observedAtUtc.ToUniversalTime();
         if(observedAtUtc.Offset!=TimeSpan.Zero||observed==default)
             throw new ArgumentException("Shadow observation time must be UTC.",nameof(observedAtUtc));
-        if(profile.Lifecycle is not (StrategyLifecycle.Shadow or StrategyLifecycle.Active))
-            throw new InvalidOperationException("Only Shadow or Active strategy observations are eligible.");
+        if(profile.Lifecycle!=StrategyLifecycle.Shadow)
+            throw new InvalidOperationException("Only Shadow strategy observations are eligible for qualification evidence.");
         if(!string.Equals(profile.Id,signal.StrategyId,StringComparison.Ordinal)
            ||!string.Equals(profile.Version,signal.StrategyVersion,StringComparison.Ordinal)
            ||!string.Equals(profile.Symbol,signal.Symbol,StringComparison.Ordinal))
@@ -71,7 +71,7 @@ internal static class StrategyShadowObservationCanonicalizerV1
         if(!BacktestValidationCanonicalizerV1.IsCanonical(validation,observed)
            ||validation.ValidatedAtUtc>marketAt
            ||!validation.Approved
-           ||validation.Promoted!=(profile.Lifecycle==StrategyLifecycle.Active)
+           ||validation.Promoted
            ||!string.Equals(validation.StrategyId,profile.Id,StringComparison.Ordinal)
            ||!string.Equals(validation.StrategyVersion,profile.Version,StringComparison.Ordinal)
            ||!string.Equals(validation.Symbol,profile.Symbol,StringComparison.Ordinal))
@@ -112,7 +112,7 @@ internal static class StrategyShadowObservationCanonicalizerV1
     {
         if(value is null
            ||value.Schema!=Schema
-           ||value.Lifecycle is not ("Shadow" or "Active")
+           ||value.Lifecycle!="Shadow"
            ||value.ValidationAtUtc.Offset!=TimeSpan.Zero
            ||value.ObservedAtUtc.Offset!=TimeSpan.Zero
            ||value.MarketCollectedAtUtc.Offset!=TimeSpan.Zero
