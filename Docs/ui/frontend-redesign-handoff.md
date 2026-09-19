@@ -128,6 +128,20 @@ Equities, broad cross-asset research, commercial distribution and unsupported pr
 - Keep focus order and heading hierarchy logical; temporary UI must restore focus to its trigger.
 - No oversized marketing headlines, decorative gradient orbs, fake candlestick charts, placeholder assets, fake notifications or invented Agent thoughts.
 
+## Execution command center
+
+The home command view is execution-first. Its primary trading surface is a read-only command center that composes existing host-authoritative projections rather than introducing another trading state:
+
+- current provider/environment and authorization mode;
+- deterministic Risk Gate and execution-gate state;
+- current provider positions and open orders;
+- recent persisted execution events from the historical order projection;
+- links to deeper position, order, risk, and history views.
+
+The command center must not add an order-entry form, direct exchange calls, approval mutation, cancellation mutation, or a second ledger. Richer future ledger views should extend canonical backend/runtime projections for strategy identity, fees, funding, slippage, reconciliation and provenance rather than recomputing those facts in React.
+
+Mature exchange terminals, including OpenDAX-style layouts, may be studied for information hierarchy, density and interaction patterns. Do not copy or vendor third-party frontend source unless its exact license permits WPE's intended use and the dependency/license review is recorded. The current command-center implementation is original WPE code and does not reuse BaseApp components.
+
 ## Acceptance gates
 
 1. `pnpm lint`, `pnpm typecheck`, Web contract tests and `pnpm build` pass in `WebUi`.
