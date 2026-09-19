@@ -18,6 +18,7 @@ public sealed class MaintenanceCliBoundaryTests
         Assert.Contains("OperatingSystem.IsWindows()", program, StringComparison.Ordinal);
         Assert.Contains("<TargetFramework>net8.0</TargetFramework>", project, StringComparison.Ordinal);
         Assert.Contains("..\\币安量化机器人.csproj", project, StringComparison.Ordinal);
+        Assert.Contains("WPE.Maintenance\\\\**\\\\*.cs", mainProject, StringComparison.Ordinal);
         Assert.Contains("WPE.Maintenance", solution, StringComparison.Ordinal);
 
         foreach (var source in new[] { program, project })
