@@ -171,7 +171,7 @@ internal sealed class ExecutionRealityCalibrationServiceV1(AgentSqliteStore stor
         var observed=await _store.GetExecutionRealityCalibrationObservationSetAsync(source,ct);
         var eligible=observed.SourceTraceMatches?observed.Summaries.Where(Eligible).ToArray():[];
         var buckets=eligible.GroupBy(x=>new{x.ProviderId,x.Environment,x.Symbol,x.OrderType,x.ReduceOnly})
-            .Select(g=>Bucket(g.Key.ProviderId,g.Key.Environment,g.Key.Symbol,g.Key.OrderType,g.Key.ReduceOnly,g.ToArray()))
+            .Select(g=>BuildBucket(g.Key.ProviderId,g.Key.Environment,g.Key.Symbol,g.Key.OrderType,g.Key.ReduceOnly,g.ToArray()))
             .OrderBy(x=>x.ProviderId,StringComparer.Ordinal).ThenBy(x=>x.Environment,StringComparer.Ordinal)
             .ThenBy(x=>x.Symbol,StringComparer.Ordinal).ThenBy(x=>x.OrderType).ThenBy(x=>x.ReduceOnly).ToArray();
         var reasons=new List<string>();
@@ -181,12 +181,27 @@ internal sealed class ExecutionRealityCalibrationServiceV1(AgentSqliteStore stor
         return ExecutionRealityCalibrationCanonicalizerV1.Create(source,source.LinkedAtUtc,MinimumSamplesPerBucket,buckets,reasons);
     }
 
+    internal async Task<bool> BuildAndPersistSafelyAsync(CancellationToken ct)
+    {
+        try
+        {
+            var report=await BuildAsync(ct);
+            return report is not null&&await _store.SaveExecutionRealityCalibrationAsync(report,ct);
+        }
+        catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
+        catch
+        {
+            // Calibration is an observational research artifact. It must never alter trading authority or execution outcomes.
+            return false;
+        }
+    }
+
     private static bool Eligible(ExecutionDriftSummaryV1 x)
         =>string.Equals(x.Environment,"Testnet",StringComparison.Ordinal)
           &&x.RequestedQuantity>0&&x.FinalObservedQuantity>0&&x.FillRatio is>0 and<=1
           &&x.FinalStatus is "FILLED" or "PARTIALLY_FILLED";
 
-    private static ExecutionRealityCalibrationBucketV1 Bucket(
+    internal static ExecutionRealityCalibrationBucketV1 BuildBucket(
         string provider,string environment,string symbol,ExecutionOrderType orderType,bool reduceOnly,IReadOnlyList<ExecutionDriftSummaryV1> values)
     {
         var fill=values.Select(x=>(double)x.FillRatio).ToArray();
@@ -279,10 +294,11 @@ public sealed partial class AgentSqliteStore
                 await using var r=await q.ExecuteReaderAsync(ct);
                 while(await r.ReadAsync(ct))
                 {
-                    if(r.IsDBNull(1)||!Enum.TryParse<PositionSide>(r.GetString(3),true,out var side)
+                    if(!Enum.TryParse<PositionSide>(r.GetString(3),true,out var side)
                        ||!decimal.TryParse(r.GetString(5),NumberStyles.Number,CultureInfo.InvariantCulture,out var quantity)||quantity<0)
                         continue;
-                    events.Add((r.GetInt64(0),r.GetString(1),r.GetString(2),side,r.GetInt32(4)==1,quantity,r.GetString(6),
+                    var id=r.GetInt64(0);var clientOrderId=r.IsDBNull(1)?$"legacy-event:{id}":r.GetString(1);
+                    events.Add((id,clientOrderId,r.GetString(2),side,r.GetInt32(4)==1,quantity,r.GetString(6),
                         r.IsDBNull(7)?"unknown":r.GetString(7),r.IsDBNull(8)?null:r.GetString(8)));
                 }
             }
