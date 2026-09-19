@@ -62,6 +62,18 @@ test('dashboard uses canonical Agent runtime and decision context instead of sim
   }
 })
 
+
+test('execution command center is read-only and backed by canonical host projections', () => {
+  const home = source('app/(dashboard)/page.tsx')
+  const cockpit = source('components/dashboard/execution-cockpit.tsx')
+  assert.match(home, /ExecutionCockpit/)
+  for (const field of ['positions', 'orders', 'historicalOrders', 'riskApprovalStatus', 'executionApprovalStatus', 'authorizationMode']) {
+    assert.match(cockpit, new RegExp(field), `missing canonical field ${field}`)
+  }
+  assert.match(cockpit, /READ ONLY/)
+  assert.doesNotMatch(cockpit, /postHostCommand|postMessage|place-order|submitOrder|approve|cancelOrder|fetch\s*\(|WebSocket|EventSource/)
+})
+
 test('static export contains deterministic nonblank DOM for every primary route', () => {
   for (const route of navRoutes) {
     const output = route === '/' ? join(root, 'out/index.html') : join(root, `out${route}/index.html`)
