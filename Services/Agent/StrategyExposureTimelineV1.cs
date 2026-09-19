@@ -95,7 +95,7 @@ internal static class StrategyExposureTimelineV1
         {
             var hash=Convert.ToHexString(SHA256.HashData(canonicalBytes)).ToLowerInvariant();
             if(!string.Equals(hash,canonicalSha256,StringComparison.Ordinal))return false;
-            using var document=JsonDocument.Parse(canonicalBytes);
+            using var document=JsonDocument.Parse(canonicalBytes.ToArray());
             var root=document.RootElement;
             var decisions=new List<StrategyExposureDecisionV1>();
             foreach(var value in root.GetProperty("decisions").EnumerateArray())
