@@ -48,6 +48,45 @@ function Get-ArtifactTreeFacts([string]$Path) {
     }
 }
 
+function Write-AndVerifyDetachedAttestation(
+    [string]$ContentPath,
+    [string]$SignaturePath,
+    [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate) {
+    Add-Type -AssemblyName System.Security.Cryptography.Pkcs
+    $contentBytes = [System.IO.File]::ReadAllBytes($ContentPath)
+    $contentInfo = [System.Security.Cryptography.Pkcs.ContentInfo]::new($contentBytes)
+    $cms = [System.Security.Cryptography.Pkcs.SignedCms]::new($contentInfo, $true)
+    $signer = [System.Security.Cryptography.Pkcs.CmsSigner]::new($Certificate)
+    $signer.IncludeOption = [System.Security.Cryptography.X509Certificates.X509IncludeOption]::EndCertOnly
+    $signer.DigestAlgorithm = [System.Security.Cryptography.Oid]::new("2.16.840.1.101.3.4.2.1")
+    $cms.ComputeSignature($signer)
+
+    $signatureDirectory = Split-Path -Parent $SignaturePath
+    New-Item -ItemType Directory -Path $signatureDirectory -Force | Out-Null
+    $temporarySignature = Join-Path $signatureDirectory ('.signing-attestation.' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    [System.IO.File]::WriteAllBytes($temporarySignature, $cms.Encode())
+    Move-Item -LiteralPath $temporarySignature -Destination $SignaturePath -Force
+
+    $verification = [System.Security.Cryptography.Pkcs.SignedCms]::new(
+        [System.Security.Cryptography.Pkcs.ContentInfo]::new($contentBytes),
+        $true)
+    try {
+        $verification.Decode([System.IO.File]::ReadAllBytes($SignaturePath))
+        $verification.CheckSignature($true)
+    } catch {
+        throw "Runtime bundle signing attestation verification failed."
+    }
+    if ($verification.SignerInfos.Count -ne 1) {
+        throw "Runtime bundle signing attestation must contain exactly one signer."
+    }
+    $attestationCertificate = $verification.SignerInfos[0].Certificate
+    if ($null -eq $attestationCertificate -or
+        $attestationCertificate.Subject -ne $Certificate.Subject -or
+        $attestationCertificate.Thumbprint.ToUpperInvariant() -ne $Certificate.Thumbprint.ToUpperInvariant()) {
+        throw "Runtime bundle signing attestation identity mismatch."
+    }
+}
+
 $signingRoots = @($PublishPath) + @($AdditionalPublishPaths) | ForEach-Object { Resolve-InRoot $_ } | Select-Object -Unique
 if ($signingRoots.Count -eq 0) { throw "At least one signing staging directory is required." }
 $bundleAttestationRequested = -not [string]::IsNullOrWhiteSpace($ReadinessReportPath) -or -not [string]::IsNullOrWhiteSpace($SigningResultPath)
@@ -156,7 +195,7 @@ if ($bundleAttestationRequested) {
         }
     } | Sort-Object label)
     $result = [ordered]@{
-        schemaVersion = "wpe.runtime-bundle-signing/1.0"
+        schemaVersion = "wpe.runtime-bundle-signing/1.1"
         signedAtUtc = [DateTimeOffset]::UtcNow.ToString("O")
         sourceCommit = [string]$readiness.source.commit
         productVersion = [string]$readiness.productVersion
@@ -164,6 +203,7 @@ if ($bundleAttestationRequested) {
         publisherSubject = $certificate.Subject
         certificateThumbprint = $certificate.Thumbprint.ToUpperInvariant()
         timestampUrl = $TimestampUrl
+        attestationFormat = "cms-detached-sha256"
         artifacts = $signedArtifacts
     }
     $resultDirectory = Split-Path -Parent $resultPath
@@ -171,6 +211,8 @@ if ($bundleAttestationRequested) {
     $temporaryResult = Join-Path $resultDirectory ('.signing-result.' + [Guid]::NewGuid().ToString('N') + '.tmp')
     $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporaryResult -Encoding utf8
     Move-Item -LiteralPath $temporaryResult -Destination $resultPath -Force
+    $attestationPath = [System.IO.Path]::ChangeExtension($resultPath, "p7s")
+    Write-AndVerifyDetachedAttestation -ContentPath $resultPath -SignaturePath $attestationPath -Certificate $certificate
 }
 Write-Host "Signing and verification passed for $($executables.Count) runtime executable(s)." -ForegroundColor Green
 
