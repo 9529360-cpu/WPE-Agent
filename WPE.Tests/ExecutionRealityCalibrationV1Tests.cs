@@ -11,9 +11,9 @@ public sealed class ExecutionRealityCalibrationV1Tests
     {
         var facts = new[]
         {
-            Fact("a", "FILLED", 1m, 100.2m, .04008m, true, 100),
-            Fact("b", "FILLED", 1m, 100.4m, .0502m, true, 200),
-            Fact("c", "PARTIALLY_FILLED", .5m, 99.9m, 0m, false, 300),
+            Fact("a", "FILLED", 1m, 100.2m, 0.04008m, true, 100),
+            Fact("b", "FILLED", 1m, 100.4m, 0.0502m, true, 200),
+            Fact("c", "PARTIALLY_FILLED", 0.5m, 99.9m, 0m, false, 300),
             Fact("d", "REJECTED", 0m, 0m, 0m, false, 400)
         };
 
@@ -27,12 +27,12 @@ public sealed class ExecutionRealityCalibrationV1Tests
         Assert.Equal(1, snapshot.PartialCount);
         Assert.Equal(1, snapshot.TerminalNoFillCount);
         Assert.Equal(0, snapshot.UnknownCount);
-        Assert.Equal((1m + 1m + .5m) / 3m, snapshot.AverageFillRatio);
+        Assert.Equal((1m + 1m + 0.5m) / 3m, snapshot.AverageFillRatio);
         Assert.Equal(20m, snapshot.MedianAdverseSlippageBps);
         Assert.Equal(40m, snapshot.P95AdverseSlippageBps);
         Assert.Equal(10m, snapshot.MedianSlippageDriftBps);
         Assert.Equal(4.5m, snapshot.MedianObservedFeeRateBps);
-        Assert.Equal(.5m, snapshot.MedianFeeDriftBps);
+        Assert.Equal(0.5m, snapshot.MedianFeeDriftBps);
         Assert.Equal(20.5m, snapshot.MedianTotalExecutionDriftBps);
         Assert.Equal(31m, snapshot.P95TotalExecutionDriftBps);
         Assert.Equal(250, snapshot.MedianObservationLatencyMs);
@@ -44,8 +44,8 @@ public sealed class ExecutionRealityCalibrationV1Tests
     [Fact]
     public void CrossStrategyAndTamperedFactsAreRejected()
     {
-        var valid = Fact("a", "FILLED", 1m, 100m, .04m, true, 100);
-        var other = MakeFact("strategy-b", "v1", "b", "FILLED", 1m, 100m, .04m, true, 200);
+        var valid = Fact("a", "FILLED", 1m, 100m, 0.04m, true, 100);
+        var other = MakeFact("strategy-b", "v1", "b", "FILLED", 1m, 100m, 0.04m, true, 200);
 
         Assert.Throws<InvalidOperationException>(() =>
             ExecutionRealityCalibrationV1.Create("strategy-a", "v1", "research-cost-v1", new[] { valid, other }));
@@ -59,7 +59,7 @@ public sealed class ExecutionRealityCalibrationV1Tests
     public void CalibrationHashDetectsProjectionTampering()
     {
         var snapshot = ExecutionRealityCalibrationV1.Create(
-            "strategy-a", "v1", "research-cost-v1", new[] { Fact("a", "FILLED", 1m, 100m, .04m, true, 100) });
+            "strategy-a", "v1", "research-cost-v1", new[] { Fact("a", "FILLED", 1m, 100m, 0.04m, true, 100) });
 
         Assert.True(ExecutionRealityCalibrationV1.IsCanonical(snapshot));
         Assert.False(ExecutionRealityCalibrationV1.IsCanonical(snapshot with { FilledCount = 99 }));
@@ -98,8 +98,8 @@ public sealed class ExecutionRealityCalibrationV1Tests
             ExecutionOrderType.Market,
             1m,
             100m,
-            .0004m,
-            .001m,
+            0.0004m,
+            0.001m,
             IntendedAt);
         var observedAt = IntendedAt.AddMilliseconds(latencyMs);
         var observation = new ExecutionRealityObservationV1(
