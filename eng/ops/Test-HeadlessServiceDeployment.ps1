@@ -18,8 +18,13 @@ function Resolve-FixedLocalPath([string]$Path, [string]$Label) {
         Stop-Preflight "$Label.not-absolute"
     }
 
-    $resolved = [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar)
-    $root = [IO.Path]::GetPathRoot($resolved)
+    $full = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetPathRoot($full)
+    $resolved = if ($full.Equals($root, [StringComparison]::OrdinalIgnoreCase)) {
+        $root
+    } else {
+        $full.TrimEnd([IO.Path]::DirectorySeparatorChar)
+    }
     if ([string]::IsNullOrWhiteSpace($root) -or $root -notmatch '^[A-Za-z]:\\$') {
         Stop-Preflight "$Label.network-path-forbidden"
     }
