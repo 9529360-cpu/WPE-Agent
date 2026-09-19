@@ -99,6 +99,7 @@ internal static class ExecutionRealityCostAuthorityV1
 internal static class ExecutionSimulationSourceCanonicalizerV1
 {
     internal const string Schema = "wpe.execution-simulation-source/1.2";
+    internal const string LegacySchema = "wpe.execution-simulation-source/1.1";
     internal static readonly TimeSpan MaximumMarketAge = TimeSpan.FromSeconds(30);
     internal static readonly TimeSpan MaximumTopOfBookAge = TimeSpan.FromSeconds(15);
 
@@ -332,7 +333,7 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
     internal static bool IsCanonical(ExecutionSimulationSourceV1? value)
     {
         if (value is null
-            || value.Schema != Schema
+            || value.Schema is not (Schema or LegacySchema)
             || !LowerSha(value.ArtifactSha256)
             || !LowerSha(value.IntentSha256)
             || !LowerSha(value.CanonicalSha256)
@@ -492,8 +493,12 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
 
             using var document = JsonDocument.Parse(bytes.ToArray());
             var root = document.RootElement;
+            var schema = root.GetProperty("schema").GetString() ?? string.Empty;
+            if (schema is not (Schema or LegacySchema))
+                return false;
+            var legacy = string.Equals(schema,LegacySchema,StringComparison.Ordinal);
             value = new(
-                root.GetProperty("schema").GetString() ?? string.Empty,
+                schema,
                 root.GetProperty("correlation_id").GetString() ?? string.Empty,
                 root.GetProperty("client_order_id").GetString() ?? string.Empty,
                 root.GetProperty("artifact_sha256").GetString() ?? string.Empty,
@@ -524,17 +529,17 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
                 root.GetProperty("market_price").GetDecimal(),
                 root.GetProperty("market_provenance_sha256").GetString() ?? string.Empty,
                 root.GetProperty("market_provenance_canonical_bytes").GetBytesFromBase64(),
-                root.GetProperty("top_of_book_available").GetBoolean(),
-                root.GetProperty("top_of_book_reason_code").GetString() ?? string.Empty,
-                root.GetProperty("top_of_book_updated_at_utc").ValueKind==JsonValueKind.Null
+                legacy ? false : root.GetProperty("top_of_book_available").GetBoolean(),
+                legacy ? "top-of-book-unavailable" : root.GetProperty("top_of_book_reason_code").GetString() ?? string.Empty,
+                legacy || root.GetProperty("top_of_book_updated_at_utc").ValueKind==JsonValueKind.Null
                     ? null
                     : root.GetProperty("top_of_book_updated_at_utc").GetDateTimeOffset(),
-                root.GetProperty("best_bid").GetDecimal(),
-                root.GetProperty("best_ask").GetDecimal(),
-                root.GetProperty("bid_quantity").GetDecimal(),
-                root.GetProperty("ask_quantity").GetDecimal(),
-                root.GetProperty("top_of_book_messages").GetInt64(),
-                root.GetProperty("top_of_book_connected").GetBoolean(),
+                legacy ? 0m : root.GetProperty("best_bid").GetDecimal(),
+                legacy ? 0m : root.GetProperty("best_ask").GetDecimal(),
+                legacy ? 0m : root.GetProperty("bid_quantity").GetDecimal(),
+                legacy ? 0m : root.GetProperty("ask_quantity").GetDecimal(),
+                legacy ? 0L : root.GetProperty("top_of_book_messages").GetInt64(),
+                legacy ? false : root.GetProperty("top_of_book_connected").GetBoolean(),
                 root.GetProperty("step_size").GetDecimal(),
                 root.GetProperty("tick_size").GetDecimal(),
                 root.GetProperty("min_quantity").GetDecimal(),
@@ -607,18 +612,21 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             writer.WriteString("market_collected_at_utc", value.MarketCollectedAtUtc.ToUniversalTime());
             writer.WriteBase64String("market_provenance_canonical_bytes", value.MarketProvenanceCanonicalBytes);
             writer.WriteString("market_provenance_sha256", value.MarketProvenanceSha256);
-            writer.WriteNumber("best_ask", value.BestAsk);
-            writer.WriteNumber("best_bid", value.BestBid);
-            writer.WriteNumber("ask_quantity", value.AskQuantity);
-            writer.WriteNumber("bid_quantity", value.BidQuantity);
-            writer.WriteBoolean("top_of_book_available", value.TopOfBookAvailable);
-            writer.WriteBoolean("top_of_book_connected", value.TopOfBookConnected);
-            writer.WriteNumber("top_of_book_messages", value.TopOfBookMessages);
-            writer.WriteString("top_of_book_reason_code", value.TopOfBookReasonCode);
-            if(value.TopOfBookUpdatedAtUtc is null)
-                writer.WriteNull("top_of_book_updated_at_utc");
-            else
-                writer.WriteString("top_of_book_updated_at_utc", value.TopOfBookUpdatedAtUtc.Value.ToUniversalTime());
+            if(value.Schema==Schema)
+            {
+                writer.WriteNumber("best_ask", value.BestAsk);
+                writer.WriteNumber("best_bid", value.BestBid);
+                writer.WriteNumber("ask_quantity", value.AskQuantity);
+                writer.WriteNumber("bid_quantity", value.BidQuantity);
+                writer.WriteBoolean("top_of_book_available", value.TopOfBookAvailable);
+                writer.WriteBoolean("top_of_book_connected", value.TopOfBookConnected);
+                writer.WriteNumber("top_of_book_messages", value.TopOfBookMessages);
+                writer.WriteString("top_of_book_reason_code", value.TopOfBookReasonCode);
+                if(value.TopOfBookUpdatedAtUtc is null)
+                    writer.WriteNull("top_of_book_updated_at_utc");
+                else
+                    writer.WriteString("top_of_book_updated_at_utc", value.TopOfBookUpdatedAtUtc.Value.ToUniversalTime());
+            }
             writer.WriteNumber("max_leverage", value.MaxLeverage);
             writer.WriteNumber("min_notional", value.MinNotional);
             writer.WriteNumber("min_quantity", value.MinQuantity);
@@ -833,6 +841,16 @@ internal sealed class AutomaticExecutionRealityPipelineV1
             if (existing is not null)
             {
                 source = existing;
+                var existingFill = await _store.GetExecutionSimulationFillAsync(
+                    artifact.CorrelationId,
+                    intent.ClientOrderId,
+                    ct);
+                if (existingFill is not null)
+                {
+                    simulated++;
+                    skipped++;
+                    continue;
+                }
                 skipped++;
             }
             else
