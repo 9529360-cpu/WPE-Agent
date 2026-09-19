@@ -22,11 +22,14 @@ public sealed class HeadlessWindowsServiceBoundaryTests
         Assert.Contains("AddWindowsService(options => options.ServiceName = \"WPE Agent Headless\")",program,StringComparison.Ordinal);
         Assert.Contains("AddHostedService<HeadlessRuntimeWorker>()",program,StringComparison.Ordinal);
         var bootstrap=File.ReadAllText(Path.Combine(root,"WPE.Headless","HeadlessDataRootBootstrap.cs"));
+        var appDataPaths=File.ReadAllText(Path.Combine(root,"Services","AppDataPaths.cs"));
         Assert.Contains("ArgumentName = \"--data-root\"",bootstrap,StringComparison.Ordinal);
         Assert.Contains("headless.data-root-conflict",bootstrap,StringComparison.Ordinal);
         Assert.Contains("headless.data-root-duplicate",bootstrap,StringComparison.Ordinal);
-        Assert.Contains("Path.IsPathFullyQualified",bootstrap,StringComparison.Ordinal);
-        Assert.Contains("candidate.StartsWith(@\"\\\\\"",bootstrap,StringComparison.Ordinal);
+        Assert.Contains("DataRootPathPolicy.TryNormalizeFixedLocalRoot",bootstrap,StringComparison.Ordinal);
+        Assert.Contains("Path.IsPathFullyQualified",appDataPaths,StringComparison.Ordinal);
+        Assert.Contains("DriveType.Fixed",appDataPaths,StringComparison.Ordinal);
+        Assert.Contains("candidate.StartsWith(@\"\\\\\"",appDataPaths,StringComparison.Ordinal);
 
         Assert.Contains("WindowsServiceHelpers.IsWindowsService()",worker,StringComparison.Ordinal);
         Assert.Contains("Environment.ExitCode = exitCode;",worker,StringComparison.Ordinal);
