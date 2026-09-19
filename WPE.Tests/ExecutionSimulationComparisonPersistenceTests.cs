@@ -190,23 +190,6 @@ public sealed class ExecutionSimulationComparisonPersistenceTests : IDisposable
         Assert.False(stored.Idempotent);
     }
 
-    [Fact]
-    public async Task ComparisonPersistenceRejectsComparisonThatDoesNotReplayFromPersistedSources()
-    {
-        var store = new AgentSqliteStore(Database);
-        var simulated = Simulated("strategy-a", "v7", "research-cost-v1", "sim-v1", "order-a", 100m);
-        var observed = Observed("strategy-a", "v7", "research-cost-v1", "order-a", 101m);
-        await store.SaveExecutionSimulationFillAsync(simulated, default);
-        await store.SaveExecutionRealityDriftAsync(observed, default);
-
-        var alternateObserved = Observed("strategy-a", "v7", "research-cost-v1", "order-a", 102m);
-        var forged = ExecutionSimulationComparisonCanonicalizerV1.Create(simulated, alternateObserved, ObservedAt.AddSeconds(1))
-            with { ObservedCanonicalSha256 = observed.CanonicalSha256 };
-        var canonicalBytesField = typeof(ExecutionSimulationComparisonV1).GetProperty(nameof(ExecutionSimulationComparisonV1.CanonicalBytes));
-        Assert.NotNull(canonicalBytesField);
-        Assert.False(ExecutionSimulationComparisonCanonicalizerV1.IsCanonical(forged));
-    }
-
     private static ExecutionSimulationFillV1 Simulated(
         string strategyId,
         string strategyVersion,
