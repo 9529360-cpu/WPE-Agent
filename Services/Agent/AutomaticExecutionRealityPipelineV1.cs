@@ -726,7 +726,7 @@ internal sealed class AutomaticExecutionRealityPipelineV1
             compared>0?"execution-reality.comparison-stored":"execution-reality.comparison-unavailable");
     }
 
-    private static bool ValidateDurableIdentity(
+    private bool ValidateDurableIdentity(
         PersistedAutomaticExecution item,
         bool requireCurrentValidity,
         out DurableExecutionArtifactV2 artifact,
@@ -762,7 +762,7 @@ internal sealed class AutomaticExecutionRealityPipelineV1
 
         if (requireCurrentValidity)
         {
-            var now = DateTimeOffset.UtcNow;
+            var now = _utcNow().ToUniversalTime();
             if (artifact.CreatedAtUtc > now
                 || artifact.ExpiresAtUtc <= now
                 || receipt.IssuedAtUtc > now
