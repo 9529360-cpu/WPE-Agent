@@ -51,6 +51,7 @@ public sealed class ReleaseRuntimeBundlePackageBoundaryTests
         Assert.Contains("Assert-ZipEntriesSafe",source,StringComparison.Ordinal);
         Assert.Contains("Archive entry escapes verification root.",source,StringComparison.Ordinal);
         Assert.Contains("Archive contains duplicate normalized entry paths.",source,StringComparison.Ordinal);
+        Assert.Contains("Archive must contain exactly one top-level package directory.",source,StringComparison.Ordinal);
         Assert.Contains("Resolve-InPackageRoot",source,StringComparison.Ordinal);
         Assert.Contains("Package metadata path escapes package root.",source,StringComparison.Ordinal);
         Assert.Contains("PAYLOAD-SHA256SUMS does not match FILE-MANIFEST.json.",source,StringComparison.Ordinal);
