@@ -12,7 +12,7 @@ public sealed class ExecutionRealityDriftPersistenceTests : IDisposable
     [Fact]
     public async Task AppendOnlyRoundTripIsIdempotentAndRestartSafe()
     {
-        var fact = Fact("strategy-a", "v1", "order-a", "FILLED", 1m, 100.2m, .04008m, true, IntendedAt.AddSeconds(1));
+        var fact = Fact("strategy-a", "v1", "order-a", "FILLED", 1m, 100.2m, 0.04008m, true, IntendedAt.AddSeconds(1));
         var store = new AgentSqliteStore(Database);
 
         var first = await store.SaveExecutionRealityDriftAsync(fact, default);
@@ -44,19 +44,19 @@ public sealed class ExecutionRealityDriftPersistenceTests : IDisposable
     {
         var store = new AgentSqliteStore(Database);
         await store.SaveExecutionRealityDriftAsync(
-            Fact("strategy-a", "v1", "filled", "FILLED", 1m, 100.2m, .04008m, true, IntendedAt.AddSeconds(1)),
+            Fact("strategy-a", "v1", "filled", "FILLED", 1m, 100.2m, 0.04008m, true, IntendedAt.AddSeconds(1)),
             default);
         await store.SaveExecutionRealityDriftAsync(
-            Fact("strategy-a", "v1", "partial", "PARTIALLY_FILLED", .5m, 99.9m, .01998m, true, IntendedAt.AddSeconds(2)),
+            Fact("strategy-a", "v1", "partial", "PARTIALLY_FILLED", 0.5m, 99.9m, 0.01998m, true, IntendedAt.AddSeconds(2)),
             default);
         await store.SaveExecutionRealityDriftAsync(
-            Fact("strategy-a", "v1", "fee-missing", "PARTIALLY_FILLED", .25m, 100.1m, 0m, false, IntendedAt.AddSeconds(3)),
+            Fact("strategy-a", "v1", "fee-missing", "PARTIALLY_FILLED", 0.25m, 100.1m, 0m, false, IntendedAt.AddSeconds(3)),
             default);
         await store.SaveExecutionRealityDriftAsync(
             Fact("strategy-a", "v1", "rejected", "REJECTED", 0m, 0m, 0m, false, IntendedAt.AddMilliseconds(500)),
             default);
         await store.SaveExecutionRealityDriftAsync(
-            Fact("strategy-b", "v7", "other", "FILLED", 1m, 110m, .044m, true, IntendedAt.AddSeconds(4), expectedPrice:110m),
+            Fact("strategy-b", "v7", "other", "FILLED", 1m, 110m, 0.044m, true, IntendedAt.AddSeconds(4), expectedPrice:110m),
             default);
 
         var summary = await store.GetExecutionRealityDriftSummaryAsync("strategy-a", "v1", "research-cost-v1", 100, default);
@@ -67,7 +67,7 @@ public sealed class ExecutionRealityDriftPersistenceTests : IDisposable
         Assert.Equal(2, summary.FeeComparableCount);
         Assert.Equal(2, summary.TotalComparableCount);
         Assert.Equal(2, summary.TerminalCount);
-        Assert.Equal((1m + .5m + .25m) / 3m, summary.AverageFillRatio);
+        Assert.Equal((1m + 0.5m + 0.25m) / 3m, summary.AverageFillRatio);
         Assert.Equal((-10m) / 3m, summary.AverageSlippageDriftBps);
         Assert.Equal(0m, summary.AverageFeeDriftBps);
         Assert.Equal(-5m, summary.AverageTotalExecutionDriftBps);
@@ -94,7 +94,7 @@ public sealed class ExecutionRealityDriftPersistenceTests : IDisposable
     public async Task NonCanonicalFactIsRejectedBeforePersistence()
     {
         var store = new AgentSqliteStore(Database);
-        var fact = Fact("strategy-a", "v1", "order-a", "FILLED", 1m, 100m, .04m, true, IntendedAt.AddSeconds(1));
+        var fact = Fact("strategy-a", "v1", "order-a", "FILLED", 1m, 100m, 0.04m, true, IntendedAt.AddSeconds(1));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             store.SaveExecutionRealityDriftAsync(fact with { AveragePrice = 101m }, default));
@@ -126,8 +126,8 @@ public sealed class ExecutionRealityDriftPersistenceTests : IDisposable
             OrderType:ExecutionOrderType.Market,
             Quantity:1m,
             ExpectedPrice:expectedPrice,
-            ExpectedCommissionRate:.0004m,
-            ExpectedSlippageRate:.001m,
+            ExpectedCommissionRate:0.0004m,
+            ExpectedSlippageRate:0.001m,
             IntendedAtUtc:IntendedAt);
         var observation = new ExecutionRealityObservationV1(
             orderId,
