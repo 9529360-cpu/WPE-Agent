@@ -16,6 +16,8 @@ public sealed class MaintenanceCliBoundaryTests
         Assert.Contains("RuntimeStateRestoreService", program, StringComparison.Ordinal);
         Assert.Contains("confirm-backup-id", program, StringComparison.Ordinal);
         Assert.Contains("OperatingSystem.IsWindows()", program, StringComparison.Ordinal);
+        Assert.Contains("DeleteDirectoryOrFail(staging)", program, StringComparison.Ordinal);
+        Assert.DoesNotContain("TryDeleteDirectory", program, StringComparison.Ordinal);
         Assert.Contains("<TargetFramework>net8.0</TargetFramework>", project, StringComparison.Ordinal);
         Assert.Contains("..\\币安量化机器人.csproj", project, StringComparison.Ordinal);
         Assert.Contains("WPE.Maintenance\\\\**\\\\*.cs", mainProject, StringComparison.Ordinal);
