@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using 币安量化机器人.Services.Access;
 using 币安量化机器人.Services.Security;
 
 namespace 币安量化机器人.Services.Backup;
@@ -36,7 +37,7 @@ public sealed class RuntimeStateBackupVerifier
         _keyProtector = keyProtector ?? new WindowsCurrentUserKeyProtector();
         _encryption = new VersionedEnvelopeEncryptionService(_keyProtector);
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
-        _deviceCode = deviceCode ?? Access.DeviceLicenseService.GetCurrentDeviceCode;
+        _deviceCode = deviceCode ?? DeviceLicenseService.GetCurrentDeviceCode;
         _productVersion = string.IsNullOrWhiteSpace(productVersion)
             ? typeof(RuntimeStateBackupVerifier).Assembly.GetName().Version?.ToString() ?? "unknown"
             : productVersion;
@@ -168,8 +169,12 @@ public sealed class RuntimeStateBackupVerifier
             !IsSha256(descriptor.DeviceCodeSha256) ||
             !IsSha256(descriptor.ItemsSha256))
             throw new InvalidDataException("Runtime-state backup descriptor metadata is invalid.");
-        if (descriptor.Manifest is null || string.IsNullOrWhiteSpace(descriptor.Manifest.BackupId))
-            throw new InvalidDataException("Runtime-state backup manifest identity is missing.");
+        if (descriptor.Manifest is null ||
+            string.IsNullOrWhiteSpace(descriptor.Manifest.BackupId) ||
+            descriptor.Manifest.KeyReference is null ||
+            descriptor.Manifest.Files is null ||
+            descriptor.Manifest.Files.Count == 0)
+            throw new InvalidDataException("Runtime-state backup manifest identity or inventory is missing.");
         if (descriptor.Authentication is null ||
             !string.Equals(
                 descriptor.Authentication.FileName,
@@ -265,44 +270,46 @@ public sealed class RuntimeStateBackupVerifier
         CancellationToken cancellationToken)
     {
         var destination = ResolveInside(stagingRoot, item.LogicalName);
-        await using var output = new FileStream(
+        using var plaintextHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        long plaintextLength = 0;
+
+        await using (var output = new FileStream(
             destination,
             FileMode.CreateNew,
             FileAccess.Write,
             FileShare.None,
             RuntimeStateBackupService.ChunkSizeBytes,
-            FileOptions.Asynchronous | FileOptions.WriteThrough);
-        using var plaintextHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        long plaintextLength = 0;
-
-        for (var index = 0; index < item.EncryptedChunks.Count; index++)
+            FileOptions.Asynchronous | FileOptions.WriteThrough))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var chunkPath = ResolveInside(backupRoot, item.EncryptedChunks[index]);
-            var encryptedBytes = await ReadBoundedAsync(
-                chunkPath, MaximumEnvelopeBytes, cancellationToken).ConfigureAwait(false);
-            var envelope = JsonSerializer.Deserialize<EncryptedEnvelope>(encryptedBytes, Json)
-                ?? throw new InvalidDataException("Runtime-state backup encrypted chunk is invalid.");
-            var plaintext = _encryption.Decrypt(
-                envelope,
-                new EnvelopeAssociatedData(
-                    "runtime-state-backup-chunk",
-                    $"{backupId}:{item.LogicalName}:{index}",
-                    1));
-            try
+            for (var index = 0; index < item.EncryptedChunks.Count; index++)
             {
-                await output.WriteAsync(plaintext, cancellationToken).ConfigureAwait(false);
-                plaintextHash.AppendData(plaintext);
-                plaintextLength += plaintext.LongLength;
+                cancellationToken.ThrowIfCancellationRequested();
+                var chunkPath = ResolveInside(backupRoot, item.EncryptedChunks[index]);
+                var encryptedBytes = await ReadBoundedAsync(
+                    chunkPath, MaximumEnvelopeBytes, cancellationToken).ConfigureAwait(false);
+                var envelope = JsonSerializer.Deserialize<EncryptedEnvelope>(encryptedBytes, Json)
+                    ?? throw new InvalidDataException("Runtime-state backup encrypted chunk is invalid.");
+                var plaintext = _encryption.Decrypt(
+                    envelope,
+                    new EnvelopeAssociatedData(
+                        "runtime-state-backup-chunk",
+                        $"{backupId}:{item.LogicalName}:{index}",
+                        1));
+                try
+                {
+                    await output.WriteAsync(plaintext, cancellationToken).ConfigureAwait(false);
+                    plaintextHash.AppendData(plaintext);
+                    plaintextLength += plaintext.LongLength;
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(plaintext);
+                }
             }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(plaintext);
-            }
-        }
 
-        await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-        output.Flush(true);
+            await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+            output.Flush(true);
+        }
 
         var actualHash = Convert.ToHexString(plaintextHash.GetHashAndReset());
         if (plaintextLength != item.PlaintextLength || !FixedHexEquals(actualHash, item.PlaintextSha256))
