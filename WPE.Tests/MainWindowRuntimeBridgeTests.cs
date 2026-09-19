@@ -20,8 +20,8 @@ public sealed class TradingRuntimeHostTests
         var pump = Method("private async Task RunRuntimeSnapshotPumpAsync(", "private async Task RefreshRuntimeSnapshotAsync(");
 
         Assert.Contains("Task.Run(() => RunRuntimeSnapshotPumpAsync", source, StringComparison.Ordinal);
-        Assert.Contains("await RefreshRuntimeSnapshotAsync(ct);", pump, StringComparison.Ordinal);
-        Assert.Contains("await Task.Delay(SnapshotRefreshInterval, ct);", pump, StringComparison.Ordinal);
+        Assert.Contains("await RefreshRuntimeSnapshotAsync(ct)", pump, StringComparison.Ordinal);
+        Assert.Contains("await Task.Delay(SnapshotRefreshInterval, ct)", pump, StringComparison.Ordinal);
         Assert.DoesNotContain("Task.WhenAll", pump, StringComparison.Ordinal);
     }
 
