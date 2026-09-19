@@ -72,7 +72,6 @@ internal sealed record ExecutionSimulationSourceV1(
 
 internal static class ExecutionRealityCostAuthorityV1
 {
-    internal const string Schema = "wpe.execution-cost-authority/1.0";
     private static readonly decimal Commission = TradingRealityCostAuthorityV1.Default.CommissionRate;
     private static readonly decimal Slippage = TradingRealityCostAuthorityV1.Default.SlippageRate;
     internal static readonly string Version = TradingRealityCostAuthorityV1.Identity;
