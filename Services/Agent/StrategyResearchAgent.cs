@@ -68,6 +68,14 @@ public sealed class StrategyResearchAgent
                 newsBySymbol[profile.Symbol]=news;
             }
             var validation = _engine.Validate(profile, candles, news, limits);
+            if(!string.IsNullOrEmpty(validation.TimelineSha256))
+            {
+                var timelineArtifact=_engine.TimelineArtifact(profile,candles,news);
+                if(timelineArtifact is null
+                   ||!string.Equals(validation.TimelineSha256,timelineArtifact.CanonicalSha256,StringComparison.Ordinal))
+                    throw new InvalidOperationException("Strategy validation timeline provenance mismatch.");
+                await _database.SaveStrategyExposureTimelineAsync(timelineArtifact,ct);
+            }
             await _database.SaveStrategyValidationAsync(validation, ct);
             var validationCompletedAt = _utcNow().ToUniversalTime();
             var coverageDays = candles.Count < 2 ? 0 : Math.Max(0, (int)Math.Floor((candles[^1].OpenTime.ToUniversalTime() - candles[0].OpenTime.ToUniversalTime()).TotalDays));
@@ -223,13 +231,19 @@ internal sealed class HistoricalResearchEngine
         var strategy=_strategies.Resolve(profile.Family);
         if(!_strategies.IsProfileCompatible(profile))return new(profile.Id,candles.Count,0,0,0,0,1,0,0,0,1,0,false,$"strategy implementation mismatch; current={profile.Version}; required={strategy.ImplementationVersion}; revalidation required",StrategyVersion:profile.Version);
         if (candles.Count < 500) return new(profile.Id, candles.Count, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, false, "insufficient hourly history",StrategyVersion:profile.Version);
-        var timeline=strategy.BuildResearchTimeline(profile,candles,news);var returns=_reality.Simulate(timeline);
-        if(returns.Count<2)return new(profile.Id,candles.Count,0,0,0,0,1,0,0,0,1,0,false,"canonical research timeline unavailable or invalid",StrategyVersion:profile.Version);
+        var timeline=strategy.BuildResearchTimeline(profile,candles,news);
+        var timelineArtifact=StrategyExposureTimelineV1.CreateArtifact(timeline);
+        var returns=timelineArtifact is null?[]:_reality.Simulate(timelineArtifact.Decisions);
+        if(returns.Count<2)return new(
+            profile.Id,candles.Count,0,0,0,0,1,0,0,0,1,0,false,
+            timelineArtifact is null?"canonical research timeline unavailable or invalid":$"canonical research timeline too short; timeline_sha256={timelineArtifact.CanonicalSha256}",
+            StrategyVersion:profile.Version,
+            TimelineSha256:timelineArtifact?.CanonicalSha256??string.Empty);
         var split = Math.Clamp((int)(returns.Count * .65), 1, returns.Count-1); var train = returns.Take(split).ToArray(); var test = returns.Skip(split).ToArray();
         var all = Metrics(returns); var trainMetrics=Metrics(train);var oos = Metrics(test); var walk = WalkForward(profile, candles, news); var mc = MonteCarlo(returns);var robustness=EvaluateRobustness(returns,trainMetrics.Expectancy,oos.Expectancy);var benchmark=candles[0].Close>0?(double)(candles[^1].Close/candles[0].Close-1):0;
         var score = Math.Clamp(.16 * Math.Min(1, all.ProfitFactor / 1.5) + .16 * Math.Max(0, (oos.TotalReturn + .10) / .30) + .16 * (1 - Math.Min(1, all.MaxDrawdown / .25)) + .16 * walk + .16 * (1 - mc)+.20*robustness.Score, 0, 1);
         var passed = returns.Count(x => x.Trade) >= Math.Max(StrategyGovernor.MinimumValidationTrades, limits.MinimumBacktestTrades) && oos.Expectancy > 0 && all.ProfitFactor >= 1.1 && all.MaxDrawdown <= .25 && walk >= .5 && mc <= .45&&robustness.Passed;
-        return new(profile.Id, candles.Count, returns.Count(x => x.Trade), all.WinRate, all.ProfitFactor, all.Expectancy, all.MaxDrawdown, all.Sharpe, oos.TotalReturn, walk, mc, score, passed, $"{profile.Id} strategy_impl={strategy.ImplementationVersion} trades={returns.Count(x => x.Trade)} OOS={oos.TotalReturn:P1} PF={all.ProfitFactor:F2} DD={all.MaxDrawdown:P1} WF={walk:F2} MC={mc:P0} regimes={robustness.PassingRegimes}/{robustness.EvaluatedRegimes} worst={robustness.WorstRegimeReturn:P1} gap={robustness.TrainTestExpectancyGap:P3} timeline=wpe.strategy-exposure/1 cost_rt={_reality.Costs.RoundTripVariableRate:P4} passed={passed}",robustness.WorstRegimeReturn,robustness.TrainTestExpectancyGap,robustness.PassingRegimes,robustness.EvaluatedRegimes,profile.Version,test.Count(x=>x.Trade),all.TotalReturn,benchmark);
+        return new(profile.Id, candles.Count, returns.Count(x => x.Trade), all.WinRate, all.ProfitFactor, all.Expectancy, all.MaxDrawdown, all.Sharpe, oos.TotalReturn, walk, mc, score, passed, $"{profile.Id} strategy_impl={strategy.ImplementationVersion} trades={returns.Count(x => x.Trade)} OOS={oos.TotalReturn:P1} PF={all.ProfitFactor:F2} DD={all.MaxDrawdown:P1} WF={walk:F2} MC={mc:P0} regimes={robustness.PassingRegimes}/{robustness.EvaluatedRegimes} worst={robustness.WorstRegimeReturn:P1} gap={robustness.TrainTestExpectancyGap:P3} timeline_sha256={timelineArtifact!.CanonicalSha256} cost_rt={_reality.Costs.RoundTripVariableRate:P4} passed={passed}",robustness.WorstRegimeReturn,robustness.TrainTestExpectancyGap,robustness.PassingRegimes,robustness.EvaluatedRegimes,profile.Version,test.Count(x=>x.Trade),all.TotalReturn,benchmark,TimelineSha256:timelineArtifact!.CanonicalSha256);
     }
 
     internal static StrategyRobustness EvaluateRobustness(IReadOnlyList<(double Return,bool Trade)> values,double? trainExpectancy=null,double? testExpectancy=null)
@@ -257,6 +271,9 @@ internal sealed class HistoricalResearchEngine
 
     internal IReadOnlyList<StrategyExposureDecisionV1> Timeline(StrategyProfile profile,IReadOnlyList<CandleEvidence> candles,IReadOnlyList<NewsFeature> news)
         =>_strategies.IsProfileCompatible(profile)?_strategies.Resolve(profile.Family).BuildResearchTimeline(profile,candles,news):[];
+
+    internal StrategyExposureTimelineArtifactV1? TimelineArtifact(StrategyProfile profile,IReadOnlyList<CandleEvidence> candles,IReadOnlyList<NewsFeature> news)
+        =>StrategyExposureTimelineV1.CreateArtifact(Timeline(profile,candles,news));
 
     internal List<(double Return, bool Trade)> Simulate(StrategyProfile profile, IReadOnlyList<CandleEvidence> candles, IReadOnlyList<NewsFeature> news)
         =>_reality.Simulate(Timeline(profile,candles,news));

@@ -72,6 +72,47 @@ public sealed class StrategyExposureTimelineTests
     }
 
     [Fact]
+    public void CanonicalTimelineArtifactBindsExactDecisionsAndIsDeterministic()
+    {
+        var registry=new DeterministicStrategyRegistry();
+        var profile=Profile(StrategyFamily.TrendBreakout,registry);
+        var timeline=registry.Resolve(profile.Family).BuildResearchTimeline(profile,Candles(220),[]);
+
+        var first=StrategyExposureTimelineV1.CreateArtifact(timeline);
+        var second=StrategyExposureTimelineV1.CreateArtifact(timeline);
+
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.Equal(StrategyExposureTimelineV1.ArtifactSchema,first!.Schema);
+        Assert.Equal(timeline.Count,first.DecisionCount);
+        Assert.Equal(first.CanonicalSha256,second!.CanonicalSha256);
+        Assert.Equal(first.CanonicalBytes,second.CanonicalBytes);
+        Assert.True(StrategyExposureTimelineV1.IsCanonical(first));
+
+        var changed=first.Decisions.ToArray();
+        changed[0]=changed[0] with{ExecutionClosePrice=changed[0].ExecutionClosePrice+.01m};
+        Assert.False(StrategyExposureTimelineV1.IsCanonical(first with{Decisions=changed}));
+        Assert.False(StrategyExposureTimelineV1.IsCanonical(first with{CanonicalSha256=new string('0',64)}));
+    }
+
+    [Fact]
+    public void HistoricalValidationBindsTheSameCanonicalTimelineArtifact()
+    {
+        var registry=new DeterministicStrategyRegistry();
+        var profile=Profile(StrategyFamily.TrendBreakout,registry);
+        var candles=Candles(800);
+        var engine=new HistoricalResearchEngine(strategies:registry);
+
+        var artifact=engine.TimelineArtifact(profile,candles,[]);
+        var validation=engine.Validate(profile,candles,[],new RiskLimits());
+
+        Assert.NotNull(artifact);
+        Assert.True(StrategyExposureTimelineV1.IsCanonical(artifact));
+        Assert.Equal(artifact!.CanonicalSha256,validation.TimelineSha256);
+        Assert.Contains(artifact.CanonicalSha256,validation.Summary,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NonUtcOrNonMonotonicBarsFailClosed()
     {
         var registry=new DeterministicStrategyRegistry();
