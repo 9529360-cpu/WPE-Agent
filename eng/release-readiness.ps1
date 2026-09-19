@@ -119,6 +119,7 @@ $assemblyVersion = "$($parsedProductVersion.Major).$($parsedProductVersion.Minor
 $sourceCommit = (& git -C $root rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') { throw "Unable to resolve release source commit." }
 $sourceDirty = @(& git -C $root status --porcelain=v1 --untracked-files=normal).Count -gt 0
+if ($sourceDirty) { throw "Release readiness requires a clean source tree so the source commit identifies the exact candidate inputs." }
 
 function Invoke-External([string]$Command, [string[]]$Arguments) {
     & $Command @Arguments
