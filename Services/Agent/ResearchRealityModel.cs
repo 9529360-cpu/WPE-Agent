@@ -9,7 +9,7 @@ namespace 币安量化机器人.Services.Agent;
 /// </summary>
 internal sealed class ResearchRealityModel
 {
-    internal static readonly ResearchCostModel DefaultCosts = new(.0004m, .0003m);
+    internal static readonly ResearchCostModel DefaultCosts = TradingRealityCostAuthorityV1.Default;
     private readonly ResearchCostModel _costs;
 
     internal ResearchRealityModel(ResearchCostModel? costs = null)
