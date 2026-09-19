@@ -233,15 +233,26 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
     {
         if(!IsTestnet)return new(AutomaticGatewayReconciliationState.Failed,"automatic.testnet-required");
         if(!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid)return new(AutomaticGatewayReconciliationState.Failed,"automatic.reconcile-artifact-invalid");
-        var found=0;var journaled=0;
+
+        var filledCount=0;
         foreach(var intent in artifact.Intents)
         {
-            var journal=await _store.HasExecutionSubmissionJournalAsync(intent.ClientOrderId,ct);if(journal)journaled++;
-            var order=await _exchange.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);if(order is null)continue;found++;
-            if(order.ExecutedQuantity<=0&&order.Status is "CANCELED" or "EXPIRED" or "REJECTED")return new(AutomaticGatewayReconciliationState.Failed,"automatic.reconcile-order-terminal");
+            var journaled=await _store.HasExecutionSubmissionJournalAsync(intent.ClientOrderId,ct);
+            var order=await _exchange.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);
+            var providerState=ProviderOrderReconciliationServiceV1.ClassifyProviderState(
+                intent.Symbol,intent.ClientOrderId,intent.Quantity,journaled,order);
+
+            if(providerState==ProviderOrderLifecycleStateV1.TerminalNoFill)
+                return new(AutomaticGatewayReconciliationState.Failed,"automatic.reconcile-order-terminal");
+            // The submission journal is still a reserved read contract with no production writer.
+            // A missing provider order therefore cannot prove that submission never happened.
+            if(providerState!=ProviderOrderLifecycleStateV1.Filled)
+                return new(AutomaticGatewayReconciliationState.Unknown,"automatic.reconcile-unknown");
+            filledCount++;
         }
-        if(found==artifact.Intents.Count)return new(AutomaticGatewayReconciliationState.Succeeded,"automatic.reconcile-succeeded");
-        if(found==0&&journaled==0)return new(AutomaticGatewayReconciliationState.NotSubmitted,"automatic.reconcile-not-submitted");
+
+        if(filledCount==artifact.Intents.Count)
+            return new(AutomaticGatewayReconciliationState.Succeeded,"automatic.reconcile-succeeded");
         return new(AutomaticGatewayReconciliationState.Unknown,"automatic.reconcile-unknown");
     }
 
