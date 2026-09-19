@@ -110,7 +110,10 @@ public sealed class StrategyResearchAgent
             var market = evidence.Markets.GetValueOrDefault(profile.Symbol);
             if (market is null) continue;
             var signal = _engine.Signal(profile, market, evidence.News);
-            await _database.RecordStrategyObservationAsync(profile.Id, profile.Symbol, signal.Direction, market.Price, signal.Confidence, ct);
+            var shadowObservation=await CreateShadowObservationAsync(profile,signal,market,ct);
+            if(shadowObservation is not null
+               &&await _database.SaveStrategyShadowObservationAsync(shadowObservation,ct))
+                await _database.RecordStrategyObservationAsync(profile.Id, profile.Symbol, signal.Direction, market.Price, signal.Confidence, ct);
             var performance = await _database.GetStrategyObservationPerformanceAsync(profile.Id, ct);
             profile.ShadowObservations = performance.Observations; profile.Expectancy = performance.Expectancy;
             profile.MaxDrawdown = performance.MaxDrawdown; profile.FailureStreak = performance.FailureStreak; profile.QualityScore = performance.QualityScore;
@@ -143,6 +146,84 @@ public sealed class StrategyResearchAgent
 
     public StrategySignal GetSignal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
         => _schedulerHealthy ? _engine.Signal(profile, market, news) : new StrategySignal(profile.Id, profile.Symbol, 0, 0, "strategy research heartbeat is stale; hold", profile.Version);
+
+    private async Task<StrategyShadowObservationV1?> CreateShadowObservationAsync(
+        StrategyProfile profile,
+        StrategySignal signal,
+        MarketEvidence market,
+        CancellationToken ct)
+    {
+        if(!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)
+           ||market.Provenance is null
+           ||!string.Equals(market.Provenance.Environment,"Testnet",StringComparison.Ordinal))
+            return null;
+
+        var persistedValidation=await _database.GetLatestStrategyValidationAsync(profile.Id,profile.Version,ct);
+        var backtest=await _database.GetLatestBacktestRunAsync(profile.Id,profile.Version,ct);
+        if(persistedValidation is null
+           ||backtest is null
+           ||!string.Equals(backtest.StrategyId,profile.Id,StringComparison.Ordinal)
+           ||!string.Equals(backtest.StrategyVersion,profile.Version,StringComparison.Ordinal)
+           ||!string.Equals(backtest.Symbol,profile.Symbol,StringComparison.Ordinal)
+           ||!string.Equals(backtest.Status,"PASSED",StringComparison.Ordinal))
+            return null;
+
+        var validation=persistedValidation.Validation;
+        if(!validation.Passed
+           ||!_governor.CanPromote(profile,validation)
+           ||string.IsNullOrWhiteSpace(validation.TimelineSha256))
+            return null;
+
+        var completedUtc=backtest.CompletedAtUtc.Kind==DateTimeKind.Utc
+            ?backtest.CompletedAtUtc
+            :backtest.CompletedAtUtc.ToUniversalTime();
+        var completedAt=new DateTimeOffset(DateTime.SpecifyKind(completedUtc,DateTimeKind.Utc));
+        if((persistedValidation.CreatedAtUtc-completedAt).Duration()>StrategyResearchAuthority.MaximumEvidencePairSkew)
+            return null;
+
+        var nowUtc=_utcNow().ToUniversalTime();
+        var observedAt=new DateTimeOffset(DateTime.SpecifyKind(nowUtc,DateTimeKind.Utc));
+        var validationFact=BacktestValidationCanonicalizerV1.Create(
+            profile.Symbol,
+            profile.Id,
+            profile.Version,
+            completedAt,
+            validation.SampleSize,
+            validation.Trades,
+            validation.OutOfSampleTrades,
+            backtest.CoverageDays,
+            validation.WinRate,
+            validation.ProfitFactor,
+            validation.Expectancy,
+            validation.MaxDrawdown,
+            validation.Sharpe,
+            validation.OutOfSampleReturn,
+            validation.WalkForwardScore,
+            validation.MonteCarloLossProbability,
+            validation.QualityScore,
+            approved:true,
+            promoted:profile.Lifecycle==StrategyLifecycle.Active);
+        if(!BacktestValidationCanonicalizerV1.IsCanonical(validationFact,observedAt))
+            return null;
+
+        var timeline=await _database.GetStrategyExposureTimelineAsync(
+            validation.TimelineSha256,
+            profile.Id,
+            profile.Version,
+            profile.Symbol,
+            ct);
+        if(timeline is null
+           ||!string.Equals(timeline.CanonicalSha256,validation.TimelineSha256,StringComparison.Ordinal))
+            return null;
+
+        try
+        {
+            return StrategyShadowObservationCanonicalizerV1.Create(
+                profile,signal,market,validationFact,timeline,observedAt);
+        }
+        catch(ArgumentException){return null;}
+        catch(InvalidOperationException){return null;}
+    }
 
     private async Task<IReadOnlyList<StrategyProfile>> EnsureCandidatesAsync(IReadOnlyList<string> symbols, CancellationToken ct)
     {
