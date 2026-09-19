@@ -56,6 +56,8 @@ public sealed class RuntimeStateBackupService
     {
         var leasePath = _layout.RuntimeFile(DataRootMaintenanceLease.LeaseFileName);
         using var maintenanceLease = DataRootMaintenanceLease.AcquireExclusiveMaintenanceLease(leasePath);
+        RuntimeStateRestoreRecovery.RecoverUnderExclusiveLease(
+            _layout, maintenanceLease, _keyProtector);
         return await CreateUnderExclusiveLeaseAsync(
             destinationRoot, maintenanceLease, cancellationToken).ConfigureAwait(false);
     }
