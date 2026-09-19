@@ -82,13 +82,13 @@ test('audit table exposes metadata but never audit payload', () => {
 
 test('default projection is fail-closed and contains no records', () => {
   const html = render(unsupportedHistoryProjection)
-  assert.equal(html.match(/unsupported/g)?.length, 10)
+  assert.equal(html.match(/unsupported/g)?.length, 12)
   assert.doesNotMatch(html, /<tbody>/)
 })
 
 test('malformed top-level projections fail closed instead of throwing', () => {
   const malformed = { state: 'error', items: [{ value: 'MUST-NOT-RENDER' }] } as unknown as HistoryProjection
   const html = render(malformed)
-  assert.equal(html.match(/unsupported/g)?.length, 10)
+  assert.equal(html.match(/unsupported/g)?.length, 12)
   assert.doesNotMatch(html, /MUST-NOT-RENDER/)
 })
