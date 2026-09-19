@@ -13,8 +13,12 @@ public sealed class StrategyGovernor
     public const double MinimumQualityScore = .62;
     public const double MaximumPromotedDrawdown = .20;
     public const double MaximumDemotionDrawdown = .30;
-    public const int RequiredEvaluatedRegimes = 4;
-    public const int MinimumPassingRegimes = 3;
+    public const int TemporalRobustnessFolds = 4;
+    public const int MinimumPassingTemporalFolds = 3;
+    public const int RequiredEvaluatedRegimes = 2;
+    public const int MinimumPassingRegimes = 2;
+    public const int MinimumRegimeValidationBars = 30;
+    public const int MinimumRegimeValidationTrades = 3;
     public const double MinimumWorstRegimeReturn = -.12;
     public const double MaximumTrainTestExpectancyGap = .003;
 
@@ -23,7 +27,7 @@ public sealed class StrategyGovernor
            && validation.Trades >= MinimumValidationTrades
            && validation.QualityScore >= MinimumQualityScore
            && validation.MaxDrawdown <= MaximumPromotedDrawdown
-           && validation.EvaluatedRegimes == RequiredEvaluatedRegimes
+           && validation.EvaluatedRegimes >= RequiredEvaluatedRegimes
            && validation.PassingRegimes >= MinimumPassingRegimes
            && validation.WorstRegimeReturn >= MinimumWorstRegimeReturn
            && validation.TrainTestExpectancyGap <= MaximumTrainTestExpectancyGap;
