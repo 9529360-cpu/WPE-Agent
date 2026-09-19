@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { Activity, AlertTriangle, History, ReceiptText, ShieldAlert, WalletCards } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useWpeRuntime, type RuntimeCollectionState } from '@/components/runtime-bridge'
+import { useWpeRuntime, type RuntimeCollectionState, type RuntimeHistoricalReconciliation } from '@/components/runtime-bridge'
 import { RuntimeUnavailable } from '@/components/runtime-state'
 import { Panel, PanelBody, PanelHeader } from '@/components/ui/panel'
 import { StatusBadge } from '@/components/ui/status-badge'
@@ -15,8 +15,8 @@ function stateOf(fresh: boolean | undefined, state: RuntimeCollectionState | und
 
 function gateTone(value: string | undefined) {
   const normalized = value?.toLowerCase() ?? ''
-  if (/ready|approved|allow|pass|enabled/.test(normalized)) return 'success'
-  if (/block|deny|fail|halt|reject|disabled/.test(normalized)) return 'danger'
+  if (/ready|approved|allow|pass|enabled|confirmed|protected|clear/.test(normalized)) return 'success'
+  if (/block|deny|fail|halt|reject|disabled|conflict|invalid|isolated|incomplete|stale/.test(normalized)) return 'danger'
   return value ? 'warning' : 'muted'
 }
 
@@ -47,6 +47,17 @@ function SectionLink({ href, children }: { href: string; children: ReactNode }) 
   return <Link href={href} className="text-[11px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">{children}</Link>
 }
 
+function ReconciliationRow({ label, item, formatDate }: { label: string; item?: RuntimeHistoricalReconciliation; formatDate: (value: Date | string, options?: Intl.DateTimeFormatOptions) => string }) {
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-b border-border/70 py-3 last:border-0">
+      <div className="min-w-0 text-xs font-medium">{label}</div>
+      {item ? <StatusBadge token={item.allowsRiskIncrease ? gateTone(item.state) : 'danger'} label={item.state} /> : <StatusBadge token="muted" label="Unavailable" />}
+      <div className="min-w-0 break-words text-[10px] text-muted-foreground">{item?.schema ?? 'No persisted audit'}</div>
+      <div className="whitespace-nowrap text-right text-[10px] text-muted-foreground">{item ? formatDate(item.evaluatedAtUtc) : ''}</div>
+    </div>
+  )
+}
+
 export function ExecutionCockpit() {
   const runtime = useWpeRuntime()
   const { t, formatDate, formatNumber } = useI18n()
@@ -58,12 +69,17 @@ export function ExecutionCockpit() {
   const positionsState = stateOf(runtime.runtimeFresh, runtime.collectionStates?.positions)
   const ordersState = stateOf(runtime.runtimeFresh, runtime.collectionStates?.orders)
   const ledgerState = stateOf(runtime.runtimeFresh, runtime.historicalOrders?.state ?? runtime.collectionStates?.historicalOrders)
+  const postTradeState = stateOf(runtime.runtimeFresh, runtime.historicalPostTradeReviews?.state ?? runtime.collectionStates?.historicalPostTradeReviews)
+  const reconciliationState = stateOf(runtime.runtimeFresh, runtime.historicalReconciliations?.state ?? runtime.collectionStates?.historicalReconciliations)
   const riskState = stateOf(runtime.runtimeFresh, runtime.collectionStates?.risk)
   const authorizationState = stateOf(runtime.runtimeFresh, runtime.authorizationMode?.state)
 
   const positions = positionsState === 'available' ? runtime.positions ?? [] : []
   const orders = ordersState === 'available' ? runtime.orders ?? [] : []
   const ledger = ledgerState === 'available' ? runtime.historicalOrders?.items.slice(0, 6) ?? [] : []
+  const postTrades = postTradeState === 'available' ? runtime.historicalPostTradeReviews?.items.slice(0, 5) ?? [] : []
+  const reconciliations = reconciliationState === 'available' ? runtime.historicalReconciliations?.items ?? [] : []
+  const latestReconciliation = (kind: RuntimeHistoricalReconciliation['kind']) => reconciliations.find(item => item.kind === kind)
   const authorizationMode = authorizationState === 'available' ? runtime.authorizationMode?.value?.mode : undefined
   const provider = runtime.runtimeProviderId || runtime.connectionStatus?.value?.providerId
 
@@ -72,12 +88,12 @@ export function ExecutionCockpit() {
       <PanelHeader
         icon={<Activity className="size-4" />}
         title={t('orders.title')}
-        action={<StatusBadge token="muted" label={t('settings.readOnly')} />}
+        action={<StatusBadge token="muted" label="READ ONLY" />}
       />
       <PanelBody className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <SummaryMetric label={t('settings.environment')} value={runtime.environment || t('common.unknown')} detail={provider || t('common.notProvided')} />
-          <SummaryMetric label={t('settings.authorization')} value={authorizationMode || t('common.unavailable')} detail={authorizationState} />
+          <SummaryMetric label="Environment" value={runtime.environment || t('common.unknown')} detail={provider || t('common.notProvided')} />
+          <SummaryMetric label="Authorization" value={authorizationMode || t('common.unavailable')} detail={authorizationState} />
           <SummaryMetric
             label={t('dashboard.riskGate')}
             value={<StatusBadge token={riskState === 'available' ? gateTone(runtime.riskApprovalStatus) : 'warning'} label={riskState === 'available' ? runtime.riskApprovalStatus || t('common.unknown') : riskState} />}
@@ -154,20 +170,73 @@ export function ExecutionCockpit() {
           </section>
         </div>
 
+        <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.75fr)]">
+          <section className="min-w-0 overflow-hidden rounded-lg border border-border">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2.5">
+              <div>
+                <div className="text-xs font-medium">Closed trade attribution</div>
+                <div className="mt-0.5 text-[10px] text-muted-foreground">Persisted post-trade accounting; strategy identity is attribution, not a causal performance claim.</div>
+              </div>
+              <SectionLink href="/history">{t('dashboard.viewAll')}</SectionLink>
+            </div>
+            {postTradeState !== 'available' ? (
+              <CollectionNotice state={postTradeState} message={runtime.historicalPostTradeReviews?.message} />
+            ) : postTrades.length === 0 ? (
+              <div className="flex min-h-24 items-center justify-center p-4 text-xs text-muted-foreground">No confirmed closed-trade reviews.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[860px] text-left text-xs">
+                  <thead className="border-b border-border text-muted-foreground">
+                    <tr><th className="px-3 py-2 font-medium">{t('common.time')}</th><th className="px-3 py-2 font-medium">{t('common.symbol')}</th><th className="px-3 py-2 font-medium">Strategy identity</th><th className="px-3 py-2 text-right font-medium">Entry → Exit</th><th className="px-3 py-2 text-right font-medium">Net PnL</th><th className="px-3 py-2 text-right font-medium">Fee / Funding / Slippage</th></tr>
+                  </thead>
+                  <tbody>
+                    {postTrades.map(review => (
+                      <tr key={review.clientOrderId} className="border-b border-border/70 last:border-0">
+                        <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">{formatDate(review.closedAtUtc)}</td>
+                        <td className="px-3 py-2.5"><div className="font-medium">{review.symbol}</div><div className={sideTone(review.side)}>{review.side}</div></td>
+                        <td className="max-w-52 px-3 py-2.5"><div className="truncate font-medium">{review.strategyId ?? review.strategyVersion}</div><div className="truncate text-[10px] text-muted-foreground">{review.strategyId ? review.strategyVersion : 'Legacy version only'} · {review.attributionBasis}</div></td>
+                        <td className="px-3 py-2.5 text-right tabular">{formatNumber(review.entryPrice, { maximumFractionDigits: 8 })} → {formatNumber(review.exitPrice, { maximumFractionDigits: 8 })}</td>
+                        <td className={'px-3 py-2.5 text-right tabular font-medium ' + (review.netPnl >= 0 ? 'text-success' : 'text-danger')}><div>{formatNumber(review.netPnl, { maximumFractionDigits: 4 })}</div><div className="text-[10px]">{review.returnPct >= 0 ? '+' : ''}{formatNumber(review.returnPct * 100, { maximumFractionDigits: 2 })}%</div></td>
+                        <td className="px-3 py-2.5 text-right tabular"><div>{formatNumber(review.fees, { maximumFractionDigits: 4 })} / {formatNumber(review.fundingAmount, { maximumFractionDigits: 4 })} / {formatNumber(review.totalSlippageAmount, { maximumFractionDigits: 4 })}</div><div className="mt-1 max-w-72 text-[10px] text-muted-foreground">{review.feeBasis} · {review.fundingBasis} · {review.slippageBasis}</div></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="min-w-0 overflow-hidden rounded-lg border border-border">
+            <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
+              <div className="flex items-center gap-2 text-xs font-medium"><ShieldAlert className="size-4 text-muted-foreground" aria-hidden="true" />Reconciliation gates</div>
+              <SectionLink href="/risk">{t('dashboard.riskSummary')}</SectionLink>
+            </div>
+            {reconciliationState !== 'available' ? (
+              <CollectionNotice state={reconciliationState} message={runtime.historicalReconciliations?.message} />
+            ) : (
+              <div className="px-3">
+                <ReconciliationRow label="Position ledger ↔ provider" item={latestReconciliation('position')} formatDate={formatDate} />
+                <ReconciliationRow label="Protection orders" item={latestReconciliation('protection')} formatDate={formatDate} />
+                <ReconciliationRow label="External position isolation" item={latestReconciliation('externalIsolation')} formatDate={formatDate} />
+              </div>
+            )}
+          </section>
+        </div>
+
         <section className="min-w-0 overflow-hidden rounded-lg border border-border">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2.5">
-            <div className="flex items-center gap-2 text-xs font-medium"><History className="size-4 text-muted-foreground" aria-hidden="true" />{t('dashboard.executionLedger')}</div>
-            <div className="flex items-center gap-3"><SectionLink href="/history">{t('dashboard.viewAll')}</SectionLink><SectionLink href="/risk"><span className="inline-flex items-center gap-1"><ShieldAlert className="size-3.5" aria-hidden="true" />{t('dashboard.riskSummary')}</span></SectionLink></div>
+            <div className="flex items-center gap-2 text-xs font-medium"><History className="size-4 text-muted-foreground" aria-hidden="true" />Execution ledger</div>
+            <SectionLink href="/history">{t('dashboard.viewAll')}</SectionLink>
           </div>
           {ledgerState !== 'available' ? (
             <CollectionNotice state={ledgerState} message={runtime.historicalOrders?.message} />
           ) : ledger.length === 0 ? (
-            <div className="flex min-h-24 items-center justify-center p-4 text-xs text-muted-foreground">{t('dashboard.noExecutionEvents')}</div>
+            <div className="flex min-h-24 items-center justify-center p-4 text-xs text-muted-foreground">No persisted execution events.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-left text-xs">
                 <thead className="border-b border-border text-muted-foreground">
-                  <tr><th className="px-3 py-2 font-medium">{t('common.time')}</th><th className="px-3 py-2 font-medium">{t('common.symbol')}</th><th className="px-3 py-2 font-medium">{t('dashboard.sideAction')}</th><th className="px-3 py-2 text-right font-medium">{t('common.quantity')}</th><th className="px-3 py-2 text-right font-medium">{t('dashboard.averagePrice')}</th><th className="px-3 py-2 font-medium">{t('common.status')}</th></tr>
+                  <tr><th className="px-3 py-2 font-medium">{t('common.time')}</th><th className="px-3 py-2 font-medium">{t('common.symbol')}</th><th className="px-3 py-2 font-medium">Side / action</th><th className="px-3 py-2 text-right font-medium">{t('common.quantity')}</th><th className="px-3 py-2 text-right font-medium">Average price</th><th className="px-3 py-2 font-medium">{t('common.status')}</th></tr>
                 </thead>
                 <tbody>
                   {ledger.map(row => (
