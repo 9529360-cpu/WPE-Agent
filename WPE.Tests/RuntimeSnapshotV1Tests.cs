@@ -301,6 +301,34 @@ public sealed class RuntimeSnapshotV1Tests
     }
 
     [Fact]
+    public void Create_ProjectsPostTradeAndReconciliationHistory()
+    {
+        var now=DateTimeOffset.UtcNow;
+        var history=RuntimeHistoricalCollectionsSnapshot.Unsupported() with
+        {
+            PostTradeReviews=new(
+                HistoricalCollectionPageV1<HistoricalPostTradeReviewV1>.CurrentContractVersion,
+                HistoricalCollectionKindV1.PostTradeReviews,
+                RuntimeCollectionState.Available,
+                [new("wpe.post-trade-review/1.4","close-1","cycle-1","BTCUSDT","Long",100m,110m,1m,.05m,"exchange-reported-usdt",0m,.1m,.2m,.3m,"intent-expected-vs-fill",1m,"exchange-reported-window",10.95m,.1095m,"win",now,"trend-alpha","2.1.0","automatic-artifact")],
+                null,now,"local-agent-sqlite"),
+            Reconciliations=new(
+                HistoricalCollectionPageV1<HistoricalReconciliationV1>.CurrentContractVersion,
+                HistoricalCollectionKindV1.Reconciliations,
+                RuntimeCollectionState.Available,
+                [new("position","position-1","wpe.position-reconciliation/1.0",now,now,"Confirmed",true,new string('a',64))],
+                null,now,"local-agent-sqlite")
+        };
+
+        var snapshot=RuntimeSnapshotFactory.Create(new SystemState { LastUpdated=now.UtcDateTime },now.UtcDateTime,historicalCollections:history);
+
+        var review=Assert.Single(snapshot.HistoricalPostTradeReviews.Items);
+        Assert.Equal("trend-alpha",review.StrategyId);Assert.Equal(10.95m,review.NetPnl);
+        var reconciliation=Assert.Single(snapshot.HistoricalReconciliations.Items);
+        Assert.Equal("position",reconciliation.Kind);Assert.True(reconciliation.AllowsRiskIncrease);
+    }
+
+    [Fact]
     public void Create_ProjectsOnlyAuthorizedAvailableEquityQuotes()
     {
         var now = DateTimeOffset.UtcNow;
