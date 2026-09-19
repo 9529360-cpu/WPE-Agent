@@ -72,6 +72,8 @@ test('execution command center is read-only and backed by canonical host project
   }
   assert.match(cockpit, /READ ONLY/)
   assert.match(cockpit, /dashboard\.closedTradeHelp/)
+  assert.match(cockpit, /dashboard\.reconciliationHelp/)
+  assert.doesNotMatch(cockpit, /item\.allowsRiskIncrease\s*\?\s*gateTone/, 'historical reconciliation must not masquerade as a current success gate')
   const forbiddenCockpitSurfaces = [
     /postHostCommand/,
     /\.postMessage\s*\(/,
