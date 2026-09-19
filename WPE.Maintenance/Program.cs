@@ -92,7 +92,7 @@ internal static class Program
         }
         finally
         {
-            TryDeleteDirectory(staging);
+            DeleteDirectoryOrFail(staging);
         }
     }
 
@@ -203,10 +203,21 @@ internal static class Program
            "verify --data-root <absolute> --backup <absolute> | " +
            "restore --data-root <absolute> --backup <absolute> --confirm-backup-id <exact-id>";
 
-    private static void TryDeleteDirectory(string path)
+    private static void DeleteDirectoryOrFail(string path)
     {
         if (!Directory.Exists(path)) return;
-        try { Directory.Delete(path, true); } catch { }
+        try
+        {
+            Directory.Delete(path, true);
+        }
+        catch
+        {
+            throw new InvalidOperationException(
+                "Maintenance verification staging cleanup failed.");
+        }
+        if (Directory.Exists(path))
+            throw new InvalidOperationException(
+                "Maintenance verification staging cleanup failed.");
     }
 
     private sealed record ParsedCommand(
