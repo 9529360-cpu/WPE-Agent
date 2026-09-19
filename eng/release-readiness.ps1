@@ -2,6 +2,8 @@ param(
     [ValidatePattern('^[a-z0-9-]+$')]
     [string]$Runtime = "win-x64",
     [string]$Output = "artifacts/release-readiness/publish",
+    [string]$HeadlessOutput = "artifacts/release-readiness/headless",
+    [string]$MaintenanceOutput = "artifacts/release-readiness/maintenance",
     [string]$ReportDirectory = "artifacts/release-readiness/report",
     [switch]$PreviewGateOnly,
     [switch]$StaticGatesOnly,
@@ -91,10 +93,20 @@ if ($PreviewGateOnly) {
 }
 
 $outputPath = Resolve-InRoot $Output
+$headlessOutputPath = Resolve-InRoot $HeadlessOutput
+$maintenanceOutputPath = Resolve-InRoot $MaintenanceOutput
 $reportPath = Resolve-InRoot $ReportDirectory
 $projectFiles = @(Get-ChildItem -LiteralPath $root -File -Filter "*.csproj")
 if ($projectFiles.Count -ne 1) { throw "Expected exactly one application project file; found $($projectFiles.Count)." }
 $projectFile = $projectFiles[0].FullName
+$solutionFile = Join-Path $root "币安量化机器人.sln"
+$headlessProject = Join-Path $root "WPE.Headless/WPE.Headless.csproj"
+$maintenanceProject = Join-Path $root "WPE.Maintenance/WPE.Maintenance.csproj"
+foreach ($requiredProject in @($solutionFile, $headlessProject, $maintenanceProject)) {
+    if (-not (Test-Path -LiteralPath $requiredProject -PathType Leaf)) {
+        throw "Release runtime bundle project is missing: $requiredProject"
+    }
+}
 $webRoot = Join-Path $root "WebUi"
 [xml]$projectXml = Get-Content -Raw -LiteralPath $projectFile
 $productVersionNodes = @($projectXml.Project.PropertyGroup.Version | Where-Object { $_ })
@@ -102,6 +114,11 @@ if ($productVersionNodes.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$p
     throw "The application project must define exactly one authoritative Version."
 }
 $productVersion = ([string]$productVersionNodes[0]).Trim()
+$parsedProductVersion = [Version]$productVersion
+$assemblyVersion = "$($parsedProductVersion.Major).$($parsedProductVersion.Minor).$($parsedProductVersion.Build).0"
+$sourceCommit = (& git -C $root rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') { throw "Unable to resolve release source commit." }
+$sourceDirty = @(& git -C $root status --porcelain=v1 --untracked-files=normal).Count -gt 0
 
 function Invoke-External([string]$Command, [string[]]$Arguments) {
     & $Command @Arguments
