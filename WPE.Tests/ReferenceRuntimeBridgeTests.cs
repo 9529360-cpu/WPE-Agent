@@ -1,5 +1,6 @@
 using System.Text.Json;
 using WpeAgent;
+using WpeAgent.RuntimeContracts;
 using WpeAgent.RuntimeServices;
 using 币安量化机器人.Core.Models;
 
@@ -29,6 +30,23 @@ public sealed class ReferenceRuntimeBridgeTests
         Assert.True(ReferenceUiWindow.TryGetHostCommand(JsonSerializer.Serialize(new { type = command }), out var parsed));
         Assert.Equal(command, parsed);
         Assert.False(ReferenceUiWindow.TryGetHostCommand("{\"type\":\"place-order\"}", out _));
+    }
+
+    [Fact]
+    public void HistoricalPageQuery_IsStrictReadOnlyAndSeparateFromControlCommands()
+    {
+        const string cursor="opaque-host-signed-cursor";
+        var json=JsonSerializer.Serialize(new{type="history-page",requestId="request_1",collection="orders",cursor});
+        Assert.False(ReferenceUiWindow.TryGetHostCommand(json,out _));
+        Assert.True(ReferenceUiWindow.TryGetHistoricalPageRequest(json,out var request));
+        Assert.Equal("request_1",request.RequestId);Assert.Equal(HistoricalCollectionKindV1.Orders,request.Kind);Assert.Equal(cursor,request.Cursor);
+
+        foreach(var invalid in new[]{
+            JsonSerializer.Serialize(new{type="history-page",requestId="../bad",collection="orders",cursor}),
+            JsonSerializer.Serialize(new{type="history-page",requestId="request_1",collection="unknown",cursor}),
+            JsonSerializer.Serialize(new{type="history-page",requestId="request_1",collection="orders",cursor="",limit=1}),
+            JsonSerializer.Serialize(new{type="history-page",requestId="request_1",collection="orders",cursor,limit=1})
+        })Assert.False(ReferenceUiWindow.TryGetHistoricalPageRequest(invalid,out _));
     }
 
     [Fact]

@@ -26,6 +26,22 @@ public sealed class RuntimeHistoricalCollectionsSnapshotStore
         lock (_gate) return _current;
     }
 
+    public async Task<object> ReadPageAsync(HistoricalCollectionKindV1 kind,string? cursor,CancellationToken ct=default)
+    {
+        var request=new HistoricalCollectionRequestV1(HistoricalCollectionPageV1<HistoricalOrderV1>.MaximumPageSize,cursor);
+        return kind switch
+        {
+            HistoricalCollectionKindV1.Orders=>await _store.ReadOrdersAsync(request,ct),
+            HistoricalCollectionKindV1.Equity=>await _store.ReadEquityAsync(request,ct),
+            HistoricalCollectionKindV1.Backtests=>await _store.ReadBacktestsAsync(request,ct),
+            HistoricalCollectionKindV1.SkillCalls=>await _store.ReadSkillCallsAsync(request,ct),
+            HistoricalCollectionKindV1.AuditEvents=>await _store.ReadAuditEventsAsync(request,ct),
+            HistoricalCollectionKindV1.PostTradeReviews=>await _store.ReadPostTradeReviewsAsync(request,ct),
+            HistoricalCollectionKindV1.Reconciliations=>await _store.ReadReconciliationsAsync(request,ct),
+            _=>throw new ArgumentOutOfRangeException(nameof(kind),kind,"Unsupported historical collection kind.")
+        };
+    }
+
     public async Task RefreshAsync(CancellationToken ct)
     {
         await _refreshGate.WaitAsync(ct);

@@ -102,6 +102,21 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
     }
 
     [Fact]
+    public async Task SnapshotStoreServesSignedNextPageFromTheSameCursorOwner()
+    {
+        await InitializeAsync();
+        for(var i=0;i<101;i++)await ExecuteAsync("INSERT INTO execution_events(cycle_id,client_order_id,symbol,side,action,reduce_only,quantity,status,occurred_at) VALUES($c,$o,'BTCUSDT','Long','OPEN',0,'1','FILLED',$t)",("$c",$"snapshot-cycle-{i}"),("$o",$"snapshot-order-{i}"),("$t",Now.AddSeconds(-i).ToString("O")));
+        var store=new RuntimeHistoricalCollectionsSnapshotStore(DatabasePath,()=>Now);
+        await store.RefreshAsync(default);
+        var first=store.Read().Orders;var cursor=Assert.IsType<string>(first.NextCursor);
+
+        var next=Assert.IsType<HistoricalCollectionPageV1<HistoricalOrderV1>>(await store.ReadPageAsync(HistoricalCollectionKindV1.Orders,cursor));
+
+        Assert.Equal(100,first.Items.Count);Assert.Single(next.Items);Assert.Null(next.NextCursor);
+        Assert.Matches("^order#[A-F0-9]{12}$",next.Items[0].ClientOrderId!);
+    }
+
+    [Fact]
     public async Task PageSizeIsCappedAtOneHundred()
     {
         await InitializeAsync();

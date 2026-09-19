@@ -14,6 +14,17 @@ public sealed class DesktopRuntimeHostTests
     }
 
     [Fact]
+    public void HistoricalPageQueryUsesExistingReadOnlyHistoryStore()
+    {
+        var method=Method("public async Task<string> BuildHistoricalPageResponseJsonAsync(","public async ValueTask DisposeAsync()");
+        Assert.Contains("ServiceLocator.RuntimeHistoricalCollections.ReadPageAsync",method,StringComparison.Ordinal);
+        Assert.Contains("RuntimeCollectionState.Error",method,StringComparison.Ordinal);
+        Assert.DoesNotContain("AutoTradingAgent",method,StringComparison.Ordinal);
+        Assert.DoesNotContain("Submit",method,StringComparison.Ordinal);
+        Assert.DoesNotContain("Cancel",method,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SnapshotPump_RunsOffTheCallerThreadAndRefreshesSerially()
     {
         var source = Source();
