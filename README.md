@@ -76,4 +76,4 @@ Never commit API keys, credentials, certificates, databases, WAL/SHM files, logs
 
 ## Release Direction
 
-The planned Windows portable package will keep immutable application files separate from local user state, include a hash manifest, and support side-by-side candidate and last-known-good rollback. Portable packaging is not yet the completed release result.
+The bounded private Windows x64 portable package is implemented and locally validated: immutable application files stay separate from local user state, payload hashes/manifests are independently verified, and side-by-side candidate/last-known-good rollback preserves user data. This is not a commercial release claim: trusted signing, commercial license clearance, installer certification, target release go/no-go, upload/deployment, and Mainnet authorization remain separate gates.
