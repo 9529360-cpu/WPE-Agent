@@ -7,6 +7,50 @@ namespace 币安量化机器人.Services.Agent;
 
 public sealed partial class AgentSqliteStore
 {
+    internal async Task<AutomaticExecutionMutationResult> BlockAutomaticExecutionBeforeRiskAsync(
+        string executionId,
+        string code,
+        CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(executionId)
+           ||string.IsNullOrWhiteSpace(code)
+           ||code.Length>120)
+            return new(false,"automatic.pretrade-block-invalid");
+        var now=_utcNow().ToUniversalTime();
+
+        await using var connection=new SqliteConnection(_cs);
+        await connection.OpenAsync(ct);
+        await EnableQueuePragmasAsync(connection,ct);
+        await using var tx=(SqliteTransaction)await connection.BeginTransactionAsync(ct);
+        await using(var update=connection.CreateCommand())
+        {
+            update.Transaction=tx;
+            update.CommandText="""
+                UPDATE automatic_execution_queue
+                SET status='RiskBlocked',last_code=$code,updated_at=$now
+                WHERE execution_id=$id AND status='Proposed';
+                """;
+            update.Parameters.AddWithValue("$code",code);
+            update.Parameters.AddWithValue("$now",DbInstant(now));
+            update.Parameters.AddWithValue("$id",executionId);
+            if(await update.ExecuteNonQueryAsync(ct)!=1)
+            {
+                await tx.RollbackAsync(ct);
+                return new(false,"automatic.pretrade-block-not-applied");
+            }
+        }
+        await AppendAutomaticExecutionEventAsync(
+            connection,tx,executionId,
+            AutomaticExecutionQueueStatus.Proposed,
+            AutomaticExecutionQueueStatus.RiskBlocked,
+            code,
+            "pretrade-simulation",
+            now,
+            ct);
+        await tx.CommitAsync(ct);
+        return new(true,code);
+    }
+
     internal async Task<bool> SaveExecutionPreTradeSimulationProvenanceAsync(
         ExecutionPreTradeSimulationProvenanceV1 value,
         CancellationToken ct)
