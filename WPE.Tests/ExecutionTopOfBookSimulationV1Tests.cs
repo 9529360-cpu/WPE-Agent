@@ -92,7 +92,7 @@ public sealed class ExecutionTopOfBookSimulationV1Tests : IDisposable
     }
 
     [Fact]
-    public void VenueRuleViolationIsUnsupportedNotRoundedIntoA DifferentOrder()
+    public void VenueRuleViolationIsUnsupportedNotRoundedIntoADifferentOrder()
     {
         var bundle = Bundle(
             Artifact(quantity:0.15m),
