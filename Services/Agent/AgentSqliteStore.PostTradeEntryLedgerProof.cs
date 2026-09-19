@@ -15,6 +15,28 @@ public sealed partial class AgentSqliteStore
         decimal closingQuantity,
         CancellationToken ct)
     {
+        long closeEventId;
+        await using (var closeQuery = connection.CreateCommand())
+        {
+            closeQuery.CommandText = """
+                SELECT id,cycle_id,symbol,side,reduce_only,quantity,status
+                FROM execution_events
+                WHERE client_order_id=$close
+                LIMIT 1;
+                """;
+            closeQuery.Parameters.AddWithValue("$close", closeClientOrderId);
+            await using var closeReader = await closeQuery.ExecuteReaderAsync(ct);
+            if (!await closeReader.ReadAsync(ct)
+                || !string.Equals(closeReader.GetString(1), closeCycleId, StringComparison.Ordinal)
+                || !string.Equals(closeReader.GetString(2), symbol, StringComparison.Ordinal)
+                || !string.Equals(closeReader.GetString(3), side, StringComparison.Ordinal)
+                || closeReader.GetInt32(4) != 1
+                || Decimal(closeReader.GetString(5)) != closingQuantity
+                || !string.Equals(closeReader.GetString(6), "FILLED", StringComparison.OrdinalIgnoreCase))
+                return null;
+            closeEventId = closeReader.GetInt64(0);
+        }
+
         var events = new List<PostTradeEntryLedgerEventV1>();
         await using var query = connection.CreateCommand();
         query.CommandText = """
@@ -23,13 +45,13 @@ public sealed partial class AgentSqliteStore
             FROM execution_events
             WHERE symbol=$symbol
               AND side=$side
-              AND client_order_id<>$close
+              AND id<$closeEventId
               AND status IN ('FILLED','PARTIALLY_FILLED')
             ORDER BY id;
             """;
         query.Parameters.AddWithValue("$symbol", symbol);
         query.Parameters.AddWithValue("$side", side);
-        query.Parameters.AddWithValue("$close", closeClientOrderId);
+        query.Parameters.AddWithValue("$closeEventId", closeEventId);
 
         await using var reader = await query.ExecuteReaderAsync(ct);
         var sequence = 0;
