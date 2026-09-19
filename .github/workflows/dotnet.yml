@@ -78,6 +78,41 @@ jobs:
       with:
         dotnet-version: '8.0.x'
 
+    - name: Verify signing attestation crypto primitive
+      shell: pwsh
+      run: |
+        Add-Type -AssemblyName System.Security.Cryptography.Pkcs
+        $rsa = [System.Security.Cryptography.RSA]::Create(2048)
+        try {
+          $request = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
+            "CN=WPE Signing Attestation CI",
+            $rsa,
+            [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+            [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+          $certificate = $request.CreateSelfSigned(
+            [DateTimeOffset]::UtcNow.AddMinutes(-1),
+            [DateTimeOffset]::UtcNow.AddMinutes(5))
+          try {
+            $content = [System.Text.Encoding]::UTF8.GetBytes("wpe-runtime-tree-attestation")
+            $cms = [System.Security.Cryptography.Pkcs.SignedCms]::new(
+              [System.Security.Cryptography.Pkcs.ContentInfo]::new($content),
+              $true)
+            $signer = [System.Security.Cryptography.Pkcs.CmsSigner]::new($certificate)
+            $signer.DigestAlgorithm = [System.Security.Cryptography.Oid]::new("2.16.840.1.101.3.4.2.1")
+            $cms.ComputeSignature($signer)
+            $verification = [System.Security.Cryptography.Pkcs.SignedCms]::new(
+              [System.Security.Cryptography.Pkcs.ContentInfo]::new($content),
+              $true)
+            $verification.Decode($cms.Encode())
+            $verification.CheckSignature($true)
+            if ($verification.SignerInfos.Count -ne 1) { throw "Detached CMS signer count mismatch." }
+          } finally {
+            $certificate.Dispose()
+          }
+        } finally {
+          $rsa.Dispose()
+        }
+
     - name: Verify UTF-8 source
       shell: pwsh
       run: ./eng/verify-utf8.ps1
