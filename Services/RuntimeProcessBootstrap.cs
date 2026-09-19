@@ -1,5 +1,6 @@
 using System.IO;
 using Serilog;
+using 币安量化机器人.Services.Backup;
 using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人.Services;
@@ -16,6 +17,7 @@ public sealed record RuntimeProcessBootstrapResult(
 public static class RuntimeProcessBootstrap
 {
     private static readonly object Gate = new();
+    private static FileStream? _dataRootLease;
     private static RuntimeProcessBootstrapResult? _current;
 
     public static RuntimeProcessBootstrapResult Initialize(string logFileName)
@@ -27,22 +29,33 @@ public static class RuntimeProcessBootstrap
         {
             if (_current is not null) return _current;
 
-            var migration = AppDataPaths.MigrateLegacyPortableData();
-            var logPath = AppDataPaths.LogFile(logFileName);
-            Log.Logger = new LoggerConfiguration()
-                .MinimumLevel.Information()
-                .WriteTo.Sink(new SensitiveFileLogSink(logPath))
-                .CreateLogger();
+            var leasePath = AppDataPaths.RuntimeFile(DataRootMaintenanceLease.LeaseFileName);
+            _dataRootLease = DataRootMaintenanceLease.AcquireProcessLease(leasePath);
+            try
+            {
+                var migration = AppDataPaths.MigrateLegacyPortableData();
+                var logPath = AppDataPaths.LogFile(logFileName);
+                Log.Logger = new LoggerConfiguration()
+                    .MinimumLevel.Information()
+                    .WriteTo.Sink(new SensitiveFileLogSink(logPath))
+                    .CreateLogger();
 
-            LocalizationService.Current.Initialize();
-            var result = new RuntimeProcessBootstrapResult(migration, DateTimeOffset.UtcNow, logPath);
-            Log.Information(
-                "Runtime process bootstrap completed. Copied={Copied}; Skipped={Skipped}; Failed={Failed}",
-                migration.Copied,
-                migration.Skipped,
-                migration.Failed);
-            _current = result;
-            return result;
+                LocalizationService.Current.Initialize();
+                var result = new RuntimeProcessBootstrapResult(migration, DateTimeOffset.UtcNow, logPath);
+                Log.Information(
+                    "Runtime process bootstrap completed. Copied={Copied}; Skipped={Skipped}; Failed={Failed}",
+                    migration.Copied,
+                    migration.Skipped,
+                    migration.Failed);
+                _current = result;
+                return result;
+            }
+            catch
+            {
+                _dataRootLease.Dispose();
+                _dataRootLease = null;
+                throw;
+            }
         }
     }
 }
