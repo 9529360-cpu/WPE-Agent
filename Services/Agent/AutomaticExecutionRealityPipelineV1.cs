@@ -287,7 +287,19 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             {
                 if (!CryptographicOperations.FixedTimeEquals(
                         SHA256.HashData(value.MarketProvenanceCanonicalBytes),
-                        Convert.FromHexString(value.MarketProvenanceSha256)))
+                        Convert.FromHexString(value.MarketProvenanceSha256))
+                    || !string.Equals(
+                        VenueRuleHash(
+                            new TradingRule(
+                                value.Symbol,
+                                value.StepSize,
+                                value.TickSize,
+                                value.MinQuantity,
+                                value.MinNotional,
+                                value.MaxLeverage)),
+                        value.VenueRuleSha256,
+                        StringComparison.Ordinal)
+                    || !MarketProvenanceMatches(value))
                     return false;
             }
             catch
@@ -376,6 +388,24 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             value = null;
             return false;
         }
+    }
+
+    private static bool MarketProvenanceMatches(ExecutionSimulationSourceV1 value)
+    {
+        using var document=JsonDocument.Parse(value.MarketProvenanceCanonicalBytes);
+        var root=document.RootElement;
+        return string.Equals(
+                   root.GetProperty("schema").GetString(),
+                   MarketEvidenceProvenanceCanonicalizerV1.Schema,
+                   StringComparison.Ordinal)
+            &&string.Equals(root.GetProperty("provider_id").GetString(),value.ProviderId,StringComparison.Ordinal)
+            &&string.Equals(root.GetProperty("environment").GetString(),value.Environment,StringComparison.Ordinal)
+            &&string.Equals(root.GetProperty("symbol").GetString(),value.Symbol,StringComparison.Ordinal)
+            &&DateTimeOffset.Parse(
+                root.GetProperty("collected_at_utc").GetString()??string.Empty,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind)==value.MarketCollectedAtUtc
+            &&root.GetProperty("price").GetDecimal()==value.MarketPrice;
     }
 
     private static string VenueRuleHash(TradingRule rule)
@@ -630,10 +660,12 @@ internal sealed class AutomaticExecutionRealityPipelineV1
             .ToArray();
         if (executing.Length != 1
             || executing[0].OccurredAtUtc < artifact.CreatedAtUtc
+            || executing[0].OccurredAtUtc >= artifact.ExpiresAtUtc
             || executing[0].OccurredAtUtc < receipt.IssuedAtUtc
             || executing[0].OccurredAtUtc >= receipt.ExpiresAtUtc)
             return new(0,0,0,0,0,"execution-reality.executing-evidence-invalid");
 
+        var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);
         var examined = 0;
         var observedCount = 0;
         var compared = 0;
@@ -650,9 +682,23 @@ internal sealed class AutomaticExecutionRealityPipelineV1
                 artifact.CorrelationId,
                 intentSnapshot.ClientOrderId,
                 ct);
+            var expectedVenueVersion=source is null
+                ?""
+                :source.State==ExecutionSimulationSourceStateV1.Available
+                    ?"wpe.venue-rule/1.0:"+source.VenueRuleSha256
+                    :"wpe.venue-rule/1.0:unavailable";
             if (fill is null || source is null
+                || !string.Equals(source.ArtifactSha256,hashes.ArtifactHash,StringComparison.Ordinal)
+                || !string.Equals(source.IntentSha256,hashes.IntentHash,StringComparison.Ordinal)
+                || !string.Equals(source.ProviderId,artifact.ProviderId,StringComparison.Ordinal)
+                || !string.Equals(source.StrategyId,artifact.StrategyId,StringComparison.Ordinal)
+                || !string.Equals(source.StrategyVersion,artifact.StrategyVersion,StringComparison.Ordinal)
+                || source.SourceObservedAtUtc>executing[0].OccurredAtUtc
                 || !string.Equals(fill.StrategyId,artifact.StrategyId,StringComparison.Ordinal)
                 || !string.Equals(fill.StrategyVersion,artifact.StrategyVersion,StringComparison.Ordinal)
+                || !string.Equals(fill.CostModelVersion,ExecutionRealityCostAuthorityV1.Version,StringComparison.Ordinal)
+                || !string.Equals(fill.SimulationModelVersion,AutomaticExecutionSimulationModelV1.Version,StringComparison.Ordinal)
+                || !string.Equals(fill.VenueRuleVersion,expectedVenueVersion,StringComparison.Ordinal)
                 || fill.SimulatedAtUtc != source.SourceObservedAtUtc)
             {
                 skipped++;
