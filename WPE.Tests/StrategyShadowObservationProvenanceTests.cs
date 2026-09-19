@@ -31,6 +31,10 @@ public sealed class StrategyShadowObservationProvenanceTests : IDisposable
             value with{TimelineSha256=new string('0',64)}));
         Assert.False(StrategyShadowObservationCanonicalizerV1.IsCanonical(
             value with{CanonicalBytes=[..value.CanonicalBytes,0]}));
+        Assert.False(StrategyShadowObservationCanonicalizerV1.IsCanonical(
+            value with{MarketProvenanceCanonicalBytes=[..value.MarketProvenanceCanonicalBytes,0]}));
+        Assert.False(StrategyShadowObservationCanonicalizerV1.IsCanonical(
+            value with{BacktestValidationCanonicalBytes=[..value.BacktestValidationCanonicalBytes,0]}));
     }
 
     [Fact]
@@ -108,7 +112,7 @@ public sealed class StrategyShadowObservationProvenanceTests : IDisposable
             validation,
             timeline,
             Now);
-        var store=new AgentSqliteStore(Database,()=>Now);
+        var store=await SeedAuthority(Now.AddMinutes(-10),profile,includeTimeline:true);
 
         Assert.True(await store.SaveStrategyShadowObservationAsync(value,default));
         Assert.False(await new AgentSqliteStore(Database,()=>Now).SaveStrategyShadowObservationAsync(value,default));
