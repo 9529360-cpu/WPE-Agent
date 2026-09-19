@@ -47,6 +47,8 @@ if($pollSeconds -lt 2 -or $pollSeconds -gt 60){throw 'soak.poll-interval-invalid
 if($startupGraceSeconds -lt 0 -or $startupGraceSeconds -gt 600){throw 'soak.startup-grace-invalid'}
 if($maximumHealthAgeSeconds -lt 5 -or $maximumHealthAgeSeconds -gt 120){throw 'soak.maximum-health-age-invalid'}
 if($actualDuration.TotalSeconds + 1 -lt $requestedDuration){throw 'soak.requested-duration-not-observed'}
+$durationToleranceSeconds=[Math]::Max(2,$pollSeconds)
+if(($actualDuration.TotalSeconds-$requestedDuration) -gt $durationToleranceSeconds){throw 'soak.requested-duration-mismatch'}
 $reportedObserved=[double]$evidence.observedDurationSeconds
 if([Math]::Abs($reportedObserved-$actualDuration.TotalSeconds) -gt [Math]::Max(2,$pollSeconds)){throw 'soak.observed-duration-mismatch'}
 $computedExpected=[Math]::Max(1,[int][Math]::Floor(($requestedDuration/$pollSeconds)*0.90))
