@@ -74,26 +74,28 @@ internal static class Program
         var staging = Path.Combine(
             layout.RuntimeDirectory,
             "maintenance-verify-" + Guid.NewGuid().ToString("N"));
+        RuntimeStateBackupVerificationResult result;
         try
         {
-            var result = await new RuntimeStateBackupVerifier()
+            result = await new RuntimeStateBackupVerifier()
                 .VerifyToStagingAsync(backup, staging)
                 .ConfigureAwait(false);
-            Write(new
-            {
-                operation = "verify",
-                success = true,
-                result.BackupId,
-                itemCount = result.Descriptor.Items.Count,
-                result.Descriptor.ItemsSha256,
-                result.VerifiedAtUtc
-            });
-            return 0;
         }
         finally
         {
             DeleteDirectoryOrFail(staging);
         }
+
+        Write(new
+        {
+            operation = "verify",
+            success = true,
+            result.BackupId,
+            itemCount = result.Descriptor.Items.Count,
+            result.Descriptor.ItemsSha256,
+            result.VerifiedAtUtc
+        });
+        return 0;
     }
 
     private static async Task<int> RestoreAsync(
