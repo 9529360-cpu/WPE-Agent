@@ -91,6 +91,61 @@ jobs:
       shell: pwsh
       run: ./eng/test.ps1 -Configuration Release
 
+    - name: Publish maintenance candidate
+      run: dotnet publish "WPE.Maintenance/WPE.Maintenance.csproj" --configuration Release --no-restore --output artifacts/maintenance
+
+    - name: Verify maintenance artifact boundary
+      shell: pwsh
+      run: |
+        if (-not (Get-ChildItem artifacts/maintenance -Filter WPE.Maintenance.exe)) {
+          throw "Maintenance executable is missing."
+        }
+        if (Test-Path -LiteralPath "artifacts/maintenance/WebUi") {
+          throw "Maintenance artifact must not contain WebUi."
+        }
+        $deps = Get-Content -LiteralPath "artifacts/maintenance/WPE.Maintenance.deps.json" -Raw
+        foreach ($forbiddenDependency in @("Microsoft.Web.WebView2", "ScottPlot.WPF", "Microsoft.WindowsDesktop.App")) {
+          if ($deps.Contains($forbiddenDependency, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Maintenance artifact contains forbidden presentation dependency: $forbiddenDependency"
+          }
+        }
+        $forbidden = Get-ChildItem artifacts/maintenance -Recurse -File | Where-Object {
+          $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
+          $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)
+    - name: Verify publish boundary
+      shell: pwsh
+      run: |
+        if (-not (Get-ChildItem artifacts/publish -Filter *.exe)) { throw "Published executable is missing." }
+        if (-not (Test-Path -LiteralPath "artifacts/publish/WebUi/out/index.html" -PathType Leaf)) {
+          throw "Published Reference UI export is missing."
+        }
+        $forbidden = Get-ChildItem artifacts/publish -Recurse -File | Where-Object {
+          $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
+          $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)$' -or
+          $_.Name -match '(?i)\.(db|sqlite|sqlite3)-(wal|shm)$'
+        }
+        if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
+ -or
+          $_.Name -match '(?i)\.(db|sqlite|sqlite3)-(wal|shm)
+    - name: Verify publish boundary
+      shell: pwsh
+      run: |
+        if (-not (Get-ChildItem artifacts/publish -Filter *.exe)) { throw "Published executable is missing." }
+        if (-not (Test-Path -LiteralPath "artifacts/publish/WebUi/out/index.html" -PathType Leaf)) {
+          throw "Published Reference UI export is missing."
+        }
+        $forbidden = Get-ChildItem artifacts/publish -Recurse -File | Where-Object {
+          $_.Name -match '(?i)(agent-settings|appsettings|order-state|secrets|credentials)' -or
+          $_.Extension -match '(?i)^\.(db|sqlite|sqlite3|pem|key|p12|pfx)$' -or
+          $_.Name -match '(?i)\.(db|sqlite|sqlite3)-(wal|shm)$'
+        }
+        if ($forbidden) { throw "Forbidden runtime or secret files entered publish output: $($forbidden.FullName -join ', ')" }
+
+        }
+        if ($forbidden) {
+          throw "Forbidden runtime or secret files entered maintenance output: $($forbidden.FullName -join ', ')"
+        }
+
     - name: Publish candidate
       run: dotnet publish "币安量化机器人.csproj" --configuration Release --framework net8.0-windows --no-restore --output artifacts/publish
 
