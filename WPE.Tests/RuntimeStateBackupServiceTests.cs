@@ -68,6 +68,17 @@ public sealed class RuntimeStateBackupServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task BackupDestinationInsideActiveDataFailsClosed()
+    {
+        await CreateDatabase(_layout.DataFile("agent.db"));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Service().CreateAsync(Path.Combine(_layout.DataDirectory, "nested-backups")));
+
+        Assert.Contains("outside the active WPE data directory", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task BackupFailsClosedWhenRuntimeOwnsDataRoot()
     {
         await CreateDatabase(_layout.DataFile("agent.db"));
