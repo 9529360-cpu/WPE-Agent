@@ -64,6 +64,7 @@ public sealed class TradeHypothesisEngine
     public const string DecisionContextKind = "market-hypothesis";
     private const string StatePrefix = "trade-hypothesis:";
     private static readonly TimeSpan MaximumHypothesisAge = TimeSpan.FromHours(6);
+    internal static readonly TimeSpan InvalidatedHypothesisCooldown = TimeSpan.FromMinutes(15);
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = false };
     private readonly AgentSqliteStore _store;
 
@@ -125,11 +126,16 @@ public sealed class TradeHypothesisEngine
             previous.Kind != TradeHypothesisKind.None &&
             now - previous.CreatedAtUtc <= MaximumHypothesisAge)
         {
+            if(previous.Stage==TradeHypothesisStage.Invalidated)
+            {
+                if(now-previous.UpdatedAtUtc<InvalidatedHypothesisCooldown)return previous;
+                return DetectNew(market,regime,now);
+            }
+
             var evolved = EvolveExisting(market, previous, positions, regime, now);
             if (evolved.Stage != TradeHypothesisStage.Invalidated)
                 return evolved;
-            if (!CandidateChanged(market, previous.Kind))
-                return evolved;
+            return evolved;
         }
 
         return DetectNew(market, regime, now);
@@ -393,14 +399,6 @@ public sealed class TradeHypothesisEngine
             ? market.Support * (1 - volatility)
             : market.Resistance * (1 + volatility);
     }
-
-    private static bool CandidateChanged(MarketEvidence market, TradeHypothesisKind previousKind) =>
-        previousKind switch
-        {
-            TradeHypothesisKind.TrendPullbackLong or TradeHypothesisKind.RangeReversionLong => market.Trend4h < 0,
-            TradeHypothesisKind.TrendPullbackShort or TradeHypothesisKind.RangeReversionShort => market.Trend4h > 0,
-            _ => true
-        };
 
     private static bool Valid(MarketEvidence market) =>
         !string.IsNullOrWhiteSpace(market.Symbol) &&

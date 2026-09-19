@@ -124,6 +124,47 @@ public sealed class TradeHypothesisEngineTests
     }
 
     [Fact]
+    public void InvalidatedHypothesisCannotImmediatelyRearmIntoTheSameTradeIdea()
+    {
+        var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var broken=Market(watching.InvalidationPrice-20m,80906m,81805.3m,24,-.8,-.5,4.2,-.7);
+        var invalidated=TradeHypothesisEngine.EvaluateMarket(broken,watching,[],Now.AddMinutes(1));
+        var recovered=Market(81080m,80906m,81805.3m,30,-.25,-.10,4.5,-.25);
+
+        var stillInvalid=TradeHypothesisEngine.EvaluateMarket(
+            recovered,
+            invalidated,
+            [],
+            invalidated.UpdatedAtUtc.Add(TradeHypothesisEngine.InvalidatedHypothesisCooldown).AddSeconds(-1));
+
+        Assert.Equal(invalidated.Id,stillInvalid.Id);
+        Assert.Equal(TradeHypothesisStage.Invalidated,stillInvalid.Stage);
+        Assert.False(stillInvalid.Actionable);
+    }
+
+    [Fact]
+    public void InvalidatedHypothesisCanFormANewIdeaAfterCooldownWhenStructureStillSupportsIt()
+    {
+        var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var broken=Market(watching.InvalidationPrice-20m,80906m,81805.3m,24,-.8,-.5,4.2,-.7);
+        var invalidated=TradeHypothesisEngine.EvaluateMarket(broken,watching,[],Now.AddMinutes(1));
+        var recovered=Market(81080m,80906m,81805.3m,30,-.25,-.10,4.5,-.25);
+
+        var rearmed=TradeHypothesisEngine.EvaluateMarket(
+            recovered,
+            invalidated,
+            [],
+            invalidated.UpdatedAtUtc.Add(TradeHypothesisEngine.InvalidatedHypothesisCooldown).AddSeconds(1));
+
+        Assert.NotEqual(invalidated.Id,rearmed.Id);
+        Assert.Equal(TradeHypothesisKind.TrendPullbackLong,rearmed.Kind);
+        Assert.Equal(TradeHypothesisStage.Watching,rearmed.Stage);
+        Assert.False(rearmed.Actionable);
+    }
+
+    [Fact]
     public async Task BrainActsOnScoutHypothesisEvenWhenLegacyAggregationIsNotEntryReady()
     {
         var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
