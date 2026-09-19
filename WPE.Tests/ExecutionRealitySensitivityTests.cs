@@ -176,7 +176,7 @@ public sealed class ExecutionRealitySensitivityTests : IDisposable
 
     private ExecutionRealityTimedSummaryV1 Timed(int index,bool? partial=null)
     {
-        var isPartial=partial??index%10==0;var fill=isPartial?.5m:1m;
+        var isPartial=partial??index%10==0;var fill=isPartial ? .5m : 1m;
         var requested=1m+index/100m;var expected=100m;
         var summary=new ExecutionDriftSummaryV1(
             $"sensitivity-{index}","binance","Testnet","BTCUSDT",PositionSide.Long,false,ExecutionOrderType.Market,0,
