@@ -245,15 +245,19 @@ internal static class StrategyShadowQualificationV1
 
     internal static bool IsCanonical(StrategyShadowQualificationDecisionV1? value)
     {
-        if(value is null
-           ||value.Schema!=Schema
+        if(value is null)return false;
+        var hasEvidence=value.ObservationCount>0;
+        if(value.Schema!=Schema
            ||!SafeToken(value.StrategyId)
            ||!SafeToken(value.StrategyVersion)
            ||!SafeToken(value.Symbol)
            ||value.Environment!="Testnet"
-           ||!SafeToken(value.MarketProviderId)
-           ||!LowerSha(value.BacktestValidationSha256)
-           ||!LowerSha(value.TimelineSha256)
+           ||hasEvidence&&!SafeToken(value.MarketProviderId)
+           ||!hasEvidence&&!string.IsNullOrEmpty(value.MarketProviderId)
+           ||hasEvidence&&!LowerSha(value.BacktestValidationSha256)
+           ||!hasEvidence&&!string.IsNullOrEmpty(value.BacktestValidationSha256)
+           ||hasEvidence&&!LowerSha(value.TimelineSha256)
+           ||!hasEvidence&&!string.IsNullOrEmpty(value.TimelineSha256)
            ||value.PolicyVersion!=DefaultPolicy.Version
            ||!string.Equals(value.PolicySha256,PolicyHash(DefaultPolicy),StringComparison.Ordinal)
            ||value.Qualified!=(value.State==StrategyShadowQualificationStateV1.Ready)
@@ -276,7 +280,19 @@ internal static class StrategyShadowQualificationV1
            ||!string.Equals(value.EvidenceSetSha256,EvidenceSetHash(value.EvidenceCanonicalSha256),StringComparison.Ordinal)
            ||!LowerSha(value.CanonicalSha256)
            ||value.CanonicalBytes.Length==0
+           ||value.ReasonCodes.Distinct(StringComparer.Ordinal).Count()!=value.ReasonCodes.Count
            ||!value.ReasonCodes.SequenceEqual(value.ReasonCodes.OrderBy(x=>x,StringComparer.Ordinal)))
+            return false;
+
+        if(value.State==StrategyShadowQualificationStateV1.Ready
+           &&(value.ReasonCodes.Count!=0
+              ||value.ObservationCount<DefaultPolicy.MinimumObservations
+              ||value.ObservationCount>DefaultPolicy.MaximumObservations
+              ||value.EvaluatedAtUtc-value.LastMarketAtUtc>DefaultPolicy.MaximumEvidenceAge
+              ||value.QualityScore<DefaultPolicy.MinimumQualityScore
+              ||value.MaxDrawdown>DefaultPolicy.MaximumDrawdown
+              ||DefaultPolicy.RequirePositiveExpectancy&&value.Expectancy<=0
+              ||value.FailureStreak>DefaultPolicy.MaximumFailureStreak))
             return false;
 
         try
