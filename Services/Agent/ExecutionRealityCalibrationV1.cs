@@ -266,7 +266,7 @@ public sealed partial class AgentSqliteStore
                 minimum_samples_per_bucket INTEGER NOT NULL,
                 status TEXT NOT NULL,
                 canonical_bytes BLOB NOT NULL,
-                UNIQUE(source_execution_trace_sha256,source_drift_trace_sha256,source_drift_schema,minimum_samples_per_bucket));
+                UNIQUE(schema,source_execution_trace_sha256,source_drift_trace_sha256,source_drift_schema,minimum_samples_per_bucket));
             CREATE INDEX IF NOT EXISTS ix_execution_reality_calibration_time ON execution_reality_calibrations(generated_at DESC);
             CREATE TRIGGER IF NOT EXISTS execution_reality_calibrations_no_update BEFORE UPDATE ON execution_reality_calibrations BEGIN SELECT RAISE(ABORT,'execution reality calibrations are append-only'); END;
             CREATE TRIGGER IF NOT EXISTS execution_reality_calibrations_no_delete BEFORE DELETE ON execution_reality_calibrations BEGIN SELECT RAISE(ABORT,'execution reality calibrations are append-only'); END;
@@ -394,9 +394,10 @@ public sealed partial class AgentSqliteStore
         var submit=values.FirstOrDefault(x=>x.Phase==ExecutionDriftPhaseV1.SubmissionAttempted);
         var firstExchange=exchange.FirstOrDefault();
         var preflight=values.LastOrDefault(x=>x.Phase==ExecutionDriftPhaseV1.PreflightQuote);
+        var intentAccepted=values.FirstOrDefault(x=>x.Phase==ExecutionDriftPhaseV1.IntentAccepted)??first;
         var fillRatio=final.RequestedQuantity>0?final.ObservedExecutedQuantity/final.RequestedQuantity:0;
         double? submitMs=submit is not null&&firstExchange is not null?(firstExchange.ObservedAtUtc-submit.ObservedAtUtc).TotalMilliseconds:null;
-        var endMs=(final.ObservedAtUtc-first.ObservedAtUtc).TotalMilliseconds;
+        var endMs=(final.ObservedAtUtc-intentAccepted.ObservedAtUtc).TotalMilliseconds;
         double? adverse=null;
         if(final.ExpectedPrice>0&&final.ObservedAveragePrice>0)
         {
