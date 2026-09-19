@@ -17,7 +17,7 @@ public sealed record RuntimeProcessBootstrapResult(
 public static class RuntimeProcessBootstrap
 {
     private static readonly object Gate = new();
-    private static FileStream? _dataRootLease;
+    private static DataRootMaintenanceLeaseHandle? _dataRootLease;
     private static RuntimeProcessBootstrapResult? _current;
 
     public static RuntimeProcessBootstrapResult Initialize(string logFileName)
@@ -29,7 +29,9 @@ public static class RuntimeProcessBootstrap
         {
             if (_current is not null) return _current;
 
-            var leasePath = AppDataPaths.RuntimeFile(DataRootMaintenanceLease.LeaseFileName);
+            var layout = new AppDataLayout(AppDataPaths.RootDirectory);
+            RuntimeStateRestoreRecovery.RecoverIfNeeded(layout);
+            var leasePath = layout.RuntimeFile(DataRootMaintenanceLease.LeaseFileName);
             _dataRootLease = DataRootMaintenanceLease.AcquireProcessLease(leasePath);
             try
             {

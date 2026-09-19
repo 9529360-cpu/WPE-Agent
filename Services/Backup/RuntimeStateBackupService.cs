@@ -54,6 +54,23 @@ public sealed class RuntimeStateBackupService
 
     public async Task<RuntimeStateBackupResult> CreateAsync(string destinationRoot, CancellationToken cancellationToken = default)
     {
+        var leasePath = _layout.RuntimeFile(DataRootMaintenanceLease.LeaseFileName);
+        using var maintenanceLease = DataRootMaintenanceLease.AcquireExclusiveMaintenanceLease(leasePath);
+        SqliteConnection.ClearAllPools();
+        RuntimeStateRestoreRecovery.RecoverUnderExclusiveLease(
+            _layout, maintenanceLease, _keyProtector);
+        return await CreateUnderExclusiveLeaseAsync(
+            destinationRoot, maintenanceLease, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<RuntimeStateBackupResult> CreateUnderExclusiveLeaseAsync(
+        string destinationRoot,
+        DataRootMaintenanceLeaseHandle maintenanceLease,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(maintenanceLease);
+        maintenanceLease.RequireExclusiveFor(_layout.RuntimeFile(DataRootMaintenanceLease.LeaseFileName));
+        // Exclusive maintenance owns the data root, so release any pooled SQLite handles\n        // retained by earlier same-process verification/setup before snapshotting files.\n        SqliteConnection.ClearAllPools();
         if (string.IsNullOrWhiteSpace(destinationRoot))
             throw new ArgumentException("Backup destination root is required.", nameof(destinationRoot));
         if (!_keyProtector.IsAvailable)
@@ -71,9 +88,6 @@ public sealed class RuntimeStateBackupService
         var stagingDirectory = Path.Combine(destination, "." + backupId + ".tmp");
         if (Directory.Exists(finalDirectory) || Directory.Exists(stagingDirectory))
             throw new InvalidOperationException("Backup destination already exists.");
-
-        var leasePath = _layout.RuntimeFile(DataRootMaintenanceLease.LeaseFileName);
-        using var maintenanceLease = DataRootMaintenanceLease.AcquireExclusiveMaintenanceLease(leasePath);
 
         Directory.CreateDirectory(stagingDirectory);
         Directory.CreateDirectory(Path.Combine(stagingDirectory, "payload"));
