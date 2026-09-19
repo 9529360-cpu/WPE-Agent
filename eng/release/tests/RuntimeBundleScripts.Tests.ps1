@@ -41,6 +41,9 @@ foreach($required in @(
     'Archive entry escapes verification root.',
     'Archive contains duplicate normalized entry paths.',
     'Package metadata path escapes package root.',
+    'PAYLOAD-SHA256SUMS does not match FILE-MANIFEST.json.',
+    '$expectedSumLine = "$zipHash  $([System.IO.Path]::GetFileName($zip))"',
+    '(Get-Item -LiteralPath $path).Length -ne [long]$entry.length',
     'Runtime package signature states are mixed.',
     'Runtime package executable timestamp is missing',
     'Signed runtime bundle verification requires the approved signer subject and thumbprint.'
