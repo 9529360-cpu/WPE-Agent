@@ -20,7 +20,7 @@ New-Item -ItemType Directory -Path $OperatorRoot -Force | Out-Null
 $current=Join-Path $OperatorRoot 'current.json';$temporary=Join-Path $OperatorRoot ('.current.'+[Guid]::NewGuid().ToString('N')+'.tmp')
 $previous=$null;if(Test-Path -LiteralPath $current){$previous=Get-Content -Raw -LiteralPath $current|ConvertFrom-Json}
 if($previous -and $previous.root -ne [IO.Path]::GetFullPath($LastKnownGoodRoot)){throw 'lkg.does-not-match-current'}
-[ordered]@{root=[IO.Path]::GetFullPath($CandidateRoot);manifestSha256=$result.CandidateManifestHash;switchedUtc=[DateTimeOffset]::UtcNow.ToString('O');previousRoot=[IO.Path]::GetFullPath($LastKnownGoodRoot)} | ConvertTo-Json | Set-Content -LiteralPath $temporary -Encoding utf8
+[ordered]@{root=[IO.Path]::GetFullPath($CandidateRoot);manifestSha256=$result.CandidateManifestHash;soakEvidenceSha256=$result.SoakEvidenceSha256;switchedUtc=[DateTimeOffset]::UtcNow.ToString('O');previousRoot=[IO.Path]::GetFullPath($LastKnownGoodRoot)} | ConvertTo-Json | Set-Content -LiteralPath $temporary -Encoding utf8
 Move-Item -LiteralPath $temporary -Destination $current -Force
 $result
 )][string]$ExpectedSoakEvidenceHash,
