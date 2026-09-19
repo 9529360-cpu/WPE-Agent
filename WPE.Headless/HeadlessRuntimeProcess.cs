@@ -53,14 +53,18 @@ public static class HeadlessRuntimeProcess
 
             var settingsStore = new AgentSettingsStore();
             var settings = settingsStore.Load();
-            if (settingsStore.LastLoadDiagnostic is not null || !settings.SetupCompleted)
+            if (settingsStore.LastLoadDiagnostic is not null || !settings.SetupCompleted || string.IsNullOrWhiteSpace(settings.ActiveUser))
             {
-                await TryWriteHealthAsync("blocked", settingsStore.LastLoadDiagnostic is null ? "headless.setup-incomplete" : "headless.settings-invalid", null).ConfigureAwait(false);
+                var code = settingsStore.LastLoadDiagnostic is not null
+                    ? "headless.settings-invalid"
+                    : !settings.SetupCompleted
+                        ? "headless.setup-incomplete"
+                        : "headless.active-user-missing";
+                await TryWriteHealthAsync("blocked", code, null).ConfigureAwait(false);
                 return SetupIncompleteExitCode;
             }
 
-            var identity = "DEVICE-" + license.License.LicenseId;
-            await using var host = new TradingRuntimeHost(identity);
+            await using var host = new TradingRuntimeHost(settings.ActiveUser);
             var startedAt = DateTimeOffset.UtcNow;
             var accessReady = await host.InitializeAsync(startAgentWhenReady: true).ConfigureAwait(false);
             var initial = host.ReadHealth();
