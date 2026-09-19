@@ -27,6 +27,7 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
         var result = await Restore(target).RestoreAsync(backup.Directory);
 
         Assert.Equal("new", await ReadDatabase(target.DataFile("agent.db")));
+        Assert.Null(result.SecurityStorageEvidenceSha256);
         Assert.Contains("\"new\"", File.ReadAllText(target.DataFile("agent-settings.json")), StringComparison.Ordinal);
         Assert.NotNull(result.SafetyBackupDirectory);
         Assert.True(Directory.Exists(result.SafetyBackupDirectory));
@@ -79,6 +80,25 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
             Restore(target).RestoreAsync(backup.Directory));
 
         Assert.Contains("security-storage record hash", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("old", await ReadDatabase(target.DataFile("agent.db")));
+        Assert.False(File.Exists(target.RuntimeFile(RuntimeStateRestoreRecovery.JournalFileName)));
+        Assert.Empty(Directory.EnumerateDirectories(target.BackupsDirectory));
+    }
+
+    [Fact]
+    public async Task UnauthenticatedSecurityStorageEnvelopeFailsBeforeActivation()
+    {
+        var source = Layout("security-auth-source");
+        var target = Layout("security-auth-target");
+        await CreateDatabase(source.DataFile("agent.db"), "new");
+        await CreateDatabase(target.DataFile("agent.db"), "old");
+        await SeedSecurityStorage(source, validHash: true, tamperAuthentication: true);
+
+        var backup = await Backup(source).CreateAsync(Path.Combine(_root, "security-auth-backups"));
+
+        await Assert.ThrowsAsync<EnvelopeEncryptionException>(() =>
+            Restore(target).RestoreAsync(backup.Directory));
+
         Assert.Equal("old", await ReadDatabase(target.DataFile("agent.db")));
         Assert.False(File.Exists(target.RuntimeFile(RuntimeStateRestoreRecovery.JournalFileName)));
         Assert.Empty(Directory.EnumerateDirectories(target.BackupsDirectory));
@@ -227,7 +247,10 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
         return Convert.ToString(await command.ExecuteScalarAsync());
     }
 
-    private async Task SeedSecurityStorage(AppDataLayout layout, bool validHash)
+    private async Task SeedSecurityStorage(
+        AppDataLayout layout,
+        bool validHash,
+        bool tamperAuthentication = false)
     {
         var encryption = new VersionedEnvelopeEncryptionService(_protector);
         var plaintext = System.Text.Encoding.UTF8.GetBytes("restore-secret");
@@ -237,6 +260,7 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
             var envelope = encryption.Encrypt(
                 plaintext,
                 new EnvelopeAssociatedData("credential", "restore-record-1", 1));
+            if (tamperAuthentication) envelope.AuthenticationTag[0] ^= 0x5A;
             encoded = EncryptedRecordCodec.Encode(envelope);
             var expectedHash = validHash
                 ? Convert.ToHexString(SHA256.HashData(encoded))
