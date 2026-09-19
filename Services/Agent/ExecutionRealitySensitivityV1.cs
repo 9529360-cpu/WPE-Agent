@@ -66,7 +66,9 @@ internal sealed record ExecutionRealitySensitivityReportV1(
     int RequiredFolds,
     int MinimumPairsPerFold,
     string SourceStabilitySha256,
+    ExecutionRealityStabilityStatusV1 SourceStabilityStatus,
     string SourceCalibrationSha256,
+    ExecutionRealityCalibrationStatusV1 SourceCalibrationStatus,
     string SourcePositionLinkId,
     string SourcePositionLinkSha256,
     string SourceExecutionTraceSha256,
@@ -115,15 +117,16 @@ internal static class ExecutionRealitySensitivityCanonicalizerV1
         {
             schema=Schema,generatedAtUtc=source.GeneratedAtUtc,method=Method,target=Target,
             requiredFolds=RequiredFolds,minimumPairsPerFold=MinimumPairsPerFold,
-            sourceStabilitySha256=source.CanonicalSha256,sourceCalibrationSha256=source.SourceCalibrationSha256,
+            sourceStabilitySha256=source.CanonicalSha256,sourceStabilityStatus=source.Status.ToString().ToLowerInvariant(),
+            sourceCalibrationSha256=source.SourceCalibrationSha256,sourceCalibrationStatus=source.SourceCalibrationStatus.ToString().ToLowerInvariant(),
             sourcePositionLinkId=source.SourcePositionLinkId,sourcePositionLinkSha256=source.SourcePositionLinkSha256,
             sourceExecutionTraceSha256=source.SourceExecutionTraceSha256,sourceDriftTraceSha256=source.SourceDriftTraceSha256,
             sourceLastExecutionEventId=source.SourceLastExecutionEventId,status=status.ToString().ToLowerInvariant(),
             reasonCodes=reasons,buckets=rows.Select(Row)
         });
         var hash=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-        return new(Schema,source.GeneratedAtUtc,Method,Target,RequiredFolds,MinimumPairsPerFold,source.CanonicalSha256,
-            source.SourceCalibrationSha256,source.SourcePositionLinkId,source.SourcePositionLinkSha256,source.SourceExecutionTraceSha256,
+        return new(Schema,source.GeneratedAtUtc,Method,Target,RequiredFolds,MinimumPairsPerFold,source.CanonicalSha256,source.Status,
+            source.SourceCalibrationSha256,source.SourceCalibrationStatus,source.SourcePositionLinkId,source.SourcePositionLinkSha256,source.SourceExecutionTraceSha256,
             source.SourceDriftTraceSha256,source.SourceLastExecutionEventId,status,reasons,rows,hash,bytes);
     }
 
@@ -131,15 +134,15 @@ internal static class ExecutionRealitySensitivityCanonicalizerV1
     {
         if(value is null||value.Schema!=Schema||value.Method!=Method||value.Target!=Target||value.GeneratedAtUtc.Offset!=TimeSpan.Zero
            ||value.RequiredFolds!=RequiredFolds||value.MinimumPairsPerFold!=MinimumPairsPerFold
-           ||!Hash(value.SourceStabilitySha256)||!Hash(value.SourceCalibrationSha256)||!Hash(value.SourcePositionLinkSha256)
+           ||!Hash(value.SourceStabilitySha256)||!Enum.IsDefined(value.SourceStabilityStatus)
+           ||!Hash(value.SourceCalibrationSha256)||!Enum.IsDefined(value.SourceCalibrationStatus)||!Hash(value.SourcePositionLinkSha256)
            ||!Hash(value.SourceExecutionTraceSha256)||!Hash(value.SourceDriftTraceSha256)||value.SourceLastExecutionEventId<1
            ||value.SourcePositionLinkId!="execution-position-drift:"+value.SourcePositionLinkSha256
            ||!Hash(value.CanonicalSha256)||value.CanonicalBytes is null)return false;
         try
         {
             var source=new ExecutionRealityStabilityReferenceV1(value.SourceStabilitySha256,value.GeneratedAtUtc,
-                value.Buckets.Count>0?ExecutionRealityStabilityStatusV1.Observed:ExecutionRealityStabilityStatusV1.Unsupported,
-                value.SourceCalibrationSha256,ExecutionRealityCalibrationStatusV1.Available,value.SourcePositionLinkId,
+                value.SourceStabilityStatus,value.SourceCalibrationSha256,value.SourceCalibrationStatus,value.SourcePositionLinkId,
                 value.SourcePositionLinkSha256,value.SourceExecutionTraceSha256,value.SourceDriftTraceSha256,
                 value.SourceLastExecutionEventId,[]);
             var expected=Create(source,value.Buckets,value.ReasonCodes);
@@ -356,7 +359,9 @@ public sealed partial class AgentSqliteStore
                 method TEXT NOT NULL,
                 target TEXT NOT NULL,
                 source_stability_sha256 TEXT NOT NULL UNIQUE,
+                source_stability_status TEXT NOT NULL,
                 source_calibration_sha256 TEXT NOT NULL,
+                source_calibration_status TEXT NOT NULL,
                 source_position_link_id TEXT NOT NULL,
                 source_position_link_sha256 TEXT NOT NULL,
                 source_execution_trace_sha256 TEXT NOT NULL,
@@ -425,13 +430,16 @@ public sealed partial class AgentSqliteStore
             source.Transaction=tx;source.CommandText="""
                 SELECT canonical_bytes FROM execution_reality_stability_audits
                 WHERE canonical_sha256=$stability AND schema=$schema AND generated_at=$generated
-                  AND source_calibration_sha256=$calibration AND source_position_link_id=$link AND source_position_link_sha256=$linkHash
+                  AND status=$stabilityStatus AND source_calibration_sha256=$calibration AND source_calibration_status=$calibrationStatus
+                  AND source_position_link_id=$link AND source_position_link_sha256=$linkHash
                   AND source_execution_trace_sha256=$executionTrace AND source_drift_trace_sha256=$driftTrace
                   AND source_last_execution_event_id=$cursor
                 LIMIT 1
                 """;
             source.Parameters.AddWithValue("$stability",value.SourceStabilitySha256);source.Parameters.AddWithValue("$schema",ExecutionRealityStabilityCanonicalizerV1.Schema);
-            source.Parameters.AddWithValue("$generated",value.GeneratedAtUtc.ToString("O",CultureInfo.InvariantCulture));source.Parameters.AddWithValue("$calibration",value.SourceCalibrationSha256);
+            source.Parameters.AddWithValue("$generated",value.GeneratedAtUtc.ToString("O",CultureInfo.InvariantCulture));
+            source.Parameters.AddWithValue("$stabilityStatus",value.SourceStabilityStatus.ToString());
+            source.Parameters.AddWithValue("$calibration",value.SourceCalibrationSha256);source.Parameters.AddWithValue("$calibrationStatus",value.SourceCalibrationStatus.ToString());
             source.Parameters.AddWithValue("$link",value.SourcePositionLinkId);source.Parameters.AddWithValue("$linkHash",value.SourcePositionLinkSha256);
             source.Parameters.AddWithValue("$executionTrace",value.SourceExecutionTraceSha256);source.Parameters.AddWithValue("$driftTrace",value.SourceDriftTraceSha256);
             source.Parameters.AddWithValue("$cursor",value.SourceLastExecutionEventId);
@@ -441,16 +449,17 @@ public sealed partial class AgentSqliteStore
         }
         await using var q=c.CreateCommand();q.Transaction=tx;q.CommandText="""
             INSERT OR IGNORE INTO execution_reality_sensitivity_audits(
-                canonical_sha256,schema,generated_at,method,target,source_stability_sha256,source_calibration_sha256,
-                source_position_link_id,source_position_link_sha256,source_execution_trace_sha256,source_drift_trace_sha256,
+                canonical_sha256,schema,generated_at,method,target,source_stability_sha256,source_stability_status,source_calibration_sha256,
+                source_calibration_status,source_position_link_id,source_position_link_sha256,source_execution_trace_sha256,source_drift_trace_sha256,
                 source_last_execution_event_id,status,canonical_bytes)
-            VALUES($hash,$schema,$generated,$method,$target,$stability,$calibration,$link,$linkHash,$executionTrace,$driftTrace,$cursor,$status,$bytes);
+            VALUES($hash,$schema,$generated,$method,$target,$stability,$stabilityStatus,$calibration,$calibrationStatus,$link,$linkHash,$executionTrace,$driftTrace,$cursor,$status,$bytes);
             SELECT changes();
             """;
         q.Parameters.AddWithValue("$hash",value.CanonicalSha256);q.Parameters.AddWithValue("$schema",value.Schema);
         q.Parameters.AddWithValue("$generated",value.GeneratedAtUtc.ToString("O",CultureInfo.InvariantCulture));q.Parameters.AddWithValue("$method",value.Method);
-        q.Parameters.AddWithValue("$target",value.Target);q.Parameters.AddWithValue("$stability",value.SourceStabilitySha256);q.Parameters.AddWithValue("$calibration",value.SourceCalibrationSha256);
-        q.Parameters.AddWithValue("$link",value.SourcePositionLinkId);q.Parameters.AddWithValue("$linkHash",value.SourcePositionLinkSha256);
+        q.Parameters.AddWithValue("$target",value.Target);q.Parameters.AddWithValue("$stability",value.SourceStabilitySha256);
+        q.Parameters.AddWithValue("$stabilityStatus",value.SourceStabilityStatus.ToString());q.Parameters.AddWithValue("$calibration",value.SourceCalibrationSha256);
+        q.Parameters.AddWithValue("$calibrationStatus",value.SourceCalibrationStatus.ToString());q.Parameters.AddWithValue("$link",value.SourcePositionLinkId);q.Parameters.AddWithValue("$linkHash",value.SourcePositionLinkSha256);
         q.Parameters.AddWithValue("$executionTrace",value.SourceExecutionTraceSha256);q.Parameters.AddWithValue("$driftTrace",value.SourceDriftTraceSha256);
         q.Parameters.AddWithValue("$cursor",value.SourceLastExecutionEventId);q.Parameters.AddWithValue("$status",value.Status.ToString());
         q.Parameters.Add("$bytes",SqliteType.Blob).Value=value.CanonicalBytes;
