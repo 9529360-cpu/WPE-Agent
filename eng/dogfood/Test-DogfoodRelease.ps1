@@ -43,8 +43,28 @@ function Convert-SnapshotToText($snapshot){
     try{$reader.ReadToEnd()}finally{$reader.Dispose();$stream.Dispose()}
 }
 function Get-Sha256([string]$path){(Get-FileSnapshot $path).Hash}
+function Assert-NoReparseTree([string]$path,[string]$label){
+    $full=[IO.Path]::GetFullPath($path).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $root=[IO.Path]::GetPathRoot($full)
+    $current=$root
+    $relative=$full.Substring($root.Length)
+    foreach($part in $relative.Split([IO.Path]::DirectorySeparatorChar,[StringSplitOptions]::RemoveEmptyEntries)){
+        $current=Join-Path $current $part
+        if(Test-Path -LiteralPath $current){
+            $item=Get-Item -LiteralPath $current -Force
+            if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw "$label.reparse-forbidden"}
+        }
+    }
+    if(Test-Path -LiteralPath $full -PathType Container){
+        $reparse=@(Get-ChildItem -LiteralPath $full -Recurse -Force | Where-Object {
+            ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+        })
+        if($reparse.Count -gt 0){throw "$label.reparse-forbidden"}
+    }
+}
 function Read-VerifiedManifest([string]$root,[string]$label,[string]$expectedHash){
     $resolved=[IO.Path]::GetFullPath($root).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    Assert-NoReparseTree $resolved $label
     if($resolved -match '(?i)[\\/](bin|obj|debug|release|artifacts|\.artifacts)([\\/]|$)'){throw "$label.mutable-root"}
     $path=Join-Path $resolved 'release-manifest.json';if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw "$label.manifest-missing"}
     $snapshot=Get-FileSnapshot $path;$actualHash=$snapshot.Hash
