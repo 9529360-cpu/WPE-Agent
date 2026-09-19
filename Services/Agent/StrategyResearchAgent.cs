@@ -255,7 +255,7 @@ internal sealed class HistoricalResearchEngine
             confidence=direction==0?0:Math.Clamp((Math.Abs(state.ZScore)-p.MeanReversionZ)/Math.Max(.1,p.MeanReversionStopZ-p.MeanReversionZ)*.65+(1-state.Adx/p.AdxCeiling)*.35,0,1);
             return new(profile.Id,market.Symbol,direction,confidence,$"family=MeanReversion; regime={state.Regime}; z={state.ZScore:F2}; rsi={state.Rsi:F1}; adx={state.Adx:F1}; atr={state.AtrRatio:P2}; distanceAtr={state.DistanceAtr:F2}; volume={state.VolumeRatio:F2}");
         }
-        if (profile.Family == StrategyFamily.NewsMomentum) { var sentiment = news.Where(x => x.AffectedAssets.Any(a => a.Equals(market.Symbol, StringComparison.OrdinalIgnoreCase) || market.Symbol.StartsWith(a, StringComparison.OrdinalIgnoreCase))).OrderByDescending(x => x.PublishedAt).Take(5).Select(x => x.Sentiment * x.Confidence).DefaultIfEmpty().Average(); direction = sentiment >= p.NewsSentimentThreshold ? 1 : sentiment <= -p.NewsSentimentThreshold ? -1 : 0; confidence = Math.Min(1, Math.Abs(sentiment)); }
+        if (profile.Family == StrategyFamily.NewsMomentum) { var sentiment = NewsMomentumScoring.Live(market.Symbol,news,market.CollectedAt); direction = sentiment >= p.NewsSentimentThreshold ? 1 : sentiment <= -p.NewsSentimentThreshold ? -1 : 0; confidence = Math.Min(1, Math.Abs(sentiment)); }
         return new(profile.Id, market.Symbol, direction, confidence, $"family={profile.Family}; local deterministic signal");
     }
 
@@ -270,10 +270,7 @@ internal sealed class HistoricalResearchEngine
             int direction;
             if(profile.Family==StrategyFamily.NewsMomentum)
             {
-                var weighted=news.Where(x=>x.PublishedAtUtc.Kind==DateTimeKind.Utc&&x.PublishedAtUtc<=asOf&&x.PublishedAtUtc>asOf.AddHours(-48)&&
-                    (x.Asset.Equals(profile.Symbol,StringComparison.OrdinalIgnoreCase)||profile.Symbol.StartsWith(x.Asset,StringComparison.OrdinalIgnoreCase)))
-                    .OrderByDescending(x=>x.PublishedAtUtc).Take(5).Select(x=>x.Sentiment*x.Confidence).ToArray();
-                var sentiment=weighted.Length==0?0:weighted.Average();direction=sentiment>=profile.Parameters.NewsSentimentThreshold?1:sentiment<=-profile.Parameters.NewsSentimentThreshold?-1:0;
+                var sentiment=NewsMomentumScoring.Historical(profile.Symbol,news,asOf);direction=sentiment>=profile.Parameters.NewsSentimentThreshold?1:sentiment<=-profile.Parameters.NewsSentimentThreshold?-1:0;
             }
             else direction=engine.Signal(profile,market,Array.Empty<NewsEvidence>()).Direction;
             var value=direction*(double)(candles[i].Close/candles[i-1].Close-1)-(direction!=0?.0014:0);result.Add((value,direction!=0));
