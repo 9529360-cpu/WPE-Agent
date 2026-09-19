@@ -142,6 +142,48 @@ public sealed class PostTradeEntryLedgerProofTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecutionReplayPreservesLedgerOrderUsedByLaterCloseProof()
+    {
+        var store = Store();
+        var opening = Intent("open",false,2m,100m);
+
+        await store.RecordExecutionAsync(
+            "cycle-open",
+            opening,
+            Order("open","PARTIALLY_FILLED",2m,100m,Now.AddMinutes(-30)),
+            "strategy-v1",
+            default);
+        var originalId = await ExecutionEventId("open");
+
+        await store.RecordExecutionAsync(
+            "cycle-reduce",
+            Intent("reduce",true,1m,105m),
+            Order("reduce","FILLED",1m,105m,Now.AddMinutes(-20)),
+            "strategy-v1",
+            default);
+
+        await store.RecordExecutionAsync(
+            "cycle-open",
+            opening,
+            Order("open","FILLED",2m,101m,Now.AddMinutes(-10)),
+            "strategy-v1",
+            default);
+        Assert.Equal(originalId,await ExecutionEventId("open"));
+
+        await store.RecordExecutionAsync(
+            "cycle-close",
+            Intent("close",true,1m,110m),
+            Order("close","FILLED",1m,110m,Now.AddMinutes(-1)),
+            "strategy-v1",
+            default);
+
+        var proof = await store.GetPostTradeEntryLedgerProofAsync("close",default);
+        Assert.NotNull(proof);
+        Assert.Equal(new[] { "open","reduce" },proof!.Events.Select(x => x.ClientOrderId).ToArray());
+        Assert.Equal(101m,proof.WeightedEntryPrice);
+    }
+
+    [Fact]
     public async Task IdenticalCloseReplayKeepsOneImmutableProof()
     {
         var store = Store();
@@ -286,6 +328,16 @@ public sealed class PostTradeEntryLedgerProofTests : IDisposable
             "FILLED",
             occurredAt,
             occurredAt);
+
+    private async Task<long> ExecutionEventId(string clientOrderId)
+    {
+        await using var connection = new SqliteConnection($"Data Source={Database}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id FROM execution_events WHERE client_order_id=$client";
+        command.Parameters.AddWithValue("$client",clientOrderId);
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
 
     public void Dispose()
     {
