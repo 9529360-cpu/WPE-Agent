@@ -195,6 +195,34 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task StartupRecoveryRejectsAmbiguousThreeGenerationStateWithoutDeletingEvidence()
+    {
+        var target = Layout("ambiguous-recovery-target");
+        await CreateDatabase(target.DataFile("agent.db"), "uncommitted-new");
+        var restoreId = "restore" + Guid.NewGuid().ToString("N");
+        var rollback = RuntimeStateRestoreRecovery.RollbackDirectory(target, restoreId);
+        var failed = RuntimeStateRestoreRecovery.FailedDirectory(target, restoreId);
+
+        Directory.CreateDirectory(rollback);
+        await CreateDatabase(Path.Combine(rollback, "agent.db"), "old");
+        Directory.CreateDirectory(failed);
+        await CreateDatabase(Path.Combine(failed, "agent.db"), "failed-other");
+        RuntimeStateRestoreRecovery.WriteJournal(
+            target,
+            Journal(restoreId, RuntimeStateRestorePhase.RestoredActivated),
+            _protector);
+
+        var error = Assert.Throws<InvalidDataException>(() =>
+            RuntimeStateRestoreRecovery.RecoverIfNeeded(target, _protector));
+
+        Assert.Contains("ambiguous", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("uncommitted-new", await ReadDatabase(target.DataFile("agent.db")));
+        Assert.Equal("old", await ReadDatabase(Path.Combine(rollback, "agent.db")));
+        Assert.Equal("failed-other", await ReadDatabase(Path.Combine(failed, "agent.db")));
+        Assert.True(File.Exists(target.RuntimeFile(RuntimeStateRestoreRecovery.JournalFileName)));
+    }
+
+    [Fact]
     public async Task BackupRecoversInterruptedRestoreBeforeTakingSnapshot()
     {
         var target = Layout("backup-recovery-target");
