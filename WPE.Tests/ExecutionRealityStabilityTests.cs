@@ -56,6 +56,17 @@ public sealed class ExecutionRealityStabilityTests : IDisposable
 
         var tampered=report with{Buckets=[bucket with{MedianIntentLatencyMillisecondsSpread=bucket.MedianIntentLatencyMillisecondsSpread+1}]};
         Assert.False(ExecutionRealityStabilityCanonicalizerV1.IsCanonical(tampered));
+
+        var overlappingFolds=bucket.Folds.ToArray();
+        overlappingFolds[1]=overlappingFolds[1] with{StartUtc=overlappingFolds[0].StartUtc};
+        Assert.Throws<ArgumentException>(()=>ExecutionRealityStabilityCanonicalizerV1.Create(
+            source,[bucket with{Folds=overlappingFolds}],[]));
+
+        var insufficient=ExecutionRealityStabilityServiceV1.BuildBucket(
+            "binance","Testnet","BTCUSDT",ExecutionOrderType.Market,false,
+            Enumerable.Range(0,119).Select(Timed).ToArray());
+        Assert.Throws<ArgumentException>(()=>ExecutionRealityStabilityCanonicalizerV1.Create(
+            source,[insufficient with{MedianFillRatioSpread=.1}],["execution-stability.samples-insufficient"]));
     }
 
     [Fact]
