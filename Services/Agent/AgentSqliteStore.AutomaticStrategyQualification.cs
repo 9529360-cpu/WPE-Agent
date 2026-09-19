@@ -9,12 +9,16 @@ public sealed partial class AgentSqliteStore
         string strategyId,
         string strategyVersion,
         string symbol,
+        string providerId,
+        string environment,
         DateTimeOffset artifactCreatedAtUtc,
         CancellationToken ct)
     {
         if(string.IsNullOrWhiteSpace(strategyId)
            ||string.IsNullOrWhiteSpace(strategyVersion)
            ||string.IsNullOrWhiteSpace(symbol)
+           ||string.IsNullOrWhiteSpace(providerId)
+           ||!string.Equals(environment,"Testnet",StringComparison.Ordinal)
            ||artifactCreatedAtUtc==default
            ||artifactCreatedAtUtc.Offset!=TimeSpan.Zero)
             return AutomaticStrategyQualificationEvidenceVerifierV1.Unavailable("strategy-qualification-request-invalid");
@@ -42,6 +46,9 @@ public sealed partial class AgentSqliteStore
             FROM strategy_shadow_qualification_decisions
             WHERE strategy_id=$strategy
               AND strategy_version=$version
+              AND symbol=$symbol
+              AND market_provider_id=$provider
+              AND environment=$environment
               AND qualified=1
               AND evaluated_at <= $created
             ORDER BY evaluated_at DESC,canonical_sha256 DESC
@@ -49,6 +56,9 @@ public sealed partial class AgentSqliteStore
             """;
         query.Parameters.AddWithValue("$strategy",strategyId);
         query.Parameters.AddWithValue("$version",strategyVersion);
+        query.Parameters.AddWithValue("$symbol",symbol);
+        query.Parameters.AddWithValue("$provider",providerId);
+        query.Parameters.AddWithValue("$environment",environment);
         query.Parameters.AddWithValue("$created",artifactCreatedAtUtc.ToString("O"));
 
         await using var reader=await query.ExecuteReaderAsync(ct);
@@ -70,6 +80,8 @@ public sealed partial class AgentSqliteStore
            ||!string.Equals(first.StrategyId,strategyId,StringComparison.Ordinal)
            ||!string.Equals(first.StrategyVersion,strategyVersion,StringComparison.Ordinal)
            ||!string.Equals(first.Symbol,symbol,StringComparison.Ordinal)
+           ||!string.Equals(first.MarketProviderId,providerId,StringComparison.Ordinal)
+           ||!string.Equals(first.Environment,environment,StringComparison.Ordinal)
            ||first.EvaluatedAtUtc>artifactCreatedAtUtc)
             return AutomaticStrategyQualificationEvidenceVerifierV1.Unavailable(
                 first.Available?"strategy-qualification-identity-mismatch":first.Code);

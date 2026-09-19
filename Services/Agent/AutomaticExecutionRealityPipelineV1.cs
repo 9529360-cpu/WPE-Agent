@@ -128,7 +128,8 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             && string.Equals(qualification.StrategyId, artifact.StrategyId, StringComparison.Ordinal)
             && string.Equals(qualification.StrategyVersion, artifact.StrategyVersion, StringComparison.Ordinal)
             && string.Equals(qualification.Symbol, intent.Symbol, StringComparison.Ordinal)
-            && string.Equals(qualification.Environment, "Testnet", StringComparison.Ordinal)
+            && string.Equals(qualification.MarketProviderId, artifact.ProviderId, StringComparison.Ordinal)
+            && string.Equals(qualification.Environment, artifact.Environment, StringComparison.Ordinal)
             && qualification.EvaluatedAtUtc <= artifact.CreatedAtUtc;
         var qualificationCode = qualificationAvailable
             ? "strategy-qualification-ready"
@@ -681,6 +682,8 @@ internal sealed class AutomaticExecutionRealityPipelineV1
                     artifact.StrategyId,
                     artifact.StrategyVersion,
                     intent.Symbol,
+                    artifact.ProviderId,
+                    artifact.Environment,
                     artifact.CreatedAtUtc,
                     ct);
                 AutomaticExecutionSimulationObservationV1 observation;

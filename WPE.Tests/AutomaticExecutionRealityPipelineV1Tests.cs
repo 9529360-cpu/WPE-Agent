@@ -157,6 +157,48 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
     }
 
     [Fact]
+    public async Task CrossProviderQualificationNeverMakesSimulationEvidenceAvailable()
+    {
+        var store=Store();
+        var artifact=Artifact(ExecutionOrderType.Market);
+        await SeedQualification(artifact,"other-testnet-provider");
+        await ApproveWithoutQualification(store,"exec-cross-provider",artifact);
+        var gateway=new EvidenceGateway(_clock)
+        {
+            Order=new ExchangeOrder(
+                "BTCUSDT","venue-cross-provider","WPE-REALITY","FILLED",
+                1m,100m,"MARKET",PositionSide.Long,false,_clock.Now.UtcDateTime)
+        };
+        var processor=new AutomaticExecutionProcessor(store,new Validator(),gateway,()=>_clock.Now);
+
+        var result=await processor.ProcessNextAsync("worker",default);
+
+        Assert.True(result.Handled);
+        Assert.Equal("automatic.succeeded",result.Code);
+        Assert.Equal(1,gateway.ExecuteCount);
+        var source=await store.GetExecutionSimulationSourceAsync(artifact.CorrelationId,"WPE-REALITY",default);
+        Assert.NotNull(source);
+        Assert.False(source!.StrategyQualificationAvailable);
+        Assert.Equal(ExecutionSimulationSourceStateV1.Unavailable,source.State);
+        Assert.Equal("strategy-qualification-missing",source.ReasonCode);
+    }
+
+    [Fact]
+    public void SimulationSourceCanonicalizerRejectsCrossProviderQualification()
+    {
+        var artifact=Artifact(ExecutionOrderType.Market);
+        var intent=artifact.Intents.Single();
+        var qualification=Qualification(artifact,"other-testnet-provider");
+
+        var source=ExecutionSimulationSourceCanonicalizerV1.Create(
+            artifact,intent,qualification,Observation(_clock.Now,100m),_clock.Now);
+
+        Assert.False(source.StrategyQualificationAvailable);
+        Assert.Equal(ExecutionSimulationSourceStateV1.Unavailable,source.State);
+        Assert.Equal("strategy-qualification-identity-mismatch",source.ReasonCode);
+    }
+
+    [Fact]
     public async Task RepeatedPipelineCaptureReusesExactSourceAndFill()
     {
         var store=Store();
@@ -233,17 +275,21 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
         Assert.True((await store.RecordAutomaticRiskDecisionAsync(id,Receipt(artifact),default)).Succeeded);
     }
 
-    private AutomaticStrategyQualificationEvidenceV1 Qualification(DurableExecutionArtifactV2 artifact)
+    private AutomaticStrategyQualificationEvidenceV1 Qualification(
+        DurableExecutionArtifactV2 artifact,
+        string? marketProviderId=null)
     {
-        var bytes=QualificationBytes(artifact);
+        var bytes=QualificationBytes(artifact,marketProviderId);
         var hash=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
         Assert.True(AutomaticStrategyQualificationEvidenceVerifierV1.TryParse(bytes,hash,out var value,out var code),code);
         return value!;
     }
 
-    private async Task SeedQualification(DurableExecutionArtifactV2 artifact)
+    private async Task SeedQualification(
+        DurableExecutionArtifactV2 artifact,
+        string? marketProviderId=null)
     {
-        var value=Qualification(artifact);
+        var value=Qualification(artifact,marketProviderId);
         await using var connection=new SqliteConnection($"Data Source={Database}");
         await connection.OpenAsync();
         await using var command=connection.CreateCommand();
@@ -300,7 +346,9 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
         await command.ExecuteNonQueryAsync();
     }
 
-    private static byte[] QualificationBytes(DurableExecutionArtifactV2 artifact)
+    private static byte[] QualificationBytes(
+        DurableExecutionArtifactV2 artifact,
+        string? marketProviderId=null)
     {
         var evaluated=artifact.CreatedAtUtc.AddSeconds(-1);
         var last=evaluated.AddMinutes(-1);
@@ -337,7 +385,7 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
             writer.WriteString("first_market_at_utc",first);
             writer.WriteNumber("max_drawdown",.10d);
             writer.WriteString("last_market_at_utc",last);
-            writer.WriteString("market_provider_id",artifact.ProviderId);
+            writer.WriteString("market_provider_id",marketProviderId??artifact.ProviderId);
             writer.WriteNumber("observation_count",hashes.Length);
             writer.WriteNumber("observation_window_seconds",(last-first).TotalSeconds);
             writer.WriteString("policy_sha256",AutomaticStrategyQualificationEvidenceVerifierV1.ExpectedPolicySha256);
