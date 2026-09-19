@@ -6,6 +6,7 @@ public sealed class StrategyGovernor
 {
     public const int MinimumShadowObservations = 24;
     public const int MinimumRegimeCalibrationObservations = 12;
+    public const int MinimumExecutionFeedbackTrades = 8;
     public const int MaximumUnqualifiedShadowObservations = 192;
     public static readonly TimeSpan MinimumShadowEvaluationTime = TimeSpan.FromHours(6);
     public const int MinimumValidationTrades = 30;
