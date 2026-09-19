@@ -269,6 +269,81 @@ public static class ExecutionTopOfBookSimulationV1
             reasonCode:reason);
     }
 
+    public static bool TryDeserializeSource(
+        ReadOnlySpan<byte> canonicalBytes,
+        string canonicalSha256,
+        out ExecutionSimulationSourceV1? source)
+    {
+        source = null;
+        if (canonicalBytes.Length == 0 || !LowerSha(canonicalSha256))
+            return false;
+        try
+        {
+            var hash = Convert.ToHexString(SHA256.HashData(canonicalBytes)).ToLowerInvariant();
+            if (!string.Equals(hash, canonicalSha256, StringComparison.Ordinal))
+                return false;
+            using var document = JsonDocument.Parse(canonicalBytes);
+            var root = document.RootElement;
+            var marketAtElement = root.GetProperty("market_updated_at_utc");
+            source = new ExecutionSimulationSourceV1(
+                root.GetProperty("schema").GetString() ?? string.Empty,
+                root.GetProperty("correlation_id").GetString() ?? string.Empty,
+                root.GetProperty("client_order_id").GetString() ?? string.Empty,
+                root.GetProperty("intent_sequence").GetInt32(),
+                root.GetProperty("strategy_id").GetString() ?? string.Empty,
+                root.GetProperty("strategy_version").GetString() ?? string.Empty,
+                root.GetProperty("cost_model_version").GetString() ?? string.Empty,
+                root.GetProperty("simulation_model_version").GetString() ?? string.Empty,
+                root.GetProperty("venue_rule_version").GetString() ?? string.Empty,
+                root.GetProperty("artifact_sha256").GetString() ?? string.Empty,
+                root.GetProperty("intent_sha256").GetString() ?? string.Empty,
+                root.GetProperty("provider_id").GetString() ?? string.Empty,
+                root.GetProperty("environment").GetString() ?? string.Empty,
+                root.GetProperty("symbol").GetString() ?? string.Empty,
+                root.GetProperty("side").GetString() ?? string.Empty,
+                root.GetProperty("reduce_only").GetBoolean(),
+                root.GetProperty("order_type").GetString() ?? string.Empty,
+                root.GetProperty("intended_quantity").GetDecimal(),
+                root.GetProperty("expected_price").GetDecimal(),
+                root.GetProperty("rule_available").GetBoolean(),
+                root.GetProperty("rule_step_size").GetDecimal(),
+                root.GetProperty("rule_tick_size").GetDecimal(),
+                root.GetProperty("rule_min_quantity").GetDecimal(),
+                root.GetProperty("rule_min_notional").GetDecimal(),
+                root.GetProperty("rule_max_leverage").GetInt32(),
+                root.GetProperty("snapshot_available").GetBoolean(),
+                marketAtElement.ValueKind == JsonValueKind.Null
+                    ? null
+                    : DateTimeOffset.Parse(
+                        marketAtElement.GetString() ?? string.Empty,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.RoundtripKind),
+                root.GetProperty("last_price").GetDecimal(),
+                root.GetProperty("best_bid").GetDecimal(),
+                root.GetProperty("best_ask").GetDecimal(),
+                root.GetProperty("bid_quantity").GetDecimal(),
+                root.GetProperty("ask_quantity").GetDecimal(),
+                root.GetProperty("market_messages").GetInt64(),
+                root.GetProperty("market_connected").GetBoolean(),
+                DateTimeOffset.Parse(
+                    root.GetProperty("simulated_at_utc").GetString() ?? string.Empty,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind),
+                root.GetProperty("simulated_fill_sha256").GetString() ?? string.Empty,
+                canonicalBytes.ToArray(),
+                canonicalSha256);
+            if (IsCanonical(source))
+                return true;
+            source = null;
+            return false;
+        }
+        catch
+        {
+            source = null;
+            return false;
+        }
+    }
+
     public static bool IsCanonical(ExecutionSimulationSourceV1 source)
     {
         if (!SourceFieldsStructurallyValid(source, requireCanonicalIdentity:true))
