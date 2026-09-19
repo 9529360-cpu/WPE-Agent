@@ -137,7 +137,7 @@ public sealed partial class AgentSqliteStore
             validation.MonteCarloLossProbability,
             validation.QualityScore,
             approved:true,
-            promoted:string.Equals(value.Lifecycle,"Active",StringComparison.Ordinal));
+            promoted:false);
         if(!BacktestValidationCanonicalizerV1.IsCanonical(expectedValidation,value.ObservedAtUtc)
            ||!string.Equals(expectedValidation.CanonicalSha256,value.BacktestValidationSha256,StringComparison.Ordinal)
            ||!CryptographicOperations.FixedTimeEquals(
