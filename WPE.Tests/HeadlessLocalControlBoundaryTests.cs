@@ -15,6 +15,11 @@ public sealed class HeadlessLocalControlBoundaryTests
         Assert.Contains("PipeOptions.CurrentUserOnly", source, StringComparison.Ordinal);
         Assert.Contains("PipeOptions.Asynchronous", source, StringComparison.Ordinal);
         Assert.Contains("MaximumRequestBytes = 4096", source, StringComparison.Ordinal);
+        Assert.Contains("RequestTimeout = TimeSpan.FromSeconds(5)", source, StringComparison.Ordinal);
+        Assert.Contains("MaximumHealthAge = TimeSpan.FromSeconds(15)", source, StringComparison.Ordinal);
+        Assert.Contains("requestTimeout.CancelAfter(RequestTimeout)", source, StringComparison.Ordinal);
+        Assert.Contains("value.ObservedAtUtc > now", source, StringComparison.Ordinal);
+        Assert.Contains("now - value.ObservedAtUtc > MaximumHealthAge", source, StringComparison.Ordinal);
         Assert.Contains("headless-health-v1.json", source, StringComparison.Ordinal);
         Assert.Contains("AddHostedService<HeadlessLocalControlWorker>()", program, StringComparison.Ordinal);
 
