@@ -77,6 +77,7 @@ internal static class StrategyShadowObservationCanonicalizerV1
            ||!string.Equals(validation.Symbol,profile.Symbol,StringComparison.Ordinal))
             throw new InvalidOperationException("Shadow validation evidence is invalid.");
         if(!StrategyExposureTimelineV1.IsCanonical(timeline)
+           ||timeline.LastTradableAtUtc>validation.ValidatedAtUtc
            ||!string.Equals(timeline.StrategyId,profile.Id,StringComparison.Ordinal)
            ||!string.Equals(timeline.StrategyVersion,profile.Version,StringComparison.Ordinal)
            ||!string.Equals(timeline.Symbol,profile.Symbol,StringComparison.Ordinal))
