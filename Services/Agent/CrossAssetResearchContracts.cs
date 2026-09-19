@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text.Json;
+
 namespace WpeAgent.CrossAssetResearch;
 
 public enum ResearchAssetClass { Crypto, Equity }
@@ -27,6 +30,30 @@ public sealed record ResearchCostModel(
     decimal BorrowRatePerDay = 0)
 {
     public decimal RoundTripVariableRate => 2 * (CommissionRate + SlippageRate);
+}
+
+public static class TradingRealityCostAuthorityV1
+{
+    public const string Schema = "wpe.trading-reality-cost/1.0";
+    public static readonly ResearchCostModel Default = new(.0004m, .0003m);
+    public static readonly string CanonicalSha256 = CreateHash();
+    public static string Identity => Schema + ":" + CanonicalSha256;
+
+    private static string CreateHash()
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("borrow_rate_per_day", Default.BorrowRatePerDay);
+            writer.WriteNumber("commission_rate", Default.CommissionRate);
+            writer.WriteNumber("fixed_cost_per_trade", Default.FixedCostPerTrade);
+            writer.WriteString("schema", Schema);
+            writer.WriteNumber("slippage_rate", Default.SlippageRate);
+            writer.WriteEndObject();
+        }
+        return Convert.ToHexString(SHA256.HashData(stream.ToArray())).ToLowerInvariant();
+    }
 }
 
 public sealed record CorporateActionEvent(
