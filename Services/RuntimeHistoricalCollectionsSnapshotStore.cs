@@ -42,10 +42,12 @@ public sealed class RuntimeHistoricalCollectionsSnapshotStore
             var auditEvents = await _store.ReadAuditEventsAsync(request, ct);
             var postTradeReviews = await _store.ReadPostTradeReviewsAsync(request, ct);
             var reconciliations = await _store.ReadReconciliationsAsync(request, ct);
+            var snapshot=new RuntimeHistoricalCollectionsSnapshot(orders, equity, backtests, skillCalls, auditEvents, postTradeReviews, reconciliations);
+            var hasError=new[]{orders.State,equity.State,backtests.State,skillCalls.State,auditEvents.State,postTradeReviews.State,reconciliations.State}.Any(state=>state==RuntimeCollectionState.Error);
             lock (_gate)
             {
-                _current = new(orders, equity, backtests, skillCalls, auditEvents, postTradeReviews, reconciliations);
-                _lastRefreshAtUtc=_utcNow().ToUniversalTime();
+                _current = snapshot;
+                _lastRefreshAtUtc=hasError?null:_utcNow().ToUniversalTime();
             }
         }
         finally{_refreshGate.Release();}
