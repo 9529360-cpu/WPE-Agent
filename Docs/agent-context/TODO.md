@@ -5,7 +5,7 @@
 - [x] Converge Chinese and non-Chinese routes onto one component tree and complete the bounded closed-trade explanation timeline: masked trade identity → canonical Market/Research/Strategy/Risk evidence hashes → historical risk decision → execution terminal state → post-trade accounting. The UI keeps current authorization separate from historical evidence and exposes no canonical payload bytes or raw cycle/order/report IDs.
 
 ## P0
-- [x] Restore a real GitHub Actions gate. Product CI runner execution resumed and run #1105 completed the full Web lint/typecheck/contracts/build/export/egress sequence plus .NET restore/build/tests/publish-boundary successfully. Continue requiring a successful run bound to the newest PR head before merge/release-candidate claims.
+- [x] Restore a real GitHub Actions gate. Product CI runner execution resumed; run #1123 on head `492f24fb2e5d65f0426f80ee5c39b9062fa64705` completed Web lint/typecheck, executable runtime-bridge dogfood, Web contracts/build/export/surface/egress, .NET restore/build/full tests, publish candidate, and publish-boundary verification successfully. Continue requiring a successful run bound to the newest PR head before merge/release-candidate claims.
 - [ ] Enable protected-main enforcement. Read-only repository metadata confirms `main` currently has `protected=false` and the repository has no rulesets. Enabling protection is an access-policy change and therefore requires explicit authorization before mutation.
 - [x] Add focused Setup Bridge message tests.
 - Keep the active safety suites in the release gate; add new collection-contract tests only together with the corresponding orders, equity, backtest, skill-call, or audit backend protocol.
