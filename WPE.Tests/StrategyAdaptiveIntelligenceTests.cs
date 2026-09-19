@@ -176,6 +176,71 @@ public sealed class StrategyAdaptiveIntelligenceTests : IDisposable
     }
 
     [Fact]
+    public async Task ExactAutomaticExecutionLossesDownweightButLegacyOutcomesDoNotCount()
+    {
+        var store=new AgentSqliteStore(DatabasePath);
+        for(var index=0;index<StrategyGovernor.MinimumExecutionFeedbackTrades;index++)
+            await InsertTradeOutcomeAsync("execution-aware",-.02m,"automatic-artifact",index);
+        for(var index=0;index<20;index++)
+            await InsertTradeOutcomeAsync("execution-aware",.10m,"legacy-version-only",100+index);
+
+        var feedback=await store.GetStrategyExecutionFeedbackAsync("execution-aware",CancellationToken.None);
+        Assert.Equal(StrategyGovernor.MinimumExecutionFeedbackTrades,feedback.Trades);
+        Assert.Equal(0,feedback.WinRate);
+        Assert.Equal(.25,feedback.PosteriorWinRate,10);
+
+        var profile=new StrategyProfile
+        {
+            Id="execution-aware",
+            Symbol="BTCUSDT",
+            Family=StrategyFamily.TrendBreakout,
+            Parameters=LocalStrategyParameters.For(StrategyFamily.TrendBreakout,0),
+            Lifecycle=StrategyLifecycle.Active,
+            QualityScore=.8
+        };
+        var candles=BreakoutCandles(106m);
+        var market=new MarketEvidence("BTCUSDT",106m,95m,110m,55,.01,.02,.03,new(0,1,1,1,1,1,0),DateTime.UtcNow){Candles=candles};
+        var research=new StrategyResearchAgent(store);
+        research.SetSchedulerHealth(true);
+
+        var raw=research.GetSignal(profile,market,Array.Empty<NewsEvidence>());
+        var adaptive=await research.GetAdaptiveSignalAsync(profile,market,Array.Empty<NewsEvidence>(),CancellationToken.None);
+
+        Assert.True(raw.Confidence>0);
+        Assert.True(adaptive.Confidence<raw.Confidence);
+        Assert.InRange(adaptive.Confidence,raw.Confidence*.749999,raw.Confidence*.750001);
+        Assert.Contains("execution_feedback=0.25",adaptive.Reason,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WinningExecutionFeedbackNeverAmplifiesRawSignal()
+    {
+        var store=new AgentSqliteStore(DatabasePath);
+        for(var index=0;index<StrategyGovernor.MinimumExecutionFeedbackTrades;index++)
+            await InsertTradeOutcomeAsync("execution-good",.02m,"automatic-artifact",index);
+
+        var profile=new StrategyProfile
+        {
+            Id="execution-good",
+            Symbol="BTCUSDT",
+            Family=StrategyFamily.TrendBreakout,
+            Parameters=LocalStrategyParameters.For(StrategyFamily.TrendBreakout,0),
+            Lifecycle=StrategyLifecycle.Active,
+            QualityScore=.8
+        };
+        var candles=BreakoutCandles(106m);
+        var market=new MarketEvidence("BTCUSDT",106m,95m,110m,55,.01,.02,.03,new(0,1,1,1,1,1,0),DateTime.UtcNow){Candles=candles};
+        var research=new StrategyResearchAgent(store);
+        research.SetSchedulerHealth(true);
+
+        var raw=research.GetSignal(profile,market,Array.Empty<NewsEvidence>());
+        var adaptive=await research.GetAdaptiveSignalAsync(profile,market,Array.Empty<NewsEvidence>(),CancellationToken.None);
+
+        Assert.Equal(raw.Confidence,adaptive.Confidence,10);
+        Assert.Contains("execution_win_rate=100",adaptive.Reason,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TrendBreakoutIgnoresIntrabarRealtimeSpikeWithoutConfirmedClose()
     {
         var profile=new StrategyProfile
@@ -268,6 +333,22 @@ public sealed class StrategyAdaptiveIntelligenceTests : IDisposable
         Assert.True(raw.Confidence>0);
         Assert.True(adaptive.Confidence<raw.Confidence);
         Assert.Contains("calibration=",adaptive.Reason,StringComparison.Ordinal);
+    }
+
+    private async Task InsertTradeOutcomeAsync(string strategyId,decimal returnPct,string attributionBasis,int index)
+    {
+        await using var connection=new SqliteConnection($"Data Source={DatabasePath}");
+        await connection.OpenAsync();
+        await using var command=connection.CreateCommand();
+        command.CommandText="INSERT INTO trade_outcomes(client_order_id,cycle_id,symbol,side,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis) VALUES($id,$cycle,'BTCUSDT','Long',$pnl,$return,$closed,$strategy,'v1',$basis)";
+        command.Parameters.AddWithValue("$id",$"{strategyId}-{attributionBasis}-{index}");
+        command.Parameters.AddWithValue("$cycle",$"cycle-{strategyId}-{index}");
+        command.Parameters.AddWithValue("$pnl",(returnPct*100m).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$return",returnPct.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$closed",DateTimeOffset.UtcNow.AddMinutes(-index).ToString("O"));
+        command.Parameters.AddWithValue("$strategy",strategyId);
+        command.Parameters.AddWithValue("$basis",attributionBasis);
+        await command.ExecuteNonQueryAsync();
     }
 
     private static CandleEvidence[] BreakoutCandles(decimal finalClose)
