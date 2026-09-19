@@ -16,10 +16,10 @@ Do not put account passwords, API keys, certificate secrets, or exchange credent
 
 Before registering or updating the Windows Service, run the read-only deployment preflight against the exact immutable candidate root:
 
-    .\eng\ops\Test-HeadlessServiceDeployment.ps1 \
-      -CandidateRoot "D:\\WPE\\versions\\<version>" \
-      -DataRoot "D:\\WPE-State" \
-      -ServiceAccount "MACHINE\\wpe-service" \
+    .\eng\ops\Test-HeadlessServiceDeployment.ps1 `
+      -CandidateRoot "D:\\WPE\\versions\\<version>" `
+      -DataRoot "D:\\WPE-State" `
+      -ServiceAccount "MACHINE\\wpe-service" `
       -MaintenanceAccount "MACHINE\\wpe-service"
 
 The preflight verifies that the candidate contains both `headless\WPE-Headless.exe` and `maintenance\WPE.Maintenance.exe`, that candidate/data paths are absolute fixed-local non-reparse paths with no overlap, and that the declared service and maintenance identities match for DPAPI CurrentUser compatibility. It returns the exact service ImagePath string but never creates, starts, stops, or reconfigures a service.
