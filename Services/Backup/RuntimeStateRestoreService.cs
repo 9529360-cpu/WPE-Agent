@@ -199,9 +199,14 @@ public sealed class RuntimeStateRestoreService
 
     private void EnsureBackupOutsideActiveData(string backupRoot)
     {
+        var backupFull = Path.GetFullPath(backupRoot);
+        if (DataRootPathPolicy.ContainsExistingReparsePoint(backupFull))
+            throw new InvalidOperationException(
+                "Runtime-state restore source must not traverse symbolic links, junctions, or other reparse points.");
+
         var data = Path.GetFullPath(_layout.DataDirectory)
             .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        var backup = backupRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var backup = backupFull.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         if (backup.StartsWith(data, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Runtime-state restore source must be outside the active WPE data directory.");
     }
