@@ -176,10 +176,10 @@ public static class ExecutionSimulationEvidenceGateV1
         var stateMismatchFraction = Fraction(valid.Count - stateMatches, valid.Count);
         var unsupportedFraction = Fraction(unsupported, valid.Count);
         var p95FillRatioDelta = P95(valid.Select(x => Math.Abs(x.FillRatioDelta)));
-        var p95PriceDrift = P95(priceComparable.Select(x => x.PriceDriftBps ?? 0m));
-        var p95FeeDrift = P95(feeComparable.Select(x => x.FeeDriftBps ?? 0m));
-        var p95LatencyDrift = P95(latencyComparable.Select(x => x.LatencyDriftMs ?? 0L));
-        var p95TotalDrift = P95(totalComparable.Select(x => x.TotalExecutionDriftBps ?? 0m));
+        var p95PriceDrift = P95(priceComparable.Select(x => Math.Max(0m, x.PriceDriftBps ?? 0m)));
+        var p95FeeDrift = P95(feeComparable.Select(x => Math.Max(0m, x.FeeDriftBps ?? 0m)));
+        var p95LatencyDrift = P95(latencyComparable.Select(x => Math.Max(0L, x.LatencyDriftMs ?? 0L)));
+        var p95TotalDrift = P95(totalComparable.Select(x => Math.Max(0m, x.TotalExecutionDriftBps ?? 0m)));
 
         if (valid.Count < policy.MinimumComparisons) reasons.Add("sample.comparisons");
         if (priceComparable.Length < policy.MinimumPriceComparableComparisons) reasons.Add("sample.price-comparable");
