@@ -28,6 +28,22 @@ public sealed class AppDataAndVersionTests : IDisposable
     }
 
     [Fact]
+    public void DataRootResolution_DefaultsPerUserAndRejectsRelativeServiceOverride()
+    {
+        var localAppData=Path.Combine(_root,"local-app-data");
+        var explicitRoot=Path.Combine(_root,"service-data");
+
+        Assert.Equal(
+            Path.GetFullPath(Path.Combine(localAppData,"WPE Agent")),
+            AppDataPaths.ResolveRootDirectory(null,localAppData));
+        Assert.Equal(
+            Path.GetFullPath(explicitRoot),
+            AppDataPaths.ResolveRootDirectory(explicitRoot,localAppData));
+        Assert.Throws<InvalidOperationException>(()=>
+            AppDataPaths.ResolveRootDirectory("relative-service-data",localAppData));
+    }
+
+    [Fact]
     public void PortableMigration_IsAtomicIdempotentAndNeverCopiesPlaintextSecrets()
     {
         var install = Path.Combine(_root, "read-only-install");

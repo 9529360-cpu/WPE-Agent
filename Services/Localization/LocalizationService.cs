@@ -1,8 +1,6 @@
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
-using System.Windows;
-using System.Windows.Markup;
 using 币安量化机器人.Services;
 
 namespace 币安量化机器人.Services.Localization;
@@ -43,13 +41,6 @@ public sealed class LocalizationService
         _strings = values;
         CultureInfo.CurrentCulture = Culture;
         CultureInfo.CurrentUICulture = Culture;
-        if (global::System.Windows.Application.Current is not null)
-        {
-            foreach (var pair in _fallback) global::System.Windows.Application.Current.Resources[pair.Key] = pair.Value;
-            foreach (var pair in _strings) global::System.Windows.Application.Current.Resources[pair.Key] = pair.Value;
-            foreach (Window window in global::System.Windows.Application.Current.Windows)
-                window.Language = XmlLanguage.GetLanguage(Culture.IetfLanguageTag);
-        }
         if (save) SaveLanguage();
         if (notify) LanguageChanged?.Invoke();
         return true;
@@ -65,6 +56,13 @@ public sealed class LocalizationService
     public string Number(decimal value, int decimals = 2) => value.ToString($"N{decimals}", Culture);
     public string Number(double value, int decimals = 2) => value.ToString($"N{decimals}", Culture);
     public string DateTime(DateTime value) => value.ToString(T("Format.DateTime"), Culture);
+
+    public IReadOnlyDictionary<string, string> GetResolvedResources()
+    {
+        var resources = new Dictionary<string, string>(_fallback, StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in _strings) resources[pair.Key] = pair.Value;
+        return resources;
+    }
 
     public IReadOnlyDictionary<string, IReadOnlyList<string>> ValidateResources()
     {

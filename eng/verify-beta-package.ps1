@@ -14,6 +14,30 @@ function Resolve-InRoot([string]$Path) {
     return $resolved
 }
 
+function Get-TextSha256([string]$Value) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-PackageTreeFacts([string]$Path) {
+    $prefix = $Path.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -File | Sort-Object FullName)
+    $lines = @($files | ForEach-Object {
+        $relative = $_.FullName.Substring($prefix.Length).Replace('\', '/')
+        $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$relative|$($_.Length)|$hash"
+    })
+    [pscustomobject]@{
+        FileCount = $files.Count
+        TreeSha256 = Get-TextSha256 ($lines -join [Environment]::NewLine)
+    }
+}
+
 $resultFile = Resolve-InRoot $ResultPath
 $verify = Resolve-InRoot $VerificationDirectory
 $result = Get-Content -Raw -LiteralPath $resultFile | ConvertFrom-Json
@@ -91,6 +115,7 @@ if (@($sbomComponents | Where-Object { $_.name -eq "@vercel/analytics" }).Count 
 if ($LASTEXITCODE -ne 0) { throw "Expanded package secret/source/preview scan failed." }
 
 $unknownLicenses = [int]$licenseReport.summary.noAssertion
+$packageTreeFacts = Get-PackageTreeFacts $packageRoot
 $verificationResult = [ordered]@{
     schemaVersion = "wpe.beta-package-verification.v1"
     status = "passed"
@@ -98,6 +123,8 @@ $verificationResult = [ordered]@{
     package = $zip
     sha256 = $zipHash
     zipBytes = [long](Get-Item -LiteralPath $zip).Length
+    packageTreeSha256 = $packageTreeFacts.TreeSha256
+    packageFileCount = $packageTreeFacts.FileCount
     payloadFiles = $manifest.Count
     sbomComponents = $sbomComponents.Count
     unknownLicenses = $unknownLicenses
