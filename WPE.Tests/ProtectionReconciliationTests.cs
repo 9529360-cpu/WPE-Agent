@@ -21,7 +21,7 @@ public sealed class ProtectionReconciliationTests : IDisposable
     [InlineData("POSITION_TPSL")]
     public void CombinedProtectionConfirmsBothLegs(string type)
     {
-        var report=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("p1",type)],Now,Now);var leg=Assert.Single(report.Legs);Assert.True(leg.StopLossConfirmed);Assert.True(leg.TakeProfitConfirmed);Assert.Equal("combined",leg.ProofKind);Assert.True(report.AllowsRiskIncrease);
+        var report=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("p1",type)],Now,Now);var leg=Assert.Single(report.Legs);Assert.True(leg.StopLossConfirmed);Assert.True(leg.TakeProfitConfirmed);Assert.True(leg.StopCoverageConfirmed);Assert.True(leg.TakeProfitCoverageConfirmed);Assert.Equal("position-wide",leg.StopCoverageProof);Assert.Equal("position-wide",leg.TakeProfitCoverageProof);Assert.Equal("combined",leg.ProofKind);Assert.True(report.AllowsRiskIncrease);
     }
 
     [Fact]
@@ -31,6 +31,39 @@ public sealed class ProtectionReconciliationTests : IDisposable
         var explicitTriggers=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("sl2","STOP_TRIGGER"),Protection("tp2","TAKE_PROFIT_TRIGGER")],Now,Now);Assert.True(explicitTriggers.AllowsRiskIncrease);
         var generic=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("a","TRIGGER"),Protection("b","TRIGGER")],Now,Now);Assert.Equal(ProtectionReconciliationStateV1.Incomplete,generic.State);Assert.False(generic.AllowsRiskIncrease);
         var duplicateStops=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("s1","STOP_TRIGGER"),Protection("s2","STOP_TRIGGER")],Now,Now);Assert.Equal(ProtectionReconciliationStateV1.Incomplete,duplicateStops.State);Assert.Contains(duplicateStops.ReasonCodes,x=>x.Contains("missing-take-profit",StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnknownOrMismatchedProtectionCoverageFailsClosed()
+    {
+        var unknown=ProtectionReconciliationServiceV1.Reconcile([Position()],[UnknownProtection("unknown","OCO")],Now,Now);
+        Assert.Equal(ProtectionReconciliationStateV1.Incomplete,unknown.State);
+        Assert.Contains("protection.coverage-unknown:BTCUSDT:long:stop",unknown.ReasonCodes);
+        Assert.Contains("protection.coverage-unknown:BTCUSDT:long:take-profit",unknown.ReasonCodes);
+        Assert.False(unknown.AllowsRiskIncrease);
+
+        var mismatch=ProtectionReconciliationServiceV1.Reconcile([Position()],[FixedProtection("short","OCO",.5m)],Now,Now);
+        var leg=Assert.Single(mismatch.Legs);
+        Assert.False(leg.StopCoverageConfirmed);
+        Assert.False(leg.TakeProfitCoverageConfirmed);
+        Assert.Equal(.5m,leg.StopFixedQuantity);
+        Assert.Equal(.5m,leg.TakeProfitFixedQuantity);
+        Assert.Contains("protection.coverage-mismatch:BTCUSDT:long:stop",mismatch.ReasonCodes);
+        Assert.Contains("protection.coverage-mismatch:BTCUSDT:long:take-profit",mismatch.ReasonCodes);
+        Assert.False(mismatch.AllowsRiskIncrease);
+    }
+
+    [Fact]
+    public void ExactFixedQuantityProtectionConfirmsCoverage()
+    {
+        var report=ProtectionReconciliationServiceV1.Reconcile([Position()],[FixedProtection("okx","OCO",1m)],Now,Now);
+        var leg=Assert.Single(report.Legs);
+        Assert.Equal("wpe.protection-reconciliation/1.1",report.Schema);
+        Assert.True(leg.StopCoverageConfirmed);
+        Assert.True(leg.TakeProfitCoverageConfirmed);
+        Assert.Equal("fixed-quantity",leg.StopCoverageProof);
+        Assert.Equal(1m,leg.StopFixedQuantity);
+        Assert.True(report.AllowsRiskIncrease);
     }
 
     [Fact]
@@ -75,7 +108,9 @@ public sealed class ProtectionReconciliationTests : IDisposable
     }
 
     private static ManagedPosition Position()=>new("BTCUSDT",PositionSide.Long,1m,100m,101m,1m,2m,true,50m);
-    private static ExchangeOrder Protection(string id,string type)=>new("BTCUSDT",id,"client-"+id,"NEW",0,0,type,PositionSide.Long,true,Now.UtcDateTime);
+    private static ExchangeOrder Protection(string id,string type)=>new("BTCUSDT",id,"client-"+id,"NEW",0,0,type,PositionSide.Long,true,Now.UtcDateTime){ProtectionCoverage=ProtectionCoverageKind.PositionWide};
+    private static ExchangeOrder UnknownProtection(string id,string type)=>new("BTCUSDT",id,"client-"+id,"NEW",0,0,type,PositionSide.Long,true,Now.UtcDateTime);
+    private static ExchangeOrder FixedProtection(string id,string type,decimal quantity)=>new("BTCUSDT",id,"client-"+id,"NEW",0,0,type,PositionSide.Long,true,Now.UtcDateTime){ProtectionCoverage=ProtectionCoverageKind.FixedQuantity,ProtectionQuantity=quantity};
     private static string ProjectRoot()=>Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
     public void Dispose(){SqliteConnection.ClearAllPools();if(Directory.Exists(_directory))Directory.Delete(_directory,true);}
 }
