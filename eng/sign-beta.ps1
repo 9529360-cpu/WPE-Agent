@@ -136,6 +136,9 @@ foreach ($executable in $executables) {
     if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
         throw "PowerShell did not validate the resulting Authenticode signature for $($executable.Name)."
     }
+    if ($null -eq $signature.TimeStamperCertificate) {
+        throw "Authenticode timestamp is missing for $($executable.Name)."
+    }
 }
 
 if ($bundleAttestationRequested) {
