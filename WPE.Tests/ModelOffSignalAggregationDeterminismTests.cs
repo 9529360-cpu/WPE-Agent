@@ -65,6 +65,20 @@ public sealed class ModelOffSignalAggregationDeterminismTests
         var market=Market("BTCUSDT",Now.AddMinutes(-1).UtcDateTime);var altered=market with{Trend15m=market.Trend15m+1};var assessment=new SignalAggregationSkill().Analyze(Pack(altered),Policy(),Now).Single();Assert.False(assessment.EntryReady);Assert.Equal(DecisionAction.Hold,assessment.RecommendedAction);Assert.Contains("signal.invalid-market-evidence",assessment.MissingConditions);
     }
 
+    [Theory]
+    [InlineData(.05,.1)]
+    [InlineData(.01,.80)]
+    public void ExtremeRegimeAbstainsFromNewEntryEvenWhenSignalsOtherwiseQualify(double atrPercent,double liquidationIntensity)
+    {
+        var market=Market("BTCUSDT",Now.AddMinutes(-1).UtcDateTime,.03,atrPercent,liquidationIntensity);
+        var assessment=new SignalAggregationSkill().Analyze(Pack(market),Policy(),Now).Single();
+
+        Assert.Equal(MarketRegime.Extreme,assessment.Regime);
+        Assert.False(assessment.EntryReady);
+        Assert.Equal(DecisionAction.Hold,assessment.RecommendedAction);
+        Assert.Contains(assessment.MissingConditions,value=>value.Contains("Extreme",StringComparison.OrdinalIgnoreCase)||value.Contains("极端",StringComparison.Ordinal));
+    }
+
     [Fact]
     public void IdenticalInputsAndTimeProduceIdenticalOrderedAssessments()
     {
@@ -77,9 +91,9 @@ public sealed class ModelOffSignalAggregationDeterminismTests
 
     private static DecisionPolicy Policy()=>new(){MaximumEvidenceAgeMinutes=5,MinimumEvidenceCompleteness=0,MinimumConfidence=0,MinimumDirectionalScore=0,MaximumConflictRatio=1,MinimumMarketQuality=0};
     private static EvidencePack Pack(params MarketEvidence[] markets)=>new(){Completeness=100,Markets=markets.ToDictionary(x=>x.Symbol,StringComparer.Ordinal)};
-    private static MarketEvidence Market(string symbol,DateTime collected,double trend=.01)
+    private static MarketEvidence Market(string symbol,DateTime collected,double trend=.01,double atrPercent=.01,double liquidationIntensity=.1)
     {
-        var market=new MarketEvidence(symbol,50_000m,49_000m,51_000m,55,trend,trend,trend,new(0,1m,1m,1m,1m,1.1m,0),collected){Quality=new(){QualityScore=100,OrderBookImbalance=.1,RelativeVolume=1.2,AtrPercent=.01,LiquidationIntensity=.1}};
+        var market=new MarketEvidence(symbol,50_000m,49_000m,51_000m,55,trend,trend,trend,new(0,1m,1m,1m,1m,1.1m,0),collected){Quality=new(){QualityScore=100,OrderBookImbalance=.1,RelativeVolume=1.2,AtrPercent=atrPercent,LiquidationIntensity=liquidationIntensity}};
         return double.IsFinite(trend)?market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,"test-provider","Testnet")}:market;
     }
 }
