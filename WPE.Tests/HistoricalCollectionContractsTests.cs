@@ -79,7 +79,7 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
         Assert.Equal(RuntimeCollectionState.Available,reviews.State);
         var review=Assert.Single(reviews.Items);
         Assert.Equal("wpe.post-trade-review/1.4",review.Schema);Assert.Equal("trend-alpha",review.StrategyId);Assert.Equal("2.1.0",review.StrategyVersion);Assert.Equal("automatic-artifact",review.AttributionBasis);
-        Assert.Matches("^trade#[A-F0-9]{12}$",review.TraceId);Assert.Equal("legacy",review.TraceState);Assert.Equal("Unavailable",review.RiskDecision);Assert.Equal("Unavailable",review.ExecutionStatus);Assert.Equal("trace.execution-unavailable",review.ExecutionCode);Assert.Null(review.ExecutionAttempts);
+        Assert.Matches("^trade#[A-F0-9]{12}$",review.TraceId);Assert.Equal("legacy",review.TraceState);Assert.Equal("Unavailable",review.RiskDecision);Assert.Equal("Unavailable",review.ExecutionStatus);Assert.Equal("trace.execution-unavailable",review.ExecutionCode);Assert.Null(review.ExecutionAttempts);Assert.Equal("unavailable",review.EvidenceState);Assert.Empty(review.EvidenceChain);
         Assert.Equal(.05m,review.Fees);Assert.Equal(1.25m,review.FundingAmount);Assert.Equal(.30m,review.TotalSlippageAmount);Assert.Equal(11.20m,review.NetPnl);Assert.Equal("win",review.Outcome);
         var reviewJson=System.Text.Json.JsonSerializer.Serialize(reviews);Assert.DoesNotContain("close-1",reviewJson,StringComparison.Ordinal);Assert.DoesNotContain("cycle-1",reviewJson,StringComparison.Ordinal);
         Assert.Equal(RuntimeCollectionState.Available,reconciliations.State);Assert.Equal(3,reconciliations.Items.Count);Assert.All(reconciliations.Items,item=>Assert.True(item.AllowsRiskIncrease));
@@ -100,6 +100,40 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
 
         Assert.Matches("^trade#[A-F0-9]{12}$",review.TraceId);Assert.Equal("available",review.TraceState);Assert.Equal("Approved",review.RiskDecision);Assert.Equal("Succeeded",review.ExecutionStatus);Assert.Equal("automatic.succeeded",review.ExecutionCode);Assert.Equal(1,review.ExecutionAttempts);Assert.Equal("provider-market-v1",review.MarketDataVersion);Assert.NotNull(review.MarketCollectedAtUtc);
         var json=System.Text.Json.JsonSerializer.Serialize(review);Assert.DoesNotContain(cycle,json,StringComparison.Ordinal);Assert.DoesNotContain(execution,json,StringComparison.Ordinal);Assert.DoesNotContain("close-trace",json,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PostTradeTraceProjectsOnlyVerifiedCanonicalUpstreamEvidence()
+    {
+        await InitializeAsync();
+        const string cycle="cycle-evidence";
+        await ExecuteAsync("CREATE TABLE model_off_canonical_audits(output_id TEXT PRIMARY KEY,cycle_id TEXT,schema TEXT,template_version TEXT,canonical_sha256 TEXT,status TEXT,output_kind TEXT,sources_json TEXT,as_of_utc TEXT,recorded_at_utc TEXT,canonical_bytes BLOB)");
+        await ExecuteAsync("INSERT INTO trade_outcomes(client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,fees,fee_basis,fee_rate,entry_slippage_amount,exit_slippage_amount,total_slippage_amount,slippage_basis,funding_amount,funding_basis,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis) VALUES('close-evidence',$cycle,'BTCUSDT','Long','100','105','1','.05','exchange-reported-usdt','0','0','0','0','unavailable','0','unavailable','4.95','.0495',$t,'trend-evidence','4.0.0','automatic-artifact')",("$cycle",cycle),("$t",Now.ToString("O")));
+        var roles=new[]{"market","research","strategy","risk"};
+        for(var i=0;i<roles.Length;i++)
+        {
+            var bytes=new byte[]{(byte)(i+1),(byte)(i+10)};var hash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+            await ExecuteAsync("INSERT INTO model_off_canonical_audits(output_id,cycle_id,schema,template_version,canonical_sha256,status,output_kind,sources_json,as_of_utc,recorded_at_utc,canonical_bytes) VALUES($id,$cycle,'schema','template',$hash,'succeeded',$kind,'[]',$at,$at,$bytes)",("$id","output-"+roles[i]),("$cycle",cycle),("$hash",hash),("$kind",roles[i]),("$at",Now.AddSeconds(i).ToString("O")),("$bytes",bytes));
+        }
+
+        var review=Assert.Single((await new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now).ReadPostTradeReviewsAsync(new())).Items);
+
+        Assert.Equal("available",review.EvidenceState);Assert.Equal(roles,review.EvidenceChain.Select(x=>x.Stage).ToArray());Assert.All(review.EvidenceChain,x=>Assert.Equal("succeeded",x.Status));Assert.All(review.EvidenceChain,x=>Assert.Matches("^[a-f0-9]{64}$",x.CanonicalSha256));
+        var json=System.Text.Json.JsonSerializer.Serialize(review);Assert.DoesNotContain("canonical_bytes",json,StringComparison.OrdinalIgnoreCase);Assert.DoesNotContain("sources_json",json,StringComparison.OrdinalIgnoreCase);Assert.DoesNotContain("output-market",json,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TamperedCanonicalEvidenceIsMarkedInvalidWithoutInventingATrace()
+    {
+        await InitializeAsync();
+        const string cycle="cycle-evidence-tampered";
+        await ExecuteAsync("CREATE TABLE model_off_canonical_audits(output_id TEXT PRIMARY KEY,cycle_id TEXT,schema TEXT,template_version TEXT,canonical_sha256 TEXT,status TEXT,output_kind TEXT,sources_json TEXT,as_of_utc TEXT,recorded_at_utc TEXT,canonical_bytes BLOB)");
+        await ExecuteAsync("INSERT INTO trade_outcomes(client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,fees,fee_basis,fee_rate,entry_slippage_amount,exit_slippage_amount,total_slippage_amount,slippage_basis,funding_amount,funding_basis,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis) VALUES('close-evidence-tampered',$cycle,'BTCUSDT','Long','100','105','1','.05','estimated-static-rate','.0004','0','0','0','unavailable','0','unavailable','4.95','.0495',$t,NULL,'legacy-v1','legacy-version-only')",("$cycle",cycle),("$t",Now.ToString("O")));
+        await ExecuteAsync("INSERT INTO model_off_canonical_audits VALUES('output-risk',$cycle,'schema','template',$hash,'succeeded','risk','[]',$t,$t,$bytes)",("$cycle",cycle),("$hash",new string('a',64)),("$t",Now.ToString("O")),("$bytes",new byte[]{1,2,3}));
+
+        var review=Assert.Single((await new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now).ReadPostTradeReviewsAsync(new())).Items);
+
+        Assert.Equal("invalid",review.EvidenceState);Assert.Empty(review.EvidenceChain);
     }
 
     [Fact]
