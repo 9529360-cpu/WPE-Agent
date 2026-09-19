@@ -2,12 +2,10 @@
 
 import { DecisionContext } from '@/components/dashboard/decision-context'
 import { DecisionFlow } from '@/components/dashboard/decision-flow'
+import { ExecutionCockpit } from '@/components/dashboard/execution-cockpit'
 import { MarketOverview } from '@/components/dashboard/market-overview'
 import { MarketSelector } from '@/components/dashboard/market-selector'
-import { OrderFeed } from '@/components/dashboard/order-feed'
-import { PortfolioPanel } from '@/components/dashboard/portfolio'
 import { ResourceMonitor } from '@/components/dashboard/resource-monitor'
-import { RiskSummary } from '@/components/dashboard/risk-summary'
 import { SystemHealth } from '@/components/dashboard/system-health'
 import { useWpeRuntime } from '@/components/runtime-bridge'
 import { RuntimeMetric, RuntimeUnavailable } from '@/components/runtime-state'
@@ -35,14 +33,15 @@ export default function DashboardPage() {
           </PanelBody>
         </Panel>
       ) : <RuntimeUnavailable stale={Boolean(runtime.lastUpdated)} subject={t('dashboard.runtime')} />}
-      <MarketSelector />
-      <MarketOverview />
-      <DecisionFlow />
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
-        <PortfolioPanel />
+      <ExecutionCockpit />
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,420px)]">
+        <div className="flex min-w-0 flex-col gap-4">
+          <MarketSelector />
+          <MarketOverview />
+        </div>
         <DecisionContext />
       </div>
-      <div className="grid gap-4 lg:grid-cols-2"><OrderFeed /><RiskSummary /></div>
+      <DecisionFlow />
       <ResourceMonitor />
       <SystemHealth />
     </div>
