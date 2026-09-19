@@ -1,8 +1,10 @@
+using System.IO;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using WpeAgent.TradingAuthorization;
+using WpeAgent.CrossAssetResearch;
 
 namespace 币安量化机器人.Services.Agent;
 
@@ -71,26 +73,12 @@ internal sealed record ExecutionSimulationSourceV1(
 internal static class ExecutionRealityCostAuthorityV1
 {
     internal const string Schema = "wpe.execution-cost-authority/1.0";
-    private static readonly decimal Commission = ResearchRealityModel.DefaultCosts.CommissionRate;
-    private static readonly decimal Slippage = ResearchRealityModel.DefaultCosts.SlippageRate;
-    internal static readonly string Version = CreateVersion();
+    private static readonly decimal Commission = TradingRealityCostAuthorityV1.Default.CommissionRate;
+    private static readonly decimal Slippage = TradingRealityCostAuthorityV1.Default.SlippageRate;
+    internal static readonly string Version = TradingRealityCostAuthorityV1.Identity;
 
     internal static ExecutionRealityCostAssumptionV1 Current =>
         new(Version, Commission, Slippage);
-
-    private static string CreateVersion()
-    {
-        using var stream = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(stream))
-        {
-            writer.WriteStartObject();
-            writer.WriteNumber("commission_rate", Commission);
-            writer.WriteString("schema", Schema);
-            writer.WriteNumber("slippage_rate", Slippage);
-            writer.WriteEndObject();
-        }
-        return Schema + ":" + Convert.ToHexString(SHA256.HashData(stream.ToArray())).ToLowerInvariant();
-    }
 }
 
 internal static class ExecutionSimulationSourceCanonicalizerV1
@@ -346,7 +334,7 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             if (!string.Equals(actual, canonicalSha256, StringComparison.Ordinal))
                 return false;
 
-            using var document = JsonDocument.Parse(bytes);
+            using var document = JsonDocument.Parse(bytes.ToArray());
             var root = document.RootElement;
             value = new(
                 root.GetProperty("schema").GetString() ?? string.Empty,
