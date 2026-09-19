@@ -81,11 +81,11 @@ public sealed class PostTradeSimulationRealityLinkV1Tests : IDisposable
     public async Task EquivalentRepeatedComparisonUsesLatestWithoutChangingUnderlyingEvidence()
     {
         var store=await SeedReview();
-        var chain=await SeedChain(store,saveSource:true,saveComparison:true,comparedAt:Now.AddSeconds(-2));
+        var chain=await SeedChain(store,saveSource:true,saveComparison:true,comparedAt:Now.AddSeconds(-1));
         var later=ExecutionSimulationComparisonCanonicalizerV1.Create(
             chain.Fill,
             chain.Observed,
-            Now.AddSeconds(-1));
+            Now);
         await store.SaveExecutionSimulationComparisonAsync(later,default);
 
         var link=Assert.Single(await new PostTradeSimulationRealityLinkerV1(store).GetRecentAsync(10,default));
