@@ -65,7 +65,7 @@ public sealed partial class AgentSqliteStore
         }
 
         if (rows.Count < 2)
-            return PendingPerformance();
+            return PendingPerformance(rows.Count);
 
         var resolved = new List<ResolvedStrategyObservation>();
         for (var index = 0; index < rows.Count - 1; index++)
@@ -83,7 +83,7 @@ public sealed partial class AgentSqliteStore
         }
 
         if (resolved.Count == 0)
-            return PendingPerformance();
+            return PendingPerformance(rows.Count);
 
         var expectancy = resolved.Average(x => x.Return);
         var (maxDrawdown, failureStreak) = DrawdownAndFailureStreak(resolved.Select(x => x.Return));
@@ -118,11 +118,12 @@ public sealed partial class AgentSqliteStore
             failureStreak,
             $"actionable={resolved.Count} expectancy={expectancy:P2} drawdown={maxDrawdown:P1} calibration={calibration:F2}",
             calibration,
-            regimes);
+            regimes,
+            rows.Count);
     }
 
-    private static StrategyObservationPerformance PendingPerformance()
-        => new(0, 0, 0, 0, 0, "shadow actionable observations pending", .5, Array.Empty<StrategyRegimePerformance>());
+    private static StrategyObservationPerformance PendingPerformance(int rawObservations)
+        => new(0, 0, 0, 0, 0, "shadow actionable observations pending", .5, Array.Empty<StrategyRegimePerformance>(), rawObservations);
 
     private static string NormalizeRegime(string value)
         => Enum.TryParse<MarketRegime>(value, true, out var parsed) && Enum.IsDefined(parsed)
