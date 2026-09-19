@@ -29,6 +29,8 @@ public sealed class HeadlessWindowsServiceBoundaryTests
         Assert.Contains("DataRootPathPolicy.TryNormalizeFixedLocalRoot",bootstrap,StringComparison.Ordinal);
         Assert.Contains("Path.IsPathFullyQualified",appDataPaths,StringComparison.Ordinal);
         Assert.Contains("DriveType.Fixed",appDataPaths,StringComparison.Ordinal);
+        Assert.Contains("FileAttributes.ReparsePoint",appDataPaths,StringComparison.Ordinal);
+        Assert.Contains("ContainsExistingReparsePoint",appDataPaths,StringComparison.Ordinal);
         Assert.Contains("candidate.StartsWith(@\"\\\\\"",appDataPaths,StringComparison.Ordinal);
 
         Assert.Contains("WindowsServiceHelpers.IsWindowsService()",worker,StringComparison.Ordinal);
