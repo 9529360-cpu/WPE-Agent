@@ -14,24 +14,41 @@ try{
     $samplesPath=Join-Path $root 'headless-soak-samples.jsonl'
     $now=[DateTimeOffset]::UtcNow
     $started=$now.AddMinutes(-61)
-    $sample=[ordered]@{
-        schemaVersion='wpe.headless-soak-sample/1.0'
-        sampledAtUtc=$now.AddSeconds(-5).ToString('O')
-        observedAtUtc=$now.AddSeconds(-6).ToString('O')
-        healthAgeSeconds=1
-        processState='ready'
-        processCode='headless.ready'
-        runtimeReady=$true
-        agentRunning=$true
-        accessFresh=$true
-        heartbeatFresh=$true
-        leaseLost=$false
-        inStartupGrace=$false
-        accepted=$true
-        reason=$null
+
+    function Write-ValidSamples {
+        $lines=[Collections.Generic.List[string]]::new()
+        for($index=0;$index -lt 54;$index++){
+            $sampledAt=$started.AddSeconds(3660.0*($index/53.0))
+            $sample=[ordered]@{
+                schemaVersion='wpe.headless-soak-sample/1.0'
+                sampledAtUtc=$sampledAt.ToString('O')
+                observedAtUtc=$sampledAt.AddSeconds(-1).ToString('O')
+                healthAgeSeconds=1
+                processState='ready'
+                processCode='headless.ready'
+                runtimeReady=$true
+                agentRunning=$true
+                accessFresh=$true
+                heartbeatFresh=$true
+                leaseLost=$false
+                inStartupGrace=(($sampledAt-$started).TotalSeconds -lt 60)
+                accepted=$true
+                reason=$null
+            }
+            $lines.Add(($sample|ConvertTo-Json -Compress))
+        }
+        $lines|Set-Content -LiteralPath $samplesPath -Encoding utf8
     }
-    $sampleJson=$sample|ConvertTo-Json -Compress
-    @(1..54|ForEach-Object{$sampleJson})|Set-Content -LiteralPath $samplesPath -Encoding utf8
+
+    function Rewrite-Samples([scriptblock]$mutator){
+        $rewritten=Get-Content -LiteralPath $samplesPath|ForEach-Object{
+            $sample=$_|ConvertFrom-Json
+            & $mutator $sample
+            $sample|ConvertTo-Json -Compress
+        }
+        $rewritten|Set-Content -LiteralPath $samplesPath -Encoding utf8
+    }
+
     $evidencePath=Join-Path $root 'headless-soak-evidence.json'
     function Write-Evidence([hashtable]$overrides){
         $e=[ordered]@{
@@ -61,13 +78,13 @@ try{
         $e|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $evidencePath -Encoding utf8
     }
 
+    Write-ValidSamples
     Write-Evidence @{}
     $result=& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60
     Assert $result.Valid 'valid evidence rejected'
     Assert ($result.SampleCount -eq 54) 'sample count not verified'
     Assert ($result.SourceIdentity -eq 'commit/test-candidate') 'source identity not returned'
     Assert ($result.CandidateManifestSha256 -eq ('a'*64)) 'candidate manifest identity not returned'
-
 
     Write-Evidence @{}
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/other' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.source-identity-mismatch'
@@ -91,28 +108,46 @@ try{
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.evidence-unknown-field'
 
     Write-Evidence @{}
-    Add-Content -LiteralPath $samplesPath -Value (($sample|ConvertTo-Json -Compress))
+    Add-Content -LiteralPath $samplesPath -Value (Get-Content -LiteralPath $samplesPath -TotalCount 1)
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.samples-hash-mismatch'
 
-    $notAcceptedJson=$sampleJson.Replace('"accepted":true','"accepted":false')
-    @(1..54|ForEach-Object{$notAcceptedJson})|Set-Content -LiteralPath $samplesPath -Encoding utf8
+    Write-ValidSamples
+    Rewrite-Samples {param($sample) $sample.accepted=$false}
     Write-Evidence @{}
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.sample-not-accepted'
 
-    $notReadyJson=$sampleJson.Replace('"processState":"ready"','"processState":"failed"')
-    @(1..54|ForEach-Object{$notReadyJson})|Set-Content -LiteralPath $samplesPath -Encoding utf8
+    Write-ValidSamples
+    Rewrite-Samples {param($sample) $sample.processState='failed'}
     Write-Evidence @{}
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.sample-runtime-not-ready'
 
-    $forgedGraceJson=$notReadyJson.Replace('"inStartupGrace":false','"inStartupGrace":true')
-    @(1..54|ForEach-Object{$forgedGraceJson})|Set-Content -LiteralPath $samplesPath -Encoding utf8
+    Write-ValidSamples
+    Rewrite-Samples {param($sample) $sample.inStartupGrace=$true}
     Write-Evidence @{}
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.sample-grace-window-mismatch'
 
-    $ageMismatchJson=$sampleJson.Replace('"healthAgeSeconds":1','"healthAgeSeconds":2')
-    @(1..54|ForEach-Object{$ageMismatchJson})|Set-Content -LiteralPath $samplesPath -Encoding utf8
+    Write-ValidSamples
+    Rewrite-Samples {param($sample) $sample.healthAgeSeconds=2}
     Write-Evidence @{}
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.sample-health-age-mismatch'
+
+    Write-ValidSamples
+    $lines=@(Get-Content -LiteralPath $samplesPath)
+    $first=$lines[0]|ConvertFrom-Json
+    $second=$lines[1]|ConvertFrom-Json
+    $second.sampledAtUtc=$first.sampledAtUtc
+    $second.observedAtUtc=$first.observedAtUtc
+    $lines[1]=$second|ConvertTo-Json -Compress
+    $lines|Set-Content -LiteralPath $samplesPath -Encoding utf8
+    Write-Evidence @{}
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.sample-time-not-strictly-increasing'
+
+    Write-ValidSamples
+    $lines=@(Get-Content -LiteralPath $samplesPath)
+    $lines=@($lines[0..9]+$lines[12..53])
+    $lines|Set-Content -LiteralPath $samplesPath -Encoding utf8
+    Write-Evidence @{sampleCount=52;readySamples=52}
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.sample-gap-exceeded'
 
     'PASS headless soak evidence verification'
 } finally {
