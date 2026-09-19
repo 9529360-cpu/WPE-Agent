@@ -44,13 +44,19 @@ jobs:
       working-directory: WebUi
       run: pnpm typecheck
 
-    - name: Runtime bridge dogfood
+    - name: Web component tests
       working-directory: WebUi
       shell: pwsh
       run: |
         Remove-Item -Recurse -Force ".bridge-test-dist" -ErrorAction SilentlyContinue
         pnpm exec tsc -p tsconfig.bridge-test.json
-        node --test .bridge-test-dist/components/runtime-bridge.dogfood.test.js
+        $sourceTests = @(Get-ChildItem "components" -Recurse -Filter "*.test.tsx")
+        $compiledTests = @(Get-ChildItem ".bridge-test-dist/components" -Recurse -Filter "*.test.js")
+        if ($sourceTests.Count -eq 0 -or $compiledTests.Count -ne $sourceTests.Count) {
+          throw "Component test compilation coverage mismatch: source=$($sourceTests.Count), compiled=$($compiledTests.Count)."
+        }
+        & node --require ./tests/component-test-alias.cjs --test $compiledTests.FullName
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     - name: Web contract tests
       working-directory: WebUi
