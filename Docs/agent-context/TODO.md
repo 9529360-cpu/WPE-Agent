@@ -2,7 +2,7 @@
 
 - [x] Close the 2026-07-28 runtime/UI gaps: hide historical handoffs without a fresh matching RunId lease, project automatic execution results, auto-start only after Testnet readiness, route Telegram configuration to the notification tab, and implement encrypted local Telegram subscriber intake, approval, scoped batch delivery, audit, runtime projection, and UI status.
 - [ ] Move runtime snapshot refresh off the WPF UI thread into a background incremental snapshot pump with observable Telegram poll/dispatch health and backoff.
-- [ ] Converge Chinese and non-Chinese routes onto one component tree, then complete the strategy evidence-to-execution explanation timeline.
+- [x] Converge Chinese and non-Chinese routes onto one component tree and complete the bounded closed-trade explanation timeline: masked trade identity → canonical Market/Research/Strategy/Risk evidence hashes → historical risk decision → execution terminal state → post-trade accounting. The UI keeps current authorization separate from historical evidence and exposes no canonical payload bytes or raw cycle/order/report IDs.
 
 ## P0
 - [ ] Restore a real GitHub Actions gate. Current private-repository pushes end in `startup_failure` before any job starts even though Actions is enabled; diagnose account/runner billing or platform eligibility, then require a successful remote build/test/publish-boundary run before treating CI as authoritative.
