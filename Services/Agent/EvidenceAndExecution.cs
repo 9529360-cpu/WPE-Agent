@@ -46,6 +46,8 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     private readonly IProviderCapabilityPrecondition? _capabilityPrecondition;
     private readonly Func<ExecutionIntent,(Instrument Instrument,ExchangeCapability? Capability)>? _capabilityResolver;
     private readonly Func<string,CancellationToken,Task<ExchangeCapability?>>? _capabilityRefresh;
+    private readonly ExecutionRealityRecorderV1? _realityRecorder;
+    private readonly ExecutionRealityCostAssumptionV1? _realityCosts;
     private readonly bool _testnet;
     private IConfirmedNotificationObserver _notifications=NullConfirmedNotificationObserver.Instance;
     public ReliableOrderExecutor(IExchangeAdapter ex,AgentSqliteStore db,RiskLimits? limits=null,IOrderPollScheduler? poll=null):this(ex,db,limits,poll,false){}
@@ -55,10 +57,40 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         _ex=ex;_db=db;_limits=limits??new();_poll=poll??SystemOrderPollScheduler.Instance;
     }
     /// <summary>Production execution boundary. Capability context is checked before any provider mutation.</summary>
-    public ReliableOrderExecutor(IExchangeAdapter ex,AgentSqliteStore db,RiskLimits limits,IOrderPollScheduler poll,IProviderCapabilityPrecondition capabilityPrecondition,Func<ExecutionIntent,(Instrument Instrument,ExchangeCapability? Capability)> capabilityResolver,bool testnet=true,IConfirmedNotificationObserver? notifications=null)
-        :this(ex,db,limits,poll,true){_capabilityPrecondition=capabilityPrecondition??throw new ArgumentNullException(nameof(capabilityPrecondition));_capabilityResolver=capabilityResolver??throw new ArgumentNullException(nameof(capabilityResolver));_testnet=testnet;_notifications=notifications??NotificationRuntimeFactory.CurrentObserver;}
+    public ReliableOrderExecutor(
+        IExchangeAdapter ex,
+        AgentSqliteStore db,
+        RiskLimits limits,
+        IOrderPollScheduler poll,
+        IProviderCapabilityPrecondition capabilityPrecondition,
+        Func<ExecutionIntent,(Instrument Instrument,ExchangeCapability? Capability)> capabilityResolver,
+        bool testnet=true,
+        IConfirmedNotificationObserver? notifications=null,
+        ExecutionRealityRecorderV1? realityRecorder=null,
+        ExecutionRealityCostAssumptionV1? realityCosts=null)
+        :this(ex,db,limits,poll,true)
+    {
+        _capabilityPrecondition=capabilityPrecondition??throw new ArgumentNullException(nameof(capabilityPrecondition));
+        _capabilityResolver=capabilityResolver??throw new ArgumentNullException(nameof(capabilityResolver));
+        _testnet=testnet;
+        _notifications=notifications??NotificationRuntimeFactory.CurrentObserver;
+        if((realityRecorder is null)!=(realityCosts is null))
+            throw new ArgumentException("Execution reality recorder and cost authority must be supplied together.");
+        _realityRecorder=realityRecorder;
+        _realityCosts=realityCosts;
+    }
     public ReliableOrderExecutor(IExchangeAdapter ex,AgentSqliteStore db,IOrderPollScheduler poll):this(ex,db,null,poll){}
-    public ReliableOrderExecutor(IExchangeAdapter ex,AgentSqliteStore db,RiskLimits limits,IOrderPollScheduler poll,IReadOnlyDictionary<string,ExchangeCapability> capabilities,bool testnet=true,IConfirmedNotificationObserver? notifications=null,Func<string,CancellationToken,Task<ExchangeCapability?>>? capabilityRefresh=null)
+    public ReliableOrderExecutor(
+        IExchangeAdapter ex,
+        AgentSqliteStore db,
+        RiskLimits limits,
+        IOrderPollScheduler poll,
+        IReadOnlyDictionary<string,ExchangeCapability> capabilities,
+        bool testnet=true,
+        IConfirmedNotificationObserver? notifications=null,
+        Func<string,CancellationToken,Task<ExchangeCapability?>>? capabilityRefresh=null,
+        ExecutionRealityRecorderV1? realityRecorder=null,
+        ExecutionRealityCostAssumptionV1? realityCosts=null)
         :this(ex,db,limits,poll,new ProviderCapabilityPrecondition(),intent =>
         {
             var symbol = intent.Symbol;
@@ -67,7 +99,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
                 ? new Instrument(symbol, symbol, string.Empty, string.Empty)
                 : new Instrument(capability.CanonicalSymbol, capability.NativeSymbol, capability.ExchangeId, capability.ProviderId, capability.MarketType);
             return (instrument, capability);
-        },testnet,notifications)
+        },testnet,notifications,realityRecorder,realityCosts)
     {
         _capabilityRefresh=capabilityRefresh??(ex is IExchangeProvider provider
             ?async(symbol,ct)=>{var refreshed=await new ProviderCapabilityProbe().ProbeAsync(provider,[symbol],testnet,ct);return refreshed.GetValueOrDefault(symbol);}
@@ -115,8 +147,8 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
                 throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));
             }
             var partial=order.ExecutedQuantity<intent.Quantity;
-            await CaptureFeeEvidenceAsync(order,ct);await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);await _db.RecordExecutionAsync(cycle,intent with{Quantity=order.ExecutedQuantity},
-                partial?order with{Status="PARTIALLY_FILLED"}:order,"wpe-core-v2",ct);
+            await CaptureFeeEvidenceAsync(order,ct);await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);var recoveryRecordedOrder=partial?order with{Status="PARTIALLY_FILLED"}:order;await RecordRealitySafelyAsync(cycle,intent,recoveryRecordedOrder,ct);await _db.RecordExecutionAsync(cycle,intent with{Quantity=order.ExecutedQuantity},
+                recoveryRecordedOrder,"wpe-core-v2",ct);
             await _db.SaveIntentAsync(cycle,intent,partial?"COMPLETED_PARTIAL":"COMPLETED",order.OrderId,ct);
             await NotifyExecutionAsync(cycle,intent,order,ct);
             if(partial)throw new InvalidOperationException(L("Execution.PartialClose",order.ExecutedQuantity,intent.Quantity));
@@ -171,11 +203,12 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         await _db.SaveIntentAsync(cycle,intent,order.Status,order.OrderId,ct);
         if(order.ExecutedQuantity<=0)
         {
+            await RecordRealitySafelyAsync(cycle,intent,order,ct);
             if(order.Status is "CANCELED" or "EXPIRED" or "REJECTED"){await _db.SaveIntentAsync(cycle,intent,order.Status,order.OrderId,ct);throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));}
             await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",order.OrderId,ct);
             throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));
         }
-        var filledIntent=intent with{Quantity=order.ExecutedQuantity};var recordedOrder=order.ExecutedQuantity>0&&order.Status!="FILLED"?order with{Status="PARTIALLY_FILLED"}:order;await CaptureFeeEvidenceAsync(recordedOrder,ct);if(intent.ReduceOnly&&recordedOrder.Status=="FILLED")await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);await _db.RecordExecutionAsync(cycle,filledIntent,recordedOrder,"wpe-core-v2",ct);
+        var filledIntent=intent with{Quantity=order.ExecutedQuantity};var recordedOrder=order.ExecutedQuantity>0&&order.Status!="FILLED"?order with{Status="PARTIALLY_FILLED"}:order;await CaptureFeeEvidenceAsync(recordedOrder,ct);if(intent.ReduceOnly&&recordedOrder.Status=="FILLED")await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);await RecordRealitySafelyAsync(cycle,intent,recordedOrder,ct);await _db.RecordExecutionAsync(cycle,filledIntent,recordedOrder,"wpe-core-v2",ct);
         if(intent.ReduceOnly)
         {
             if(IsFullClose(intent.Action)){await CancelProtectionOrdersAsync(intent.Symbol,intent.Side,ct);await _db.ClearLockedSideIfMatchesAsync(intent.Symbol,intent.Side,ct);}
@@ -328,6 +361,25 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             var intent=await _db.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);if(intent is null){safe=false;messages.Add(L("Execution.ProtectionMissing",position.Symbol,position.Side,!hasSl,!hasTp));continue;}
             try{EnsureCapability(intent);await _ex.PlaceProtectionAsync(position.Symbol,position.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);messages.Add(L("Execution.ProtectionRepaired",position.Symbol,position.Side));}catch(Exception ex){safe=false;messages.Add(L("Execution.ProtectionRepairFailed",position.Symbol,position.Side,SensitiveDataRedactor.ForLog(ex.Message,180)));}
         }return new(safe,messages);
+    }
+
+    private async Task RecordRealitySafelyAsync(
+        string cycle,
+        ExecutionIntent intent,
+        ExchangeOrder order,
+        CancellationToken ct)
+    {
+        if(_realityRecorder is null||_realityCosts is null)
+            return;
+        try
+        {
+            await _realityRecorder.RecordAsync(cycle,intent,order,_realityCosts,ct);
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch(Exception ex)
+        {
+            await _db.RecordErrorAsync("EXECUTION_REALITY",ex,CancellationToken.None);
+        }
     }
 
     private async Task PreflightAsync(ExecutionIntent intent,CancellationToken ct)
