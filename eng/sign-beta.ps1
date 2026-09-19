@@ -79,6 +79,9 @@ function Write-AndVerifyDetachedAttestation(
     if ($verification.SignerInfos.Count -ne 1) {
         throw "Runtime bundle signing attestation must contain exactly one signer."
     }
+    if ($verification.SignerInfos[0].DigestAlgorithm.Value -ne "2.16.840.1.101.3.4.2.1") {
+        throw "Runtime bundle signing attestation must use SHA-256."
+    }
     $attestationCertificate = $verification.SignerInfos[0].Certificate
     if ($null -eq $attestationCertificate -or
         $attestationCertificate.Subject -ne $Certificate.Subject -or
