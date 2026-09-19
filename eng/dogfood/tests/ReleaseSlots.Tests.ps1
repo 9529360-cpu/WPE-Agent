@@ -121,6 +121,11 @@ try{
     $declared=@($ast.ParamBlock.Parameters|ForEach-Object {$_.Name.VariablePath.UserPath});Assert ((Compare-Object $contract $declared -SyncWindow 0).Count -eq 0) 'stable parameter order changed'
     $switchTokens=$null;$switchParseErrors=$null;$null=[Management.Automation.Language.Parser]::ParseFile($switch,[ref]$switchTokens,[ref]$switchParseErrors);Assert ($switchParseErrors.Count -eq 0) 'slot switch AST parse failed'
     $switchSource=Get-Content -Raw -LiteralPath $switch;Assert ([regex]::Matches($switchSource,'\$result=& \$test').Count -eq 1) 'slot switch validator invocation duplicated'
+    Assert ($switchSource.Contains('[IO.FileShare]::None')) 'slot switch does not use exclusive writer lock'
+    Assert ($switchSource.Contains("operator.switch-in-progress")) 'slot switch does not fail closed on concurrent promotion'
+    Assert ($switchSource.Contains('$pointerStream.Flush($true)')) 'slot switch pointer is not durably flushed'
+    Assert ($switchSource.Contains('[IO.File]::Move($temporary,$current,$true)')) 'slot switch pointer replacement is not same-directory atomic'
+    Assert ($switchSource.Contains("operator.lock-reparse-forbidden")) 'slot switch lock reparse boundary missing'
     $source=Join-Path $root 'package';New-Item -ItemType Directory -Path $source|Out-Null
     'payload'|Set-Content -LiteralPath (Join-Path $source 'app.bin') -Encoding ascii
     $canonicalPackage=Join-Path $root 'artifacts/beta-packages/verified-package';New-Item -ItemType Directory -Path (Split-Path $canonicalPackage -Parent) -Force|Out-Null;Copy-Item $source $canonicalPackage -Recurse
@@ -156,6 +161,16 @@ try{
     $proofPath=Join-Path $root 'trusted-runtime-proof.json';$proofHash=Write-Proof $proofPath $candidate $lkg @{}
     $soakPath=Join-Path $root 'headless-soak-evidence.json';$soakHash=Write-SoakEvidence $soakPath $candidate @{}
     $acceptance=@{CandidateRoot=$candidate.CandidateRoot;LastKnownGoodRoot=$lkg.CandidateRoot;ProviderReadOnly=$true;RequireTrustedRuntimeFresh=$true;VerifyInstall=$true;VerifyStartup=$true;VerifyRestartRecovery=$true;VerifyRollback=$true;RejectMainnet=$true;ExpectedCandidateManifestHash=$candidate.ManifestSha256;ExpectedLastKnownGoodManifestHash=$lkg.ManifestSha256;TrustedRuntimeProofPath=$proofPath;ExpectedTrustedRuntimeProofHash=$proofHash;ExpectedRuntimeProofId='proof/current-001';ExpectedRuntimeSourceIdentity='runtime/snapshot-authority-v1';ExpectedEvidenceGateRefs=@('gate/build','gate/tests');SoakEvidencePath=$soakPath;ExpectedSoakEvidenceHash=$soakHash;MinimumSoakDurationMinutes=1440}
+    $candidateReparseTarget=Join-Path $root 'candidate-reparse-target';New-Item -ItemType Directory -Path $candidateReparseTarget -Force|Out-Null
+    $candidateReparse=Join-Path $candidate.CandidateRoot 'linked'
+    try{
+        $null=New-Item -ItemType Junction -Path $candidateReparse -Target $candidateReparseTarget -ErrorAction Stop
+        Throws {& $test @acceptance} 'candidate.reparse-forbidden'
+    }catch{
+        if($_.Exception.Message -notlike '*candidate.reparse-forbidden*'){Write-Output 'ReleaseSlots.Tests: candidate reparse regression SKIP (junction unavailable)'}
+    }finally{
+        if(Test-Path -LiteralPath $candidateReparse){Remove-Item -LiteralPath $candidateReparse -Force -ErrorAction SilentlyContinue}
+    }
     $result=& $test @acceptance;Assert $result.Valid 'full acceptance failed';Assert ($result.Transcript -contains 'testnet-mutation:not-run') 'mutation default changed';Assert ($result.UserDataRollback -eq 'not-performed') 'user data rollback changed';Assert ($result.SoakEvidenceSha256 -eq $soakHash) 'soak evidence identity missing'
     $lateCandidateFile=Join-Path $candidate.CandidateRoot 'late-extra.bin';'late-payload'|Set-Content -LiteralPath $lateCandidateFile -Encoding ascii
     Throws {& $test @acceptance} 'candidate.inventory-drift'
@@ -190,6 +205,13 @@ try{
     (Get-Item -LiteralPath (Join-Path $candidate.CandidateRoot 'app.bin')).IsReadOnly=$false;'tamper'|Set-Content -LiteralPath (Join-Path $candidate.CandidateRoot 'app.bin');Throws {& $test @acceptance} 'candidate.hash-drift'
     $candidate=New-TestCandidate -SourceRoot $source -SlotsRoot $slots -Version '1.0.3' -SourceIdentity 'commit/ddd' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests';$acceptance.CandidateRoot=$candidate.CandidateRoot;$acceptance.ExpectedCandidateManifestHash=$candidate.ManifestSha256;$acceptance.ExpectedTrustedRuntimeProofHash=Write-Proof $proofPath $candidate $lkg @{};$acceptance.ExpectedSoakEvidenceHash=Write-SoakEvidence $soakPath $candidate @{}
     $operator=Join-Path $root 'operator';$switchArgs=@{CandidateRoot=$candidate.CandidateRoot;LastKnownGoodRoot=$lkg.CandidateRoot;OperatorRoot=$operator;ExpectedCandidateManifestHash=$candidate.ManifestSha256;ExpectedLastKnownGoodManifestHash=$lkg.ManifestSha256;TrustedRuntimeProofPath=$proofPath;ExpectedTrustedRuntimeProofHash=$acceptance.ExpectedTrustedRuntimeProofHash;ExpectedRuntimeProofId='proof/current-001';ExpectedRuntimeSourceIdentity='runtime/snapshot-authority-v1';ExpectedEvidenceGateRefs=@('gate/build','gate/tests');SoakEvidencePath=$soakPath;ExpectedSoakEvidenceHash=$acceptance.ExpectedSoakEvidenceHash;MinimumSoakDurationMinutes=1440}
+    $concurrentOperator=Join-Path $root 'concurrent-operator';New-Item -ItemType Directory -Path $concurrentOperator -Force|Out-Null
+    $heldLock=[IO.FileStream]::new((Join-Path $concurrentOperator 'switch.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    try{
+        $concurrentArgs=$switchArgs.Clone();$concurrentArgs.OperatorRoot=$concurrentOperator
+        Throws {& $switch @concurrentArgs} 'operator.switch-in-progress'
+        Assert (-not(Test-Path -LiteralPath (Join-Path $concurrentOperator 'current.json'))) 'concurrent switch wrote operator pointer'
+    }finally{$heldLock.Dispose()}
     $switched=& $switch @switchArgs;Assert (Test-Path (Join-Path $operator 'current.json')) 'atomic pointer missing';Assert $switched.Valid 'switch validation failed';$current=Get-Content -Raw -LiteralPath (Join-Path $operator 'current.json')|ConvertFrom-Json;Assert ($current.soakEvidenceSha256 -eq $acceptance.ExpectedSoakEvidenceHash) 'atomic pointer omitted soak evidence identity'
     $mutableRoot=Join-Path $root 'bin';Copy-Item -LiteralPath $candidate.CandidateRoot -Destination $mutableRoot -Recurse;$bad=$acceptance.Clone();$bad.CandidateRoot=$mutableRoot;Throws {& $test @bad} 'candidate.mutable-root'
     $otherSource=Join-Path $root 'other-package';Copy-Item -LiteralPath $source -Destination $otherSource -Recurse
