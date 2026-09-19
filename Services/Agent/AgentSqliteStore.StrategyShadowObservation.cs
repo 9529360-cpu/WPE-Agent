@@ -161,11 +161,12 @@ public sealed partial class AgentSqliteStore
                 reader.GetString(0));
             if(!StrategyShadowObservationCanonicalizerV1.IsCanonical(row))
                 throw new InvalidOperationException("Persisted strategy shadow observation failed canonical verification.");
-            if(validationHash is not null
-               &&(!string.Equals(validationHash,row.BacktestValidationSha256,StringComparison.Ordinal)
-                  ||!string.Equals(timelineHash,row.TimelineSha256,StringComparison.Ordinal)
-                  ||!string.Equals(providerId,row.MarketProviderId,StringComparison.Ordinal)
-                  ||!string.Equals(environment,row.Environment,StringComparison.Ordinal)))
+            if(validationHash is null)
+                await VerifyStrategyShadowSourcesAsync(row,ct);
+            else if(!string.Equals(validationHash,row.BacktestValidationSha256,StringComparison.Ordinal)
+                    ||!string.Equals(timelineHash,row.TimelineSha256,StringComparison.Ordinal)
+                    ||!string.Equals(providerId,row.MarketProviderId,StringComparison.Ordinal)
+                    ||!string.Equals(environment,row.Environment,StringComparison.Ordinal))
                 throw new InvalidOperationException("Strategy shadow qualification mixes durable authority.");
             validationHash??=row.BacktestValidationSha256;
             timelineHash??=row.TimelineSha256;

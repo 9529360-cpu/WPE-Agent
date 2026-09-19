@@ -1,5 +1,7 @@
 using System.IO;
+using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using 币安量化机器人.Core.Strategy;
 
@@ -144,13 +146,95 @@ internal static class StrategyShadowObservationCanonicalizerV1
                    Convert.FromHexString(value.BacktestValidationSha256))
                ||!CryptographicOperations.FixedTimeEquals(
                    SHA256.HashData(value.MarketProvenanceCanonicalBytes),
-                   Convert.FromHexString(value.MarketProvenanceSha256)))
+                   Convert.FromHexString(value.MarketProvenanceSha256))
+               ||!ValidationSourceMatches(value)
+               ||!MarketSourceMatches(value))
                 return false;
             var bytes=Serialize(value);
             return CryptographicOperations.FixedTimeEquals(bytes,value.CanonicalBytes)
                 &&CryptographicOperations.FixedTimeEquals(SHA256.HashData(bytes),Convert.FromHexString(value.CanonicalSha256));
         }
         catch{return false;}
+    }
+
+    private static bool ValidationSourceMatches(StrategyShadowObservationV1 value)
+    {
+        var fields=Encoding.UTF8.GetString(value.BacktestValidationCanonicalBytes).Split('|');
+        if(fields.Length!=20)return false;
+        var fact=BacktestValidationCanonicalizerV1.Create(
+            fields[1],fields[2],fields[3],
+            DateTimeOffset.Parse(fields[4],CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),
+            int.Parse(fields[5],CultureInfo.InvariantCulture),
+            int.Parse(fields[6],CultureInfo.InvariantCulture),
+            int.Parse(fields[7],CultureInfo.InvariantCulture),
+            int.Parse(fields[8],CultureInfo.InvariantCulture),
+            double.Parse(fields[9],CultureInfo.InvariantCulture),
+            double.Parse(fields[10],CultureInfo.InvariantCulture),
+            double.Parse(fields[11],CultureInfo.InvariantCulture),
+            double.Parse(fields[12],CultureInfo.InvariantCulture),
+            double.Parse(fields[13],CultureInfo.InvariantCulture),
+            double.Parse(fields[14],CultureInfo.InvariantCulture),
+            double.Parse(fields[15],CultureInfo.InvariantCulture),
+            double.Parse(fields[16],CultureInfo.InvariantCulture),
+            double.Parse(fields[17],CultureInfo.InvariantCulture),
+            bool.Parse(fields[18]),
+            bool.Parse(fields[19]));
+        return fields[0]==BacktestValidationCanonicalizerV1.Schema
+            &&BacktestValidationCanonicalizerV1.IsCanonical(fact,value.ObservedAtUtc)
+            &&fact.Approved&&!fact.Promoted
+            &&fact.StrategyId==value.StrategyId
+            &&fact.StrategyVersion==value.StrategyVersion
+            &&fact.Symbol==value.Symbol
+            &&fact.ValidatedAtUtc==value.ValidationAtUtc
+            &&fact.CanonicalSha256==value.BacktestValidationSha256
+            &&CryptographicOperations.FixedTimeEquals(
+                fact.CanonicalBytes,value.BacktestValidationCanonicalBytes);
+    }
+
+    private static bool MarketSourceMatches(StrategyShadowObservationV1 value)
+    {
+        using var document=JsonDocument.Parse(value.MarketProvenanceCanonicalBytes);
+        var root=document.RootElement;
+        var schema=root.GetProperty("schema").GetString()??string.Empty;
+        var provider=root.GetProperty("provider_id").GetString()??string.Empty;
+        var environment=root.GetProperty("environment").GetString()??string.Empty;
+        var symbol=root.GetProperty("symbol").GetString()??string.Empty;
+        var collected=root.GetProperty("collected_at_utc").GetDateTimeOffset().UtcDateTime;
+        var candles=root.GetProperty("candles").EnumerateArray().Select(row=>
+        {
+            var cells=row.EnumerateArray().ToArray();
+            if(cells.Length!=9)throw new InvalidDataException("Market provenance candle shape is invalid.");
+            return new CandleEvidence(
+                cells[0].GetDateTimeOffset().UtcDateTime,
+                cells[1].GetDecimal(),cells[2].GetDecimal(),cells[3].GetDecimal(),
+                cells[4].GetDecimal(),cells[5].GetDecimal(),cells[6].GetDecimal(),
+                cells[7].GetInt64(),cells[8].GetDecimal());
+        }).ToArray();
+        var market=new MarketEvidence(
+            symbol,
+            root.GetProperty("price").GetDecimal(),
+            root.GetProperty("support").GetDecimal(),
+            root.GetProperty("resistance").GetDecimal(),
+            root.GetProperty("rsi").GetDouble(),
+            root.GetProperty("trend_15m").GetDouble(),
+            root.GetProperty("trend_1h").GetDouble(),
+            root.GetProperty("trend_4h").GetDouble(),
+            new DerivativesSnapshot(0,0,0,0,0,0,0),
+            collected)
+        {
+            Candles=candles
+        };
+        var expected=MarketEvidenceProvenanceCanonicalizerV1.Create(
+            market,provider,environment);
+        return schema==MarketEvidenceProvenanceCanonicalizerV1.Schema
+            &&provider==value.MarketProviderId
+            &&environment==value.Environment
+            &&symbol==value.Symbol
+            &&new DateTimeOffset(collected)==value.MarketCollectedAtUtc
+            &&market.Price==value.MarketPrice
+            &&expected.CanonicalSha256==value.MarketProvenanceSha256
+            &&CryptographicOperations.FixedTimeEquals(
+                expected.CanonicalBytes,value.MarketProvenanceCanonicalBytes);
     }
 
     private static byte[] Serialize(StrategyShadowObservationV1 value)
