@@ -76,6 +76,11 @@ internal sealed record ExecutionSimulationSourceV1(
     decimal AskQuantity,
     long TopOfBookMessages,
     bool TopOfBookConnected,
+    string CostModelVersion,
+    decimal CommissionRate,
+    decimal SlippageRate,
+    decimal FixedCostPerTrade,
+    decimal BorrowRatePerDay,
     decimal StepSize,
     decimal TickSize,
     decimal MinQuantity,
@@ -98,7 +103,8 @@ internal static class ExecutionRealityCostAuthorityV1
 
 internal static class ExecutionSimulationSourceCanonicalizerV1
 {
-    internal const string Schema = "wpe.execution-simulation-source/1.2";
+    internal const string Schema = "wpe.execution-simulation-source/1.3";
+    internal const string PreviousSchema = "wpe.execution-simulation-source/1.2";
     internal const string LegacySchema = "wpe.execution-simulation-source/1.1";
     internal static readonly TimeSpan MaximumMarketAge = TimeSpan.FromSeconds(30);
     internal static readonly TimeSpan MaximumTopOfBookAge = TimeSpan.FromSeconds(15);
@@ -147,6 +153,9 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             : qualification.Available
                 ? "strategy-qualification-identity-mismatch"
                 : qualification.Code;
+
+        var costModel = TradingRealityCostAuthorityV1.Default;
+        var costModelVersion = TradingRealityCostAuthorityV1.IdentityFor(costModel);
 
         var topOfBookAvailable = false;
         var topOfBookReason = "top-of-book-unavailable";
@@ -315,6 +324,11 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             askQuantity,
             topOfBookMessages,
             topOfBookConnected,
+            costModelVersion,
+            costModel.CommissionRate,
+            costModel.SlippageRate,
+            costModel.FixedCostPerTrade,
+            costModel.BorrowRatePerDay,
             step,
             tick,
             minQty,
@@ -333,7 +347,7 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
     internal static bool IsCanonical(ExecutionSimulationSourceV1? value)
     {
         if (value is null
-            || value.Schema is not (Schema or LegacySchema)
+            || value.Schema is not (Schema or PreviousSchema or LegacySchema)
             || !LowerSha(value.ArtifactSha256)
             || !LowerSha(value.IntentSha256)
             || !LowerSha(value.CanonicalSha256)
@@ -354,6 +368,32 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             || string.IsNullOrWhiteSpace(value.ArtifactMarketDataVersion)
             || string.IsNullOrWhiteSpace(value.TopOfBookReasonCode)
             || string.IsNullOrWhiteSpace(value.ReasonCode))
+            return false;
+
+        if (value.Schema == Schema)
+        {
+            if (string.IsNullOrWhiteSpace(value.CostModelVersion)
+                || value.CommissionRate < 0
+                || value.CommissionRate >= 1
+                || value.SlippageRate < 0
+                || value.SlippageRate >= 1
+                || value.FixedCostPerTrade < 0
+                || value.BorrowRatePerDay < 0
+                || value.BorrowRatePerDay >= 1
+                || !TradingRealityCostAuthorityV1.MatchesIdentity(
+                    new ResearchCostModel(
+                        value.CommissionRate,
+                        value.SlippageRate,
+                        value.FixedCostPerTrade,
+                        value.BorrowRatePerDay),
+                    value.CostModelVersion))
+                return false;
+        }
+        else if (value.CostModelVersion.Length != 0
+                 || value.CommissionRate != 0
+                 || value.SlippageRate != 0
+                 || value.FixedCostPerTrade != 0
+                 || value.BorrowRatePerDay != 0)
             return false;
 
         if (value.StrategyQualificationAvailable)
@@ -494,9 +534,10 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             using var document = JsonDocument.Parse(bytes.ToArray());
             var root = document.RootElement;
             var schema = root.GetProperty("schema").GetString() ?? string.Empty;
-            if (schema is not (Schema or LegacySchema))
+            if (schema is not (Schema or PreviousSchema or LegacySchema))
                 return false;
             var legacy = string.Equals(schema,LegacySchema,StringComparison.Ordinal);
+            var hasCostSource = string.Equals(schema,Schema,StringComparison.Ordinal);
             value = new(
                 schema,
                 root.GetProperty("correlation_id").GetString() ?? string.Empty,
@@ -540,6 +581,11 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
                 legacy ? 0m : root.GetProperty("ask_quantity").GetDecimal(),
                 legacy ? 0L : root.GetProperty("top_of_book_messages").GetInt64(),
                 legacy ? false : root.GetProperty("top_of_book_connected").GetBoolean(),
+                hasCostSource ? root.GetProperty("cost_model_version").GetString() ?? string.Empty : string.Empty,
+                hasCostSource ? root.GetProperty("commission_rate").GetDecimal() : 0m,
+                hasCostSource ? root.GetProperty("slippage_rate").GetDecimal() : 0m,
+                hasCostSource ? root.GetProperty("fixed_cost_per_trade").GetDecimal() : 0m,
+                hasCostSource ? root.GetProperty("borrow_rate_per_day").GetDecimal() : 0m,
                 root.GetProperty("step_size").GetDecimal(),
                 root.GetProperty("tick_size").GetDecimal(),
                 root.GetProperty("min_quantity").GetDecimal(),
@@ -612,7 +658,7 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             writer.WriteString("market_collected_at_utc", value.MarketCollectedAtUtc.ToUniversalTime());
             writer.WriteBase64String("market_provenance_canonical_bytes", value.MarketProvenanceCanonicalBytes);
             writer.WriteString("market_provenance_sha256", value.MarketProvenanceSha256);
-            if(value.Schema==Schema)
+            if(value.Schema is Schema or PreviousSchema)
             {
                 writer.WriteNumber("best_ask", value.BestAsk);
                 writer.WriteNumber("best_bid", value.BestBid);
@@ -626,6 +672,14 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
                     writer.WriteNull("top_of_book_updated_at_utc");
                 else
                     writer.WriteString("top_of_book_updated_at_utc", value.TopOfBookUpdatedAtUtc.Value.ToUniversalTime());
+            }
+            if(value.Schema==Schema)
+            {
+                writer.WriteNumber("borrow_rate_per_day", value.BorrowRatePerDay);
+                writer.WriteNumber("commission_rate", value.CommissionRate);
+                writer.WriteString("cost_model_version", value.CostModelVersion);
+                writer.WriteNumber("fixed_cost_per_trade", value.FixedCostPerTrade);
+                writer.WriteNumber("slippage_rate", value.SlippageRate);
             }
             writer.WriteNumber("max_leverage", value.MaxLeverage);
             writer.WriteNumber("min_notional", value.MinNotional);
@@ -664,17 +718,28 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
 
 internal static class AutomaticExecutionSimulationModelV1
 {
-    internal const string Version = "wpe.execution-simulation-model/1.1";
+    internal const string Version = "wpe.execution-simulation-model/1.2";
+    private const string UnavailableCostVersion = "wpe.trading-reality-cost/1.0:unavailable";
 
     internal static ExecutionSimulationFillV1 CreateFill(ExecutionSimulationSourceV1 source)
     {
         if (!ExecutionSimulationSourceCanonicalizerV1.IsCanonical(source))
             throw new InvalidOperationException("Execution simulation source is not canonical.");
 
-        var costs = ExecutionRealityCostAuthorityV1.Current;
         var venueVersion = source.State == ExecutionSimulationSourceStateV1.Available
             ? "wpe.venue-rule/1.0:" + source.VenueRuleSha256
             : "wpe.venue-rule/1.0:unavailable";
+
+        if (source.Schema != ExecutionSimulationSourceCanonicalizerV1.Schema)
+            return Unsupported(source, UnavailableCostVersion, venueVersion, "simulation-cost-source-unavailable");
+
+        var costs = new ExecutionRealityCostAssumptionV1(
+            source.CostModelVersion,
+            source.CommissionRate,
+            source.SlippageRate);
+
+        if (source.FixedCostPerTrade != 0 || source.BorrowRatePerDay != 0)
+            return Unsupported(source, costs.Version, venueVersion, "simulation-cost-model-unsupported");
 
         if (source.State != ExecutionSimulationSourceStateV1.Available)
             return Unsupported(source, costs.Version, venueVersion, source.ReasonCode);
@@ -783,9 +848,9 @@ internal static class AutomaticExecutionSimulationModelV1
             source.OrderType,
             source.IntendedQuantity,
             ExecutionSimulationFillStateV1.Unsupported,
-            0,
-            0,
-            0,
+            0m,
+            0m,
+            0m,
             ExecutionSimulationFeeRoleV1.Unavailable,
             latencyModeled:false,
             simulatedLatencyMs:0,
@@ -935,6 +1000,13 @@ internal sealed class AutomaticExecutionRealityPipelineV1
                 :source.State==ExecutionSimulationSourceStateV1.Available
                     ?"wpe.venue-rule/1.0:"+source.VenueRuleSha256
                     :"wpe.venue-rule/1.0:unavailable";
+            var comparisonCosts=source is not null
+                &&source.Schema==ExecutionSimulationSourceCanonicalizerV1.Schema
+                ?new ExecutionRealityCostAssumptionV1(
+                    source.CostModelVersion,
+                    source.CommissionRate,
+                    source.SlippageRate)
+                :ExecutionRealityCostAuthorityV1.Current;
             if (fill is null || source is null
                 || !string.Equals(source.ArtifactSha256,hashes.ArtifactHash,StringComparison.Ordinal)
                 || !string.Equals(source.IntentSha256,hashes.IntentHash,StringComparison.Ordinal)
@@ -944,7 +1016,7 @@ internal sealed class AutomaticExecutionRealityPipelineV1
                 || source.SourceObservedAtUtc>executing[0].OccurredAtUtc
                 || !string.Equals(fill.StrategyId,artifact.StrategyId,StringComparison.Ordinal)
                 || !string.Equals(fill.StrategyVersion,artifact.StrategyVersion,StringComparison.Ordinal)
-                || !string.Equals(fill.CostModelVersion,ExecutionRealityCostAuthorityV1.Version,StringComparison.Ordinal)
+                || !string.Equals(fill.CostModelVersion,comparisonCosts.Version,StringComparison.Ordinal)
                 || !string.Equals(fill.SimulationModelVersion,AutomaticExecutionSimulationModelV1.Version,StringComparison.Ordinal)
                 || !string.Equals(fill.VenueRuleVersion,expectedVenueVersion,StringComparison.Ordinal)
                 || fill.SimulatedAtUtc != source.SourceObservedAtUtc)
@@ -977,7 +1049,7 @@ internal sealed class AutomaticExecutionRealityPipelineV1
             }
 
             var intent = RestoreIntent(intentSnapshot);
-            var costs = ExecutionRealityCostAuthorityV1.Current;
+            var costs = comparisonCosts;
             var fee = await _store.GetExecutionRealityFeeObservationAsync(
                 order.ClientOrderId,
                 order.ExecutedQuantity,
