@@ -2,6 +2,8 @@ param(
     [ValidatePattern('^[a-z0-9-]+$')]
     [string]$Runtime = "win-x64",
     [string]$Output = "artifacts/release-readiness/publish",
+    [string]$HeadlessOutput = "artifacts/release-readiness/headless",
+    [string]$MaintenanceOutput = "artifacts/release-readiness/maintenance",
     [string]$ReportDirectory = "artifacts/release-readiness/report",
     [switch]$PreviewGateOnly,
     [switch]$StaticGatesOnly,
@@ -91,10 +93,20 @@ if ($PreviewGateOnly) {
 }
 
 $outputPath = Resolve-InRoot $Output
+$headlessOutputPath = Resolve-InRoot $HeadlessOutput
+$maintenanceOutputPath = Resolve-InRoot $MaintenanceOutput
 $reportPath = Resolve-InRoot $ReportDirectory
 $projectFiles = @(Get-ChildItem -LiteralPath $root -File -Filter "*.csproj")
 if ($projectFiles.Count -ne 1) { throw "Expected exactly one application project file; found $($projectFiles.Count)." }
 $projectFile = $projectFiles[0].FullName
+$solutionFile = Join-Path $root "币安量化机器人.sln"
+$headlessProject = Join-Path $root "WPE.Headless/WPE.Headless.csproj"
+$maintenanceProject = Join-Path $root "WPE.Maintenance/WPE.Maintenance.csproj"
+foreach ($requiredProject in @($solutionFile, $headlessProject, $maintenanceProject)) {
+    if (-not (Test-Path -LiteralPath $requiredProject -PathType Leaf)) {
+        throw "Release runtime bundle project is missing: $requiredProject"
+    }
+}
 $webRoot = Join-Path $root "WebUi"
 [xml]$projectXml = Get-Content -Raw -LiteralPath $projectFile
 $productVersionNodes = @($projectXml.Project.PropertyGroup.Version | Where-Object { $_ })
@@ -102,6 +114,11 @@ if ($productVersionNodes.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$p
     throw "The application project must define exactly one authoritative Version."
 }
 $productVersion = ([string]$productVersionNodes[0]).Trim()
+$parsedProductVersion = [Version]$productVersion
+$assemblyVersion = "$($parsedProductVersion.Major).$($parsedProductVersion.Minor).$($parsedProductVersion.Build).0"
+$sourceCommit = (& git -C $root rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') { throw "Unable to resolve release source commit." }
+$sourceDirty = @(& git -C $root status --porcelain=v1 --untracked-files=normal).Count -gt 0
 
 function Invoke-External([string]$Command, [string[]]$Arguments) {
     & $Command @Arguments
@@ -120,6 +137,114 @@ function Invoke-Step([string]$Name, [scriptblock]$Action) {
         $steps.Add([ordered]@{ name = $Name; status = "failed"; durationSeconds = [Math]::Round($watch.Elapsed.TotalSeconds, 3) })
         throw
     }
+}
+
+
+function Reset-ArtifactDirectory([string]$Path) {
+    if (Test-Path -LiteralPath $Path) {
+        $resolved = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $Path).Path)
+        if (-not $resolved.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or $resolved -eq $root) {
+            throw "Refusing to clean unsafe release artifact path: $resolved"
+        }
+        Remove-Item -LiteralPath $resolved -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+}
+
+function Get-TextSha256([string]$Value) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-ArtifactFacts([string]$Path) {
+    $relativePath = $Path.Substring($rootPrefix.Length).Replace('\', '/')
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        return [ordered]@{ relativePath = $relativePath; exists = $false; fileCount = 0; totalBytes = 0; treeSha256 = $null }
+    }
+    $prefix = $Path.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -File | Sort-Object FullName)
+    $lines = @($files | ForEach-Object {
+        $relative = $_.FullName.Substring($prefix.Length).Replace('\', '/')
+        $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$relative|$($_.Length)|$hash"
+    })
+    return [ordered]@{
+        relativePath = $relativePath
+        exists = $true
+        fileCount = $files.Count
+        totalBytes = [long](($files | Measure-Object -Property Length -Sum).Sum)
+        treeSha256 = Get-TextSha256 ($lines -join [Environment]::NewLine)
+    }
+}
+
+function Assert-NoRuntimeStateOrSecrets([string]$Path, [string]$Label) {
+    $forbiddenExtensions = @(".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12", ".pfx", ".env", ".pdb", ".cs", ".csproj", ".sln", ".ps1")
+    $forbiddenSuffixes = @(".db-wal", ".db-shm", ".sqlite-wal", ".sqlite-shm", ".sqlite3-wal", ".sqlite3-shm")
+    $forbidden = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -File | Where-Object {
+        $name = $_.Name.ToLowerInvariant()
+        $extension = $_.Extension.ToLowerInvariant()
+        $knownState = $name -match '^(agent-settings|appsettings|order-state|local-accounts|local-session|device-license|llm-calls|llm-cache)'
+        $secretData = ($name.Contains("secrets") -or $name.Contains("credentials")) -and
+            @(".json", ".dat", ".txt", ".xml", ".yaml", ".yml") -contains $extension
+        $knownState -or $secretData -or
+        $forbiddenExtensions -contains $extension -or
+        ($forbiddenSuffixes | Where-Object { $name.EndsWith($_) })
+    })
+    if ($forbidden.Count -gt 0) {
+        throw "$Label artifact contains forbidden runtime, source, debug, or secret files: $($forbidden.FullName -join ', ')"
+    }
+}
+
+function Assert-HeadlessArtifact {
+    if (-not (Test-Path -LiteralPath $headlessOutputPath -PathType Container)) { throw "Headless artifact directory is missing." }
+    foreach ($required in @("WPE-Headless.exe", "WPE-Headless.dll", "WPE-Headless.deps.json")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $headlessOutputPath $required) -PathType Leaf)) {
+            throw "Headless artifact is missing $required."
+        }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $headlessOutputPath "Resources/i18n/zh_CN.json") -PathType Leaf)) {
+        throw "Headless localization resources are missing."
+    }
+    if (Test-Path -LiteralPath (Join-Path $headlessOutputPath "WebUi")) { throw "Desktop Web UI entered the headless artifact." }
+    $deps = Get-Content -Raw -LiteralPath (Join-Path $headlessOutputPath "WPE-Headless.deps.json")
+    foreach ($forbiddenDependency in @("Microsoft.WindowsDesktop.App", "Microsoft.Web.WebView2", "ScottPlot.WPF", "PresentationFramework")) {
+        if ($deps.Contains($forbiddenDependency, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Headless artifact contains forbidden presentation dependency: $forbiddenDependency"
+        }
+    }
+    $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $headlessOutputPath "WPE-Headless.exe")).FileVersion
+    $parsed = [Version]$fileVersion
+    if ("$($parsed.Major).$($parsed.Minor).$($parsed.Build)" -ne $productVersion) {
+        throw "Headless binary version does not match product Version $productVersion."
+    }
+    Assert-NoRuntimeStateOrSecrets $headlessOutputPath "Headless"
+}
+
+function Assert-MaintenanceArtifact {
+    if (-not (Test-Path -LiteralPath $maintenanceOutputPath -PathType Container)) { throw "Maintenance artifact directory is missing." }
+    foreach ($required in @("WPE.Maintenance.exe", "WPE.Maintenance.dll", "WPE.Maintenance.deps.json")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $maintenanceOutputPath $required) -PathType Leaf)) {
+            throw "Maintenance artifact is missing $required."
+        }
+    }
+    if (Test-Path -LiteralPath (Join-Path $maintenanceOutputPath "WebUi")) { throw "Desktop Web UI entered the maintenance artifact." }
+    $deps = Get-Content -Raw -LiteralPath (Join-Path $maintenanceOutputPath "WPE.Maintenance.deps.json")
+    foreach ($forbiddenDependency in @("Microsoft.WindowsDesktop.App", "Microsoft.Web.WebView2", "ScottPlot.WPF", "PresentationFramework")) {
+        if ($deps.Contains($forbiddenDependency, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Maintenance artifact contains forbidden presentation dependency: $forbiddenDependency"
+        }
+    }
+    $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $maintenanceOutputPath "WPE.Maintenance.exe")).FileVersion
+    $parsed = [Version]$fileVersion
+    if ("$($parsed.Major).$($parsed.Minor).$($parsed.Build)" -ne $productVersion) {
+        throw "Maintenance binary version does not match product Version $productVersion."
+    }
+    Assert-NoRuntimeStateOrSecrets $maintenanceOutputPath "Maintenance"
 }
 
 function Assert-FileContains([string]$RelativePath, [string]$Pattern, [string]$Rule) {
@@ -180,13 +305,16 @@ if ($StaticGatesOnly) {
 function Write-Reports {
     New-Item -ItemType Directory -Path $reportPath -Force | Out-Null
     $finishedAt = [DateTimeOffset]::UtcNow
-    $files = if (Test-Path -LiteralPath $outputPath) { @(Get-ChildItem -LiteralPath $outputPath -Recurse -Force -File) } else { @() }
+    $desktopArtifact = Get-ArtifactFacts $outputPath
+    $headlessArtifact = Get-ArtifactFacts $headlessOutputPath
+    $maintenanceArtifact = Get-ArtifactFacts $maintenanceOutputPath
     $report = [ordered]@{
         schemaVersion = "wpe.release-readiness.v1"
         status = $overallStatus
         configuration = "Release"
         runtime = $Runtime
         productVersion = $productVersion
+        source = [ordered]@{ commit = $sourceCommit; dirty = $sourceDirty }
         startedAtUtc = $startedAt.ToString("O")
         finishedAtUtc = $finishedAt.ToString("O")
         durationSeconds = [Math]::Round(($finishedAt - $startedAt).TotalSeconds, 3)
@@ -198,10 +326,11 @@ function Write-Reports {
             artifactSecretScanPassed = ($overallStatus -eq "passed")
             productionPreviewDataPresent = $false
         }
-        artifact = [ordered]@{
-            relativePath = $outputPath.Substring($rootPrefix.Length).Replace('\', '/')
-            fileCount = $files.Count
-            totalBytes = [long](($files | Measure-Object -Property Length -Sum).Sum)
+        artifact = $desktopArtifact
+        artifacts = [ordered]@{
+            desktop = $desktopArtifact
+            headless = $headlessArtifact
+            maintenance = $maintenanceArtifact
         }
         steps = @($steps)
         failure = $failure
@@ -214,9 +343,13 @@ function Write-Reports {
     $lines.Add("- Status: **$($overallStatus.ToUpperInvariant())**")
     $lines.Add("- Configuration/runtime: Release / $Runtime")
     $lines.Add("- Product version (project/assembly): $productVersion")
+    $lines.Add("- Source commit: $sourceCommit")
+    $lines.Add("- Source dirty: $sourceDirty")
     $lines.Add("- Testnet-only: yes; Mainnet enabled: no")
     $lines.Add("- Deployment/upload performed: no")
-    $lines.Add("- Artifact files: $($files.Count)")
+    $lines.Add("- Desktop files/tree: $($desktopArtifact.fileCount) / $($desktopArtifact.treeSha256)")
+    $lines.Add("- Headless files/tree: $($headlessArtifact.fileCount) / $($headlessArtifact.treeSha256)")
+    $lines.Add("- Maintenance files/tree: $($maintenanceArtifact.fileCount) / $($maintenanceArtifact.treeSha256)")
     $lines.Add("")
     $lines.Add("## Checks")
     $lines.Add("")
@@ -246,9 +379,20 @@ try {
         }
     } finally { Pop-Location }
     Invoke-Step ".NET tests" { & (Join-Path $root "eng/test.ps1") -Configuration Release; if ($LASTEXITCODE -ne 0) { throw ".NET tests failed." } }
-    Invoke-Step ".NET Release build" { Invoke-External "dotnet" @("build", $projectFile, "--configuration", "Release", "--no-restore", "--nologo") }
-    Invoke-Step "Release publish" { & (Join-Path $root "publish.ps1") -Configuration Release -Runtime $Runtime -Output $outputPath -SkipWebBuild; if ($LASTEXITCODE -ne 0) { throw "Release publish failed." } }
-    Invoke-Step "Published artifact validation" { Assert-PublishArtifact }
+    Invoke-Step ".NET solution restore" { Invoke-External "dotnet" @("restore", $solutionFile, "--runtime", $Runtime, "--nologo") }
+    Invoke-Step ".NET Release build" { Invoke-External "dotnet" @("build", $solutionFile, "--configuration", "Release", "--no-restore", "--nologo") }
+    Invoke-Step "Headless publish" {
+        Reset-ArtifactDirectory $headlessOutputPath
+        Invoke-External "dotnet" @("publish", $headlessProject, "--configuration", "Release", "--framework", "net8.0", "--runtime", $Runtime, "--self-contained", "false", "--no-restore", "-p:Version=$productVersion", "-p:AssemblyVersion=$assemblyVersion", "-p:FileVersion=$assemblyVersion", "-p:DebugType=None", "-p:DebugSymbols=false", "--output", $headlessOutputPath)
+    }
+    Invoke-Step "Headless artifact validation" { Assert-HeadlessArtifact }
+    Invoke-Step "Maintenance publish" {
+        Reset-ArtifactDirectory $maintenanceOutputPath
+        Invoke-External "dotnet" @("publish", $maintenanceProject, "--configuration", "Release", "--framework", "net8.0", "--runtime", $Runtime, "--self-contained", "false", "--no-restore", "-p:Version=$productVersion", "-p:AssemblyVersion=$assemblyVersion", "-p:FileVersion=$assemblyVersion", "-p:DebugType=None", "-p:DebugSymbols=false", "--output", $maintenanceOutputPath)
+    }
+    Invoke-Step "Maintenance artifact validation" { Assert-MaintenanceArtifact }
+    Invoke-Step "Desktop release publish" { & (Join-Path $root "publish.ps1") -Configuration Release -Runtime $Runtime -Output $outputPath -SkipWebBuild; if ($LASTEXITCODE -ne 0) { throw "Release publish failed." } }
+    Invoke-Step "Desktop artifact validation" { Assert-PublishArtifact }
     $overallStatus = "passed"
 } catch {
     $overallStatus = "failed"

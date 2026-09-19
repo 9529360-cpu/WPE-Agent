@@ -27,12 +27,63 @@ function Write-Proof([string]$path,$candidate,$lkg,[hashtable]$overrides){
     $proof|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $path -Encoding utf8
     Hash $path
 }
+function Write-SoakEvidence([string]$path,$candidate,[hashtable]$overrides){
+    $manifest=Get-Content -Raw -LiteralPath (Join-Path $candidate.CandidateRoot 'release-manifest.json')|ConvertFrom-Json
+    $now=[DateTimeOffset]::UtcNow
+    $samplePath=Join-Path (Split-Path -Parent $path) 'headless-soak-samples.jsonl'
+    $sample=[ordered]@{
+        schemaVersion='wpe.headless-soak-sample/1.0'
+        sampledAtUtc=$now.AddSeconds(-5).ToString('O')
+        observedAtUtc=$now.AddSeconds(-6).ToString('O')
+        healthAgeSeconds=1
+        processState='ready'
+        processCode='headless.ready'
+        runtimeReady=$true
+        agentRunning=$true
+        accessFresh=$true
+        heartbeatFresh=$true
+        leaseLost=$false
+        inStartupGrace=$false
+        accepted=$true
+        reason=$null
+    }
+    @(
+        ($sample|ConvertTo-Json -Compress),
+        ($sample|ConvertTo-Json -Compress)
+    )|Set-Content -LiteralPath $samplePath -Encoding utf8
+    $e=[ordered]@{
+        schemaVersion='wpe.headless-soak-evidence/1.0'
+        status='passed'
+        sourceIdentity=[string]$manifest.sourceIdentity
+        candidateManifestSha256=$candidate.ManifestSha256
+        startedAtUtc=$now.AddHours(-25).ToString('O')
+        completedAtUtc=$now.ToString('O')
+        requestedDurationSeconds=90000
+        observedDurationSeconds=90000
+        pollSeconds=5
+        startupGraceSeconds=60
+        maximumHealthAgeSeconds=15
+        sampleCount=2
+        expectedMinimumSamples=2
+        readySamples=2
+        graceSamples=0
+        unhealthySamples=0
+        invalidSamples=0
+        maximumObservedHealthAgeSeconds=1
+        samplesFile='headless-soak-samples.jsonl'
+        samplesSha256=Hash $samplePath
+        reasonCounts=[ordered]@{}
+    }
+    foreach($key in $overrides.Keys){$e[$key]=$overrides[$key]}
+    $e|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $path -Encoding utf8
+    Hash $path
+}
 $root=Join-Path ([IO.Path]::GetTempPath()) ('wpe-dogfood-'+[Guid]::NewGuid().ToString('N'));New-Item -ItemType Directory -Path $root|Out-Null
 try{
     $tool=Split-Path $PSScriptRoot -Parent;$new=Join-Path $tool 'New-Candidate.ps1';$script:new=$new;$test=Join-Path $tool 'Test-DogfoodRelease.ps1';$switch=Join-Path $tool 'Switch-DogfoodSlot.ps1'
     $fixtureRoot=Join-Path $PSScriptRoot 'fixtures';$f01=Get-Content -Raw (Join-Path $fixtureRoot 'F01-trusted-runtime-proof-not-consumed.json')|ConvertFrom-Json;$f02=Get-Content -Raw (Join-Path $fixtureRoot 'F02-manifest-hash-unanchored.json')|ConvertFrom-Json
     Assert ($f01.expectedRejection -eq 'runtime.proof-source-untrusted') 'F01 fixture contract changed';Assert ($f02.expectedRejection -eq 'candidate.manifest-hash-mismatch') 'F02 fixture contract changed'
-    $command=(Get-Command $test).Parameters.Keys;[string[]]$contract='CandidateRoot','LastKnownGoodRoot','ProviderReadOnly','RequireTrustedRuntimeFresh','VerifyInstall','VerifyStartup','VerifyRestartRecovery','VerifyRollback','RejectMainnet','ExpectedCandidateManifestHash','ExpectedLastKnownGoodManifestHash','TrustedRuntimeProofPath','ExpectedTrustedRuntimeProofHash','ExpectedRuntimeProofId','ExpectedRuntimeSourceIdentity','ExpectedEvidenceGateRefs','MaximumRuntimeAgeSeconds','TestnetMutationSmoke','VerifiedGateEvidenceRef','Mainnet'
+    $command=(Get-Command $test).Parameters.Keys;[string[]]$contract='CandidateRoot','LastKnownGoodRoot','ProviderReadOnly','RequireTrustedRuntimeFresh','VerifyInstall','VerifyStartup','VerifyRestartRecovery','VerifyRollback','RejectMainnet','ExpectedCandidateManifestHash','ExpectedLastKnownGoodManifestHash','TrustedRuntimeProofPath','ExpectedTrustedRuntimeProofHash','ExpectedRuntimeProofId','ExpectedRuntimeSourceIdentity','ExpectedEvidenceGateRefs','SoakEvidencePath','ExpectedSoakEvidenceHash','MinimumSoakDurationMinutes','MaximumRuntimeAgeSeconds','TestnetMutationSmoke','VerifiedGateEvidenceRef','Mainnet'
     foreach($name in $contract){Assert ($command -contains $name) "missing parameter $name"}
     $tokens=$null;$parseErrors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($test,[ref]$tokens,[ref]$parseErrors);Assert ($parseErrors.Count -eq 0) 'validator AST parse failed'
     $declared=@($ast.ParamBlock.Parameters|ForEach-Object {$_.Name.VariablePath.UserPath});Assert ((Compare-Object $contract $declared -SyncWindow 0).Count -eq 0) 'stable parameter order changed'
@@ -59,9 +110,10 @@ exit 0
     Assert (@(Get-ChildItem -LiteralPath $candidate.CandidateRoot,$lkg.CandidateRoot -Recurse -File|Where-Object {-not $_.IsReadOnly}).Count -eq 0) 'candidate or LKG contains mutable staged files'
     Assert ($candidate.ManifestSha256 -eq (Hash (Join-Path $candidate.CandidateRoot 'release-manifest.json'))) 'candidate identity is not deterministic over staged bytes'
     $proofPath=Join-Path $root 'trusted-runtime-proof.json';$proofHash=Write-Proof $proofPath $candidate $lkg @{}
-    $acceptance=@{CandidateRoot=$candidate.CandidateRoot;LastKnownGoodRoot=$lkg.CandidateRoot;ProviderReadOnly=$true;RequireTrustedRuntimeFresh=$true;VerifyInstall=$true;VerifyStartup=$true;VerifyRestartRecovery=$true;VerifyRollback=$true;RejectMainnet=$true;ExpectedCandidateManifestHash=$candidate.ManifestSha256;ExpectedLastKnownGoodManifestHash=$lkg.ManifestSha256;TrustedRuntimeProofPath=$proofPath;ExpectedTrustedRuntimeProofHash=$proofHash;ExpectedRuntimeProofId='proof/current-001';ExpectedRuntimeSourceIdentity='runtime/snapshot-authority-v1';ExpectedEvidenceGateRefs=@('gate/build','gate/tests')}
-    $result=& $test @acceptance;Assert $result.Valid 'full acceptance failed';Assert ($result.Transcript -contains 'testnet-mutation:not-run') 'mutation default changed';Assert ($result.UserDataRollback -eq 'not-performed') 'user data rollback changed'
-    Assert (($result.Transcript[1..4] -join ',') -eq 'install:pass,startup:pass,restart:pass,rollback-preflight:pass') 'verification order changed'
+    $soakPath=Join-Path $root 'headless-soak-evidence.json';$soakHash=Write-SoakEvidence $soakPath $candidate @{}
+    $acceptance=@{CandidateRoot=$candidate.CandidateRoot;LastKnownGoodRoot=$lkg.CandidateRoot;ProviderReadOnly=$true;RequireTrustedRuntimeFresh=$true;VerifyInstall=$true;VerifyStartup=$true;VerifyRestartRecovery=$true;VerifyRollback=$true;RejectMainnet=$true;ExpectedCandidateManifestHash=$candidate.ManifestSha256;ExpectedLastKnownGoodManifestHash=$lkg.ManifestSha256;TrustedRuntimeProofPath=$proofPath;ExpectedTrustedRuntimeProofHash=$proofHash;ExpectedRuntimeProofId='proof/current-001';ExpectedRuntimeSourceIdentity='runtime/snapshot-authority-v1';ExpectedEvidenceGateRefs=@('gate/build','gate/tests');SoakEvidencePath=$soakPath;ExpectedSoakEvidenceHash=$soakHash;MinimumSoakDurationMinutes=1440}
+    $result=& $test @acceptance;Assert $result.Valid 'full acceptance failed';Assert ($result.Transcript -contains 'testnet-mutation:not-run') 'mutation default changed';Assert ($result.UserDataRollback -eq 'not-performed') 'user data rollback changed';Assert ($result.SoakEvidenceSha256 -eq $soakHash) 'soak evidence identity missing'
+    Assert (($result.Transcript[2..5] -join ',') -eq 'install:pass,startup:pass,restart:pass,rollback-preflight:pass') 'verification order changed'
     Throws {& $test @acceptance -Mainnet} 'mainnet.always-forbidden';Throws {& $test @acceptance -TestnetMutationSmoke} 'mutation.gate-evidence-required'
 
     $bad=$acceptance.Clone();$bad.TrustedRuntimeProofPath=Join-Path $root 'missing.json';Throws {& $test @bad} 'runtime.proof-missing'
@@ -79,20 +131,26 @@ exit 0
     $badHash=Write-Proof $proofPath $candidate $lkg @{candidateManifestSha256=('0'*64)};$bad=$acceptance.Clone();$bad.ExpectedTrustedRuntimeProofHash=$badHash;Throws {& $test @bad} 'runtime.proof-manifest-binding-mismatch'
 
     $proofHash=Write-Proof $proofPath $candidate $lkg @{};$acceptance.ExpectedTrustedRuntimeProofHash=$proofHash
+    $bad=$acceptance.Clone();$bad.SoakEvidencePath=Join-Path $root 'missing-soak.json';Throws {& $test @bad} 'soak.evidence-missing'
+    $bad=$acceptance.Clone();$bad.ExpectedSoakEvidenceHash=('0'*64);Throws {& $test @bad} 'soak.evidence-hash-mismatch'
+    $badSoakHash=Write-SoakEvidence $soakPath $candidate @{sourceIdentity='commit/other'};$bad=$acceptance.Clone();$bad.ExpectedSoakEvidenceHash=$badSoakHash;Throws {& $test @bad} 'soak.source-identity-mismatch'
+    $soakHash=Write-SoakEvidence $soakPath $candidate @{};$acceptance.ExpectedSoakEvidenceHash=$soakHash
+
+    $proofHash=Write-Proof $proofPath $candidate $lkg @{};$acceptance.ExpectedTrustedRuntimeProofHash=$proofHash
     $manifestPath=Join-Path $candidate.CandidateRoot 'release-manifest.json';(Get-Item $manifestPath).IsReadOnly=$false;$manifest=Get-Content -Raw $manifestPath|ConvertFrom-Json;$manifest.gates=@($f02.attack.rewriteManifestGate);$manifest|ConvertTo-Json -Depth 10|Set-Content $manifestPath -Encoding utf8
     Throws {& $test @acceptance} $f02.expectedRejection
     $candidate=New-TestCandidate -SourceRoot $source -SlotsRoot $slots -Version '1.0.2' -SourceIdentity 'commit/ccc' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests';$acceptance.CandidateRoot=$candidate.CandidateRoot;$acceptance.ExpectedCandidateManifestHash=$candidate.ManifestSha256;$acceptance.ExpectedTrustedRuntimeProofHash=Write-Proof $proofPath $candidate $lkg @{}
     (Get-Item -LiteralPath (Join-Path $candidate.CandidateRoot 'app.bin')).IsReadOnly=$false;'tamper'|Set-Content -LiteralPath (Join-Path $candidate.CandidateRoot 'app.bin');Throws {& $test @acceptance} 'candidate.hash-drift'
-    $candidate=New-TestCandidate -SourceRoot $source -SlotsRoot $slots -Version '1.0.3' -SourceIdentity 'commit/ddd' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests';$acceptance.CandidateRoot=$candidate.CandidateRoot;$acceptance.ExpectedCandidateManifestHash=$candidate.ManifestSha256;$acceptance.ExpectedTrustedRuntimeProofHash=Write-Proof $proofPath $candidate $lkg @{}
-    $operator=Join-Path $root 'operator';$switchArgs=@{CandidateRoot=$candidate.CandidateRoot;LastKnownGoodRoot=$lkg.CandidateRoot;OperatorRoot=$operator;ExpectedCandidateManifestHash=$candidate.ManifestSha256;ExpectedLastKnownGoodManifestHash=$lkg.ManifestSha256;TrustedRuntimeProofPath=$proofPath;ExpectedTrustedRuntimeProofHash=$acceptance.ExpectedTrustedRuntimeProofHash;ExpectedRuntimeProofId='proof/current-001';ExpectedRuntimeSourceIdentity='runtime/snapshot-authority-v1';ExpectedEvidenceGateRefs=@('gate/build','gate/tests')}
-    $switched=& $switch @switchArgs;Assert (Test-Path (Join-Path $operator 'current.json')) 'atomic pointer missing';Assert $switched.Valid 'switch validation failed'
+    $candidate=New-TestCandidate -SourceRoot $source -SlotsRoot $slots -Version '1.0.3' -SourceIdentity 'commit/ddd' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests';$acceptance.CandidateRoot=$candidate.CandidateRoot;$acceptance.ExpectedCandidateManifestHash=$candidate.ManifestSha256;$acceptance.ExpectedTrustedRuntimeProofHash=Write-Proof $proofPath $candidate $lkg @{};$acceptance.ExpectedSoakEvidenceHash=Write-SoakEvidence $soakPath $candidate @{}
+    $operator=Join-Path $root 'operator';$switchArgs=@{CandidateRoot=$candidate.CandidateRoot;LastKnownGoodRoot=$lkg.CandidateRoot;OperatorRoot=$operator;ExpectedCandidateManifestHash=$candidate.ManifestSha256;ExpectedLastKnownGoodManifestHash=$lkg.ManifestSha256;TrustedRuntimeProofPath=$proofPath;ExpectedTrustedRuntimeProofHash=$acceptance.ExpectedTrustedRuntimeProofHash;ExpectedRuntimeProofId='proof/current-001';ExpectedRuntimeSourceIdentity='runtime/snapshot-authority-v1';ExpectedEvidenceGateRefs=@('gate/build','gate/tests');SoakEvidencePath=$soakPath;ExpectedSoakEvidenceHash=$acceptance.ExpectedSoakEvidenceHash;MinimumSoakDurationMinutes=1440}
+    $switched=& $switch @switchArgs;Assert (Test-Path (Join-Path $operator 'current.json')) 'atomic pointer missing';Assert $switched.Valid 'switch validation failed';$current=Get-Content -Raw -LiteralPath (Join-Path $operator 'current.json')|ConvertFrom-Json;Assert ($current.soakEvidenceSha256 -eq $acceptance.ExpectedSoakEvidenceHash) 'atomic pointer omitted soak evidence identity'
     $mutableRoot=Join-Path $root 'bin';Copy-Item -LiteralPath $candidate.CandidateRoot -Destination $mutableRoot -Recurse;$bad=$acceptance.Clone();$bad.CandidateRoot=$mutableRoot;Throws {& $test @bad} 'candidate.mutable-root'
     $otherSource=Join-Path $root 'other-package';Copy-Item -LiteralPath $source -Destination $otherSource -Recurse
     $other=New-TestCandidate -SourceRoot $otherSource -SlotsRoot $slots -Version '1.1.0' -SourceIdentity 'commit/other' -ConfigurationSchema 'cfg/2' -MigrationVersion 'db/1' -Gates 'build','tests';$bad=$acceptance.Clone();$bad.CandidateRoot=$other.CandidateRoot;$bad.ExpectedCandidateManifestHash=$other.ManifestSha256;$bad.ExpectedTrustedRuntimeProofHash=Write-Proof $proofPath $other $lkg @{};Throws {& $test @bad} 'configuration.schema-mismatch'
     $badSource=Join-Path $root 'bad-package';New-Item -ItemType Directory $badSource|Out-Null;'payload'|Set-Content (Join-Path $badSource 'app.bin') -Encoding ascii
     "param([string]`$Mode,[switch]`$ProviderReadOnly,[string]`$Environment);if(`$Mode -eq 'startup'){exit 7};exit 0"|Set-Content (Join-Path $badSource 'dogfood-probe.ps1') -Encoding utf8
-    $failed=New-TestCandidate -SourceRoot $badSource -SlotsRoot $slots -Version '1.2.0' -SourceIdentity 'commit/fail' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests';$failedProofHash=Write-Proof $proofPath $failed $lkg @{}
-    $failedArgs=$switchArgs.Clone();$failedArgs.CandidateRoot=$failed.CandidateRoot;$failedArgs.ExpectedCandidateManifestHash=$failed.ManifestSha256;$failedArgs.ExpectedTrustedRuntimeProofHash=$failedProofHash;$failedArgs.OperatorRoot=Join-Path $root 'failed-operator'
+    $failed=New-TestCandidate -SourceRoot $badSource -SlotsRoot $slots -Version '1.2.0' -SourceIdentity 'commit/fail' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests';$failedProofHash=Write-Proof $proofPath $failed $lkg @{};$failedSoakHash=Write-SoakEvidence $soakPath $failed @{}
+    $failedArgs=$switchArgs.Clone();$failedArgs.CandidateRoot=$failed.CandidateRoot;$failedArgs.ExpectedCandidateManifestHash=$failed.ManifestSha256;$failedArgs.ExpectedTrustedRuntimeProofHash=$failedProofHash;$failedArgs.ExpectedSoakEvidenceHash=$failedSoakHash;$failedArgs.OperatorRoot=Join-Path $root 'failed-operator'
     Throws {& $switch @failedArgs} 'probe.startup.failed';Assert (-not(Test-Path (Join-Path $failedArgs.OperatorRoot 'current.json'))) 'failed candidate switched operator pointer'
     Throws {& $new -SourceRoot (Join-Path $root 'release') -SlotsRoot $slots -Version '2.0.0' -SourceIdentity 'commit/eee' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build' -ExpectedSourceManifestHash ('0'*64) -PackageVerificationPath (Join-Path $root 'missing-verification.json') -ExpectedPackageVerificationHash ('0'*64)} 'source.missing'
     'PASS ReleaseSlots anchored-manifest/trusted-runtime/install/start/restart/rollback/atomic-switch/mainnet/mutation-default/user-data'
