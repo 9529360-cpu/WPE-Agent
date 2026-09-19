@@ -97,7 +97,7 @@ public sealed class ExecutionTopOfBookSimulationV1Tests : IDisposable
         var bundle = Bundle(
             Artifact(quantity:0.15m),
             Snapshot(),
-            new TradingRule("BTCUSDT", .1m, .1m, .1m, 5m, 20),
+            new TradingRule("BTCUSDT", 0.1m, 0.1m, 0.1m, 5m, 20),
             Now);
 
         Assert.Equal(ExecutionSimulationFillStateV1.Unsupported, bundle.Fill.State);
@@ -285,7 +285,7 @@ public sealed class ExecutionTopOfBookSimulationV1Tests : IDisposable
             true);
 
     private static TradingRule Rule() =>
-        new("BTCUSDT", .01m, .1m, .01m, 5m, 20);
+        new("BTCUSDT", 0.01m, 0.1m, 0.01m, 5m, 20);
 
     private sealed class FakeFeed(RealtimeMarketSnapshot? snapshot) : IRealtimeMarketFeed
     {
