@@ -84,6 +84,12 @@ public sealed record HistoricalAuditEventV1(
     string Status);
 
 
+public sealed record HistoricalEvidenceLinkV1(
+    string Stage,
+    string Status,
+    string CanonicalSha256,
+    DateTimeOffset AsOfUtc);
+
 public sealed record HistoricalPostTradeReviewV1(
     string TraceId,
     string Schema,
@@ -114,7 +120,9 @@ public sealed record HistoricalPostTradeReviewV1(
     string ExecutionCode,
     int? ExecutionAttempts,
     DateTimeOffset? MarketCollectedAtUtc,
-    string? MarketDataVersion);
+    string? MarketDataVersion,
+    string EvidenceState,
+    IReadOnlyList<HistoricalEvidenceLinkV1> EvidenceChain);
 
 public sealed record HistoricalReconciliationV1(
     string Kind,
