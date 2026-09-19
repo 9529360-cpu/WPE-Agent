@@ -163,13 +163,13 @@ internal static class ExecutionSimulationSourceCanonicalizerV1
             {
                 topOfBookReason = "top-of-book-symbol-mismatch";
             }
-            else if (top.UpdatedAt.Kind != DateTimeKind.Utc)
+            else if (top.BookUpdatedAt.Kind != DateTimeKind.Utc)
             {
                 topOfBookReason = "top-of-book-invalid-or-stale";
             }
             else
             {
-                var candidateAt = new DateTimeOffset(top.UpdatedAt);
+                var candidateAt = new DateTimeOffset(top.BookUpdatedAt);
                 if (candidateAt > observedAt
                     || observedAt - candidateAt > MaximumTopOfBookAge
                     || top.BestBid <= 0
