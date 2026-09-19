@@ -114,13 +114,19 @@ test('global shell remains read-only and lifecycle commands have one typed bridg
     assert.match(hostCommand, new RegExp(`'${command}'`), `missing allowed host command ${command}`)
   }
   assert.doesNotMatch(hostCommand, /place-order|approve|confirm|submitOrder|direct-exchange-submit/)
+  assert.match(hostCommand, /'history-page'/)
+  assert.match(hostCommand, /postHistoryPageRequest/)
+  assert.doesNotMatch(hostCommand, /\boffset\b|\blimit\b|sql/i)
 
   const agents = source('app/(dashboard)/agents/page.tsx')
   const settings = source('app/(dashboard)/settings/page.tsx')
-  for (const consumer of [agents, settings]) {
+  const history = source('app/(dashboard)/history/page.tsx')
+  for (const consumer of [agents, settings, history]) {
     assert.match(consumer, /postHostCommand/)
     assert.doesNotMatch(consumer, /\.postMessage\s*\(/)
   }
+  assert.match(history, /postHistoryPageRequest/)
+  assert.match(history, /normalizeHistoricalPageResponse/)
   assert.match(agents, /window\.confirm/)
   assert.match(agents, /agentStartAllowed/)
   assert.match(agents, /agentStopAllowed/)

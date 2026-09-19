@@ -18,8 +18,8 @@ Important facts:
 
 - Production is a static Next.js export inside WPF WebView2; there is no production REST API port.
 - Runtime truth arrives through the `wpe-runtime` window event as a complete host snapshot.
-- The only Web-to-host commands are `open-settings`, `open-notification-settings`, `agent-start`, and `agent-stop`.
-- Web-to-host commands must go through the shared typed bridge in `WebUi/lib/host-command.ts`; do not add direct `postMessage` call sites.
+- The only control commands are `open-settings`, `open-notification-settings`, `agent-start`, and `agent-stop`. History additionally has one bounded read-only `history-page` query carrying only a request id, collection key, and host-signed cursor; it cannot supply a limit, offset, SQL, mutation, or authority.
+- All Web-to-host messages must go through the shared typed bridge in `WebUi/lib/host-command.ts`; do not add direct `postMessage` call sites.
 - The canonical trading chain is exactly Market, Research, Strategy, Risk, Execution, Recovery, Audit.
 - The Financial Teacher is outside that chain and has no trading authority.
 - Unsupported, stale and error data must be withheld. Never invent preview values, sample Agents, charts, positions, orders, lessons or recommendations.
@@ -36,7 +36,7 @@ For substantial redesign work, keep these decisions explicit in the implementati
 4. Reused or changed component/token contracts.
 5. State behavior for available, empty, stale, unsupported, error, disconnected and unauthorized data.
 6. Exact mapping from visible runtime data to `WpeRuntimeState` fields.
-7. Action mapping to the four allowlisted host commands.
+7. Action mapping to the four allowlisted control commands plus the bounded read-only history-page query.
 8. Localization and long-text behavior across all supported locales.
 9. Accessibility, dense-table, keyboard/focus, reduced-motion and consequential-action treatment.
 10. Any missing backend fields or unsafe ambiguities. Do not invent missing fields.

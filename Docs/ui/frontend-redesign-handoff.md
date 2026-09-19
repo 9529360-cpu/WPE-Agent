@@ -28,7 +28,7 @@ The WPE backend owns runtime truth, permissions, data freshness, trading authori
 - Production browser network access: forbidden. The Web UI must not call `fetch`, XHR, WebSocket, EventSource, exchange endpoints, localhost APIs or remote analytics.
 - Development preview: the normal Next.js development port may be used for visual work. Development preview data must never ship in `WebUi/out`.
 - Host-to-Web update: WPF dispatches the complete runtime snapshot through the `wpe-runtime` window event.
-- Web-to-host commands are emitted only through the shared typed bridge in `WebUi/lib/host-command.ts`.
+- Web-to-host messages are emitted only through the shared typed bridge in `WebUi/lib/host-command.ts`.
 
 The production UI is a projection of one complete host snapshot. It is not a separately authenticated web service and must not create a second source of truth.
 
@@ -41,7 +41,7 @@ The production UI is a projection of one complete host snapshot. It is not a sep
 | `agent-start` | Request Agent start | Host revalidates readiness, Testnet environment and current authority |
 | `agent-stop` | Request Agent stop | Host owns lifecycle transition and resulting runtime state |
 
-No other Web-to-host command is supported. In particular, the Web UI cannot save credentials, place orders directly, bypass Risk Gate, modify strategies, approve risk, enable Mainnet or edit SQLite.
+No other control command is supported. A separate read-only `history-page` message may carry only a request id, one fixed historical collection key and a host-signed opaque cursor; the host chooses the bounded page size and validates cursor signature/version. The Web UI cannot supply offsets/SQL, save credentials, place orders directly, bypass Risk Gate, modify strategies, approve risk, enable Mainnet or edit SQLite.
 
 ## Runtime contract
 
@@ -150,7 +150,7 @@ Mature exchange terminals, including OpenDAX-style layouts, may be studied for i
 4. Malformed or stale runtime evidence fails closed rather than partially rendering actionable values.
 5. The exact seven-Agent chain is shown, with Teacher outside the trading chain.
 6. No browser network API exists in production code.
-7. Only the four allowlisted host commands are emitted, through the shared typed bridge.
+7. Only the four allowlisted control commands plus the bounded read-only history-page query are emitted, through the shared typed bridge.
 8. Start/stop controls remain disabled unless the host runtime reports the corresponding action as allowed.
 9. Representative desktop and narrow/mobile layouts show no overlap, clipped controls or unreadable long localized text.
 10. Security, execution, risk and persistence authority remain with their existing backend/WPF owners unless a separate accepted change explicitly moves that authority.

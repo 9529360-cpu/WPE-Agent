@@ -1,7 +1,9 @@
 'use client'
 
-import { HistoryCollectionsView, unsupportedHistoryProjection, type HistoryProjection } from '@/components/history/history-collections-view'
-import { useWpeRuntime, type RuntimeHistoricalCollection, type WpeRuntimeState } from '@/components/runtime-bridge'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { HistoryCollectionsView, unsupportedHistoryProjection, type HistoryCollectionKey, type HistoryProjection } from '@/components/history/history-collections-view'
+import { normalizeHistoricalPageResponse, useWpeRuntime, type RuntimeHistoricalCollection, type WpeRuntimeState } from '@/components/runtime-bridge'
+import { postHistoryPageRequest } from '@/lib/host-command'
 import { PageHeader } from '@/components/shell/page-header'
 import { StatusBadge } from '@/components/ui/status-badge'
 
@@ -14,6 +16,7 @@ function pageMetadata<T>(collection: RuntimeHistoricalCollection<T>) {
     pageNumber: 1,
     hasPreviousPage: false,
     hasNextPage: collection.state === 'available' && collection.nextCursor !== null,
+    nextCursor: collection.state === 'available' ? collection.nextCursor : null,
   }
 }
 
@@ -37,8 +40,84 @@ export function projectRuntimeHistory(runtime: WpeRuntimeState): HistoryProjecti
   }
 }
 
+const historyKeys:HistoryCollectionKey[]=['orders','postTradeReviews','reconciliations','equity','backtests','skillCalls','auditEvents']
+type AnyHistoryPage=HistoryProjection[HistoryCollectionKey]
+type HistoryOverride={page:AnyHistoryPage;anchor:string|undefined}
+type PendingHistoryRequest={kind:HistoryCollectionKey;current:AnyHistoryPage;stack:AnyHistoryPage[];anchor:string|undefined}
+
 export default function HistoryPage() {
-  const runtime = useWpeRuntime()
+  const runtime=useWpeRuntime()
+  const baseProjection=useMemo(()=>projectRuntimeHistory(runtime),[runtime])
+  const baseRef=useRef(baseProjection);baseRef.current=baseProjection
+  const [overrides,setOverrides]=useState<Partial<Record<HistoryCollectionKey,HistoryOverride>>>({})
+  const [stacks,setStacks]=useState<Partial<Record<HistoryCollectionKey,AnyHistoryPage[]>>>({})
+  const [pendingKinds,setPendingKinds]=useState<ReadonlySet<HistoryCollectionKey>>(new Set())
+  const pendingRef=useRef(new Map<string,PendingHistoryRequest>())
+
+  const projection=useMemo(()=>{
+    const merged={...baseProjection} as Record<HistoryCollectionKey,AnyHistoryPage>
+    for(const key of historyKeys){
+      const override=overrides[key],base=baseProjection[key]
+      if(override&&base.state==='available'&&override.anchor===base.sourceUpdatedAtUtc)merged[key]=override.page
+    }
+    return merged as HistoryProjection
+  },[baseProjection,overrides])
+
+  useEffect(()=>{
+    const handler=(event:Event)=>{
+      const response=normalizeHistoricalPageResponse((event as CustomEvent<unknown>).detail)
+      if(!response)return
+      const pending=pendingRef.current.get(response.requestId)
+      if(!pending||pending.kind!==response.kind)return
+      pendingRef.current.delete(response.requestId)
+      setPendingKinds(current=>{const next=new Set(current);next.delete(response.kind);return next})
+      const base=baseRef.current[response.kind]
+      if(base.state!=='available'||base.sourceUpdatedAtUtc!==pending.anchor)return
+      const projected=projectRuntimeHistory(response.runtimePatch as WpeRuntimeState)[response.kind] as AnyHistoryPage
+      if(projected.state!=='available'||projected.sourceUpdatedAtUtc!==pending.anchor){
+        setOverrides(current=>{const next={...current};delete next[response.kind];return next})
+        setStacks(current=>{const next={...current};delete next[response.kind];return next})
+        return
+      }
+      const nextPage={...projected,pageNumber:(pending.current.pageNumber??1)+1,hasPreviousPage:true}
+      setStacks(current=>({...current,[response.kind]:[...pending.stack,pending.current]}))
+      setOverrides(current=>({...current,[response.kind]:{page:nextPage,anchor:pending.anchor}}))
+    }
+    window.addEventListener('wpe-history-page',handler as EventListener)
+    return()=>window.removeEventListener('wpe-history-page',handler as EventListener)
+  },[])
+
+  const nextPage=(kind:HistoryCollectionKey)=>{
+    if(pendingKinds.has(kind))return
+    const current=projection[kind],base=baseProjection[kind],cursor=current.nextCursor
+    if(current.state!=='available'||base.state!=='available'||!cursor)return
+    const anchor=base.sourceUpdatedAtUtc,active=overrides[kind]
+    const stack=active?.anchor===anchor?[...(stacks[kind]??[])]:[]
+    const requestId=window.crypto.randomUUID()
+    pendingRef.current.set(requestId,{kind,current,stack,anchor})
+    setPendingKinds(currentPending=>new Set(currentPending).add(kind))
+    if(!postHistoryPageRequest(requestId,kind,cursor)){
+      pendingRef.current.delete(requestId)
+      setPendingKinds(currentPending=>{const next=new Set(currentPending);next.delete(kind);return next})
+    }
+  }
+
+  const previousPage=(kind:HistoryCollectionKey)=>{
+    if(pendingKinds.has(kind))return
+    const active=overrides[kind],base=baseProjection[kind]
+    if(!active||active.anchor!==base.sourceUpdatedAtUtc)return
+    const stack=stacks[kind]??[],previous=stack.at(-1)
+    if(!previous)return
+    const remaining=stack.slice(0,-1)
+    setStacks(current=>({...current,[kind]:remaining}))
+    setOverrides(current=>{
+      const next={...current}
+      if(remaining.length===0&&(previous.pageNumber??1)===1)delete next[kind]
+      else next[kind]={page:previous,anchor:active.anchor}
+      return next
+    })
+  }
+
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <PageHeader
@@ -46,7 +125,7 @@ export default function HistoryPage() {
         description="Host-authoritative, read-only collection pages"
         actions={runtime.previewMode ? <StatusBadge token="warning" label="Preview" /> : undefined}
       />
-      <HistoryCollectionsView projection={projectRuntimeHistory(runtime)} />
+      <HistoryCollectionsView projection={projection} onPreviousPage={previousPage} onNextPage={nextPage} pendingCollections={pendingKinds} />
     </div>
   )
 }

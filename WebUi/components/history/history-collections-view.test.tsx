@@ -7,7 +7,7 @@ import { HistoryCollectionsView, unsupportedHistoryProjection, type HistoryProje
 
 const emptyPage = { state: 'available' as const, items: [] }
 const base = (): HistoryProjection => ({ orders: emptyPage, postTradeReviews: emptyPage, reconciliations: emptyPage, equity: emptyPage, backtests: emptyPage, skillCalls: emptyPage, auditEvents: emptyPage })
-const render = (projection: HistoryProjection) => renderToStaticMarkup(<HistoryCollectionsView projection={projection} />)
+const render = (projection: HistoryProjection, interactive = false, pending = false) => renderToStaticMarkup(<HistoryCollectionsView projection={projection} onPreviousPage={interactive ? () => {} : undefined} onNextPage={interactive ? () => {} : undefined} pendingCollections={pending ? new Set(['orders']) : undefined} />)
 const collection = <T,>(items: T[], nextCursor: string | null = null): RuntimeHistoricalCollection<T> => ({ state: 'available', items, nextCursor, sourceUpdatedAtUtc: '2026-07-22T01:00:00Z', source: 'local-agent-sqlite' })
 
 test('maps all seven normalized top-level collections to real available rows', () => {
@@ -63,12 +63,14 @@ test('clears rows for unsupported, stale, and error collections', () => {
 test('does not render or retain opaque cursors', () => {
   const opaqueCursor = 'opaque-secret-cursor-MUST-NOT-RENDER'
   const projection = base()
-  projection.orders = { ...emptyPage, pageNumber: 3, hasPreviousPage: true, hasNextPage: true, ...({ nextCursor: opaqueCursor } as object) }
+  projection.orders = { ...emptyPage, pageNumber: 3, hasPreviousPage: true, hasNextPage: true, nextCursor: opaqueCursor }
   const html = render(projection)
   assert.match(html, /Page 3/)
   assert.doesNotMatch(html, new RegExp(opaqueCursor))
   assert.doesNotMatch(html, /nextCursor/i)
 })
+
+test('enables only host-backed pagination controls and disables them while pending',()=>{const projection=base();projection.orders={...emptyPage,hasNextPage:true,nextCursor:'opaque-cursor'};const interactive=render(projection,true);assert.equal(interactive.match(/disabled=""/g)?.length,13);const pending=render(projection,true,true);assert.equal(pending.match(/disabled=""/g)?.length,14)})
 
 test('audit table exposes metadata but never audit payload', () => {
   const payload = 'SENSITIVE-AUDIT-PAYLOAD-MUST-NOT-RENDER'
