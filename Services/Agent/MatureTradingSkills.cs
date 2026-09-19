@@ -107,8 +107,18 @@ public sealed class IndependentRiskManagerSkill
         Check(equity<=0||history.DailyRealizedPnl>-equity*limits.MaxDailyLoss,"daily_loss",L("RiskReview.DailyLoss",history.DailyRealizedPnl));
         Check(history.ApiFailures<limits.ApiFailureThreshold,"api_health",L("RiskReview.ApiFailures",history.ApiFailures));
         Check(!history.OrderStateUncertain,"order_state",L("RiskReview.OrderUncertain"));
-        Check(research is not null&&research.CoverageDays>=limits.MinimumHistoricalDays,"historical_coverage",L("RiskReview.History",research?.CoverageDays??0,limits.MinimumHistoricalDays));
-        Check(research is{Promoted:true,Approved:true},"research_gate",L("RiskReview.Research",research?.QualityScore??0));
+        var hypothesisDriven=string.Equals(decision.DecisionContextKind,TradeHypothesisEngine.DecisionContextKind,StringComparison.Ordinal);
+        if(hypothesisDriven)
+        {
+            checks.Add("market_hypothesis_context");
+            if(research is not null&&research.CoverageDays>=limits.MinimumHistoricalDays)checks.Add("historical_context_available");
+            if(research is{Promoted:true,Approved:true})checks.Add("promoted_research_support");
+        }
+        else
+        {
+            Check(research is not null&&research.CoverageDays>=limits.MinimumHistoricalDays,"historical_coverage",L("RiskReview.History",research?.CoverageDays??0,limits.MinimumHistoricalDays));
+            Check(research is{Promoted:true,Approved:true},"research_gate",L("RiskReview.Research",research?.QualityScore??0));
+        }
         Check(portfolio is{Approved:true},"portfolio_risk",L("RiskReview.Portfolio",portfolio?.Summary??"unavailable"));
         var newNotional=intents.Where(x=>!x.ReduceOnly).Sum(x=>x.Quantity*(x.ExpectedPrice>0?x.ExpectedPrice:decision.EntryPrice));var reducedNotional=intents.Where(x=>x.ReduceOnly).Sum(x=>x.Quantity*(x.ExpectedPrice>0?x.ExpectedPrice:decision.EntryPrice));var currentNotional=evidence.Positions.Sum(x=>x.Quantity*x.MarkPrice);var postNotional=Math.Max(0,currentNotional+newNotional-reducedNotional);var exposure=equity>0?postNotional/equity:1;var currentSymbol=evidence.Positions.Where(x=>x.Symbol==decision.Instrument).Sum(x=>x.Quantity*x.MarkPrice);var symbolExposure=equity>0?Math.Max(0,currentSymbol+newNotional-reducedNotional)/equity:1;
         Check(equity>0&&evidence.Account.AvailableBalance>0,"balance",L("RiskReview.Balance"));

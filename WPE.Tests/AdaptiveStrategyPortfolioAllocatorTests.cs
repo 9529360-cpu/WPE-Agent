@@ -116,7 +116,7 @@ public sealed class AdaptiveStrategyPortfolioAllocatorTests
     }
 
     [Fact]
-    public async Task DeterministicBrainUsesPortfolioOpportunityForSymbolAndTierWithoutAmplifyingConfidence()
+    public async Task PortfolioScoresCannotTriggerEntryWithoutARealMarketHypothesis()
     {
         var btc=Assessment("BTCUSDT",.90,DecisionAction.OpenLong);
         var eth=Assessment("ETHUSDT",.65,DecisionAction.OpenLong);
@@ -130,11 +130,10 @@ public sealed class AdaptiveStrategyPortfolioAllocatorTests
 
         var result=await new DeterministicBrainProvider().DecideAsync(evidence,context,CancellationToken.None);
 
-        Assert.Equal(DecisionAction.OpenLong,result.Decision.Action);
-        Assert.Equal("ETHUSDT",result.Decision.Instrument);
-        Assert.Equal(3,result.Decision.TargetTier);
-        Assert.Equal(.65,result.Decision.Confidence,10);
-        Assert.Contains("opportunity=0.880",result.Decision.ConflictSummary,StringComparison.Ordinal);
+        Assert.Equal(DecisionAction.Hold,result.Decision.Action);
+        Assert.Equal(0,result.Decision.TargetTier);
+        Assert.Equal("market-observation",result.Decision.DecisionContextKind);
+        Assert.Contains("No coherent market hypothesis",result.Decision.Reason,StringComparison.OrdinalIgnoreCase);
     }
 
     private static StrategyCycleSelection Selection(

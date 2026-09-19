@@ -89,22 +89,56 @@ public sealed class SignalAggregationSkill
 
 public sealed class DecisionGovernanceSkill
 {
-    public DecisionReview Review(DecisionPlan proposed,IReadOnlyList<MarketDecisionAssessment> assessments,EvidencePack evidence,DecisionPolicy policy)
+    public DecisionReview Review(
+        DecisionPlan proposed,
+        IReadOnlyList<MarketDecisionAssessment> assessments,
+        EvidencePack evidence,
+        DecisionPolicy policy,
+        IReadOnlyDictionary<string,TradeHypothesis>? hypotheses=null)
     {
         var blocks=new List<string>();
         var assessment=assessments.FirstOrDefault(x=>x.Symbol.Equals(proposed.Instrument,StringComparison.OrdinalIgnoreCase));
-        var riskIncreasing=proposed.Action is DecisionAction.OpenLong or DecisionAction.OpenShort or DecisionAction.AddLong or DecisionAction.AddShort or DecisionAction.Lock or DecisionAction.ReverseToLong or DecisionAction.ReverseToShort;
+        var riskIncreasing=DeterministicPlanSkill.IsRiskIncreasing(proposed.Action);
+        var hypothesisDriven=string.Equals(proposed.DecisionContextKind,TradeHypothesisEngine.DecisionContextKind,StringComparison.Ordinal);
+        TradeHypothesis? hypothesis=null;
+        if(hypothesisDriven&&hypotheses is not null)hypotheses.TryGetValue(proposed.Instrument,out hypothesis);
+
         if(assessment is null)blocks.Add(L("Review.NoAssessment"));
         if(evidence.Completeness<policy.MinimumEvidenceCompleteness&&riskIncreasing)blocks.Add(L("Review.Incomplete"));
         if(assessment is{Fresh:false}&&riskIncreasing)blocks.Add(L("Review.Stale"));
-        if(proposed.Confidence<policy.MinimumConfidence&&riskIncreasing)blocks.Add(L("Review.BrainConfidence",proposed.Confidence,policy.MinimumConfidence));
-        if(assessment is{EntryReady:false}&&riskIncreasing)blocks.AddRange(assessment.MissingConditions);
-        if(assessment is not null&&riskIncreasing)
+
+        if(hypothesisDriven&&riskIncreasing)
         {
-            var wantsLong=proposed.Action is DecisionAction.OpenLong or DecisionAction.AddLong or DecisionAction.ReverseToLong;
-            var wantsShort=proposed.Action is DecisionAction.OpenShort or DecisionAction.AddShort or DecisionAction.ReverseToShort;
-            if((wantsLong&&assessment.NetScore<0)||(wantsShort&&assessment.NetScore>0))blocks.Add(L("Review.DirectionConflict"));
+            if(hypothesis is null||
+               !string.Equals(hypothesis.Id,proposed.DecisionContextId,StringComparison.Ordinal)||
+               !hypothesis.Actionable)
+                blocks.Add("market hypothesis is missing, stale, or not actionable");
+            else
+            {
+                if(!hypothesis.DirectionMatches(proposed.Action))blocks.Add("market hypothesis direction does not match the proposed action");
+                if(hypothesis.Stage is not (TradeHypothesisStage.ScoutReady or TradeHypothesisStage.Confirmed))
+                    blocks.Add("market hypothesis has not reached an actionable stage");
+                if(hypothesis.Regime==MarketRegime.Extreme)blocks.Add("market hypothesis is blocked in an extreme regime");
+                if(proposed.RiskBudgetMultiplier<=0||proposed.RiskBudgetMultiplier>1)
+                    blocks.Add("market hypothesis risk budget is invalid");
+            }
+
+            if(evidence.Markets.TryGetValue(proposed.Instrument,out var market)&&
+               market.Quality.QualityScore<policy.MinimumMarketQuality)
+                blocks.Add(L("Review.Incomplete"));
         }
+        else
+        {
+            if(proposed.Confidence<policy.MinimumConfidence&&riskIncreasing)blocks.Add(L("Review.BrainConfidence",proposed.Confidence,policy.MinimumConfidence));
+            if(assessment is{EntryReady:false}&&riskIncreasing)blocks.AddRange(assessment.MissingConditions);
+            if(assessment is not null&&riskIncreasing)
+            {
+                var wantsLong=proposed.Action is DecisionAction.OpenLong or DecisionAction.AddLong or DecisionAction.ReverseToLong;
+                var wantsShort=proposed.Action is DecisionAction.OpenShort or DecisionAction.AddShort or DecisionAction.ReverseToShort;
+                if((wantsLong&&assessment.NetScore<0)||(wantsShort&&assessment.NetScore>0))blocks.Add(L("Review.DirectionConflict"));
+            }
+        }
+
         var final=blocks.Count==0?proposed:CopyAsHold(proposed,blocks);
         var accepted=blocks.Count==0;
         var explanation=Explain(final,assessment,blocks);
@@ -114,12 +148,19 @@ public sealed class DecisionGovernanceSkill
     private static DecisionPlan CopyAsHold(DecisionPlan p,IReadOnlyList<string> blocks)=>new()
     {
         Action=DecisionAction.Hold,Instrument=p.Instrument,TargetTier=0,Confidence=p.Confidence,Invalidation=p.Invalidation,Regime=p.Regime,Reason=p.Reason,
-        EvidenceReferences=p.EvidenceReferences,MissingConditions=blocks.Distinct().ToList(),ConflictSummary=p.ConflictSummary
+        EvidenceReferences=p.EvidenceReferences,MissingConditions=blocks.Distinct().ToList(),ConflictSummary=p.ConflictSummary,
+        EntryPrice=p.EntryPrice,StopLossPrice=p.StopLossPrice,TakeProfitPrice=p.TakeProfitPrice,RiskRewardRatio=p.RiskRewardRatio,OrderType=p.OrderType,
+        StrategyVersion=p.StrategyVersion,DecisionContextKind=p.DecisionContextKind,DecisionContextId=p.DecisionContextId,HypothesisStage=p.HypothesisStage,
+        RiskBudgetMultiplier=p.RiskBudgetMultiplier
     };
 
     private static string Explain(DecisionPlan decision,MarketDecisionAssessment? assessment,IReadOnlyList<string> blocks)
     {
-        var b=new StringBuilder();b.Append($"{decision.Action} · Brain {decision.Confidence:P0}");
+        var hypothesisDriven=string.Equals(decision.DecisionContextKind,TradeHypothesisEngine.DecisionContextKind,StringComparison.Ordinal);
+        var b=new StringBuilder();
+        b.Append(hypothesisDriven
+            ?$"{decision.Action} · Hypothesis {decision.HypothesisStage}"
+            :$"{decision.Action} · Brain {decision.Confidence:P0}");
         if(assessment is not null)
         {
             b.Append(L("Review.Aggregation",assessment.Confidence,assessment.ConflictRatio)).Append('\n');
@@ -128,7 +169,8 @@ public sealed class DecisionGovernanceSkill
             b.Append('\n').Append(L("Review.Signals")).Append(string.Join("; ",strongest));
         }
         b.Append('\n').Append(L("Review.Reason")).Append(decision.Reason);
-        var missing=blocks.Concat(decision.MissingConditions).Concat(assessment?.MissingConditions??Array.Empty<string>()).Where(x=>!string.IsNullOrWhiteSpace(x)).Distinct().ToArray();
+        var legacyMissing=hypothesisDriven?Array.Empty<string>():assessment?.MissingConditions??Array.Empty<string>();
+        var missing=blocks.Concat(decision.MissingConditions).Concat(legacyMissing).Where(x=>!string.IsNullOrWhiteSpace(x)).Distinct().ToArray();
         if(missing.Length>0)b.Append('\n').Append(L("Review.Missing")).Append(string.Join("; ",missing));
         return b.ToString();
     }
@@ -147,6 +189,7 @@ public sealed class AgentSkillRegistry
         new("DataQuality","Validate","MarketEvidence","MarketQualityEvidence","read:market",8,1,true,"quality score and clock skew"),
         new("SignalAggregation","Reason","EvidencePack","MarketDecisionAssessment[]","local:compute",5,0,true,"finite weighted contributions"),
         new("MarketRegime","Reason","multi-timeframe evidence","MarketRegime","local:compute",3,0,true,"known regime result"),
+        new("TradeHypothesis","Reason","fresh market evidence and prior hypothesis","TradeHypothesis[]","local:compute,write:local-db",4,0,true,"persistent market thesis and explicit invalidation"),
         new("StrategyResearch","Research","candles and costs","ResearchValidationResult","local:compute,write:research",12,0,true,"in/out-sample metrics"),
         new("PortfolioRisk","Risk","positions, intents and returns","PortfolioRiskAssessment","read:account,local:compute",6,0,true,"VaR, CVaR, concentration and correlation"),
         new("BrainPlanner","Plan","audited evidence","DecisionPlan","local:compute",3,0,true,"deterministic local plan and schema-valid response"),

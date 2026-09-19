@@ -115,6 +115,10 @@ public sealed class DecisionPlan
     public double RiskRewardRatio { get; set; }
     public ExecutionOrderType OrderType { get; set; } = ExecutionOrderType.Market;
     public string StrategyVersion { get; set; } = "wpe-core-v2";
+    public string DecisionContextKind { get; set; } = "legacy-signal";
+    public string DecisionContextId { get; set; } = string.Empty;
+    public string HypothesisStage { get; set; } = string.Empty;
+    public double RiskBudgetMultiplier { get; set; } = 1;
 }
 public enum MarketRegime { Trending, Ranging, Transition, Extreme, Unknown }
 public sealed record SignalContribution(string Name,string Horizon,double RawValue,double Weight,double WeightedScore,string Direction,string Explanation);
@@ -191,7 +195,7 @@ public sealed class PortfolioRiskAssessment
     public bool Approved { get; init; }
     public string Summary { get; init; } = string.Empty;
 }
-public sealed record AgentContext(string BrainName, bool CircuitBreakerActive, string? ActiveSymbol, IReadOnlyList<StructuredOutcomeMemory> OutcomeMemories, IReadOnlyList<MarketDecisionAssessment> MarketAssessments, int ConsecutiveHolds, IReadOnlyList<PlannerMemoryFact>? RelevantMemories=null,AdaptiveStrategyPortfolioPlan? StrategyPortfolio=null);
+public sealed record AgentContext(string BrainName, bool CircuitBreakerActive, string? ActiveSymbol, IReadOnlyList<StructuredOutcomeMemory> OutcomeMemories, IReadOnlyList<MarketDecisionAssessment> MarketAssessments, int ConsecutiveHolds, IReadOnlyList<PlannerMemoryFact>? RelevantMemories=null,AdaptiveStrategyPortfolioPlan? StrategyPortfolio=null,IReadOnlyDictionary<string,TradeHypothesis>? TradeHypotheses=null);
 public sealed record PlannerMemoryFact(string Tier,DateTime OccurredAtUtc,string Result,string Source,string Summary);
 public sealed record StructuredOutcomeMemory(
     DateTime CycleStartedUtc,

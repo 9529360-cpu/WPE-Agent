@@ -85,46 +85,82 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
 
     public Task<BrainDecisionResult> DecideAsync(EvidencePack evidence, AgentContext context, CancellationToken ct)
     {
-        double PlanningScore(MarketDecisionAssessment assessment)
+        var hypotheses=(context.TradeHypotheses?.Values??Array.Empty<TradeHypothesis>())
+            .Where(x=>x.IsLive)
+            .OrderByDescending(x=>x.Stage==TradeHypothesisStage.Confirmed)
+            .ThenByDescending(x=>x.Stage==TradeHypothesisStage.ScoutReady)
+            .ThenBy(x=>x.CreatedAtUtc)
+            .ThenBy(x=>x.Symbol,StringComparer.Ordinal)
+            .ToArray();
+
+        var actionable=hypotheses.FirstOrDefault(x=>x.Actionable&&
+            !evidence.Positions.Any(position=>position.Symbol.Equals(x.Symbol,StringComparison.OrdinalIgnoreCase)));
+        var watching=hypotheses.FirstOrDefault();
+        var selected=actionable??watching;
+        var blocked=context.CircuitBreakerActive||actionable is null;
+        var instrument=selected?.Symbol??evidence.Markets.Keys.FirstOrDefault()??"BTCUSDT";
+        var assessment=context.MarketAssessments.FirstOrDefault(x=>x.Symbol.Equals(instrument,StringComparison.OrdinalIgnoreCase));
+        var action=DecisionAction.Hold;
+        var targetTier=0;
+        var riskBudget=0d;
+
+        if(!blocked&&actionable is not null)
         {
-            var allocation=context.StrategyPortfolio?.ForSymbol(assessment.Symbol);
-            if(allocation is not null&&allocation.DirectionMatches(assessment.RecommendedAction))
-                return allocation.OpportunityScore;
-            return assessment.Confidence*(1-assessment.ConflictRatio);
+            action=actionable.Direction>0?DecisionAction.OpenLong:DecisionAction.OpenShort;
+            targetTier=actionable.Stage==TradeHypothesisStage.Confirmed?2:1;
+            riskBudget=actionable.RiskBudgetMultiplier;
         }
 
-        var selected = context.MarketAssessments.Where(x => x.EntryReady && x.Fresh)
-            .OrderByDescending(PlanningScore)
-            .ThenByDescending(x => x.Confidence * (1 - x.ConflictRatio))
-            .ThenByDescending(x => Math.Abs(x.NetScore))
-            .FirstOrDefault();
-        var allocation=selected is null?null:context.StrategyPortfolio?.ForSymbol(selected.Symbol);
-        if(allocation is not null&&!allocation.DirectionMatches(selected!.RecommendedAction))allocation=null;
-        var blocked = context.CircuitBreakerActive || selected is null;
         var reason=context.CircuitBreakerActive
             ?"local risk circuit breaker is active"
-            :selected?.Summary??"no locally validated entry is ready";
-        if(!blocked&&allocation is not null)reason=$"{reason}; {allocation.Reason}";
-        var decision = new DecisionPlan
+            :selected is null
+                ?"No coherent market hypothesis is currently forming."
+                :selected.Thesis+" "+(selected.Actionable
+                    ?$"Action stage={selected.Stage}; trigger has matured enough for bounded risk."
+                    :$"Watching stage={selected.Stage}; {selected.Trigger}");
+
+        var decision=new DecisionPlan
         {
-            Action = blocked ? DecisionAction.Hold : selected!.RecommendedAction,
-            Instrument = selected?.Symbol ?? evidence.Markets.Keys.FirstOrDefault() ?? "BTCUSDT",
-            TargetTier = blocked ? 0 : allocation?.TargetTier ?? 1,
-            Confidence = selected?.Confidence ?? 0,
-            Regime = selected?.Regime.ToString() ?? MarketRegime.Unknown.ToString(),
-            Reason = reason,
-            Invalidation = "local signal, data freshness, strategy health, or risk gate becomes invalid",
-            EvidenceReferences = selected?.Signals.OrderByDescending(x => Math.Abs(x.WeightedScore)).Take(5).Select(x => x.Name).ToList() ?? [],
-            MissingConditions = selected?.MissingConditions.ToList() ?? context.MarketAssessments.SelectMany(x => x.MissingConditions).Distinct().ToList(),
-            ConflictSummary = selected is null
-                ?"no executable local assessment"
-                :allocation is null
-                    ?$"conflict={selected.ConflictRatio:F3}; score={selected.NetScore:F3}"
-                    :$"conflict={selected.ConflictRatio:F3}; score={selected.NetScore:F3}; opportunity={allocation.OpportunityScore:F3}; capital={allocation.CapitalShare:F3}; risk_multiplier={allocation.RiskMultiplier:F3}; exploration={allocation.IsExploration}",
-            StrategyVersion = "wpe-local-deterministic-v1"
+            Action=action,
+            Instrument=instrument,
+            TargetTier=targetTier,
+            Confidence=0,
+            Regime=selected?.Regime.ToString()??assessment?.Regime.ToString()??MarketRegime.Unknown.ToString(),
+            Reason=reason,
+            Invalidation=selected?.Invalidation??"Market hypothesis is absent or invalidated.",
+            EvidenceReferences=selected?.Evidence.ToList()??[],
+            MissingConditions=selected is {Actionable:false}?[selected.Trigger]:[],
+            ConflictSummary=selected is null
+                ?"no active market hypothesis"
+                :$"hypothesis={selected.Kind}; stage={selected.Stage}; revision={selected.Revision}; legacy_score={assessment?.NetScore:F3}; legacy_conflict={assessment?.ConflictRatio:F3}",
+            StrategyVersion=selected?.Version??TradeHypothesis.CurrentVersion,
+            DecisionContextKind=selected is null?"market-observation":TradeHypothesisEngine.DecisionContextKind,
+            DecisionContextId=selected?.Id??string.Empty,
+            HypothesisStage=selected?.Stage.ToString()??TradeHypothesisStage.Observing.ToString(),
+            RiskBudgetMultiplier=riskBudget
         };
-        var audit = JsonSerializer.Serialize(new { provider = Name, decision.Action, decision.Instrument, decision.TargetTier, decision.Confidence, allocation?.OpportunityScore, allocation?.CapitalShare, allocation?.RiskMultiplier, allocation?.IsExploration, decision.Reason });
-        return Task.FromResult(new BrainDecisionResult(decision, audit, audit));
+
+        var audit=JsonSerializer.Serialize(new
+        {
+            provider=Name,
+            decision.Action,
+            decision.Instrument,
+            decision.TargetTier,
+            decision.DecisionContextKind,
+            decision.DecisionContextId,
+            decision.HypothesisStage,
+            decision.RiskBudgetMultiplier,
+            hypothesis=selected,
+            legacyAssessment=assessment is null?null:new
+            {
+                assessment.NetScore,
+                assessment.Confidence,
+                assessment.ConflictRatio,
+                assessment.EntryReady
+            },
+            decision.Reason
+        });
+        return Task.FromResult(new BrainDecisionResult(decision,audit,audit));
     }
 }
 
