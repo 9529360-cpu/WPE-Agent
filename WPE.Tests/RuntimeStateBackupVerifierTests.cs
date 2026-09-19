@@ -98,6 +98,62 @@ public sealed class RuntimeStateBackupVerifierTests : IDisposable
     }
 
     [Fact]
+    public async Task BackupRootAndInternalReparsePointsFailBeforeStaging()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var backup = await Backup().CreateAsync(Path.Combine(_root, "backups"));
+        var linkedRoot = Path.Combine(_root, "backup-link");
+        var externalTarget = Path.Combine(_root, "external-link-target");
+        Directory.CreateDirectory(externalTarget);
+
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(linkedRoot, backup.Directory);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException or
+                IOException or
+                PlatformNotSupportedException)
+            {
+                return;
+            }
+
+            var rootStage = Path.Combine(_root, "staging-linked-root");
+            var rootError = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Verifier(_protector).VerifyToStagingAsync(linkedRoot, rootStage));
+            Assert.Contains("reparse", rootError.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(Directory.Exists(rootStage));
+
+            Directory.Delete(linkedRoot);
+            var internalLink = Path.Combine(backup.Directory, "linked-extra");
+            Directory.CreateSymbolicLink(internalLink, externalTarget);
+            try
+            {
+                var internalStage = Path.Combine(_root, "staging-linked-entry");
+                var internalError = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                    Verifier(_protector).VerifyToStagingAsync(backup.Directory, internalStage));
+                Assert.Contains("reparse", internalError.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.False(Directory.Exists(internalStage));
+            }
+            finally
+            {
+                if (Directory.Exists(internalLink))
+                    Directory.Delete(internalLink);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(linkedRoot))
+                Directory.Delete(linkedRoot);
+            if (Directory.Exists(externalTarget))
+                Directory.Delete(externalTarget, true);
+        }
+    }
+
+    [Fact]
     public async Task UnmanifestedBackupFileFailsClosed()
     {
         await CreateDatabase(_layout.DataFile("agent.db"));
