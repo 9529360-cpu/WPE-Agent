@@ -2,16 +2,15 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
-  postRuntimeHostCommand,
   useWpeRuntime,
   type RuntimeCollectionState,
   type WpeRuntimeState,
 } from '@/components/runtime-bridge'
+import { postHostCommand, type HostCommand } from '@/lib/host-command'
 import { useI18n } from '@/lib/i18n/context'
 import { localeMeta, locales, type Locale } from '@/lib/i18n/dictionaries'
 
 type PageId = 'home' | 'agents' | 'teacher' | 'trading' | 'research' | 'risk' | 'monitoring' | 'settings'
-type HostCommand = 'open-settings' | 'open-notification-settings' | 'agent-start' | 'agent-stop'
 type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
 
 const AGENT_CHAIN = ['Market', 'Research', 'Strategy', 'Risk', 'Execution', 'Recovery', 'Audit'] as const
@@ -219,16 +218,6 @@ function strategyResultLabel(value: unknown): string {
   if (/deterministic.*seed/i.test(reason)) return '本地确定性初始候选'
   if (/bounded.*child|qualified.*parent/i.test(reason)) return '由合格策略生成的受限参数候选'
   return '结果已记录，详见审计事件'
-}
-
-function postHostCommand(type: HostCommand): boolean {
-  if (type === 'agent-start' || type === 'agent-stop') return postRuntimeHostCommand(type)
-  const bridge = (window as Window & {
-    chrome?: { webview?: { postMessage: (message: { type: HostCommand }) => void } }
-  }).chrome?.webview
-  if (!bridge) return false
-  bridge.postMessage({ type })
-  return true
 }
 
 function Badge({ children, tone = 'neutral', title }: { children: ReactNode; tone?: Tone; title?: string }) {

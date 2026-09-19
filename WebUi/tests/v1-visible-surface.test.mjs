@@ -121,10 +121,13 @@ test('global shell remains read-only and lifecycle commands have one typed bridg
   const agents = source('app/(dashboard)/agents/page.tsx')
   const settings = source('app/(dashboard)/settings/page.tsx')
   const history = source('app/(dashboard)/history/page.tsx')
-  for (const consumer of [agents, settings, history]) {
+  const consoleSource = source('components/console/wpe-console.tsx')
+  for (const consumer of [agents, settings, consoleSource]) {
     assert.match(consumer, /postHostCommand/)
     assert.doesNotMatch(consumer, /\.postMessage\s*\(/)
   }
+  assert.doesNotMatch(history, /postHostCommand/)
+  assert.doesNotMatch(history, /\.postMessage\s*\(/)
   assert.match(history, /postHistoryPageRequest/)
   assert.match(history, /normalizeHistoricalPageResponse/)
   assert.match(agents, /window\.confirm/)

@@ -42,23 +42,25 @@ export function projectRuntimeHistory(runtime: WpeRuntimeState): HistoryProjecti
 
 const historyKeys:HistoryCollectionKey[]=['orders','postTradeReviews','reconciliations','equity','backtests','skillCalls','auditEvents']
 type AnyHistoryPage=HistoryProjection[HistoryCollectionKey]
-type HistoryOverride={page:AnyHistoryPage;anchor:string|undefined}
-type PendingHistoryRequest={kind:HistoryCollectionKey;current:AnyHistoryPage;stack:AnyHistoryPage[];anchor:string|undefined}
+type HistoryOverride={page:AnyHistoryPage;anchorCursor:string}
+type PendingHistoryRequest={kind:HistoryCollectionKey;current:AnyHistoryPage;stack:AnyHistoryPage[];anchorCursor:string}
 
 export default function HistoryPage() {
   const runtime=useWpeRuntime()
   const baseProjection=useMemo(()=>projectRuntimeHistory(runtime),[runtime])
-  const baseRef=useRef(baseProjection);baseRef.current=baseProjection
+  const baseRef=useRef(baseProjection)
   const [overrides,setOverrides]=useState<Partial<Record<HistoryCollectionKey,HistoryOverride>>>({})
   const [stacks,setStacks]=useState<Partial<Record<HistoryCollectionKey,AnyHistoryPage[]>>>({})
   const [pendingKinds,setPendingKinds]=useState<ReadonlySet<HistoryCollectionKey>>(new Set())
   const pendingRef=useRef(new Map<string,PendingHistoryRequest>())
 
+  useEffect(()=>{baseRef.current=baseProjection},[baseProjection])
+
   const projection=useMemo(()=>{
     const merged={...baseProjection} as Record<HistoryCollectionKey,AnyHistoryPage>
     for(const key of historyKeys){
       const override=overrides[key],base=baseProjection[key]
-      if(override&&base.state==='available'&&override.anchor===base.sourceUpdatedAtUtc)merged[key]=override.page
+      if(override&&base.state==='available'&&override.anchorCursor===base.nextCursor)merged[key]=override.page
     }
     return merged as HistoryProjection
   },[baseProjection,overrides])
@@ -72,16 +74,16 @@ export default function HistoryPage() {
       pendingRef.current.delete(response.requestId)
       setPendingKinds(current=>{const next=new Set(current);next.delete(response.kind);return next})
       const base=baseRef.current[response.kind]
-      if(base.state!=='available'||base.sourceUpdatedAtUtc!==pending.anchor)return
+      if(base.state!=='available'||base.nextCursor!==pending.anchorCursor)return
       const projected=projectRuntimeHistory(response.runtimePatch as WpeRuntimeState)[response.kind] as AnyHistoryPage
-      if(projected.state!=='available'||projected.sourceUpdatedAtUtc!==pending.anchor){
+      if(projected.state!=='available'||projected.sourceUpdatedAtUtc!==base.sourceUpdatedAtUtc){
         setOverrides(current=>{const next={...current};delete next[response.kind];return next})
         setStacks(current=>{const next={...current};delete next[response.kind];return next})
         return
       }
       const nextPage={...projected,pageNumber:(pending.current.pageNumber??1)+1,hasPreviousPage:true}
       setStacks(current=>({...current,[response.kind]:[...pending.stack,pending.current]}))
-      setOverrides(current=>({...current,[response.kind]:{page:nextPage,anchor:pending.anchor}}))
+      setOverrides(current=>({...current,[response.kind]:{page:nextPage,anchorCursor:pending.anchorCursor}}))
     }
     window.addEventListener('wpe-history-page',handler as EventListener)
     return()=>window.removeEventListener('wpe-history-page',handler as EventListener)
@@ -91,10 +93,11 @@ export default function HistoryPage() {
     if(pendingKinds.has(kind))return
     const current=projection[kind],base=baseProjection[kind],cursor=current.nextCursor
     if(current.state!=='available'||base.state!=='available'||!cursor)return
-    const anchor=base.sourceUpdatedAtUtc,active=overrides[kind]
-    const stack=active?.anchor===anchor?[...(stacks[kind]??[])]:[]
+    const anchorCursor=base.nextCursor,active=overrides[kind]
+    if(!anchorCursor)return
+    const stack=active?.anchorCursor===anchorCursor?[...(stacks[kind]??[])]:[]
     const requestId=window.crypto.randomUUID()
-    pendingRef.current.set(requestId,{kind,current,stack,anchor})
+    pendingRef.current.set(requestId,{kind,current,stack,anchorCursor})
     setPendingKinds(currentPending=>new Set(currentPending).add(kind))
     if(!postHistoryPageRequest(requestId,kind,cursor)){
       pendingRef.current.delete(requestId)
@@ -105,7 +108,7 @@ export default function HistoryPage() {
   const previousPage=(kind:HistoryCollectionKey)=>{
     if(pendingKinds.has(kind))return
     const active=overrides[kind],base=baseProjection[kind]
-    if(!active||active.anchor!==base.sourceUpdatedAtUtc)return
+    if(!active||active.anchorCursor!==base.nextCursor)return
     const stack=stacks[kind]??[],previous=stack.at(-1)
     if(!previous)return
     const remaining=stack.slice(0,-1)
@@ -113,7 +116,7 @@ export default function HistoryPage() {
     setOverrides(current=>{
       const next={...current}
       if(remaining.length===0&&(previous.pageNumber??1)===1)delete next[kind]
-      else next[kind]={page:previous,anchor:active.anchor}
+      else next[kind]={page:previous,anchorCursor:active.anchorCursor}
       return next
     })
   }

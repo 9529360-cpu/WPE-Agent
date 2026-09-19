@@ -856,13 +856,6 @@ export function RuntimeBridge({ children }: { children: React.ReactNode }) {
   return <RuntimeContext.Provider value={value}>{children}</RuntimeContext.Provider>
 }
 
-export function postRuntimeHostCommand(type:'agent-start'|'agent-stop'):boolean{
-  const bridge=(window as Window&{chrome?:{webview?:{postMessage:(message:{type:string})=>void}}}).chrome?.webview
-  if(!bridge)return false
-  bridge.postMessage({type})
-  return true
-}
-
 export function useWpeRuntime() {
   return useContext(RuntimeContext)
 }
