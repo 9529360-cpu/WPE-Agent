@@ -1,4 +1,4 @@
-namespace WpeAgent.Headless;
+using 币安量化机器人.Services;\n\nnamespace WpeAgent.Headless;
 
 public sealed record HeadlessDataRootResolution(
     bool Success,
@@ -54,39 +54,9 @@ public static class HeadlessDataRootBootstrap
     private static string? Normalize(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
-        var candidate = value.Trim();
-        if (candidate.StartsWith(@"\\", StringComparison.Ordinal) ||
-            !Path.IsPathFullyQualified(candidate))
-            return null;
-
-        try
-        {
-            var full = Path.GetFullPath(candidate);
-            var root = Path.GetPathRoot(full);
-            if (string.IsNullOrWhiteSpace(root) ||
-                root.StartsWith(@"\\", StringComparison.Ordinal))
-                return null;
-
-            if (OperatingSystem.IsWindows() &&
-                new DriveInfo(root).DriveType != DriveType.Fixed)
-                return null;
-
-            if (string.Equals(full, root, StringComparison.OrdinalIgnoreCase))
-                return root;
-
-            return full.TrimEnd(
-                Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar);
-        }
-        catch (Exception ex) when (
-            ex is ArgumentException or
-            NotSupportedException or
-            PathTooLongException or
-            IOException or
-            UnauthorizedAccessException)
-        {
-            return null;
-        }
+        return DataRootPathPolicy.TryNormalizeFixedLocalRoot(value, out var normalized)
+            ? normalized
+            : null;
     }
 
     private static HeadlessDataRootResolution Reject(string code)
