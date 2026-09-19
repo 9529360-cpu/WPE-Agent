@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "rootDir": ".",
+    "outDir": ".bridge-test-dist",
+    "plugins": []
+  },
+  "include": [
+    "components/runtime-bridge.tsx",
+    "components/runtime-bridge.dogfood.test.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    ".bridge-test-dist"
+  ]
+}

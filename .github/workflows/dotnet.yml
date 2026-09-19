@@ -44,6 +44,14 @@ jobs:
       working-directory: WebUi
       run: pnpm typecheck
 
+    - name: Runtime bridge dogfood
+      working-directory: WebUi
+      shell: pwsh
+      run: |
+        Remove-Item -Recurse -Force ".bridge-test-dist" -ErrorAction SilentlyContinue
+        pnpm exec tsc -p tsconfig.bridge-test.json
+        node --test .bridge-test-dist/components/runtime-bridge.dogfood.test.js
+
     - name: Web contract tests
       working-directory: WebUi
       run: |
