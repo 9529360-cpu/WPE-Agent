@@ -46,6 +46,8 @@ public sealed partial class AgentSqliteStore
         await using var connection = new SqliteConnection(_cs);
         await connection.OpenAsync(ct);
         await EnsureExecutionSimulationStorageAsync(connection, ct);
+        await EnsureExecutionRealityDriftStorageAsync(connection, ct);
+        await VerifySimulationComparisonSourcesAsync(connection, comparison, ct);
 
         await using var insert = connection.CreateCommand();
         insert.CommandText = """
@@ -245,6 +247,106 @@ public sealed partial class AgentSqliteStore
                 BEGIN SELECT RAISE(ABORT,'execution simulation comparisons are append-only'); END;
             """;
         await command.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task VerifySimulationComparisonSourcesAsync(
+        SqliteConnection connection,
+        ExecutionSimulationComparisonV1 comparison,
+        CancellationToken ct)
+    {
+        var simulated = await ReadPersistedSimulationFillAsync(
+            connection,
+            comparison.SimulatedCanonicalSha256,
+            ct);
+        if (simulated is null)
+            throw new InvalidOperationException("Persisted simulated fill source is missing.");
+        if (!ExecutionSimulationFillCanonicalizerV1.IsCanonical(simulated))
+            throw new InvalidOperationException("Persisted simulated fill source failed canonical verification.");
+
+        var observed = await ReadPersistedObservedDriftAsync(
+            connection,
+            comparison.ObservedCanonicalSha256,
+            ct);
+        if (observed is null)
+            throw new InvalidOperationException("Persisted observed execution source is missing.");
+        if (!ExecutionRealityDriftV1.IsCanonical(observed))
+            throw new InvalidOperationException("Persisted observed execution source failed canonical verification.");
+
+        var replay = ExecutionSimulationComparisonCanonicalizerV1.Create(
+            simulated,
+            observed,
+            comparison.ComparedAtUtc);
+        if (!string.Equals(replay.CanonicalSha256, comparison.CanonicalSha256, StringComparison.Ordinal)
+            || !CryptographicOperations.FixedTimeEquals(replay.CanonicalBytes, comparison.CanonicalBytes))
+            throw new InvalidOperationException("Execution simulation comparison does not replay from persisted source evidence.");
+    }
+
+    private static async Task<ExecutionSimulationFillV1?> ReadPersistedSimulationFillAsync(
+        SqliteConnection connection,
+        string canonicalSha256,
+        CancellationToken ct)
+    {
+        await using var query = connection.CreateCommand();
+        query.CommandText = "SELECT canonical_bytes FROM execution_simulated_fills WHERE canonical_sha256=$hash LIMIT 1";
+        query.Parameters.AddWithValue("$hash", canonicalSha256);
+        var value = await query.ExecuteScalarAsync(ct);
+        if (value is not byte[] bytes)
+            return null;
+
+        VerifySimulationBytes(canonicalSha256, bytes);
+        using var document = JsonDocument.Parse(bytes);
+        var root = document.RootElement;
+        if (!string.Equals(root.GetProperty("schema").GetString(), ExecutionSimulationFillCanonicalizerV1.Schema, StringComparison.Ordinal))
+            throw new InvalidOperationException("Persisted simulated fill source schema is invalid.");
+
+        return new ExecutionSimulationFillV1(
+            root.GetProperty("schema").GetString() ?? throw new InvalidOperationException("Missing simulation schema."),
+            root.GetProperty("correlation_id").GetString() ?? throw new InvalidOperationException("Missing simulation correlation id."),
+            root.GetProperty("client_order_id").GetString() ?? throw new InvalidOperationException("Missing simulation client order id."),
+            root.GetProperty("strategy_id").GetString() ?? throw new InvalidOperationException("Missing simulation strategy id."),
+            root.GetProperty("strategy_version").GetString() ?? throw new InvalidOperationException("Missing simulation strategy version."),
+            root.GetProperty("cost_model_version").GetString() ?? throw new InvalidOperationException("Missing simulation cost-model version."),
+            root.GetProperty("simulation_model_version").GetString() ?? throw new InvalidOperationException("Missing simulation model version."),
+            root.GetProperty("venue_rule_version").GetString() ?? throw new InvalidOperationException("Missing simulation venue-rule version."),
+            root.GetProperty("symbol").GetString() ?? throw new InvalidOperationException("Missing simulation symbol."),
+            Enum.Parse<PositionSide>(root.GetProperty("side").GetString() ?? string.Empty, false),
+            root.GetProperty("reduce_only").GetBoolean(),
+            Enum.Parse<ExecutionOrderType>(root.GetProperty("order_type").GetString() ?? string.Empty, false),
+            root.GetProperty("intended_quantity").GetDecimal(),
+            Enum.Parse<ExecutionSimulationFillStateV1>(root.GetProperty("state").GetString() ?? string.Empty, false),
+            root.GetProperty("executed_quantity").GetDecimal(),
+            root.GetProperty("average_price").GetDecimal(),
+            root.GetProperty("fee_amount").GetDecimal(),
+            Enum.Parse<ExecutionSimulationFeeRoleV1>(root.GetProperty("fee_role").GetString() ?? string.Empty, false),
+            root.GetProperty("latency_modeled").GetBoolean(),
+            root.GetProperty("simulated_latency_ms").GetInt64(),
+            DateTimeOffset.Parse(root.GetProperty("market_as_of_utc").GetString() ?? throw new InvalidOperationException("Missing simulation market time."), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+            DateTimeOffset.Parse(root.GetProperty("simulated_at_utc").GetString() ?? throw new InvalidOperationException("Missing simulation time."), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+            root.GetProperty("reason_code").GetString() ?? throw new InvalidOperationException("Missing simulation reason code."),
+            bytes,
+            canonicalSha256);
+    }
+
+    private static async Task<ExecutionRealityDriftFactV1?> ReadPersistedObservedDriftAsync(
+        SqliteConnection connection,
+        string canonicalSha256,
+        CancellationToken ct)
+    {
+        await using var query = connection.CreateCommand();
+        query.CommandText = """
+            SELECT schema,correlation_id,client_order_id,strategy_id,strategy_version,cost_model_version,symbol,side,
+                   reduce_only,order_type,intended_quantity,executed_quantity,expected_price,average_price,
+                   exchange_status,state,terminal,comparable,fill_ratio,adverse_slippage_bps,expected_slippage_bps,
+                   slippage_drift_bps,observed_fee,fee_basis,fee_comparable,observed_fee_rate_bps,
+                   expected_commission_bps,fee_drift_bps,total_comparable,total_execution_drift_bps,
+                   observation_latency_ms,exchange_updated_at,observed_at,reason_code,canonical_bytes,canonical_sha256
+            FROM execution_reality_drift
+            WHERE canonical_sha256=$hash
+            LIMIT 1;
+            """;
+        query.Parameters.AddWithValue("$hash", canonicalSha256);
+        await using var reader = await query.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct) ? ReadRealityFact(reader) : null;
     }
 
     private static async Task VerifySimulationReplayAsync(
