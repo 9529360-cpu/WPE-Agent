@@ -132,7 +132,7 @@ function Read-VerifiedSoakEvidence($candidate){
     $engRoot=Split-Path $PSScriptRoot -Parent
     $verifier=Join-Path $engRoot 'ops/Test-HeadlessSoakEvidence.ps1'
     if(-not(Test-Path -LiteralPath $verifier -PathType Leaf)){throw 'soak.verifier-missing'}
-    $result=& $verifier -EvidencePath $path -ExpectedSourceIdentity ([string]$candidate.Manifest.sourceIdentity) -ExpectedCandidateManifestSha256 $candidate.ManifestHash -MinimumDurationMinutes $MinimumSoakDurationMinutes
+    $result=& $verifier -EvidencePath $path -ExpectedSourceIdentity ([string]$candidate.Manifest.sourceIdentity) -ExpectedCandidateManifestSha256 $candidate.ManifestHash -ExpectedEvidenceSha256 $ExpectedSoakEvidenceHash -MinimumDurationMinutes $MinimumSoakDurationMinutes
     if(-not $result.Valid){throw 'soak.evidence-invalid'}
     $result
 }
