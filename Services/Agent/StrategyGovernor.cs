@@ -40,9 +40,9 @@ public sealed class StrategyGovernor
            && profile.ShadowObservations >= MinimumShadowObservations
            && (profile.FailureStreak >= 3 || profile.MaxDrawdown > MaximumDemotionDrawdown || profile.Expectancy < 0);
 
-    public bool ShouldRetireShadow(StrategyProfile profile,DateTime nowUtc)
+    public bool ShouldRetireShadow(StrategyProfile profile,DateTime nowUtc,int? rawObservations=null)
         =>profile.Lifecycle==StrategyLifecycle.Shadow
-          &&profile.ShadowObservations>=MaximumUnqualifiedShadowObservations
+          &&(profile.ShadowObservations>=MaximumUnqualifiedShadowObservations||rawObservations>=MaximumUnqualifiedShadowObservations)
           &&profile.StateChangedAtUtc is not null
           &&nowUtc.ToUniversalTime()-profile.StateChangedAtUtc.Value.ToUniversalTime()>=MinimumShadowEvaluationTime
           &&!CanActivateFromShadow(profile);
