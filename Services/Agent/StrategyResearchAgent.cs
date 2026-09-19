@@ -119,7 +119,9 @@ public sealed class StrategyResearchAgent
             }
             else
                 await _database.RecordStrategyObservationAsync(profile.Id, profile.Symbol, signal.Direction, market.Price, signal.Confidence, ct);
-            var performance = await _database.GetStrategyObservationPerformanceAsync(profile.Id, ct);
+            var performance = profile.Lifecycle==StrategyLifecycle.Shadow
+                ?await _database.GetStrategyShadowObservationPerformanceAsync(profile.Id,profile.Version,ct)
+                :await _database.GetStrategyObservationPerformanceAsync(profile.Id,ct);
             profile.ShadowObservations = performance.Observations; profile.Expectancy = performance.Expectancy;
             profile.MaxDrawdown = performance.MaxDrawdown; profile.FailureStreak = performance.FailureStreak; profile.QualityScore = performance.QualityScore;
             var previous=profile.Lifecycle;var next = _governor.NextLifecycle(profile);
