@@ -116,6 +116,40 @@ public sealed class StrategyShadowQualificationTests : IDisposable
     }
 
     [Fact]
+    public async Task RestartReusesPersistedReadyReceiptAfterCrashBeforeLifecycleCommit()
+    {
+        var profile=Profile();
+        var store=await SeedAuthority(profile);
+        foreach(var value in Evidence(profile,StrategyGovernor.MinimumShadowObservations))
+            await store.SaveStrategyShadowObservationAsync(value,default);
+
+        var performance=await store.GetStrategyShadowObservationPerformanceAsync(profile.Id,profile.Version,default);
+        profile.ShadowObservations=performance.Observations;
+        profile.Expectancy=performance.Expectancy;
+        profile.MaxDrawdown=performance.MaxDrawdown;
+        profile.QualityScore=performance.QualityScore;
+        profile.FailureStreak=performance.FailureStreak;
+        await store.UpsertStrategyAsync(profile,default);
+
+        var persistedEvidence=await store.GetStrategyShadowObservationsAsync(profile.Id,profile.Version,default);
+        var receipt=StrategyShadowQualificationV1.Evaluate(
+            profile.Id,profile.Version,profile.Symbol,persistedEvidence,Now);
+        Assert.True(receipt.Qualified);
+        Assert.True(await store.SaveStrategyShadowQualificationAsync(receipt,default));
+
+        // Simulate a crash after receipt persistence but before the Shadow -> Active profile update.
+        var restarted=new AgentSqliteStore(Database,()=>Now.AddMinutes(1));
+        var agent=new StrategyResearchAgent(restarted,utcNow:()=>Now.AddMinutes(1).UtcDateTime);
+        await agent.ObserveAsync(new EvidencePack{Completeness=100},default);
+
+        var active=(await restarted.GetStrategiesAsync(default)).Single(x=>x.Id==profile.Id);
+        Assert.Equal(StrategyLifecycle.Active,active.Lifecycle);
+        var restored=await restarted.GetLatestStrategyShadowQualificationAsync(profile.Id,profile.Version,default);
+        Assert.NotNull(restored);
+        Assert.Equal(receipt.CanonicalSha256,restored!.CanonicalSha256);
+    }
+
+    [Fact]
     public async Task DeterministicFailoverRequiresCanonicalQualificationReceipt()
     {
         var profile=Profile();
