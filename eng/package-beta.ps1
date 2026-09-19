@@ -36,6 +36,36 @@ function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Assert-DetachedSigningAttestation(
+    [string]$ContentPath,
+    [string]$SignaturePath,
+    [string]$ExpectedSubject,
+    [string]$ExpectedThumbprint) {
+    if (-not (Test-Path -LiteralPath $SignaturePath -PathType Leaf)) {
+        throw "Runtime bundle signing attestation is missing."
+    }
+    Add-Type -AssemblyName System.Security.Cryptography.Pkcs
+    $contentBytes = [System.IO.File]::ReadAllBytes($ContentPath)
+    $cms = [System.Security.Cryptography.Pkcs.SignedCms]::new(
+        [System.Security.Cryptography.Pkcs.ContentInfo]::new($contentBytes),
+        $true)
+    try {
+        $cms.Decode([System.IO.File]::ReadAllBytes($SignaturePath))
+        $cms.CheckSignature($true)
+    } catch {
+        throw "Runtime bundle signing attestation signature is invalid."
+    }
+    if ($cms.SignerInfos.Count -ne 1) {
+        throw "Runtime bundle signing attestation must contain exactly one signer."
+    }
+    $certificate = $cms.SignerInfos[0].Certificate
+    if ($null -eq $certificate -or
+        $certificate.Subject -ne $ExpectedSubject -or
+        $certificate.Thumbprint.ToUpperInvariant() -ne $ExpectedThumbprint.ToUpperInvariant()) {
+        throw "Runtime bundle signing attestation identity does not match the approved publisher."
+    }
+}
+
 
 function Get-TextSha256([string]$Value) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -170,6 +200,7 @@ $publish = Resolve-InRoot $PublishPath
 $headlessPublish = Resolve-InRoot $HeadlessPublishPath
 $maintenancePublish = Resolve-InRoot $MaintenancePublishPath
 $signingResultInput = if ([string]::IsNullOrWhiteSpace($SigningResultPath)) { $null } else { Resolve-InRoot $SigningResultPath }
+$signingAttestationInput = if ($null -eq $signingResultInput) { $null } else { [System.IO.Path]::ChangeExtension($signingResultInput, "p7s") }
 $output = Resolve-InRoot $OutputDirectory
 $releaseReportPath = Join-Path $root "artifacts/release-readiness/report/release-readiness.json"
 $webRoot = Join-Path $root "WebUi"
@@ -268,6 +299,7 @@ if (-not ($allSigned -or $allUnsigned)) { throw "Runtime bundle signature states
 $readinessReportHash = Get-Sha256 $releaseReportPath
 $signingResult = $null
 $signingResultHash = $null
+$signingAttestationHash = $null
 $signatureSubject = $null
 $signatureThumbprint = $null
 if ($allSigned) {
@@ -277,9 +309,14 @@ if ($allSigned) {
     if ($null -eq $signingResultInput -or -not (Test-Path -LiteralPath $signingResultInput -PathType Leaf)) {
         throw "A signed runtime bundle requires SigningResultPath."
     }
+    if ($null -eq $signingAttestationInput) {
+        throw "A signed runtime bundle requires the detached signing attestation."
+    }
+    Assert-DetachedSigningAttestation $signingResultInput $signingAttestationInput $ExpectedSignerSubject $ExpectedSignerThumbprint
     $signingResultHash = Get-Sha256 $signingResultInput
+    $signingAttestationHash = Get-Sha256 $signingAttestationInput
     try { $signingResult = Get-Content -Raw -LiteralPath $signingResultInput | ConvertFrom-Json } catch { throw "Runtime bundle signing result is malformed." }
-    if ($signingResult.schemaVersion -ne "wpe.runtime-bundle-signing/1.0") { throw "Runtime bundle signing result schema is unsupported." }
+    if ($signingResult.schemaVersion -ne "wpe.runtime-bundle-signing/1.1" -or [string]$signingResult.attestationFormat -ne "cms-detached-sha256") { throw "Runtime bundle signing result schema is unsupported." }
     if ([string]$signingResult.readinessReportSha256 -ne $readinessReportHash -or
         [string]$signingResult.sourceCommit -ne $commit -or
         [string]$signingResult.productVersion -ne $projectVersion) {
@@ -356,6 +393,7 @@ foreach ($copy in $copyPlan) {
 }
 if ($null -ne $signingResultInput) {
     Copy-Item -LiteralPath $signingResultInput -Destination (Join-Path $packageRoot "SIGNING-RESULT.json") -Force
+    Copy-Item -LiteralPath $signingAttestationInput -Destination (Join-Path $packageRoot "SIGNING-RESULT.p7s") -Force
 }
 
 $manifest = @()
@@ -500,6 +538,8 @@ $metadata = [ordered]@{
         readinessReportSha256 = $readinessReportHash
         transitionResultPath = if ($isSigned) { "SIGNING-RESULT.json" } else { $null }
         transitionResultSha256 = if ($isSigned) { $signingResultHash } else { $null }
+        transitionSignaturePath = if ($isSigned) { "SIGNING-RESULT.p7s" } else { $null }
+        transitionSignatureSha256 = if ($isSigned) { $signingAttestationHash } else { $null }
         distributable = ($isSigned -and -not $dirty -and $releaseReport.source.dirty -eq $false)
         note = if (-not $isSigned) { "Unsigned three-artifact Beta bundle; internal evaluation only and non-distributable." } elseif ($dirty) { "Signed runtime bundle came from a dirty packaging source; non-distributable." } else { "All runtime executables have one verified publisher identity; commercial release still requires the documented go/no-go gates." }
     }
@@ -547,6 +587,7 @@ $result = [ordered]@{
     sourceDirty = $dirty
     readinessReportSha256 = $readinessReportHash
     signingResultSha256 = if ($isSigned) { $signingResultHash } else { $null }
+    signingAttestationSha256 = if ($isSigned) { $signingAttestationHash } else { $null }
     runtimeArtifactCount = $artifactStates.Count
     fileCount = $manifest.Count
     sbomComponents = $components.Count
