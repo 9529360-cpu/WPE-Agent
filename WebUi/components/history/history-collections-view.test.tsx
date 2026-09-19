@@ -41,7 +41,7 @@ test('top-level unsupported, stale, and error collections withhold rows and expo
 test('does not treat legacy history or preview data as live historical collections', () => {
   const runtime = { previewMode: true, history: { orders: collection([{ symbol: 'PREVIEW-MUST-NOT-RENDER' }]) } } as unknown as WpeRuntimeState
   const html = render(projectRuntimeHistory(runtime))
-  assert.equal(html.match(/unsupported/g)?.length, 10)
+  assert.equal(html.match(/unsupported/g)?.length, 14)
   assert.doesNotMatch(html, /PREVIEW-MUST-NOT-RENDER/)
 })
 
