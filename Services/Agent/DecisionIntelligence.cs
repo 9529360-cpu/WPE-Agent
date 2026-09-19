@@ -59,6 +59,7 @@ public sealed class SignalAggregationSkill
         if(conflict>policy.MaximumConflictRatio)missing.Add(L("Decision.Conflict",policy.MaximumConflictRatio,conflict));
         if(confidence<policy.MinimumConfidence)missing.Add(L("Decision.Confidence",policy.MinimumConfidence,confidence));
         if(market.Quality.QualityScore<policy.MinimumMarketQuality)missing.Add(L("Decision.MarketQuality",policy.MinimumMarketQuality,market.Quality.QualityScore));
+        if(regime==MarketRegime.Extreme)missing.Add(L("Decision.ExtremeRegime"));
         var entryReady=missing.Count==0;
         var action=entryReady?(score>0?DecisionAction.OpenLong:DecisionAction.OpenShort):DecisionAction.Hold;
         var summary=L("Decision.Summary",market.Symbol,regime,score,confidence,conflict,L(entryReady?"Decision.Ready":"Decision.Waiting"));
