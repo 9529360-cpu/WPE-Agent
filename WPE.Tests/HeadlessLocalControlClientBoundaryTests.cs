@@ -22,10 +22,10 @@ public sealed class HeadlessLocalControlClientBoundaryTests
 
         Assert.Contains("NamedPipeClientStream", client, StringComparison.Ordinal);
         Assert.Contains("HeadlessLocalControlWorker.PipeName", client, StringComparison.Ordinal);
-        Assert.Contains(""."", client, StringComparison.Ordinal);
-        Assert.Contains(""health"", client, StringComparison.Ordinal);
-        Assert.Contains(""shutdown"", client, StringComparison.Ordinal);
-        Assert.Contains(""--confirm"", client, StringComparison.Ordinal);
+        Assert.Contains("\".\"", client, StringComparison.Ordinal);
+        Assert.Contains("\"health\"", client, StringComparison.Ordinal);
+        Assert.Contains("\"shutdown\"", client, StringComparison.Ordinal);
+        Assert.Contains("\"--confirm\"", client, StringComparison.Ordinal);
         Assert.Contains("HeadlessLocalControlProtocol.ShutdownConfirmation", client, StringComparison.Ordinal);
         Assert.Contains("MaximumResponseBytes = 4096", client, StringComparison.Ordinal);
         Assert.Contains("ConnectTimeout = TimeSpan.FromSeconds(5)", client, StringComparison.Ordinal);
