@@ -46,8 +46,6 @@ public sealed partial class AgentSqliteStore
         await using var connection = new SqliteConnection(_cs);
         await connection.OpenAsync(ct);
         await EnsureExecutionSimulationStorageAsync(connection, ct);
-        await EnsureExecutionRealityDriftStorageAsync(connection, ct);
-        await VerifySimulationComparisonSourcesAsync(connection, comparison, ct);
 
         await using var insert = connection.CreateCommand();
         insert.CommandText = """
@@ -91,6 +89,8 @@ public sealed partial class AgentSqliteStore
         await using var connection = new SqliteConnection(_cs);
         await connection.OpenAsync(ct);
         await EnsureExecutionSimulationStorageAsync(connection, ct);
+        await EnsureExecutionRealityDriftStorageAsync(connection, ct);
+        await VerifySimulationComparisonSourcesAsync(connection, comparison, ct);
 
         await using var insert = connection.CreateCommand();
         insert.CommandText = """
