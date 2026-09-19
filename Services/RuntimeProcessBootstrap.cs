@@ -17,7 +17,7 @@ public sealed record RuntimeProcessBootstrapResult(
 public static class RuntimeProcessBootstrap
 {
     private static readonly object Gate = new();
-    private static FileStream? _dataRootLease;
+    private static DataRootMaintenanceLeaseHandle? _dataRootLease;
     private static RuntimeProcessBootstrapResult? _current;
 
     public static RuntimeProcessBootstrapResult Initialize(string logFileName)
