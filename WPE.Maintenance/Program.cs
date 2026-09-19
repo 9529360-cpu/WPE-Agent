@@ -21,7 +21,7 @@ internal static class Program
 
             var parsed = Parse(args);
             operation = parsed.Operation;
-            var dataRoot = RequireAbsolutePath(parsed.Options, "data-root");
+            var dataRoot = RequireFixedLocalDataRoot(parsed.Options, "data-root");
             var layout = new AppDataLayout(dataRoot);
 
             return operation switch
@@ -153,6 +153,18 @@ internal static class Program
         }
 
         return new(operation, options);
+    }
+
+    private static string RequireFixedLocalDataRoot(
+        IReadOnlyDictionary<string, string> options,
+        string key)
+    {
+        var value = Require(options, key);
+        if (!DataRootPathPolicy.TryNormalizeFixedLocalRoot(value, out var normalized) ||
+            normalized is null)
+            throw new ArgumentException(
+                $"--{key} must be an absolute path on a fixed local drive.");
+        return normalized;
     }
 
     private static string RequireAbsolutePath(
