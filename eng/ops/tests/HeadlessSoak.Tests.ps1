@@ -101,6 +101,9 @@ try{
     Write-Evidence @{startedAtUtc=$now.AddMinutes(-5).ToString('O')}
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.duration-insufficient'
 
+    Write-Evidence @{requestedDurationSeconds=60;expectedMinimumSamples=1}
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.requested-duration-mismatch'
+
     Write-Evidence @{}
     $tampered=Get-Content -Raw -LiteralPath $evidencePath|ConvertFrom-Json
     $tampered|Add-Member -NotePropertyName unexpected -NotePropertyValue 'x'
