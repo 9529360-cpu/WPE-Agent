@@ -1,3 +1,4 @@
+using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
 using 币安量化机器人.Core.Strategy;
@@ -317,7 +318,7 @@ internal static class StrategyShadowQualificationV1
                 SHA256.HashData(canonicalBytes),
                 Convert.FromHexString(canonicalSha256)))
                 return false;
-            using var document=JsonDocument.Parse(canonicalBytes);
+            using var document=JsonDocument.Parse(canonicalBytes.ToArray());
             var root=document.RootElement;
             if(!Enum.TryParse<StrategyShadowQualificationStateV1>(
                 root.GetProperty("state").GetString(),true,out var state))
