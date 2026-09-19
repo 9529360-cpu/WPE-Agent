@@ -104,6 +104,16 @@ try{
     Write-Evidence @{}
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.sample-runtime-not-ready'
 
+    $forgedGraceJson=$notReadyJson.Replace('"inStartupGrace":false','"inStartupGrace":true')
+    @(1..54|ForEach-Object{$forgedGraceJson})|Set-Content -LiteralPath $samplesPath -Encoding utf8
+    Write-Evidence @{}
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.sample-grace-window-mismatch'
+
+    $ageMismatchJson=$sampleJson.Replace('"healthAgeSeconds":1','"healthAgeSeconds":2')
+    @(1..54|ForEach-Object{$ageMismatchJson})|Set-Content -LiteralPath $samplesPath -Encoding utf8
+    Write-Evidence @{}
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.sample-health-age-mismatch'
+
     'PASS headless soak evidence verification'
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
