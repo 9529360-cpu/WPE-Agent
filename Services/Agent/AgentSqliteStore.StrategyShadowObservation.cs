@@ -26,12 +26,12 @@ public sealed partial class AgentSqliteStore
                 INSERT OR IGNORE INTO strategy_shadow_observation_artifacts(
                     canonical_sha256,schema,strategy_id,strategy_version,symbol,lifecycle,
                     validation_at,observed_at,market_collected_at,market_price,direction,confidence,
-                    market_provenance_sha256,market_provenance_bytes,
+                    market_provider_id,environment,market_provenance_sha256,market_provenance_bytes,
                     backtest_validation_sha256,backtest_validation_bytes,timeline_sha256,canonical_bytes)
                 VALUES(
                     $hash,$schema,$strategy,$version,$symbol,$lifecycle,
                     $validationAt,$observed,$marketAt,$marketPrice,$direction,$confidence,
-                    $marketHash,$marketBytes,$validationHash,$validationBytes,$timelineHash,$bytes);
+                    $marketProvider,$environment,$marketHash,$marketBytes,$validationHash,$validationBytes,$timelineHash,$bytes);
                 SELECT changes();
                 """;
             insert.Parameters.AddWithValue("$hash",value.CanonicalSha256);
@@ -46,6 +46,8 @@ public sealed partial class AgentSqliteStore
             insert.Parameters.AddWithValue("$marketPrice",value.MarketPrice.ToString(CultureInfo.InvariantCulture));
             insert.Parameters.AddWithValue("$direction",value.Direction);
             insert.Parameters.AddWithValue("$confidence",value.Confidence);
+            insert.Parameters.AddWithValue("$marketProvider",value.MarketProviderId);
+            insert.Parameters.AddWithValue("$environment",value.Environment);
             insert.Parameters.AddWithValue("$marketHash",value.MarketProvenanceSha256);
             insert.Parameters.Add("$marketBytes",SqliteType.Blob).Value=value.MarketProvenanceCanonicalBytes;
             insert.Parameters.AddWithValue("$validationHash",value.BacktestValidationSha256);
@@ -59,7 +61,8 @@ public sealed partial class AgentSqliteStore
         await using var query=connection.CreateCommand();
         query.CommandText="""
             SELECT canonical_sha256,schema,symbol,lifecycle,validation_at,observed_at,market_collected_at,
-                   market_price,direction,confidence,market_provenance_sha256,market_provenance_bytes,
+                   market_price,direction,confidence,market_provider_id,environment,
+                   market_provenance_sha256,market_provenance_bytes,
                    backtest_validation_sha256,backtest_validation_bytes,timeline_sha256,canonical_bytes
             FROM strategy_shadow_observation_artifacts
             WHERE strategy_id=$strategy
@@ -74,9 +77,9 @@ public sealed partial class AgentSqliteStore
         if(!await reader.ReadAsync(ct))
             throw new InvalidOperationException("Strategy shadow observation idempotent replay lost persisted evidence.");
 
-        var marketBytes=(byte[])reader[11];
-        var validationBytes=(byte[])reader[13];
-        var bytes=(byte[])reader[15];
+        var marketBytes=(byte[])reader[13];
+        var validationBytes=(byte[])reader[15];
+        var bytes=(byte[])reader[17];
         if(!string.Equals(reader.GetString(0),value.CanonicalSha256,StringComparison.Ordinal)
            ||!string.Equals(reader.GetString(1),value.Schema,StringComparison.Ordinal)
            ||!string.Equals(reader.GetString(2),value.Symbol,StringComparison.Ordinal)
@@ -87,11 +90,13 @@ public sealed partial class AgentSqliteStore
            ||decimal.Parse(reader.GetString(7),CultureInfo.InvariantCulture)!=value.MarketPrice
            ||reader.GetInt32(8)!=value.Direction
            ||reader.GetDouble(9)!=value.Confidence
-           ||!string.Equals(reader.GetString(10),value.MarketProvenanceSha256,StringComparison.Ordinal)
+           ||!string.Equals(reader.GetString(10),value.MarketProviderId,StringComparison.Ordinal)
+           ||!string.Equals(reader.GetString(11),value.Environment,StringComparison.Ordinal)
+           ||!string.Equals(reader.GetString(12),value.MarketProvenanceSha256,StringComparison.Ordinal)
            ||!CryptographicOperations.FixedTimeEquals(marketBytes,value.MarketProvenanceCanonicalBytes)
-           ||!string.Equals(reader.GetString(12),value.BacktestValidationSha256,StringComparison.Ordinal)
+           ||!string.Equals(reader.GetString(14),value.BacktestValidationSha256,StringComparison.Ordinal)
            ||!CryptographicOperations.FixedTimeEquals(validationBytes,value.BacktestValidationCanonicalBytes)
-           ||!string.Equals(reader.GetString(14),value.TimelineSha256,StringComparison.Ordinal)
+           ||!string.Equals(reader.GetString(16),value.TimelineSha256,StringComparison.Ordinal)
            ||!CryptographicOperations.FixedTimeEquals(bytes,value.CanonicalBytes))
             throw new InvalidOperationException("Strategy shadow observation replay conflicts with persisted evidence.");
 
@@ -114,7 +119,7 @@ public sealed partial class AgentSqliteStore
         query.CommandText="""
             SELECT canonical_sha256,schema,strategy_id,strategy_version,symbol,lifecycle,
                    validation_at,observed_at,market_collected_at,market_price,direction,confidence,
-                   market_provenance_sha256,market_provenance_bytes,
+                   market_provider_id,environment,market_provenance_sha256,market_provenance_bytes,
                    backtest_validation_sha256,backtest_validation_bytes,timeline_sha256,canonical_bytes
             FROM strategy_shadow_observation_artifacts
             WHERE strategy_id=$strategy AND strategy_version=$version
@@ -141,14 +146,14 @@ public sealed partial class AgentSqliteStore
                 decimal.Parse(reader.GetString(9),CultureInfo.InvariantCulture),
                 reader.GetInt32(10),
                 reader.GetDouble(11),
+                reader.GetString(16),
+                (byte[])reader[17],
+                reader.GetString(18),
+                reader.GetString(12),
+                reader.GetString(13),
                 reader.GetString(14),
                 (byte[])reader[15],
-                reader.GetString(16),
-                string.Empty,
-                "Testnet",
-                reader.GetString(12),
-                (byte[])reader[13],
-                (byte[])reader[17],
+                (byte[])reader[19],
                 reader.GetString(0));
             if(!StrategyShadowObservationCanonicalizerV1.IsCanonical(row))
                 throw new InvalidOperationException("Persisted strategy shadow observation failed canonical verification.");
@@ -272,6 +277,8 @@ public sealed partial class AgentSqliteStore
                 market_price TEXT NOT NULL,
                 direction INTEGER NOT NULL CHECK(direction BETWEEN -1 AND 1),
                 confidence REAL NOT NULL CHECK(confidence>=0 AND confidence<=1),
+                market_provider_id TEXT NOT NULL,
+                environment TEXT NOT NULL CHECK(environment='Testnet'),
                 market_provenance_sha256 TEXT NOT NULL,
                 market_provenance_bytes BLOB NOT NULL,
                 backtest_validation_sha256 TEXT NOT NULL,
