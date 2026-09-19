@@ -185,16 +185,16 @@ export function ExecutionCockpit() {
               <div className="flex min-h-24 items-center justify-center p-4 text-xs text-muted-foreground">{t('dashboard.noClosedTradeReviews')}</div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[860px] text-left text-xs">
+                <table className="w-full min-w-[980px] text-left text-xs">
                   <thead className="border-b border-border text-muted-foreground">
                     <tr><th className="px-3 py-2 font-medium">{t('common.time')}</th><th className="px-3 py-2 font-medium">{t('common.symbol')}</th><th className="px-3 py-2 font-medium">{t('dashboard.strategyIdentity')}</th><th className="px-3 py-2 text-right font-medium">{t('dashboard.entryExit')}</th><th className="px-3 py-2 text-right font-medium">{t('dashboard.netPnl')}</th><th className="px-3 py-2 text-right font-medium">{t('dashboard.feeFundingSlippage')}</th></tr>
                   </thead>
                   <tbody>
                     {postTrades.map(review => (
-                      <tr key={review.clientOrderId} className="border-b border-border/70 last:border-0">
+                      <tr key={review.traceId} className="border-b border-border/70 last:border-0">
                         <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">{formatDate(review.closedAtUtc)}</td>
                         <td className="px-3 py-2.5"><div className="font-medium">{review.symbol}</div><div className={sideTone(review.side)}>{review.side}</div></td>
-                        <td className="max-w-52 px-3 py-2.5"><div className="truncate font-medium">{review.strategyId ?? review.strategyVersion}</div><div className="truncate text-[10px] text-muted-foreground">{review.strategyId ? review.strategyVersion : t('dashboard.legacyVersionOnly')} · {review.attributionBasis}</div></td>
+                        <td className="max-w-64 px-3 py-2.5"><div className="truncate font-medium">{review.strategyId ?? review.strategyVersion}</div><div className="truncate text-[10px] text-muted-foreground">{review.strategyId ? review.strategyVersion : t('dashboard.legacyVersionOnly')} · {review.attributionBasis}</div><div className="mt-1 break-words font-mono text-[10px] text-muted-foreground">{review.traceId} · {t('dashboard.riskAtTrade')}: {review.riskDecision} · {t('dashboard.executionAtTrade')}: {review.executionStatus}</div>{review.marketDataVersion ? <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{t('dashboard.marketEvidenceAtTrade')}: {review.marketDataVersion}</div> : null}</td>
                         <td className="px-3 py-2.5 text-right tabular">{formatNumber(review.entryPrice, { maximumFractionDigits: 8 })} → {formatNumber(review.exitPrice, { maximumFractionDigits: 8 })}</td>
                         <td className={'px-3 py-2.5 text-right tabular font-medium ' + (review.netPnl >= 0 ? 'text-success' : 'text-danger')}><div>{formatNumber(review.netPnl, { maximumFractionDigits: 4 })}</div><div className="text-[10px]">{review.returnPct >= 0 ? '+' : ''}{formatNumber(review.returnPct * 100, { maximumFractionDigits: 2 })}%</div></td>
                         <td className="px-3 py-2.5 text-right tabular"><div>{formatNumber(review.fees, { maximumFractionDigits: 4 })} / {formatNumber(review.fundingAmount, { maximumFractionDigits: 4 })} / {formatNumber(review.totalSlippageAmount, { maximumFractionDigits: 4 })}</div><div className="mt-1 max-w-72 text-[10px] text-muted-foreground">{review.feeBasis} · {review.fundingBasis} · {review.slippageBasis}</div></td>
