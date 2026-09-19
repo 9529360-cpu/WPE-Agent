@@ -213,7 +213,7 @@ public sealed class ExecutionSimulationComparisonPersistenceTests : IDisposable
             state:ExecutionSimulationFillStateV1.Filled,
             executedQuantity:1m,
             averagePrice:price,
-            feeAmount:price * .0004m,
+            feeAmount:price * 0.0004m,
             feeRole:ExecutionSimulationFeeRoleV1.Taker,
             latencyModeled:true,
             simulatedLatencyMs:500,
@@ -230,9 +230,9 @@ public sealed class ExecutionSimulationComparisonPersistenceTests : IDisposable
     {
         var expectation = new ExecutionRealityExpectationV1(
             "cycle-" + orderId, orderId, strategyId, strategyVersion, costModelVersion, "BTCUSDT",
-            PositionSide.Long, false, ExecutionOrderType.Market, 1m, 100m, .0004m, .001m, SimulatedAt);
+            PositionSide.Long, false, ExecutionOrderType.Market, 1m, 100m, 0.0004m, 0.001m, SimulatedAt);
         var observation = new ExecutionRealityObservationV1(
-            orderId, "FILLED", 1m, price, price * .0004m,
+            orderId, "FILLED", 1m, price, price * 0.0004m,
             ExecutionRealityDriftV1.ExchangeReportedFeeBasis,
             ObservedAt.AddMilliseconds(-100),
             ObservedAt);
