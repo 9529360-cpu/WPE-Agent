@@ -183,6 +183,10 @@ jobs:
       shell: pwsh
       run: ./eng/ops/tests/HeadlessSoak.Tests.ps1
 
+    - name: Verify headless service deployment preflight
+      shell: pwsh
+      run: ./eng/ops/tests/HeadlessServiceDeployment.Tests.ps1
+
     - name: Verify dogfood release slots
       shell: pwsh
       run: ./eng/dogfood/tests/ReleaseSlots.Tests.ps1
