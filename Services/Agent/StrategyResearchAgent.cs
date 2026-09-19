@@ -182,9 +182,26 @@ public sealed class StrategyResearchAgent
             profile.Symbol,
             evidence,
             evaluatedAt);
-        return StrategyShadowQualificationV1.IsCanonical(decision)&&decision.Qualified
-            ?decision
-            :null;
+        if(!StrategyShadowQualificationV1.IsCanonical(decision)||!decision.Qualified)
+            return null;
+
+        // A crash may persist the durable receipt before the profile lifecycle becomes Active.
+        // Re-evaluate freshness first, then reuse the exact persisted receipt instead of creating
+        // a conflicting canonical decision for the same evidence set at a later evaluation time.
+        var persisted=await _database.GetLatestStrategyShadowQualificationAsync(profile.Id,profile.Version,ct);
+        if(persisted is not null
+           &&persisted.Qualified
+           &&StrategyShadowQualificationV1.IsCanonical(persisted)
+           &&string.Equals(persisted.Symbol,decision.Symbol,StringComparison.Ordinal)
+           &&string.Equals(persisted.MarketProviderId,decision.MarketProviderId,StringComparison.Ordinal)
+           &&string.Equals(persisted.Environment,decision.Environment,StringComparison.Ordinal)
+           &&string.Equals(persisted.BacktestValidationSha256,decision.BacktestValidationSha256,StringComparison.Ordinal)
+           &&string.Equals(persisted.TimelineSha256,decision.TimelineSha256,StringComparison.Ordinal)
+           &&string.Equals(persisted.PolicySha256,decision.PolicySha256,StringComparison.Ordinal)
+           &&string.Equals(persisted.EvidenceSetSha256,decision.EvidenceSetSha256,StringComparison.Ordinal))
+            return persisted;
+
+        return decision;
     }
 
     private async Task<StrategyShadowObservationV1?> CreateShadowObservationAsync(
