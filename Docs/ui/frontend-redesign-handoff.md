@@ -138,7 +138,7 @@ The home command view is execution-first. Its primary trading surface is a read-
 - recent persisted execution events from the historical order projection;
 - links to deeper position, order, risk, and history views.
 
-The command center must not add an order-entry form, direct exchange calls, approval mutation, cancellation mutation, or a second ledger. Richer future ledger views should extend canonical backend/runtime projections for strategy identity, fees, funding, slippage, reconciliation and provenance rather than recomputing those facts in React.
+The command center must not add an order-entry form, direct exchange calls, approval mutation, cancellation mutation, or a second ledger. Settlement detail is exposed through the canonical read-only `historicalPostTradeReviews` projection from persisted `trade_outcomes`; reconciliation status is exposed through `historicalReconciliations` from the append-only Position, protection and external-position-isolation audit tables. React must not recompute those facts. Strategy identity is attribution metadata only, not a causal performance claim. Reconciliation projections expose bounded metadata and canonical hashes only; canonical payload bytes remain backend-owned.
 
 Mature exchange terminals, including OpenDAX-style layouts, may be studied for information hierarchy, density and interaction patterns. Do not copy or vendor third-party frontend source unless its exact license permits WPE's intended use and the dependency/license review is recorded. The current command-center implementation is original WPE code and does not reuse BaseApp components.
 
