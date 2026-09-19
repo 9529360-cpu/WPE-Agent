@@ -24,19 +24,13 @@ public partial class App : global::System.Windows.Application
 
     public App()
     {
-        var migration = AppDataPaths.MigrateLegacyPortableData();
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .WriteTo.Sink(new SensitiveFileLogSink(AppDataPaths.LogFile("app.log")))
-            .CreateLogger();
-        Log.Information("Portable data migration completed. Copied={Copied}; Skipped={Skipped}; Failed={Failed}", migration.Copied, migration.Skipped, migration.Failed);
+        RuntimeProcessBootstrap.Initialize("app.log");
     }
 
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
-        LocalizationService.Current.Initialize();
         _localizationBridge = new WpfLocalizationBridge(LocalizationService.Current);
 
         if (e.Args.Any(x => string.Equals(x, "--i18n-test", StringComparison.OrdinalIgnoreCase)))
