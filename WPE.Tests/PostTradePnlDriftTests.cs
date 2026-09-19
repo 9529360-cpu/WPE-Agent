@@ -35,6 +35,7 @@ public sealed class PostTradePnlDriftTests : IDisposable
 
         var fact=Assert.Single(await store.GetRecentPostTradePnlDriftAsync(10,default));
 
+        Assert.Equal("wpe.post-trade-pnl-drift/1.1",fact.Schema);
         Assert.Equal(PostTradePnlDriftStateV1.GrossComparable,fact.State);
         Assert.Equal(100m,fact.ActualEntryPrice);
         Assert.Equal(110m,fact.ActualExitPrice);
