@@ -70,16 +70,60 @@ $sampleAllowed=@(
  'schemaVersion','sampledAtUtc','observedAtUtc','healthAgeSeconds','processState','processCode',
  'runtimeReady','agentRunning','accessFresh','heartbeatFresh','leaseLost','inStartupGrace','accepted','reason'
 )
+$booleanFields=@('runtimeReady','agentRunning','accessFresh','heartbeatFresh','leaseLost','inStartupGrace','accepted')
 $count=0
+$recomputedReady=0
+$recomputedGrace=0
+$maximumSampleHealthAge=0.0
+$lastSampledAt=$null
 Get-Content -LiteralPath $samples | ForEach-Object {
     if([string]::IsNullOrWhiteSpace($_)){throw 'soak.sample-empty'}
     try{$sample=$_|ConvertFrom-Json}catch{throw 'soak.sample-malformed'}
     if(@($sample.PSObject.Properties.Name|Where-Object{$sampleAllowed -notcontains $_}).Count){throw 'soak.sample-unknown-field'}
     if($sample.schemaVersion -ne 'wpe.headless-soak-sample/1.0'){throw 'soak.sample-schema-invalid'}
+    foreach($field in $booleanFields){
+        if($sample.$field -isnot [bool]){throw 'soak.sample-boolean-invalid'}
+    }
+
+    $sampledAt=Parse-Utc $sample.sampledAtUtc 'soak.sample-sampled-at-invalid'
+    if($sampledAt -lt $started -or $sampledAt -gt $completed.AddSeconds(1)){throw 'soak.sample-time-outside-window'}
+    if($null -ne $lastSampledAt -and $sampledAt -lt $lastSampledAt){throw 'soak.sample-time-not-monotonic'}
+    $lastSampledAt=$sampledAt
+
     if([bool]$sample.leaseLost){throw 'soak.sample-lease-lost'}
+    if(-not [bool]$sample.accepted){throw 'soak.sample-not-accepted'}
+
+    if($null -ne $sample.observedAtUtc -and -not [string]::IsNullOrWhiteSpace([string]$sample.observedAtUtc)){
+        $observedAt=Parse-Utc $sample.observedAtUtc 'soak.sample-observed-at-invalid'
+        if($observedAt -gt $sampledAt.AddSeconds(5)){throw 'soak.sample-observation-future'}
+    }
+
+    if($null -ne $sample.healthAgeSeconds){
+        try{$sampleAge=[double]$sample.healthAgeSeconds}catch{throw 'soak.sample-health-age-invalid'}
+        if($sampleAge -lt 0 -or $sampleAge -gt $maximumHealthAgeSeconds){throw 'soak.sample-health-age-invalid'}
+        $maximumSampleHealthAge=[Math]::Max($maximumSampleHealthAge,$sampleAge)
+    }
+
+    $ready=([string]$sample.processState -eq 'ready') -and
+        [bool]$sample.runtimeReady -and
+        [bool]$sample.agentRunning -and
+        [bool]$sample.accessFresh -and
+        [bool]$sample.heartbeatFresh -and
+        -not [bool]$sample.leaseLost
+    if($ready){
+        $recomputedReady++
+    } elseif([bool]$sample.inStartupGrace){
+        $recomputedGrace++
+    } else {
+        throw 'soak.sample-runtime-not-ready'
+    }
     $count++
 }
 if($count -ne [int]$evidence.sampleCount){throw 'soak.sample-count-mismatch'}
+if($recomputedReady -ne [int]$evidence.readySamples){throw 'soak.ready-sample-count-mismatch'}
+if($recomputedGrace -ne [int]$evidence.graceSamples){throw 'soak.grace-sample-count-mismatch'}
+if(($recomputedReady+$recomputedGrace) -ne $count){throw 'soak.accepted-sample-count-mismatch'}
+if([Math]::Abs($maximumSampleHealthAge-[double]$evidence.maximumObservedHealthAgeSeconds) -gt 0.01){throw 'soak.maximum-health-age-mismatch'}
 
 [pscustomobject]@{
     Valid=$true
