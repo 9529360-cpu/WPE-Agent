@@ -186,6 +186,35 @@ public sealed class PostTradeSimulationRealityLinkerV1
            ||string.IsNullOrWhiteSpace(value.Code))
             return false;
 
+        if(value.State!=PostTradeSimulationRealityLinkStateV1.Linked)
+        {
+            if(value.CostModelVersion is not null
+               ||value.SimulationModelVersion is not null
+               ||value.VenueRuleVersion is not null
+               ||value.ArtifactSha256 is not null
+               ||value.IntentSha256 is not null
+               ||value.SimulationSourceSha256 is not null
+               ||value.MarketProvenanceSha256 is not null
+               ||value.SimulatedFillSha256 is not null
+               ||value.SimulatedState is not null
+               ||value.ObservedDriftSha256 is not null
+               ||value.ObservedState is not null
+               ||value.ComparisonSha256 is not null
+               ||value.StateMatch is not null
+               ||value.SimulatedFillRatio is not null
+               ||value.ObservedFillRatio is not null
+               ||value.FillRatioDelta is not null
+               ||value.PriceComparable is not null
+               ||value.PriceDriftBps is not null
+               ||value.FeeComparable is not null
+               ||value.FeeDriftBps is not null
+               ||value.LatencyComparable is not null
+               ||value.LatencyDriftMs is not null
+               ||value.TotalComparable is not null
+               ||value.TotalExecutionDriftBps is not null)
+                return false;
+        }
+
         if(value.State==PostTradeSimulationRealityLinkStateV1.Linked)
         {
             if(!LowerSha(value.ArtifactSha256)
@@ -206,7 +235,12 @@ public sealed class PostTradeSimulationRealityLinkerV1
                ||value.PriceComparable is null
                ||value.FeeComparable is null
                ||value.LatencyComparable is null
-               ||value.TotalComparable is null)
+               ||value.TotalComparable is null
+               ||value.FillRatioDelta!=value.ObservedFillRatio-value.SimulatedFillRatio
+               ||value.PriceComparable!=value.PriceDriftBps.HasValue
+               ||value.FeeComparable!=value.FeeDriftBps.HasValue
+               ||value.LatencyComparable!=value.LatencyDriftMs.HasValue
+               ||value.TotalComparable!=value.TotalExecutionDriftBps.HasValue)
                 return false;
         }
 
