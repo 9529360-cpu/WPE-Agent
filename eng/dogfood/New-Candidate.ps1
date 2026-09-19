@@ -10,7 +10,6 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedSourceManifestHash,
     [Parameter(Mandatory)][string]$PackageVerificationPath,
     [Parameter(Mandatory)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedPackageVerificationHash,
-    [string]$ProbeScript = 'dogfood-probe.ps1',
     [ValidateSet('Testnet')][string]$Environment = 'Testnet'
 )
 $ErrorActionPreference='Stop'
@@ -78,10 +77,6 @@ if($actualPayloadPaths.Count -ne $manifestPaths.Count -or
    (Compare-Object @($actualPayloadPaths|Sort-Object) @($manifestPaths|Sort-Object) -SyncWindow 0).Count -ne 0){
     throw 'package.manifest-inventory-drift'
 }
-$probePath=Join-Path $source $ProbeScript
-if(-not(Test-Path -LiteralPath $probePath -PathType Leaf)){throw 'probe.missing'}
-$probeRelative=$ProbeScript.Replace('\\','/')
-if(@($sourceManifest|Where-Object {$_.path -eq $probeRelative}).Count -ne 1){throw 'probe.unanchored'}
 $destination=Join-Path $slots (Join-Path 'versions' $Version)
 if(Test-Path -LiteralPath $destination){throw 'candidate.version-exists'}
 New-Item -ItemType Directory -Path $destination -Force | Out-Null
@@ -89,7 +84,7 @@ Copy-Item -Path (Join-Path $source '*') -Destination $destination -Recurse -Forc
 $files=@(Get-ChildItem -LiteralPath $destination -Recurse -File | Sort-Object FullName | ForEach-Object {
     [ordered]@{path=$_.FullName.Substring($destination.Length+1).Replace('\\','/');sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant();length=$_.Length}
 })
-$manifest=[ordered]@{schemaVersion='wpe.dogfood-release-manifest/1.0';version=$Version;sourceIdentity=$SourceIdentity;environment=$Environment;configurationSchema=$ConfigurationSchema;migrationVersion=$MigrationVersion;createdUtc=[DateTimeOffset]::UtcNow.ToString('O');probeScript=$ProbeScript.Replace('\\','/');files=$files;gates=@($Gates)}
+$manifest=[ordered]@{schemaVersion='wpe.dogfood-release-manifest/1.1';version=$Version;sourceIdentity=$SourceIdentity;environment=$Environment;configurationSchema=$ConfigurationSchema;migrationVersion=$MigrationVersion;createdUtc=[DateTimeOffset]::UtcNow.ToString('O');files=$files;gates=@($Gates)}
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $destination 'release-manifest.json') -Encoding utf8
 Get-ChildItem -LiteralPath $destination -Recurse -File | ForEach-Object {$_.IsReadOnly=$true}
 [pscustomobject]@{CandidateRoot=$destination;ManifestSha256=(Get-FileHash -LiteralPath (Join-Path $destination 'release-manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant()}
