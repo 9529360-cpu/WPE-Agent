@@ -45,6 +45,66 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
     }
 
     [Fact]
+    public async Task PersistedSimulationSourceAutomaticallyProducesComparisonAfterObservedReality()
+    {
+        var store = Store();
+        var artifact = Artifact("cycle-a", "strategy-a", "v7", "order-a");
+        await AuthorizeArtifact(store, artifact);
+
+        var simulatedAt = ExecutionStart;
+        var snapshot = new RealtimeMarketSnapshot(
+            "BTCUSDT",
+            100m,
+            99.9m,
+            100.1m,
+            5m,
+            5m,
+            10m,
+            9m,
+            1m,
+            simulatedAt.AddMilliseconds(-100).UtcDateTime,
+            10,
+            true);
+        var rule = new TradingRule("BTCUSDT", .001m, .1m, .001m, 5m, 20);
+        var bundle = ExecutionTopOfBookSimulationV1.Create(
+            artifact,
+            Assert.Single(artifact.Intents),
+            "binance-futures",
+            ExchangeEnvironment.Testnet,
+            snapshot,
+            rule,
+            TradingRealityCostAuthorityV1.Version,
+            simulatedAt);
+        await store.SaveExecutionSimulationBundleAsync(bundle.Source, bundle.Fill, default);
+        await store.SaveExchangeOrderFeeEvidenceAsync(Fee("order-a", .04008m), default);
+
+        var result = await new ExecutionRealityRecorderV1(store, () => Now).RecordAsync(
+            "cycle-a",
+            Intent("order-a"),
+            Order("order-a", "FILLED", 1m, 100.2m),
+            TradingRealityCostAuthorityV1.Execution,
+            default);
+
+        Assert.True(result.Recorded);
+        Assert.True(result.ComparisonRecorded);
+        Assert.NotNull(result.ComparisonCanonicalSha256);
+
+        var comparisons = await store.GetRecentExecutionSimulationComparisonsAsync(
+            10,
+            default,
+            "strategy-a",
+            "v7",
+            TradingRealityCostAuthorityV1.Version);
+        var comparison = Assert.Single(comparisons);
+        Assert.Equal(result.ComparisonCanonicalSha256, comparison.CanonicalSha256);
+        Assert.Equal(bundle.Fill.CanonicalSha256, comparison.SimulatedCanonicalSha256);
+        Assert.True(comparison.PriceComparable);
+        Assert.Equal(10m, comparison.PriceDriftBps);
+        Assert.False(comparison.FeeComparable);
+        Assert.False(comparison.TotalComparable);
+    }
+
+    [Fact]
     public async Task MissingFeeEvidenceKeepsPriceFactButWithholdsTotalComparison()
     {
         var store = Store();
