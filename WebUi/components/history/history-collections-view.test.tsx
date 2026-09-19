@@ -13,7 +13,7 @@ const collection = <T,>(items: T[], nextCursor: string | null = null): RuntimeHi
 test('maps all seven normalized top-level collections to real available rows', () => {
   const secret = 'MUST-NOT-RENDER'
   const runtime: WpeRuntimeState = {
-    historicalOrders: collection([{ sequence: 1, occurredAtUtc: '2026-07-22T01:00:00Z', correlationId: secret, clientOrderId: secret, symbol: 'BTCUSDT', side: 'Buy', action: 'Open', reduceOnly: false, quantity: 0.25, averagePrice: 64000, status: 'Filled' }], secret),
+    historicalOrders: collection([{ sequence: 1, occurredAtUtc: '2026-07-22T01:00:00Z', correlationId: 'cycle#ABCDEF123456', clientOrderId: 'order#ABCDEF123456', symbol: 'BTCUSDT', side: 'Buy', action: 'Open', reduceOnly: false, quantity: 0.25, averagePrice: 64000, status: 'Filled', ...({ rawCorrelationId: secret, rawClientOrderId: secret } as object) }], secret),
     historicalEquity: collection([{ sequence: 2, observedAtUtc: '2026-07-22T01:01:00Z', equity: 12500, availableBalance: 9000, environment: 'Testnet', providerId: 'binance-futures' }]),
     historicalBacktests: collection([{ backtestId: 'backtest-real-1', completedAtUtc: '2026-07-22T01:02:00Z', strategyId: 'trend-alpha', strategyVersion: '2.1.0', symbol: 'ETHUSDT', status: 'Passed', coverageDays: 365, trades: 42, outOfSampleReturn: 0.12, maxDrawdown: 0.04, sharpe: 1.7 }]),
     historicalSkillCalls: collection([{ id: 'skill-real-1', occurredAtUtc: '2026-07-22T01:03:00Z', skill: 'market-research', status: 'Completed', durationMs: 87, mode: 'Local Only', remoteLlmUsed: false, tokens: 0, costUsd: 0 }]),
