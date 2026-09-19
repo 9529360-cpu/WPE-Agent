@@ -39,6 +39,12 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
         var source=await store.GetExecutionSimulationSourceAsync(artifact.CorrelationId,"WPE-REALITY",default);
         Assert.NotNull(source);
         Assert.Equal(ExecutionSimulationSourceStateV1.Available,source!.State);
+        Assert.Equal("wpe.execution-simulation-source/1.3",source.Schema);
+        Assert.Equal(TradingRealityCostAuthorityV1.Identity,source.CostModelVersion);
+        Assert.Equal(TradingRealityCostAuthorityV1.Default.CommissionRate,source.CommissionRate);
+        Assert.Equal(TradingRealityCostAuthorityV1.Default.SlippageRate,source.SlippageRate);
+        Assert.Equal(TradingRealityCostAuthorityV1.Default.FixedCostPerTrade,source.FixedCostPerTrade);
+        Assert.Equal(TradingRealityCostAuthorityV1.Default.BorrowRatePerDay,source.BorrowRatePerDay);
         Assert.True(source.StrategyQualificationAvailable);
         Assert.Equal(64,source.StrategyQualificationSha256.Length);
         Assert.Equal(AutomaticStrategyQualificationEvidenceVerifierV1.ExpectedPolicySha256,source.StrategyQualificationPolicySha256);
@@ -84,7 +90,7 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
             Observation(_clock.Now,100m,bestAsk:101m,askQuantity:0.4m),
             _clock.Now);
 
-        Assert.Equal("wpe.execution-simulation-source/1.2",source.Schema);
+        Assert.Equal("wpe.execution-simulation-source/1.3",source.Schema);
         Assert.True(source.TopOfBookAvailable);
         Assert.Equal(101m,source.BestAsk);
         Assert.Equal(0.4m,source.AskQuantity);
@@ -94,12 +100,65 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
         var costs=ExecutionRealityCostAuthorityV1.Current;
         var expectedPrice=101m*(1m+costs.SlippageRate);
 
-        Assert.Equal("wpe.execution-simulation-model/1.1",fill.SimulationModelVersion);
+        Assert.Equal("wpe.execution-simulation-model/1.2",fill.SimulationModelVersion);
         Assert.Equal(ExecutionSimulationFillStateV1.Partial,fill.State);
         Assert.Equal(0.4m,fill.ExecutedQuantity);
         Assert.Equal(expectedPrice,fill.AveragePrice);
         Assert.Equal(expectedPrice*0.4m*costs.CommissionRate,fill.FeeAmount);
         Assert.Equal("top-of-book-partial-taker-cost-authority",fill.ReasonCode);
+    }
+
+    [Fact]
+    public void CostSourceIsCanonicalAndTamperingFailsClosed()
+    {
+        var artifact=Artifact(ExecutionOrderType.Market);
+        var source=ExecutionSimulationSourceCanonicalizerV1.Create(
+            artifact,
+            artifact.Intents.Single(),
+            Qualification(artifact),
+            Observation(_clock.Now,100m),
+            _clock.Now);
+
+        var model=TradingRealityCostAuthorityV1.Default;
+        Assert.Equal(TradingRealityCostAuthorityV1.IdentityFor(model),source.CostModelVersion);
+        Assert.True(TradingRealityCostAuthorityV1.MatchesIdentity(model,source.CostModelVersion));
+        Assert.True(ExecutionSimulationSourceCanonicalizerV1.IsCanonical(source));
+
+        Assert.False(ExecutionSimulationSourceCanonicalizerV1.IsCanonical(
+            source with { CommissionRate=source.CommissionRate+0.0001m }));
+        Assert.False(ExecutionSimulationSourceCanonicalizerV1.IsCanonical(
+            source with { CostModelVersion=TradingRealityCostAuthorityV1.Schema+":"+new string('0',64) }));
+    }
+
+    [Fact]
+    public void PreviousTopOfBookSourceSchemaStillRestartsCanonicallyButCannotBeRepriced()
+    {
+        var artifact=Artifact(ExecutionOrderType.Market);
+        var current=ExecutionSimulationSourceCanonicalizerV1.Create(
+            artifact,
+            artifact.Intents.Single(),
+            Qualification(artifact),
+            Observation(_clock.Now,100m),
+            _clock.Now);
+        var legacyBytes=PreviousSourceBytes(current);
+        var legacyHash=Convert.ToHexString(SHA256.HashData(legacyBytes)).ToLowerInvariant();
+
+        Assert.True(
+            ExecutionSimulationSourceCanonicalizerV1.TryDeserialize(
+                legacyBytes,
+                legacyHash,
+                out var previous));
+        Assert.NotNull(previous);
+        Assert.Equal(ExecutionSimulationSourceCanonicalizerV1.PreviousSchema,previous!.Schema);
+        Assert.True(previous.TopOfBookAvailable);
+        Assert.Equal(string.Empty,previous.CostModelVersion);
+        Assert.Equal(0m,previous.CommissionRate);
+        Assert.True(ExecutionSimulationSourceCanonicalizerV1.IsCanonical(previous));
+
+        var fill=AutomaticExecutionSimulationModelV1.CreateFill(previous);
+        Assert.Equal(ExecutionSimulationFillStateV1.Unsupported,fill.State);
+        Assert.Equal("simulation-cost-source-unavailable",fill.ReasonCode);
+        Assert.Equal("wpe.trading-reality-cost/1.0:unavailable",fill.CostModelVersion);
     }
 
     [Fact]
@@ -321,6 +380,31 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
         Assert.Equal(TradingRealityCostAuthorityV1.Default.SlippageRate,costs.SlippageRate);
         Assert.Equal(ExecutionRealityCostAuthorityV1.Version,costs.Version);
         Assert.Equal(TradingRealityCostAuthorityV1.Identity,costs.Version);
+        Assert.Equal(TradingRealityCostAuthorityV1.CanonicalSha256For(TradingRealityCostAuthorityV1.Default),TradingRealityCostAuthorityV1.CanonicalSha256);
+        Assert.True(TradingRealityCostAuthorityV1.MatchesIdentity(TradingRealityCostAuthorityV1.Default,costs.Version));
+    }
+
+    private static byte[] PreviousSourceBytes(ExecutionSimulationSourceV1 current)
+    {
+        using var document=JsonDocument.Parse(current.CanonicalBytes);
+        using var stream=new MemoryStream();
+        using(var writer=new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            foreach(var property in document.RootElement.EnumerateObject())
+            {
+                if(property.Name is "borrow_rate_per_day" or "commission_rate" or "cost_model_version" or "fixed_cost_per_trade" or "slippage_rate")
+                    continue;
+                if(property.Name=="schema")
+                {
+                    writer.WriteString("schema",ExecutionSimulationSourceCanonicalizerV1.PreviousSchema);
+                    continue;
+                }
+                property.WriteTo(writer);
+            }
+            writer.WriteEndObject();
+        }
+        return stream.ToArray();
     }
 
     private AgentSqliteStore Store()=>new(Database,()=>_clock.Now);
