@@ -1,4 +1,6 @@
 using Microsoft.Data.Sqlite;
+using System.Security.Cryptography;
+using System.Text.Json;
 using WpeAgent.TradingAuthorization;
 using WpeAgent.CrossAssetResearch;
 using 币安量化机器人.Services.Agent;
@@ -36,6 +38,10 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
         var source=await store.GetExecutionSimulationSourceAsync(artifact.CorrelationId,"WPE-REALITY",default);
         Assert.NotNull(source);
         Assert.Equal(ExecutionSimulationSourceStateV1.Available,source!.State);
+        Assert.True(source.StrategyQualificationAvailable);
+        Assert.Equal(64,source.StrategyQualificationSha256.Length);
+        Assert.Equal(AutomaticStrategyQualificationEvidenceVerifierV1.ExpectedPolicySha256,source.StrategyQualificationPolicySha256);
+        Assert.NotEmpty(source.StrategyQualificationCanonicalBytes);
         Assert.True(ExecutionSimulationSourceCanonicalizerV1.IsCanonical(source));
 
         var fill=await store.GetExecutionSimulationFillAsync(artifact.CorrelationId,"WPE-REALITY",default);
@@ -120,6 +126,36 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
     }
 
     [Fact]
+    public async Task MissingStrategyQualificationNeverBlocksAuthorizedMutationButSimulationFailsClosed()
+    {
+        var store=Store();
+        var artifact=Artifact(ExecutionOrderType.Market);
+        await ApproveWithoutQualification(store,"exec-no-qualification",artifact);
+        var gateway=new EvidenceGateway(_clock)
+        {
+            Order=new ExchangeOrder(
+                "BTCUSDT","venue-no-qualification","WPE-REALITY","FILLED",
+                1m,100m,"MARKET",PositionSide.Long,false,_clock.Now.UtcDateTime)
+        };
+        var processor=new AutomaticExecutionProcessor(store,new Validator(),gateway,()=>_clock.Now);
+
+        var result=await processor.ProcessNextAsync("worker",default);
+
+        Assert.True(result.Handled);
+        Assert.Equal("automatic.succeeded",result.Code);
+        Assert.Equal(1,gateway.ExecuteCount);
+        var source=await store.GetExecutionSimulationSourceAsync(artifact.CorrelationId,"WPE-REALITY",default);
+        Assert.NotNull(source);
+        Assert.False(source!.StrategyQualificationAvailable);
+        Assert.Equal(ExecutionSimulationSourceStateV1.Unavailable,source.State);
+        Assert.Equal("strategy-qualification-table-missing",source.ReasonCode);
+        var fill=await store.GetExecutionSimulationFillAsync(artifact.CorrelationId,"WPE-REALITY",default);
+        Assert.NotNull(fill);
+        Assert.Equal(ExecutionSimulationFillStateV1.Unsupported,fill!.State);
+        Assert.Equal("strategy-qualification-table-missing",fill.ReasonCode);
+    }
+
+    [Fact]
     public async Task RepeatedPipelineCaptureReusesExactSourceAndFill()
     {
         var store=Store();
@@ -149,9 +185,10 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
         var artifact=Artifact(ExecutionOrderType.Market);
         var intent=artifact.Intents.Single();
         var observation=Observation(_clock.Now,100m);
-        var first=ExecutionSimulationSourceCanonicalizerV1.Create(artifact,intent,observation,_clock.Now);
+        var qualification=Qualification(artifact);
+        var first=ExecutionSimulationSourceCanonicalizerV1.Create(artifact,intent,qualification,observation,_clock.Now);
         var second=ExecutionSimulationSourceCanonicalizerV1.Create(
-            artifact,intent,Observation(_clock.Now.AddSeconds(1),101m),_clock.Now.AddSeconds(1));
+            artifact,intent,qualification,Observation(_clock.Now.AddSeconds(1),101m),_clock.Now.AddSeconds(1));
 
         Assert.True(await store.SaveExecutionSimulationSourceAsync(first,default));
         await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveExecutionSimulationSourceAsync(second,default));
@@ -185,8 +222,140 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
 
     private async Task Approve(AgentSqliteStore store,string id,DurableExecutionArtifactV2 artifact)
     {
+        await SeedQualification(artifact);
+        await ApproveWithoutQualification(store,id,artifact);
+    }
+
+    private async Task ApproveWithoutQualification(AgentSqliteStore store,string id,DurableExecutionArtifactV2 artifact)
+    {
         Assert.True((await store.SaveAutomaticExecutionAsync(id,artifact,default)).Succeeded);
         Assert.True((await store.RecordAutomaticRiskDecisionAsync(id,Receipt(artifact),default)).Succeeded);
+    }
+
+    private AutomaticStrategyQualificationEvidenceV1 Qualification(DurableExecutionArtifactV2 artifact)
+    {
+        var bytes=QualificationBytes(artifact);
+        var hash=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        Assert.True(AutomaticStrategyQualificationEvidenceVerifierV1.TryParse(bytes,hash,out var value,out var code),code);
+        return value!;
+    }
+
+    private async Task SeedQualification(DurableExecutionArtifactV2 artifact)
+    {
+        var value=Qualification(artifact);
+        await using var connection=new SqliteConnection($"Data Source={Database}");
+        await connection.OpenAsync();
+        await using var command=connection.CreateCommand();
+        command.CommandText="""
+            CREATE TABLE IF NOT EXISTS strategy_shadow_qualification_decisions(
+                canonical_sha256 TEXT PRIMARY KEY,
+                schema TEXT NOT NULL,
+                strategy_id TEXT NOT NULL,
+                strategy_version TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                market_provider_id TEXT NOT NULL,
+                environment TEXT NOT NULL CHECK(environment='Testnet'),
+                backtest_validation_sha256 TEXT NOT NULL,
+                timeline_sha256 TEXT NOT NULL,
+                policy_version TEXT NOT NULL,
+                policy_sha256 TEXT NOT NULL,
+                state TEXT NOT NULL,
+                qualified INTEGER NOT NULL CHECK(qualified IN (0,1)),
+                observation_count INTEGER NOT NULL CHECK(observation_count>=0),
+                first_market_at TEXT NOT NULL,
+                last_market_at TEXT NOT NULL,
+                evaluated_at TEXT NOT NULL,
+                evidence_set_sha256 TEXT NOT NULL,
+                canonical_bytes BLOB NOT NULL,
+                UNIQUE(strategy_id,strategy_version,evidence_set_sha256,policy_sha256));
+            INSERT INTO strategy_shadow_qualification_decisions(
+                canonical_sha256,schema,strategy_id,strategy_version,symbol,
+                market_provider_id,environment,backtest_validation_sha256,timeline_sha256,
+                policy_version,policy_sha256,state,qualified,observation_count,
+                first_market_at,last_market_at,evaluated_at,evidence_set_sha256,canonical_bytes)
+            VALUES(
+                $hash,$schema,$strategy,$version,$symbol,
+                $provider,$environment,$validation,$timeline,
+                $policyVersion,$policyHash,'Ready',1,$count,
+                $first,$last,$evaluated,$evidenceSet,$bytes);
+            """;
+        command.Parameters.AddWithValue("$hash",value.CanonicalSha256);
+        command.Parameters.AddWithValue("$schema",AutomaticStrategyQualificationEvidenceVerifierV1.Schema);
+        command.Parameters.AddWithValue("$strategy",value.StrategyId);
+        command.Parameters.AddWithValue("$version",value.StrategyVersion);
+        command.Parameters.AddWithValue("$symbol",value.Symbol);
+        command.Parameters.AddWithValue("$provider",value.MarketProviderId);
+        command.Parameters.AddWithValue("$environment",value.Environment);
+        command.Parameters.AddWithValue("$validation",value.BacktestValidationSha256);
+        command.Parameters.AddWithValue("$timeline",value.TimelineSha256);
+        command.Parameters.AddWithValue("$policyVersion",value.PolicyVersion);
+        command.Parameters.AddWithValue("$policyHash",value.PolicySha256);
+        command.Parameters.AddWithValue("$count",value.ObservationCount);
+        command.Parameters.AddWithValue("$first",value.FirstMarketAtUtc.ToString("O"));
+        command.Parameters.AddWithValue("$last",value.LastMarketAtUtc.ToString("O"));
+        command.Parameters.AddWithValue("$evaluated",value.EvaluatedAtUtc.ToString("O"));
+        command.Parameters.AddWithValue("$evidenceSet",value.EvidenceSetSha256);
+        command.Parameters.AddWithValue("$bytes",value.CanonicalBytes);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static byte[] QualificationBytes(DurableExecutionArtifactV2 artifact)
+    {
+        var evaluated=artifact.CreatedAtUtc.AddSeconds(-1);
+        var last=evaluated.AddMinutes(-1);
+        var first=last.AddMinutes(-(StrategyGovernor.MinimumShadowObservations-1));
+        var hashes=Enumerable.Range(0,StrategyGovernor.MinimumShadowObservations)
+            .Select(i=>Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+                $"{artifact.StrategyId}|{artifact.StrategyVersion}|{artifact.Intents[0].Symbol}|{i}"))).ToLowerInvariant())
+            .ToArray();
+        string evidenceSet;
+        using(var evidenceStream=new MemoryStream())
+        {
+            using(var evidenceWriter=new Utf8JsonWriter(evidenceStream))
+            {
+                evidenceWriter.WriteStartArray();
+                foreach(var hash in hashes)evidenceWriter.WriteStringValue(hash);
+                evidenceWriter.WriteEndArray();
+            }
+            evidenceSet=Convert.ToHexString(SHA256.HashData(evidenceStream.ToArray())).ToLowerInvariant();
+        }
+
+        using var stream=new MemoryStream();
+        using(var writer=new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("backtest_validation_sha256",new string('a',64));
+            writer.WriteString("environment","Testnet");
+            writer.WriteString("evaluated_at_utc",evaluated);
+            writer.WriteString("evidence_set_sha256",evidenceSet);
+            writer.WritePropertyName("evidence_sha256");
+            writer.WriteStartArray();
+            foreach(var hash in hashes)writer.WriteStringValue(hash);
+            writer.WriteEndArray();
+            writer.WriteNumber("failure_streak",0);
+            writer.WriteString("first_market_at_utc",first);
+            writer.WriteNumber("max_drawdown",.10d);
+            writer.WriteString("last_market_at_utc",last);
+            writer.WriteString("market_provider_id",artifact.ProviderId);
+            writer.WriteNumber("observation_count",hashes.Length);
+            writer.WriteNumber("observation_window_seconds",(last-first).TotalSeconds);
+            writer.WriteString("policy_sha256",AutomaticStrategyQualificationEvidenceVerifierV1.ExpectedPolicySha256);
+            writer.WriteString("policy_version",AutomaticStrategyQualificationEvidenceVerifierV1.PolicyVersion);
+            writer.WriteNumber("quality_score",.80d);
+            writer.WriteBoolean("qualified",true);
+            writer.WritePropertyName("reason_codes");
+            writer.WriteStartArray();
+            writer.WriteEndArray();
+            writer.WriteString("schema",AutomaticStrategyQualificationEvidenceVerifierV1.Schema);
+            writer.WriteString("state","ready");
+            writer.WriteString("strategy_id",artifact.StrategyId);
+            writer.WriteString("strategy_version",artifact.StrategyVersion);
+            writer.WriteString("symbol",artifact.Intents[0].Symbol);
+            writer.WriteString("timeline_sha256",new string('b',64));
+            writer.WriteNumber("expectancy",.01d);
+            writer.WriteEndObject();
+        }
+        return stream.ToArray();
     }
 
     private DurableExecutionArtifactV2 Artifact(ExecutionOrderType orderType)=>new(
