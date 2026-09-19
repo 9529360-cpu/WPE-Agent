@@ -6,7 +6,7 @@
 
 ## P0
 - [x] Restore a real GitHub Actions gate. Product CI runner execution resumed and run #1105 completed the full Web lint/typecheck/contracts/build/export/egress sequence plus .NET restore/build/tests/publish-boundary successfully. Continue requiring a successful run bound to the newest PR head before merge/release-candidate claims.
-- [ ] Enable and verify protected-main enforcement. The repository is now public, but the current GitHub integration still returns HTTP 403 (`Resource not accessible by integration`) for the branch-protection endpoint, so enforcement cannot yet be verified or changed from this session.
+- [ ] Enable protected-main enforcement. Read-only repository metadata confirms `main` currently has `protected=false` and the repository has no rulesets. Enabling protection is an access-policy change and therefore requires explicit authorization before mutation.
 - [x] Add focused Setup Bridge message tests.
 - Keep the active safety suites in the release gate; add new collection-contract tests only together with the corresponding orders, equity, backtest, skill-call, or audit backend protocol.
 - [x] Re-enable Agent settings resilience and Brain endpoint validation suites with the stage 2A configuration migration.
