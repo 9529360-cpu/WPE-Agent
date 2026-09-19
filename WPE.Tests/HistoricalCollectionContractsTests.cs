@@ -137,6 +137,30 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
     }
 
     [Fact]
+    public async Task BatchedTradeTraceKeepsRiskAndEvidenceIsolatedPerCycle()
+    {
+        await InitializeAsync();
+        await ExecuteAsync("CREATE TABLE model_off_canonical_audits(output_id TEXT PRIMARY KEY,cycle_id TEXT,schema TEXT,template_version TEXT,canonical_sha256 TEXT,status TEXT,output_kind TEXT,sources_json TEXT,as_of_utc TEXT,recorded_at_utc TEXT,canonical_bytes BLOB)");
+        foreach(var row in new[]{("cycle-a","close-a","BTCUSDT","trend-a"),("cycle-b","close-b","ETHUSDT","trend-b")})
+            await ExecuteAsync("INSERT INTO trade_outcomes(client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,fees,fee_basis,fee_rate,entry_slippage_amount,exit_slippage_amount,total_slippage_amount,slippage_basis,funding_amount,funding_basis,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis) VALUES($close,$cycle,$symbol,'Long','100','105','1','.05','exchange-reported-usdt','0','0','0','0','unavailable','0','unavailable','4.95','.0495',$t,$strategy,'4.0.0','automatic-artifact')",("$close",row.Item2),("$cycle",row.Item1),("$symbol",row.Item3),("$t",Now.ToString("O")),("$strategy",row.Item4));
+        await ExecuteAsync("INSERT INTO automatic_execution_queue VALUES('execution-a','cycle-a','Succeeded','automatic.succeeded',1,$t,'market-a',$t)",("$t",Now.ToString("O")));
+        await ExecuteAsync("INSERT INTO automatic_execution_queue VALUES('execution-b','cycle-b','FailedTerminal','automatic.gateway-rejected',2,$t,'market-b',$t)",("$t",Now.ToString("O")));
+        await ExecuteAsync("INSERT INTO automatic_execution_events(execution_id,sequence,occurred_at,from_status,to_status,event_code,actor_kind) VALUES('execution-a',1,$t,'Proposed','RiskApproved','automatic.risk-approved','risk')",("$t",Now.ToString("O")));
+        await ExecuteAsync("INSERT INTO automatic_execution_events(execution_id,sequence,occurred_at,from_status,to_status,event_code,actor_kind) VALUES('execution-b',1,$t,'Proposed','RiskBlocked','automatic.risk-blocked','risk')",("$t",Now.ToString("O")));
+        var aBytes=new byte[]{1,2};var bBytes=new byte[]{3,4};
+        var aHash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(aBytes)).ToLowerInvariant();var bHash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bBytes)).ToLowerInvariant();
+        await ExecuteAsync("INSERT INTO model_off_canonical_audits VALUES('evidence-a','cycle-a','schema','template',$hash,'succeeded','strategy','[]',$t,$t,$bytes)",("$hash",aHash),("$t",Now.ToString("O")),("$bytes",aBytes));
+        await ExecuteAsync("INSERT INTO model_off_canonical_audits VALUES('evidence-b','cycle-b','schema','template',$hash,'blocked','risk','[]',$t,$t,$bytes)",("$hash",bHash),("$t",Now.ToString("O")),("$bytes",bBytes));
+
+        var page=await new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now).ReadPostTradeReviewsAsync(new());
+        Assert.Equal(RuntimeCollectionState.Available,page.State);Assert.Equal(2,page.Items.Count);
+        var btc=Assert.Single(page.Items.Where(x=>x.Symbol=="BTCUSDT"));var eth=Assert.Single(page.Items.Where(x=>x.Symbol=="ETHUSDT"));
+        Assert.Equal("Approved",btc.RiskDecision);Assert.Equal("Succeeded",btc.ExecutionStatus);Assert.Equal("market-a",btc.MarketDataVersion);Assert.Equal("partial",btc.EvidenceState);Assert.Equal("strategy",Assert.Single(btc.EvidenceChain).Stage);
+        Assert.Equal("Blocked",eth.RiskDecision);Assert.Equal("FailedTerminal",eth.ExecutionStatus);Assert.Equal("market-b",eth.MarketDataVersion);Assert.Equal("partial",eth.EvidenceState);Assert.Equal("risk",Assert.Single(eth.EvidenceChain).Stage);
+        Assert.NotEqual(btc.TraceId,eth.TraceId);Assert.NotEqual(btc.EvidenceChain[0].CanonicalSha256,eth.EvidenceChain[0].CanonicalSha256);
+    }
+
+    [Fact]
     public async Task AmbiguousExecutionCorrelationNeverGuessesATrace()
     {
         await InitializeAsync();
