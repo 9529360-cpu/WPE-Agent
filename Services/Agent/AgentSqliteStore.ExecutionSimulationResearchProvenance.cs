@@ -160,6 +160,42 @@ public sealed partial class AgentSqliteStore
             throw new InvalidOperationException("Execution simulation research provenance does not match the persisted simulated fill.");
     }
 
+    private static async Task VerifyExecutionSimulationResearchProvenanceForComparisonAsync(
+        SqliteConnection connection,
+        ExecutionSimulationComparisonV1 comparison,
+        CancellationToken ct)
+    {
+        await using var query = connection.CreateCommand();
+        query.CommandText = """
+            SELECT canonical_sha256,canonical_bytes
+            FROM execution_simulation_research_provenance
+            WHERE simulated_fill_sha256=$fillHash
+            LIMIT 1;
+            """;
+        query.Parameters.AddWithValue("$fillHash", comparison.SimulatedCanonicalSha256);
+        await using var reader = await query.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+            throw new InvalidOperationException("Execution simulation comparison is missing research provenance.");
+
+        var hash = reader.GetString(0);
+        var bytes = (byte[])reader[1];
+        if (!ExecutionSimulationResearchProvenanceCanonicalizerV1.TryDeserialize(bytes, hash, out var provenance)
+            || provenance is null)
+            throw new InvalidOperationException("Execution simulation comparison research provenance failed canonical verification.");
+
+        if (!string.Equals(provenance.SimulatedFillCanonicalSha256, comparison.SimulatedCanonicalSha256, StringComparison.Ordinal)
+            || !string.Equals(provenance.CorrelationId, comparison.CorrelationId, StringComparison.Ordinal)
+            || !string.Equals(provenance.ClientOrderId, comparison.ClientOrderId, StringComparison.Ordinal)
+            || !string.Equals(provenance.StrategyId, comparison.StrategyId, StringComparison.Ordinal)
+            || !string.Equals(provenance.StrategyVersion, comparison.StrategyVersion, StringComparison.Ordinal)
+            || !string.Equals(provenance.CostModelVersion, comparison.CostModelVersion, StringComparison.Ordinal)
+            || !string.Equals(provenance.SimulationModelVersion, comparison.SimulationModelVersion, StringComparison.Ordinal)
+            || !string.Equals(provenance.VenueRuleVersion, comparison.VenueRuleVersion, StringComparison.Ordinal)
+            || !string.Equals(provenance.Symbol, comparison.Symbol, StringComparison.Ordinal)
+            || provenance.BoundAtUtc > comparison.ComparedAtUtc)
+            throw new InvalidOperationException("Execution simulation comparison does not match its research provenance.");
+    }
+
     private static async Task EnsureExecutionSimulationResearchProvenanceStorageAsync(
         SqliteConnection connection,
         CancellationToken ct)
