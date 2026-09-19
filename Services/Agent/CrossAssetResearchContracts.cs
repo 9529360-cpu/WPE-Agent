@@ -36,24 +36,48 @@ public sealed record ResearchCostModel(
 public static class TradingRealityCostAuthorityV1
 {
     public const string Schema = "wpe.trading-reality-cost/1.0";
-    public static readonly ResearchCostModel Default = new(.0004m, .0003m);
-    public static readonly string CanonicalSha256 = CreateHash();
-    public static string Identity => Schema + ":" + CanonicalSha256;
+    public static readonly ResearchCostModel Default = new(0.0004m, 0.0003m);
+    public static readonly string CanonicalSha256 = CanonicalSha256For(Default);
+    public static string Identity => IdentityFor(Default);
 
-    private static string CreateHash()
+    public static string IdentityFor(ResearchCostModel model) =>
+        Schema + ":" + CanonicalSha256For(model);
+
+    public static string CanonicalSha256For(ResearchCostModel model)
     {
+        ArgumentNullException.ThrowIfNull(model);
+        if (model.CommissionRate < 0 || model.CommissionRate >= 1
+            || model.SlippageRate < 0 || model.SlippageRate >= 1
+            || model.FixedCostPerTrade < 0
+            || model.BorrowRatePerDay < 0 || model.BorrowRatePerDay >= 1)
+            throw new InvalidOperationException("Trading reality cost model is invalid.");
+
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
         {
             writer.WriteStartObject();
-            writer.WriteNumber("borrow_rate_per_day", Default.BorrowRatePerDay);
-            writer.WriteNumber("commission_rate", Default.CommissionRate);
-            writer.WriteNumber("fixed_cost_per_trade", Default.FixedCostPerTrade);
+            writer.WriteNumber("borrow_rate_per_day", model.BorrowRatePerDay);
+            writer.WriteNumber("commission_rate", model.CommissionRate);
+            writer.WriteNumber("fixed_cost_per_trade", model.FixedCostPerTrade);
             writer.WriteString("schema", Schema);
-            writer.WriteNumber("slippage_rate", Default.SlippageRate);
+            writer.WriteNumber("slippage_rate", model.SlippageRate);
             writer.WriteEndObject();
         }
         return Convert.ToHexString(SHA256.HashData(stream.ToArray())).ToLowerInvariant();
+    }
+
+    public static bool MatchesIdentity(ResearchCostModel model,string identity)
+    {
+        if (string.IsNullOrWhiteSpace(identity))
+            return false;
+        try
+        {
+            return string.Equals(IdentityFor(model),identity,StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
+        }
     }
 }
 
