@@ -221,7 +221,7 @@ public sealed class OkxBybitCertificationContractTests
     {
         using var json=JsonDocument.Parse("""[{"symbol":"BTCUSDT","side":"Buy","positionIdx":"1","size":"1","stopLoss":"49000","takeProfit":"52000"},{"symbol":"ETHUSDT","side":"Sell","positionIdx":"2","size":"2","stopLoss":"3100","takeProfit":"0"},{"symbol":"SOLUSDT","side":"","positionIdx":"0","size":"3","stopLoss":"100","takeProfit":"0"},{"symbol":"XRPUSDT","side":"Buy","positionIdx":"1","size":"0","stopLoss":"1","takeProfit":"2"}]""");var observed=new DateTime(2026,7,27,9,0,0,DateTimeKind.Utc);
         var rows=BybitExchangeProvider.ParsePositionProtectionOrders(json.RootElement,observed,value=>value);
-        var btc=Assert.Single(rows,x=>x.Symbol=="BTCUSDT");Assert.Equal("POSITION_TPSL",btc.Type);Assert.Equal(PositionSide.Long,btc.PositionSide);Assert.True(btc.IsProtection);Assert.Equal(observed,btc.UpdatedAt);
+        var btc=Assert.Single(rows,x=>x.Symbol=="BTCUSDT");Assert.Equal("POSITION_TPSL",btc.Type);Assert.Equal(PositionSide.Long,btc.PositionSide);Assert.True(btc.IsProtection);Assert.Equal(ProtectionCoverageKind.PositionWide,btc.ProtectionCoverage);Assert.Null(btc.ProtectionQuantity);Assert.Equal(observed,btc.UpdatedAt);
         var eth=Assert.Single(rows,x=>x.Symbol=="ETHUSDT");Assert.Equal("STOP_POSITION",eth.Type);Assert.Equal(PositionSide.Short,eth.PositionSide);
         Assert.Null(Assert.Single(rows,x=>x.Symbol=="SOLUSDT").PositionSide);Assert.DoesNotContain(rows,x=>x.Symbol=="XRPUSDT");
     }
