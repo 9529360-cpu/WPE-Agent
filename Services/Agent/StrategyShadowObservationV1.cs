@@ -56,6 +56,7 @@ internal static class StrategyShadowObservationCanonicalizerV1
             throw new InvalidOperationException("Strategy signal is outside the canonical shadow bounds.");
         if(!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)
            ||market.Provenance is null
+           ||!string.Equals(market.Provenance.Environment,"Testnet",StringComparison.Ordinal)
            ||!string.Equals(market.Symbol,profile.Symbol,StringComparison.Ordinal)
            ||market.Price<=0)
             throw new InvalidOperationException("Shadow market provenance is invalid.");
