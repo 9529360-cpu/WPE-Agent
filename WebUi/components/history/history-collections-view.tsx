@@ -22,6 +22,8 @@ export type HistoricalEquity = { sequence: number; observedAtUtc: string; equity
 export type HistoricalBacktest = { backtestId: string; completedAtUtc: string; strategyId: string; strategyVersion: string; symbol: string; status: string; coverageDays: number; trades: number; outOfSampleReturn: number; maxDrawdown: number; sharpe: number }
 export type HistoricalSkillCall = { id: string; occurredAtUtc: string; skill: string; status: string; durationMs: number; mode: string | null; remoteLlmUsed: boolean | null; tokens: number | null; costUsd: number | null }
 export type HistoricalAuditEvent = { id: string; occurredAtUtc: string; category: string; source: string; status: string }
+export type HistoricalPostTradeReview = { closedAtUtc: string; symbol: string; side: string; entryPrice: number; exitPrice: number; quantity: number; fees: number; feeBasis: string; totalSlippageAmount: number; slippageBasis: string; fundingAmount: number; fundingBasis: string; netPnl: number; returnPct: number; outcome: 'win' | 'loss' | 'flat'; strategyId: string | null; strategyVersion: string; attributionBasis: string }
+export type HistoricalReconciliation = { kind: 'position' | 'protection' | 'externalIsolation'; schema: string; observedAtUtc: string; evaluatedAtUtc: string; state: string; allowsRiskIncrease: boolean; canonicalSha256: string }
 
 export type HistoryProjection = {
   orders: PageState<HistoricalOrder>
@@ -29,6 +31,8 @@ export type HistoryProjection = {
   backtests: PageState<HistoricalBacktest>
   skillCalls: PageState<HistoricalSkillCall>
   auditEvents: PageState<HistoricalAuditEvent>
+  postTradeReviews: PageState<HistoricalPostTradeReview>
+  reconciliations: PageState<HistoricalReconciliation>
 }
 
 const unsupported = (message: string): PageState<never> => ({ state: 'unsupported', items: [], message })
@@ -38,9 +42,11 @@ export const unsupportedHistoryProjection: HistoryProjection = {
   backtests: unsupported('Historical backtests are not exposed by the current host runtime.'),
   skillCalls: unsupported('Historical skill calls are not exposed by the current host runtime.'),
   auditEvents: unsupported('Historical audit events are not exposed by the current host runtime.'),
+  postTradeReviews: unsupported('Post-trade accounting is not exposed by the current host runtime.'),
+  reconciliations: unsupported('Reconciliation audits are not exposed by the current host runtime.'),
 }
 
-const labels = { orders: 'Orders', equity: 'Equity', backtests: 'Backtests', skillCalls: 'Skill calls', auditEvents: 'Audit events' } as const
+const labels = { orders: 'Orders', postTradeReviews: 'Closed trade accounting', reconciliations: 'Reconciliation audits', equity: 'Equity', backtests: 'Backtests', skillCalls: 'Skill calls', auditEvents: 'Audit events' } as const
 const stateTone: Record<RuntimeCollectionState, string> = { available: 'success', unsupported: 'muted', stale: 'warning', error: 'danger' }
 const stateMessage: Record<Exclude<RuntimeCollectionState, 'available'>, string> = {
   unsupported: 'This historical collection is not supported by the host.',
@@ -102,15 +108,19 @@ export function HistoryCollectionsView({ projection }: { projection: HistoryProj
     backtests: projection?.backtests ?? unsupportedHistoryProjection.backtests,
     skillCalls: projection?.skillCalls ?? unsupportedHistoryProjection.skillCalls,
     auditEvents: projection?.auditEvents ?? unsupportedHistoryProjection.auditEvents,
+    postTradeReviews: projection?.postTradeReviews ?? unsupportedHistoryProjection.postTradeReviews,
+    reconciliations: projection?.reconciliations ?? unsupportedHistoryProjection.reconciliations,
   }
   const entries = Object.entries(labels) as [keyof HistoryProjection, string][]
   return (
     <div className="min-w-0 space-y-5">
-      <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-5" role="status" aria-live="polite" aria-atomic="true" aria-label="Historical collection capabilities">
+      <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7" role="status" aria-live="polite" aria-atomic="true" aria-label="Historical collection capabilities">
         {entries.map(([key, label]) => <div key={key} className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-border bg-panel/40 p-3"><span className="min-w-0 break-words text-xs">{label}</span><StatusBadge token={stateTone[safeProjection[key].state]} label={safeProjection[key].state} /></div>)}
       </div>
 
       <CollectionFrame title={labels.orders} page={safeProjection.orders}>{items => <Table headings={['Time', 'Symbol', 'Side / action', 'Quantity', 'Average price', 'Status']}>{items.map(x => <tr key={x.sequence} className="border-b border-border/70 last:border-0"><Cell>{date(x.occurredAtUtc)}</Cell><Cell mono>{x.symbol}</Cell><Cell>{x.side} / {x.action}</Cell><Cell>{number(x.quantity, { maximumFractionDigits: 8 })}</Cell><Cell>{x.averagePrice === null ? 'Not provided' : number(x.averagePrice, { maximumFractionDigits: 8 })}</Cell><Cell>{x.status}</Cell></tr>)}</Table>}</CollectionFrame>
+      <CollectionFrame title={labels.postTradeReviews} page={safeProjection.postTradeReviews}>{items => <Table headings={['Closed', 'Symbol / side', 'Strategy identity', 'Entry / exit / quantity', 'Fee / funding / slippage quality', 'Net / return']}>{items.map((x, index) => <tr key={`${x.closedAtUtc}:${x.symbol}:${index}`} className="border-b border-border/70 last:border-0"><Cell>{date(x.closedAtUtc)}</Cell><Cell><span className="font-medium">{x.symbol}</span><div className="text-muted-foreground">{x.side}</div></Cell><Cell>{x.strategyId ?? 'Not attributed'}<div className="text-muted-foreground">{x.strategyVersion} · {x.attributionBasis}</div></Cell><Cell>{number(x.entryPrice, { maximumFractionDigits: 8 })} → {number(x.exitPrice, { maximumFractionDigits: 8 })}<div className="text-muted-foreground">Qty {number(x.quantity, { maximumFractionDigits: 8 })}</div></Cell><Cell>{number(x.fees, { maximumFractionDigits: 6 })} / {number(x.fundingAmount, { maximumFractionDigits: 6 })} / {number(x.totalSlippageAmount, { maximumFractionDigits: 6 })}<div className="max-w-72 text-muted-foreground">{x.feeBasis} · {x.fundingBasis} · {x.slippageBasis}</div></Cell><Cell><span className={x.netPnl >= 0 ? 'text-success' : 'text-danger'}>{number(x.netPnl, { maximumFractionDigits: 6 })}</span><div className="text-muted-foreground">{number(x.returnPct, { style: 'percent', maximumFractionDigits: 2 })} · {x.outcome}</div></Cell></tr>)}</Table>}</CollectionFrame>
+      <CollectionFrame title={labels.reconciliations} page={safeProjection.reconciliations}>{items => <Table headings={['Evaluated', 'Gate', 'State', 'Risk increase', 'Schema', 'Evidence hash']}>{items.map((x, index) => <tr key={`${x.kind}:${x.evaluatedAtUtc}:${index}`} className="border-b border-border/70 last:border-0"><Cell>{date(x.evaluatedAtUtc)}</Cell><Cell>{x.kind === 'position' ? 'Position ledger ↔ provider' : x.kind === 'protection' ? 'Protection orders' : 'External position isolation'}</Cell><Cell>{x.state}</Cell><Cell>{x.allowsRiskIncrease ? 'Allowed' : 'Blocked'}</Cell><Cell mono>{x.schema}</Cell><Cell mono><span title={x.canonicalSha256}>{x.canonicalSha256.slice(0, 12)}…</span></Cell></tr>)}</Table>}</CollectionFrame>
       <CollectionFrame title={labels.equity} page={safeProjection.equity}>{items => <Table headings={['Time', 'Equity', 'Available', 'Environment', 'Provider']}>{items.map(x => <tr key={x.sequence} className="border-b border-border/70 last:border-0"><Cell>{date(x.observedAtUtc)}</Cell><Cell>{number(x.equity, { maximumFractionDigits: 8 })}</Cell><Cell>{number(x.availableBalance, { maximumFractionDigits: 8 })}</Cell><Cell>{x.environment}</Cell><Cell mono>{x.providerId}</Cell></tr>)}</Table>}</CollectionFrame>
       <CollectionFrame title={labels.backtests} page={safeProjection.backtests}>{items => <Table headings={['Completed', 'Strategy', 'Symbol', 'Status', 'Coverage / trades', 'OOS / drawdown / Sharpe']}>{items.map(x => <tr key={x.backtestId} className="border-b border-border/70 last:border-0"><Cell>{date(x.completedAtUtc)}</Cell><Cell>{x.strategyId}<div className="text-muted-foreground">{x.strategyVersion}</div></Cell><Cell mono>{x.symbol}</Cell><Cell>{x.status}</Cell><Cell>{x.coverageDays} days / {x.trades}</Cell><Cell>{number(x.outOfSampleReturn, { style: 'percent', maximumFractionDigits: 2 })} / {number(x.maxDrawdown, { style: 'percent', maximumFractionDigits: 2 })} / {number(x.sharpe, { maximumFractionDigits: 2 })}</Cell></tr>)}</Table>}</CollectionFrame>
       <CollectionFrame title={labels.skillCalls} page={safeProjection.skillCalls}>{items => <Table headings={['Time', 'Skill', 'Status', 'Duration', 'Mode', 'Remote', 'Tokens / cost']}>{items.map(x => <tr key={x.id} className="border-b border-border/70 last:border-0"><Cell>{date(x.occurredAtUtc)}</Cell><Cell>{x.skill}</Cell><Cell>{x.status}</Cell><Cell>{x.durationMs} ms</Cell><Cell>{x.mode ?? 'Not provided'}</Cell><Cell>{x.remoteLlmUsed === null ? 'Not provided' : x.remoteLlmUsed ? 'Yes' : 'No'}</Cell><Cell>{x.tokens ?? 'Not provided'}{x.costUsd === null ? '' : ` / $${number(x.costUsd, { maximumFractionDigits: 6 })}`}</Cell></tr>)}</Table>}</CollectionFrame>
