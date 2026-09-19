@@ -122,6 +122,34 @@ public sealed partial class AgentSqliteStore
             rows.Count);
     }
 
+    internal async Task<StrategyExecutionFeedback> GetStrategyExecutionFeedbackAsync(string strategyId,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(strategyId))throw new ArgumentException("Strategy id is required.",nameof(strategyId));
+        var returns=new List<decimal>();
+        await using var connection=new SqliteConnection(_cs);
+        await connection.OpenAsync(ct);
+        await using var command=connection.CreateCommand();
+        command.CommandText="SELECT return_pct FROM trade_outcomes WHERE strategy_id=$id AND attribution_basis='automatic-artifact' AND return_pct IS NOT NULL ORDER BY closed_at DESC,id DESC LIMIT 50";
+        command.Parameters.AddWithValue("$id",strategyId);
+        await using var reader=await command.ExecuteReaderAsync(ct);
+        while(await reader.ReadAsync(ct))
+        {
+            if(decimal.TryParse(reader.GetString(0),NumberStyles.Number,CultureInfo.InvariantCulture,out var value))
+                returns.Add(value);
+        }
+
+        if(returns.Count==0)return new(0,0,0,.5);
+        var wins=returns.Count(value=>value>0);
+        const double priorWins=4;
+        const double priorTrades=8;
+        var posteriorWinRate=(wins+priorWins)/(returns.Count+priorTrades);
+        return new(
+            returns.Count,
+            (double)returns.Average(),
+            wins/(double)returns.Count,
+            posteriorWinRate);
+    }
+
     private static StrategyObservationPerformance PendingPerformance(int rawObservations)
         => new(0, 0, 0, 0, 0, "shadow actionable observations pending", .5, Array.Empty<StrategyRegimePerformance>(), rawObservations);
 
@@ -162,3 +190,5 @@ public sealed partial class AgentSqliteStore
 
     private sealed record ResolvedStrategyObservation(double Return, double Confidence, string Regime);
 }
+
+internal sealed record StrategyExecutionFeedback(int Trades,double AverageReturn,double WinRate,double PosteriorWinRate);
