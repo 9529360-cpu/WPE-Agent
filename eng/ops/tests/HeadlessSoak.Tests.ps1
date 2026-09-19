@@ -144,9 +144,20 @@ try{
 
     Write-ValidSamples
     $lines=@(Get-Content -LiteralPath $samplesPath)
-    $lines=@($lines[0..9]+$lines[12..53])
+    $previous=$lines[9]|ConvertFrom-Json
+    $previousAt=[DateTimeOffset]::Parse([string]$previous.sampledAtUtc)
+    $gapStart=$previousAt.AddSeconds(181)
+    for($index=10;$index -lt 54;$index++){
+        $sample=$lines[$index]|ConvertFrom-Json
+        $fraction=($index-10)/43.0
+        $sampledAt=$gapStart.AddSeconds(($now-$gapStart).TotalSeconds*$fraction)
+        $sample.sampledAtUtc=$sampledAt.ToString('O')
+        $sample.observedAtUtc=$sampledAt.AddSeconds(-1).ToString('O')
+        $sample.inStartupGrace=$false
+        $lines[$index]=$sample|ConvertTo-Json -Compress
+    }
     $lines|Set-Content -LiteralPath $samplesPath -Encoding utf8
-    Write-Evidence @{sampleCount=52;readySamples=52}
+    Write-Evidence @{}
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.sample-gap-exceeded'
 
     'PASS headless soak evidence verification'
