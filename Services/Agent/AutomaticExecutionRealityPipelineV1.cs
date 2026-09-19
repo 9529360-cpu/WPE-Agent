@@ -846,7 +846,7 @@ internal sealed class AutomaticExecutionRealityPipelineV1
                 AutomaticExecutionSimulationObservationV1 observation;
                 var now = _utcNow().ToUniversalTime();
                 if (_reader is null)
-                    observation = new(false,"simulation-reader-unavailable",artifact.ProviderId,artifact.Environment,null,null,now);
+                    observation = new(false,"simulation-reader-unavailable",artifact.ProviderId,artifact.Environment,null,null,null,now);
                 else
                 {
                     try
@@ -859,7 +859,7 @@ internal sealed class AutomaticExecutionRealityPipelineV1
                     }
                     catch
                     {
-                        observation = new(false,"simulation-source-query-failed",artifact.ProviderId,artifact.Environment,null,null,now);
+                        observation = new(false,"simulation-source-query-failed",artifact.ProviderId,artifact.Environment,null,null,null,now);
                     }
                 }
                 source = ExecutionSimulationSourceCanonicalizerV1.Create(artifact,intent,qualification,observation,now);
