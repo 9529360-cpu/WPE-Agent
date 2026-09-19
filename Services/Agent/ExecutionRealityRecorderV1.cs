@@ -10,7 +10,9 @@ public sealed record ExecutionRealityRecordResultV1(
     bool Idempotent,
     bool FeeComparable,
     string Code,
-    string? CanonicalSha256);
+    string? CanonicalSha256,
+    bool ComparisonRecorded = false,
+    string? ComparisonCanonicalSha256 = null);
 
 public sealed class ExecutionRealityRecorderV1
 {
@@ -90,6 +92,35 @@ public sealed class ExecutionRealityRecorderV1
             now);
         var fact = ExecutionRealityDriftV1.Analyze(expectation, observation);
         var persisted = await _store.SaveExecutionRealityDriftAsync(fact, ct);
-        return new(true, persisted.Idempotent, fact.FeeComparable, persisted.Code, fact.CanonicalSha256);
+
+        var simulated = await _store.GetExecutionSimulationIntentEvidenceAsync(
+            correlationId,
+            intent.ClientOrderId,
+            ct);
+        if (simulated is null)
+            return new(true, persisted.Idempotent, fact.FeeComparable, persisted.Code, fact.CanonicalSha256);
+
+        var comparedAt = _utcNow().ToUniversalTime();
+        if (comparedAt < fact.ObservedAtUtc)
+            comparedAt = fact.ObservedAtUtc;
+        if (comparedAt < simulated.Fill.SimulatedAtUtc)
+            comparedAt = simulated.Fill.SimulatedAtUtc;
+
+        var comparison = ExecutionSimulationComparisonCanonicalizerV1.Create(
+            simulated.Fill,
+            fact,
+            comparedAt);
+        var comparisonPersisted = await _store.SaveExecutionSimulationComparisonAsync(
+            comparison,
+            ct);
+
+        return new(
+            true,
+            persisted.Idempotent,
+            fact.FeeComparable,
+            persisted.Code,
+            fact.CanonicalSha256,
+            true,
+            comparison.CanonicalSha256);
     }
 }
