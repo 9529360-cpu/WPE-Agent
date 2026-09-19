@@ -5,7 +5,7 @@ function Throws([scriptblock]$action,[string]$contains){
     catch{if($_.Exception.Message -notlike "*$contains*"){throw}}
 }
 
-$root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+$root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
 $paths=@(
     'eng/release-readiness.ps1',
     'eng/sign-beta.ps1',
@@ -75,6 +75,7 @@ foreach($required in @(
 $testRoot=Join-Path $root ('artifacts/release-script-security-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot -Force|Out-Null
 try{
+    Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip=Join-Path $testRoot 'zip-slip.zip'
     $archive=[IO.Compression.ZipFile]::Open($zip,[IO.Compression.ZipArchiveMode]::Create)
