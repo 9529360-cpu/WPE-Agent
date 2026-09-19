@@ -67,13 +67,14 @@ test('execution command center is read-only and backed by canonical host project
   const home = source('app/(dashboard)/page.tsx')
   const cockpit = source('components/dashboard/execution-cockpit.tsx')
   assert.match(home, /ExecutionCockpit/)
-  for (const field of ['positions', 'orders', 'historicalOrders', 'historicalPostTradeReviews', 'historicalReconciliations', 'riskApprovalStatus', 'executionApprovalStatus', 'authorizationMode']) {
+  for (const field of ['positions', 'orders', 'historicalOrders', 'historicalPostTradeReviews', 'historicalReconciliations', 'traceId', 'riskDecision', 'executionStatus', 'marketDataVersion', 'riskApprovalStatus', 'executionApprovalStatus', 'authorizationMode']) {
     assert.match(cockpit, new RegExp(field), `missing canonical field ${field}`)
   }
   assert.match(cockpit, /READ ONLY/)
   assert.match(cockpit, /dashboard\.closedTradeHelp/)
   assert.match(cockpit, /dashboard\.reconciliationHelp/)
   assert.doesNotMatch(cockpit, /item\.allowsRiskIncrease\s*\?\s*gateTone/, 'historical reconciliation must not masquerade as a current success gate')
+  assert.doesNotMatch(cockpit, /clientOrderId|cycleId|executionId/, 'raw execution identities must not enter the cockpit')
   const forbiddenCockpitSurfaces = [
     /postHostCommand/,
     /\.postMessage\s*\(/,
