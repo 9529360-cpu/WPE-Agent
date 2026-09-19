@@ -155,6 +155,32 @@ public sealed class ExecutionRealityRecorderV1Tests : IDisposable
     }
 
     [Fact]
+    public async Task TamperedRiskReceiptCannotAuthorizeRealityWrite()
+    {
+        var store = Store();
+        await AuthorizeArtifact(store, Artifact("cycle-a", "strategy-a", "v7", "order-a"));
+
+        await using (var connection = new SqliteConnection($"Data Source={Database}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE automatic_execution_queue SET risk_receipt_hash='bad' WHERE execution_id='cycle-a'";
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+
+        var result = await new ExecutionRealityRecorderV1(store, () => Now).RecordAsync(
+            "cycle-a",
+            Intent("order-a"),
+            Order("order-a", "FILLED", 1m, 100m),
+            Costs(),
+            default);
+
+        Assert.False(result.Recorded);
+        Assert.Equal("intent-authority-automatic-risk-receipt-invalid", result.Code);
+        Assert.Empty(await store.GetRecentExecutionRealityDriftAsync(10, default));
+    }
+
+    [Fact]
     public async Task OrderIdentityMismatchFailsClosedBeforePersistence()
     {
         var store = Store();
