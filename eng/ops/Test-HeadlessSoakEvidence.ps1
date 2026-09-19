@@ -75,7 +75,9 @@ $count=0
 $recomputedReady=0
 $recomputedGrace=0
 $maximumSampleHealthAge=0.0
+$firstSampledAt=$null
 $lastSampledAt=$null
+$maximumSampleGapSeconds=[Math]::Max(($pollSeconds*3),($pollSeconds+5))
 Get-Content -LiteralPath $samples | ForEach-Object {
     if([string]::IsNullOrWhiteSpace($_)){throw 'soak.sample-empty'}
     try{$sample=$_|ConvertFrom-Json}catch{throw 'soak.sample-malformed'}
@@ -87,7 +89,11 @@ Get-Content -LiteralPath $samples | ForEach-Object {
 
     $sampledAt=Parse-Utc $sample.sampledAtUtc 'soak.sample-sampled-at-invalid'
     if($sampledAt -lt $started -or $sampledAt -gt $completed.AddSeconds(1)){throw 'soak.sample-time-outside-window'}
-    if($null -ne $lastSampledAt -and $sampledAt -lt $lastSampledAt){throw 'soak.sample-time-not-monotonic'}
+    if($null -eq $firstSampledAt){$firstSampledAt=$sampledAt}
+    if($null -ne $lastSampledAt){
+        if($sampledAt -le $lastSampledAt){throw 'soak.sample-time-not-strictly-increasing'}
+        if(($sampledAt-$lastSampledAt).TotalSeconds -gt $maximumSampleGapSeconds){throw 'soak.sample-gap-exceeded'}
+    }
     $lastSampledAt=$sampledAt
 
     $expectedGrace=(($sampledAt-$started).TotalSeconds -lt $startupGraceSeconds)
@@ -130,6 +136,10 @@ Get-Content -LiteralPath $samples | ForEach-Object {
     $count++
 }
 if($count -ne [int]$evidence.sampleCount){throw 'soak.sample-count-mismatch'}
+if($count -eq 0 -or $null -eq $firstSampledAt -or $null -eq $lastSampledAt){throw 'soak.sample-coverage-empty'}
+$endpointToleranceSeconds=[Math]::Max(($pollSeconds*2),($pollSeconds+5))
+if($firstSampledAt -gt $started.AddSeconds($endpointToleranceSeconds)){throw 'soak.sample-start-coverage-missing'}
+if($lastSampledAt -lt $completed.AddSeconds(-$endpointToleranceSeconds)){throw 'soak.sample-end-coverage-missing'}
 if($recomputedReady -ne [int]$evidence.readySamples){throw 'soak.ready-sample-count-mismatch'}
 if($recomputedGrace -ne [int]$evidence.graceSamples){throw 'soak.grace-sample-count-mismatch'}
 if(($recomputedReady+$recomputedGrace) -ne $count){throw 'soak.accepted-sample-count-mismatch'}
