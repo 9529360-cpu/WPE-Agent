@@ -91,6 +91,10 @@ function Write-SoakEvidence([string]$path,$candidate,[hashtable]$overrides){
 $root=Join-Path ([IO.Path]::GetTempPath()) ('wpe-dogfood-'+[Guid]::NewGuid().ToString('N'));New-Item -ItemType Directory -Path $root|Out-Null
 try{
     $tool=Split-Path $PSScriptRoot -Parent;$new=Join-Path $tool 'New-Candidate.ps1';$script:new=$new;$test=Join-Path $tool 'Test-DogfoodRelease.ps1';$switch=Join-Path $tool 'Switch-DogfoodSlot.ps1'
+    $newSource=Get-Content -Raw -LiteralPath $new
+    Assert ($newSource.IndexOf('$sourceSnapshot',[StringComparison]::Ordinal) -ge 0) 'candidate source snapshot contract missing'
+    Assert ($newSource.IndexOf('candidate.copy-drift',[StringComparison]::Ordinal) -ge 0) 'candidate copy drift gate missing'
+    Assert ($newSource.IndexOf('Move-Item -LiteralPath $staging -Destination $destination',[StringComparison]::Ordinal) -ge 0) 'candidate atomic promotion missing'
     $fixtureRoot=Join-Path $PSScriptRoot 'fixtures';$f01=Get-Content -Raw (Join-Path $fixtureRoot 'F01-trusted-runtime-proof-not-consumed.json')|ConvertFrom-Json;$f02=Get-Content -Raw (Join-Path $fixtureRoot 'F02-manifest-hash-unanchored.json')|ConvertFrom-Json
     Assert ($f01.expectedRejection -eq 'runtime.proof-source-untrusted') 'F01 fixture contract changed';Assert ($f02.expectedRejection -eq 'candidate.manifest-hash-mismatch') 'F02 fixture contract changed'
     $command=(Get-Command $test).Parameters.Keys;[string[]]$contract='CandidateRoot','LastKnownGoodRoot','ProviderReadOnly','RequireTrustedRuntimeFresh','VerifyInstall','VerifyStartup','VerifyRestartRecovery','VerifyRollback','RejectMainnet','ExpectedCandidateManifestHash','ExpectedLastKnownGoodManifestHash','TrustedRuntimeProofPath','ExpectedTrustedRuntimeProofHash','ExpectedRuntimeProofId','ExpectedRuntimeSourceIdentity','ExpectedEvidenceGateRefs','SoakEvidencePath','ExpectedSoakEvidenceHash','MinimumSoakDurationMinutes','MaximumRuntimeAgeSeconds','TestnetMutationSmoke','VerifiedGateEvidenceRef','Mainnet'
@@ -127,6 +131,7 @@ try{
     }
     $slots=Join-Path $root 'slots';$lkg=New-TestCandidate -SourceRoot $source -SlotsRoot $slots -Version '1.0.0' -SourceIdentity 'commit/aaa' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests'
     $candidate=New-TestCandidate -SourceRoot $source -SlotsRoot $slots -Version '1.0.1' -SourceIdentity 'commit/bbb' -ConfigurationSchema 'cfg/1' -MigrationVersion 'db/1' -Gates 'build','tests'
+    Assert (@(Get-ChildItem -LiteralPath (Join-Path $slots 'versions') -Directory -Force|Where-Object {$_.Name -like '.*.tmp'}).Count -eq 0) 'candidate staging directory leaked'
     Assert (@(Get-ChildItem -LiteralPath $candidate.CandidateRoot,$lkg.CandidateRoot -Recurse -File|Where-Object {-not $_.IsReadOnly}).Count -eq 0) 'candidate or LKG contains mutable staged files'
     Assert ($candidate.ManifestSha256 -eq (Hash (Join-Path $candidate.CandidateRoot 'release-manifest.json'))) 'candidate identity is not deterministic over staged bytes'
     $proofPath=Join-Path $root 'trusted-runtime-proof.json';$proofHash=Write-Proof $proofPath $candidate $lkg @{}
