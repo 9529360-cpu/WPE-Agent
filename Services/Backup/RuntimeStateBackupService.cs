@@ -79,6 +79,9 @@ public sealed class RuntimeStateBackupService
             throw new InvalidOperationException("The platform backup key protector is unavailable.");
 
         var destination = Path.GetFullPath(destinationRoot);
+        if (DataRootPathPolicy.ContainsExistingReparsePoint(destination))
+            throw new InvalidOperationException(
+                "Backup destination must not traverse symbolic links, junctions, or other reparse points.");
         var dataRoot = Path.GetFullPath(_layout.DataDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         var destinationWithSeparator = destination.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         if (destinationWithSeparator.StartsWith(dataRoot, StringComparison.OrdinalIgnoreCase))
