@@ -192,7 +192,7 @@ public sealed class RuntimeHistoricalCollectionStateStore
                 if(allows is not 0 and not 1)throw new InvalidOperationException("Reconciliation risk flag is invalid.");
                 items.Add(new(
                     Safe(reader.GetString(0),40),
-                    Safe(reader.GetString(1),120),
+                    SensitiveDataRedactor.MaskIdentifier(reader.GetString(1),"reconciliation"),
                     Safe(reader.GetString(2),120),
                     Instant(reader.GetString(3)),
                     Instant(reader.GetString(4)),
