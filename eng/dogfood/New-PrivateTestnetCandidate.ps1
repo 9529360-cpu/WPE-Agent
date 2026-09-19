@@ -39,7 +39,16 @@ try{$manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json}catch
 $allowed=@('schemaVersion','version','createdUtc','localOnly','commercialDistribution','mainnet','probeScript','files')
 if(@($manifest.PSObject.Properties.Name|Where-Object {$allowed -notcontains $_}).Count){Stop-Candidate 'manifest.unknown-field'}
 if($manifest.schemaVersion -ne 'wpe.private-testnet-payload/1.0' -or $manifest.version -ne $Version -or $manifest.localOnly -ne $true -or $manifest.commercialDistribution -ne $false -or $manifest.mainnet -ne $false){Stop-Candidate 'manifest.boundary-mismatch'}
-try{$created=[DateTimeOffset]::ParseExact([string]$manifest.createdUtc,'o',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None)}catch{Stop-Candidate 'manifest.timestamp-invalid'}
+try{
+    $createdValue=$manifest.createdUtc
+    if($createdValue -is [DateTimeOffset]){$created=([DateTimeOffset]$createdValue).ToUniversalTime()}
+    elseif($createdValue -is [DateTime]){
+        $createdDate=[DateTime]$createdValue
+        if($createdDate.Kind -eq [DateTimeKind]::Unspecified){Stop-Candidate 'manifest.timestamp-invalid'}
+        $created=([DateTimeOffset]$createdDate).ToUniversalTime()
+    }
+    else{$created=[DateTimeOffset]::ParseExact([string]$createdValue,'o',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None)}
+}catch{Stop-Candidate 'manifest.timestamp-invalid'}
 $age=([DateTimeOffset]::UtcNow-$created).TotalSeconds;if($age -lt -5 -or $age -gt $MaximumManifestAgeSeconds){Stop-Candidate 'manifest.stale'}
 if([string]::IsNullOrWhiteSpace([string]$manifest.probeScript) -or $manifest.probeScript -notmatch '^[^:\\]+\.ps1$'){Stop-Candidate 'probe.invalid'}
 $entries=@($manifest.files|ForEach-Object {$_});if($entries.Count -eq 0){Stop-Candidate 'manifest.files-empty'}
