@@ -34,6 +34,22 @@ public sealed class DataRootMaintenanceLeaseTests : IDisposable
             DataRootMaintenanceLease.AcquireProcessLease(LeasePath));
     }
 
+    [Fact]
+    public void OnlyHeldExclusiveLeaseCanAuthorizeMaintenanceOwner()
+    {
+        using var process = DataRootMaintenanceLease.AcquireProcessLease(LeasePath);
+        Assert.Equal(DataRootLeaseMode.ProcessShared, process.Mode);
+        Assert.Throws<InvalidOperationException>(() => process.RequireExclusiveFor(LeasePath));
+        process.Dispose();
+        Assert.False(process.IsHeld);
+
+        using var maintenance = DataRootMaintenanceLease.AcquireExclusiveMaintenanceLease(LeasePath);
+        Assert.Equal(DataRootLeaseMode.ExclusiveMaintenance, maintenance.Mode);
+        maintenance.RequireExclusiveFor(LeasePath);
+        Assert.Throws<InvalidOperationException>(() =>
+            maintenance.RequireExclusiveFor(Path.Combine(_directory, "other.lock")));
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_directory, true); } catch { }
