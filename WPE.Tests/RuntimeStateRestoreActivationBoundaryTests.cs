@@ -26,6 +26,10 @@ public sealed class RuntimeStateRestoreActivationBoundaryTests
             Assert.DoesNotContain(forbidden, source, StringComparison.Ordinal);
 
         Assert.Contains("AcquireExclusiveMaintenanceLease", service, StringComparison.Ordinal);
+        var lease = service.IndexOf("AcquireExclusiveMaintenanceLease", StringComparison.Ordinal);
+        var sqlitePools = service.IndexOf("SqliteConnection.ClearAllPools();", lease, StringComparison.Ordinal);
+        var recoveryCall = service.IndexOf("RuntimeStateRestoreRecovery.RecoverUnderExclusiveLease", lease, StringComparison.Ordinal);
+        Assert.True(lease >= 0 && sqlitePools > lease && recoveryCall > sqlitePools);
         Assert.Contains("VerifyToStagingAsync", service, StringComparison.Ordinal);
         Assert.Contains("CreateUnderExclusiveLeaseAsync", service, StringComparison.Ordinal);
         Assert.Contains("Directory.Move(_layout.DataDirectory, rollback)", service, StringComparison.Ordinal);
