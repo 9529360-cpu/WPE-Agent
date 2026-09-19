@@ -39,6 +39,8 @@ try{
         $e=[ordered]@{
             schemaVersion='wpe.headless-soak-evidence/1.0'
             status='passed'
+            sourceIdentity='commit/test-candidate'
+            candidateManifestSha256=('a'*64)
             startedAtUtc=$started.ToString('O')
             completedAtUtc=$now.ToString('O')
             requestedDurationSeconds=3660
@@ -62,28 +64,35 @@ try{
     }
 
     Write-Evidence @{}
-    $result=& $verify -EvidencePath $evidencePath -MinimumDurationMinutes 60
+    $result=& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60
     Assert $result.Valid 'valid evidence rejected'
     Assert ($result.SampleCount -eq 2) 'sample count not verified'
 
+
+    Write-Evidence @{}
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/other' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.source-identity-mismatch'
+
+    Write-Evidence @{}
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('b'*64) -MinimumDurationMinutes 60} 'soak.candidate-manifest-mismatch'
+
     Write-Evidence @{samplesSha256=('0'*64)}
-    Throws {& $verify -EvidencePath $evidencePath -MinimumDurationMinutes 60} 'soak.samples-hash-mismatch'
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.samples-hash-mismatch'
 
     Write-Evidence @{unhealthySamples=1}
-    Throws {& $verify -EvidencePath $evidencePath -MinimumDurationMinutes 60} 'soak.unhealthy-samples-exceeded'
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.unhealthy-samples-exceeded'
 
     Write-Evidence @{startedAtUtc=$now.AddMinutes(-5).ToString('O')}
-    Throws {& $verify -EvidencePath $evidencePath -MinimumDurationMinutes 60} 'soak.duration-insufficient'
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.duration-insufficient'
 
     Write-Evidence @{}
     $tampered=Get-Content -Raw -LiteralPath $evidencePath|ConvertFrom-Json
     $tampered|Add-Member -NotePropertyName unexpected -NotePropertyValue 'x'
     $tampered|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $evidencePath -Encoding utf8
-    Throws {& $verify -EvidencePath $evidencePath -MinimumDurationMinutes 60} 'soak.evidence-unknown-field'
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.evidence-unknown-field'
 
     Write-Evidence @{}
     Add-Content -LiteralPath $samplesPath -Value (($sample|ConvertTo-Json -Compress))
-    Throws {& $verify -EvidencePath $evidencePath -MinimumDurationMinutes 60} 'soak.samples-hash-mismatch'
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.samples-hash-mismatch'
 
     'PASS headless soak evidence verification'
 } finally {
