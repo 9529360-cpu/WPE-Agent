@@ -47,10 +47,8 @@ function Write-SoakEvidence([string]$path,$candidate,[hashtable]$overrides){
         accepted=$true
         reason=$null
     }
-    @(
-        ($sample|ConvertTo-Json -Compress),
-        ($sample|ConvertTo-Json -Compress)
-    )|Set-Content -LiteralPath $samplePath -Encoding utf8
+    $sampleJson=$sample|ConvertTo-Json -Compress
+    @(1..1350|ForEach-Object{$sampleJson})|Set-Content -LiteralPath $samplePath -Encoding utf8
     $e=[ordered]@{
         schemaVersion='wpe.headless-soak-evidence/1.0'
         status='passed'
@@ -60,12 +58,12 @@ function Write-SoakEvidence([string]$path,$candidate,[hashtable]$overrides){
         completedAtUtc=$now.ToString('O')
         requestedDurationSeconds=90000
         observedDurationSeconds=90000
-        pollSeconds=5
+        pollSeconds=60
         startupGraceSeconds=60
         maximumHealthAgeSeconds=15
-        sampleCount=2
-        expectedMinimumSamples=2
-        readySamples=2
+        sampleCount=1350
+        expectedMinimumSamples=1350
+        readySamples=1350
         graceSamples=0
         unhealthySamples=0
         invalidSamples=0
