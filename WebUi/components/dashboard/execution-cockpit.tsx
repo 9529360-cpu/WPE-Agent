@@ -47,12 +47,12 @@ function SectionLink({ href, children }: { href: string; children: ReactNode }) 
   return <Link href={href} className="text-[11px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">{children}</Link>
 }
 
-function ReconciliationRow({ label, item, formatDate }: { label: string; item?: RuntimeHistoricalReconciliation; formatDate: (value: Date | string, options?: Intl.DateTimeFormatOptions) => string }) {
+function ReconciliationRow({ label, item, formatDate, auditRiskLabel }: { label: string; item?: RuntimeHistoricalReconciliation; formatDate: (value: Date | string, options?: Intl.DateTimeFormatOptions) => string; auditRiskLabel: string }) {
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-b border-border/70 py-3 last:border-0">
       <div className="min-w-0 text-xs font-medium">{label}</div>
-      {item ? <StatusBadge token={item.allowsRiskIncrease ? gateTone(item.state) : 'danger'} label={item.state} /> : <StatusBadge token="muted" label="Unavailable" />}
-      <div className="min-w-0 break-words text-[10px] text-muted-foreground">{item?.schema ?? 'No persisted audit'}</div>
+      {item ? <StatusBadge token={item.allowsRiskIncrease ? 'info' : 'danger'} label={item.state} /> : <StatusBadge token="muted" label="Unavailable" />}
+      <div className="min-w-0 break-words text-[10px] text-muted-foreground">{item ? `${item.schema} · ${auditRiskLabel}` : 'No persisted audit'}</div>
       <div className="whitespace-nowrap text-right text-[10px] text-muted-foreground">{item ? formatDate(item.evaluatedAtUtc) : ''}</div>
     </div>
   )
@@ -208,16 +208,19 @@ export function ExecutionCockpit() {
 
           <section className="min-w-0 overflow-hidden rounded-lg border border-border">
             <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
-              <div className="flex items-center gap-2 text-xs font-medium"><ShieldAlert className="size-4 text-muted-foreground" aria-hidden="true" />{t('dashboard.reconciliationGates')}</div>
+              <div>
+                <div className="flex items-center gap-2 text-xs font-medium"><ShieldAlert className="size-4 text-muted-foreground" aria-hidden="true" />{t('dashboard.reconciliationGates')}</div>
+                <div className="mt-0.5 text-[10px] text-muted-foreground">{t('dashboard.reconciliationHelp')}</div>
+              </div>
               <SectionLink href="/risk">{t('dashboard.riskSummary')}</SectionLink>
             </div>
             {reconciliationState !== 'available' ? (
               <CollectionNotice state={reconciliationState} message={runtime.historicalReconciliations?.message} />
             ) : (
               <div className="px-3">
-                <ReconciliationRow label={t('dashboard.positionReconciliation')} item={latestReconciliation('position')} formatDate={formatDate} />
-                <ReconciliationRow label={t('dashboard.protectionReconciliation')} item={latestReconciliation('protection')} formatDate={formatDate} />
-                <ReconciliationRow label={t('dashboard.externalPositionIsolation')} item={latestReconciliation('externalIsolation')} formatDate={formatDate} />
+                <ReconciliationRow label={t('dashboard.positionReconciliation')} item={latestReconciliation('position')} formatDate={formatDate} auditRiskLabel={latestReconciliation('position')?.allowsRiskIncrease ? t('dashboard.auditRiskAllowed') : t('dashboard.auditRiskBlocked')} />
+                <ReconciliationRow label={t('dashboard.protectionReconciliation')} item={latestReconciliation('protection')} formatDate={formatDate} auditRiskLabel={latestReconciliation('protection')?.allowsRiskIncrease ? t('dashboard.auditRiskAllowed') : t('dashboard.auditRiskBlocked')} />
+                <ReconciliationRow label={t('dashboard.externalPositionIsolation')} item={latestReconciliation('externalIsolation')} formatDate={formatDate} auditRiskLabel={latestReconciliation('externalIsolation')?.allowsRiskIncrease ? t('dashboard.auditRiskAllowed') : t('dashboard.auditRiskBlocked')} />
               </div>
             )}
           </section>
