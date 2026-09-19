@@ -126,7 +126,7 @@ public sealed class ExecutionRealityCalibrationTests : IDisposable
 
     private ExecutionDriftSummaryV1 Summary(int index)
     {
-        var partial=index%10==0;var fill=partial?.5m:1m;
+        var partial=index%10==0;var fill=partial ? .5m : 1m;
         return new($"sample-{index}","binance","Testnet","BTCUSDT",PositionSide.Long,false,ExecutionOrderType.Market,0,
             4,2,partial?1:0,1m,fill,fill,100m,100m+(decimal)index/1000m,100m,4,.8,.02,
             10+index,30+index,index/10d,"FILLED");
