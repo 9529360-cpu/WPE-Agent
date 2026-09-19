@@ -39,12 +39,15 @@ Run `eng/ops/Watch-HeadlessSoak.ps1` against the exact candidate source identity
 
 Verify the produced evidence independently with `eng/ops/Test-HeadlessSoakEvidence.ps1`. Preserve both the evidence-file SHA-256 and the JSONL sample-stream SHA-256.
 
+The release validator does not execute a package-local probe script and does not control Windows SCM. Install/start/restart/rollback actions remain target-machine/operator responsibilities. Their results must be captured by the trusted runtime-proof producer and bound to the candidate and last-known-good manifest hashes before promotion.
+
 ## 3. Validate and switch the slot
 
 `Switch-DogfoodSlot.ps1` delegates to `Test-DogfoodRelease.ps1`. Promotion requires all of the following together:
 
 - exact candidate and last-known-good manifest hashes;
 - fresh trusted runtime proof bound to both manifests;
+- trusted target-machine probe evidence inside that proof for `install`, `startup`, `restartRecovery`, and `rollback`, each marked `passed` with a 64-hex evidence SHA-256;
 - passed candidate-bound soak evidence, 24 hours by default;
 - read-only provider mode;
 - install, startup, restart-recovery, and rollback probes;
