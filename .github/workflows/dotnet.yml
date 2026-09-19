@@ -124,6 +124,10 @@ jobs:
       shell: pwsh
       run: ./eng/test.ps1 -Configuration Release
 
+    - name: Verify soak evidence harness
+      shell: pwsh
+      run: ./eng/ops/tests/HeadlessSoak.Tests.ps1
+
     - name: Publish maintenance candidate
       run: dotnet publish "WPE.Maintenance/WPE.Maintenance.csproj" --configuration Release --no-restore --output artifacts/maintenance
 
