@@ -2,6 +2,37 @@ using 币安量化机器人.Services.Security;
 
 namespace 币安量化机器人.Services.Backup;
 
+public static class RuntimeStateBackupInventoryV1
+{
+    public static readonly IReadOnlyList<string> AuthoritativeDatabases =
+    [
+        "agent.db",
+        "trading.db",
+        "notification-outbox.db",
+        "security-storage.db"
+    ];
+
+    public static readonly IReadOnlyList<string> AuthoritativeFiles =
+    [
+        "agent-settings.json",
+        "appsettings.json",
+        "local-accounts.json",
+        "device-license.dat",
+        "ui-settings.json",
+        "ui-preferences.json",
+        "llm-calls.jsonl"
+    ];
+
+    public static RuntimeStateBackupItemKind? KindFor(string logicalName)
+    {
+        if (AuthoritativeDatabases.Contains(logicalName, StringComparer.Ordinal))
+            return RuntimeStateBackupItemKind.SqliteDatabase;
+        if (AuthoritativeFiles.Contains(logicalName, StringComparer.Ordinal))
+            return RuntimeStateBackupItemKind.File;
+        return null;
+    }
+}
+
 public enum RuntimeStateBackupItemKind
 {
     SqliteDatabase,
