@@ -38,6 +38,9 @@ public sealed class HeadlessRuntimeBoundaryTests
 
         Assert.True(platform>=0&&bootstrap>platform&&license>bootstrap&&setup>license&&host>setup&&start>host);
         Assert.Contains("settingsStore.LastLoadDiagnostic is not null",source,StringComparison.Ordinal);
+        Assert.Contains("string.IsNullOrWhiteSpace(settings.ActiveUser)",source,StringComparison.Ordinal);
+        Assert.Contains("new TradingRuntimeHost(settings.ActiveUser)",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("\"DEVICE-\" + license.License.LicenseId",source,StringComparison.Ordinal);
         Assert.Contains("headless.access-not-ready",source,StringComparison.Ordinal);
         Assert.Contains("health.LeaseLost",source,StringComparison.Ordinal);
         Assert.Contains("!health.AgentRunning",source,StringComparison.Ordinal);
