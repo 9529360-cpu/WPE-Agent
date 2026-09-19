@@ -20,6 +20,14 @@ public sealed record RuntimeStateRestoreJournalV1(
     public const string CurrentSchema = "wpe.runtime-state-restore-journal/1.0";
 }
 
+public sealed record RuntimeStateRestoreJournalEnvelopeV1(
+    string Schema,
+    string RestoreId,
+    Services.Security.EncryptedEnvelope Envelope)
+{
+    public const string CurrentSchema = "wpe.runtime-state-restore-journal-envelope/1.0";
+}
+
 public sealed record RuntimeStateRestoreResult(
     string RestoreId,
     string BackupId,
