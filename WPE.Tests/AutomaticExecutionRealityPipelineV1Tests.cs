@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using WpeAgent.TradingAuthorization;
+using WpeAgent.CrossAssetResearch;
 using 币安量化机器人.Services.Agent;
 
 namespace WPE.Tests;
@@ -174,10 +175,10 @@ public sealed class AutomaticExecutionRealityPipelineV1Tests : IDisposable
     {
         var costs=ExecutionRealityCostAuthorityV1.Current;
 
-        Assert.Equal(ResearchRealityModel.DefaultCosts.CommissionRate,costs.CommissionRate);
-        Assert.Equal(ResearchRealityModel.DefaultCosts.SlippageRate,costs.SlippageRate);
+        Assert.Equal(TradingRealityCostAuthorityV1.Default.CommissionRate,costs.CommissionRate);
+        Assert.Equal(TradingRealityCostAuthorityV1.Default.SlippageRate,costs.SlippageRate);
         Assert.Equal(ExecutionRealityCostAuthorityV1.Version,costs.Version);
-        Assert.StartsWith(ExecutionRealityCostAuthorityV1.Schema+":",costs.Version,StringComparison.Ordinal);
+        Assert.Equal(TradingRealityCostAuthorityV1.Identity,costs.Version);
     }
 
     private AgentSqliteStore Store()=>new(Database,()=>_clock.Now);
