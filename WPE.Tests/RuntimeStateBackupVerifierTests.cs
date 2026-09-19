@@ -154,6 +154,21 @@ public sealed class RuntimeStateBackupVerifierTests : IDisposable
     }
 
     [Fact]
+    public async Task ProductVersionMismatchFailsBeforeStaging()
+    {
+        await CreateDatabase(_layout.DataFile("agent.db"));
+        var backup = await Backup().CreateAsync(Path.Combine(_root, "backups"));
+        var staging = Path.Combine(_root, "staging-version");
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            Verifier(_protector, productVersion: "3.7.0-test")
+                .VerifyToStagingAsync(backup.Directory, staging));
+
+        Assert.Contains("product version", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(staging));
+    }
+
+    [Fact]
     public async Task UnmanifestedBackupFileFailsClosed()
     {
         await CreateDatabase(_layout.DataFile("agent.db"));
@@ -173,8 +188,9 @@ public sealed class RuntimeStateBackupVerifierTests : IDisposable
 
     private RuntimeStateBackupVerifier Verifier(
         IPlatformKeyProtector protector,
-        string deviceCode = "DEVICE-TEST") =>
-        new(protector, () => Now.AddMinutes(1), () => deviceCode, "3.6.0-test");
+        string deviceCode = "DEVICE-TEST",
+        string productVersion = "3.6.0-test") =>
+        new(protector, () => Now.AddMinutes(1), () => deviceCode, productVersion);
 
     private static async Task CreateDatabase(string path)
     {
