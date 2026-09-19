@@ -55,6 +55,50 @@ public sealed partial class AgentSqliteStore
         return fact;
     }
 
+    internal async Task<int> BackfillMissingPostTradePnlDriftAsync(
+        int limit,
+        CancellationToken ct)
+    {
+        var boundedLimit=Math.Clamp(limit,1,100);
+        var closeIds=new List<string>();
+        await using(var connection=new SqliteConnection(_cs))
+        {
+            await connection.OpenAsync(ct);
+            await EnsurePostTradePnlDriftStorageAsync(connection,ct);
+            await using var query=connection.CreateCommand();
+            query.CommandText="""
+                SELECT outcome.client_order_id
+                FROM trade_outcomes AS outcome
+                LEFT JOIN post_trade_pnl_drift AS drift
+                  ON drift.close_client_order_id=outcome.client_order_id
+                WHERE outcome.attribution_basis='automatic-artifact'
+                  AND outcome.client_order_id IS NOT NULL
+                  AND drift.close_client_order_id IS NULL
+                ORDER BY outcome.closed_at ASC,outcome.id ASC
+                LIMIT $limit;
+                """;
+            query.Parameters.AddWithValue("$limit",boundedLimit);
+            await using var reader=await query.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))closeIds.Add(reader.GetString(0));
+        }
+
+        var written=0;
+        foreach(var closeId in closeIds)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                if(await TryBuildAndSavePostTradePnlDriftAsync(closeId,ct) is not null)written++;
+            }
+            catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+            catch(Exception ex)
+            {
+                try{await RecordErrorAsync("PostTradePnlDriftBackfill",ex,CancellationToken.None);}catch{}
+            }
+        }
+        return written;
+    }
+
     internal async Task<IReadOnlyList<PostTradePnlDriftV1>> GetRecentPostTradePnlDriftAsync(
         int limit,
         CancellationToken ct,

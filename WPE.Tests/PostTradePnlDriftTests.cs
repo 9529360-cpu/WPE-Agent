@@ -137,6 +137,49 @@ public sealed class PostTradePnlDriftTests : IDisposable
     }
 
     [Fact]
+    public async Task StartupBackfillRepairsMissingPnlDriftAfterDurableCloseCrashWindow()
+    {
+        var store=Store();
+        var open=Intent("open-restart",false,1m,100m);
+        var close=Intent("close-restart",true,1m,110m);
+        var openArtifact=await Bind(store,"cycle-open-restart",open);
+        var closeArtifact=await Bind(store,"cycle-close-restart",close);
+        await SaveSimulation(store,openArtifact,bestBid:99m,bestAsk:100m,bidQuantity:5m,askQuantity:5m);
+        await SaveSimulation(store,closeArtifact,bestBid:110m,bestAsk:111m,bidQuantity:5m,askQuantity:5m);
+        await store.RecordExecutionAsync(
+            "cycle-open-restart",open,Order(open,"FILLED",1m,100m,Now.AddMinutes(-5)),"fallback",default);
+        await store.RecordExecutionAsync(
+            "cycle-close-restart",close,Order(close,"FILLED",1m,110m,Now.AddSeconds(-1)),"fallback",default);
+        Assert.Single(await store.GetRecentPostTradePnlDriftAsync(10,default));
+
+        await using(var connection=new SqliteConnection($"Data Source={Database}"))
+        {
+            await connection.OpenAsync();
+            await using(var drop=connection.CreateCommand())
+            {
+                drop.CommandText="DROP TRIGGER post_trade_pnl_drift_no_delete";
+                await drop.ExecuteNonQueryAsync();
+            }
+            await using(var delete=connection.CreateCommand())
+            {
+                delete.CommandText="DELETE FROM post_trade_pnl_drift WHERE close_client_order_id='close-restart'";
+                Assert.Equal(1,await delete.ExecuteNonQueryAsync());
+            }
+        }
+
+        var restarted=new AgentSqliteStore(Database,()=>Now);
+        Assert.Empty(await restarted.GetRecentPostTradePnlDriftAsync(10,default));
+        var processor=new AutomaticExecutionProcessor(
+            restarted,new BackfillValidator(),new BackfillGateway(),()=>Now);
+
+        await processor.BackfillObservationsAsync(default);
+
+        var repaired=Assert.Single(await restarted.GetRecentPostTradePnlDriftAsync(10,default));
+        Assert.Equal("close-restart",repaired.CloseClientOrderId);
+        Assert.Equal("cycle-close-restart",repaired.CloseCycleId);
+    }
+
+    [Fact]
     public async Task PersistedPnlDriftIsAppendOnlyAndSourceTamperingFailsRestartReplay()
     {
         var store=Store();
@@ -442,6 +485,28 @@ public sealed class PostTradePnlDriftTests : IDisposable
             intent.Side,
             intent.ReduceOnly,
             updatedAt.UtcDateTime);
+
+    private sealed class BackfillValidator:IAutomaticExecutionReadOnlyValidator
+    {
+        public Task<AutomaticExecutionRuntimeFacts> ValidateAsync(
+            DurableExecutionArtifactV2 artifact,CancellationToken ct)=>
+            Task.FromResult(new AutomaticExecutionRuntimeFacts(
+                AutomaticFactState.False,AutomaticFactState.False,
+                AutomaticFactState.False,AutomaticFactState.False,"backfill-only"));
+    }
+
+    private sealed class BackfillGateway:IAutomaticExecutionGateway
+    {
+        public bool IsTestnet=>true;
+        public Task<AutomaticGatewayExecutionResult> ExecuteAsync(
+            DurableExecutionArtifactV2 artifact,DeterministicRiskReceipt receipt,CancellationToken ct)=>
+            Task.FromResult(new AutomaticGatewayExecutionResult(
+                AutomaticGatewayExecutionState.Rejected,"backfill-only"));
+        public Task<AutomaticGatewayReconciliationResult> ReconcileAsync(
+            DurableExecutionArtifactV2 artifact,CancellationToken ct)=>
+            Task.FromResult(new AutomaticGatewayReconciliationResult(
+                AutomaticGatewayReconciliationState.Failed,"backfill-only"));
+    }
 
     public void Dispose()
     {
