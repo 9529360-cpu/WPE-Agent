@@ -209,8 +209,8 @@ public sealed class ProviderOrderReconciliationTests : IDisposable
     {
         var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
         var source = File.ReadAllText(Path.Combine(root, "Services", "AutoTradingAgent.cs"));
-        var start = source.IndexOf("Stage("Stage.Recovery"", StringComparison.Ordinal);
-        var end = source.IndexOf("Stage("Stage.Evidence"", start, StringComparison.Ordinal);
+        var start = source.IndexOf("Stage(\"Stage.Recovery\"", StringComparison.Ordinal);
+        var end = source.IndexOf("Stage(\"Stage.Evidence\"", start, StringComparison.Ordinal);
         Assert.True(start >= 0 && end > start);
         var recoveryStage = source[start..end];
 
