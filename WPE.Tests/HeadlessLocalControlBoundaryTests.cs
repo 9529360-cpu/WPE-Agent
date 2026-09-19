@@ -45,9 +45,9 @@ public sealed class HeadlessLocalControlBoundaryTests
         var source = File.ReadAllText(Path.Combine(
             Root(), "WPE.Headless", "HeadlessLocalControl.cs"));
 
-        Assert.Contains(""health"", source, StringComparison.Ordinal);
-        Assert.Contains(""shutdown"", source, StringComparison.Ordinal);
-        Assert.Contains("ShutdownConfirmation = "shutdown-wpe-headless"", source, StringComparison.Ordinal);
+        Assert.Contains("\"health\"", source, StringComparison.Ordinal);
+        Assert.Contains("\"shutdown\"", source, StringComparison.Ordinal);
+        Assert.Contains("ShutdownConfirmation = \"shutdown-wpe-headless\"", source, StringComparison.Ordinal);
         Assert.Contains("control.command-unsupported", source, StringComparison.Ordinal);
 
         foreach (var forbidden in new[]
@@ -80,7 +80,7 @@ public sealed class HeadlessLocalControlBoundaryTests
             "control.shutdown-requested",
             StringComparison.Ordinal);
         var flush = source.IndexOf(
-            "await pipe.FlushAsync(stoppingToken)",
+            "await pipe.FlushAsync(requestTimeout.Token)",
             requested,
             StringComparison.Ordinal);
         var stop = source.IndexOf(
