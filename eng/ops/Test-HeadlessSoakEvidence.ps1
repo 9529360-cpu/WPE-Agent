@@ -90,19 +90,28 @@ Get-Content -LiteralPath $samples | ForEach-Object {
     if($null -ne $lastSampledAt -and $sampledAt -lt $lastSampledAt){throw 'soak.sample-time-not-monotonic'}
     $lastSampledAt=$sampledAt
 
+    $expectedGrace=(($sampledAt-$started).TotalSeconds -lt $startupGraceSeconds)
+    if([bool]$sample.inStartupGrace -ne $expectedGrace){throw 'soak.sample-grace-window-mismatch'}
     if([bool]$sample.leaseLost){throw 'soak.sample-lease-lost'}
     if(-not [bool]$sample.accepted){throw 'soak.sample-not-accepted'}
 
+    $observedAt=$null
+    $computedAge=$null
     if($null -ne $sample.observedAtUtc -and -not [string]::IsNullOrWhiteSpace([string]$sample.observedAtUtc)){
         $observedAt=Parse-Utc $sample.observedAtUtc 'soak.sample-observed-at-invalid'
         if($observedAt -gt $sampledAt.AddSeconds(5)){throw 'soak.sample-observation-future'}
+        $computedAge=[Math]::Max(0.0,($sampledAt-$observedAt).TotalSeconds)
+        if($computedAge -gt $maximumHealthAgeSeconds){throw 'soak.sample-health-age-invalid'}
     }
 
+    $sampleAge=$null
     if($null -ne $sample.healthAgeSeconds){
         try{$sampleAge=[double]$sample.healthAgeSeconds}catch{throw 'soak.sample-health-age-invalid'}
         if($sampleAge -lt 0 -or $sampleAge -gt $maximumHealthAgeSeconds){throw 'soak.sample-health-age-invalid'}
         $maximumSampleHealthAge=[Math]::Max($maximumSampleHealthAge,$sampleAge)
     }
+    if(($null -eq $observedAt) -ne ($null -eq $sampleAge)){throw 'soak.sample-health-age-mismatch'}
+    if($null -ne $computedAge -and [Math]::Abs($computedAge-$sampleAge) -gt 0.01){throw 'soak.sample-health-age-mismatch'}
 
     $ready=([string]$sample.processState -eq 'ready') -and
         [bool]$sample.runtimeReady -and
@@ -111,6 +120,7 @@ Get-Content -LiteralPath $samples | ForEach-Object {
         [bool]$sample.heartbeatFresh -and
         -not [bool]$sample.leaseLost
     if($ready){
+        if($null -eq $observedAt -or $null -eq $sampleAge){throw 'soak.sample-ready-health-missing'}
         $recomputedReady++
     } elseif([bool]$sample.inStartupGrace){
         $recomputedGrace++
