@@ -22,6 +22,7 @@ export type HistoricalEquity = { sequence: number; observedAtUtc: string; equity
 export type HistoricalBacktest = { backtestId: string; completedAtUtc: string; strategyId: string; strategyVersion: string; symbol: string; status: string; coverageDays: number; trades: number; outOfSampleReturn: number; maxDrawdown: number; sharpe: number }
 export type HistoricalSkillCall = { id: string; occurredAtUtc: string; skill: string; status: string; durationMs: number; mode: string | null; remoteLlmUsed: boolean | null; tokens: number | null; costUsd: number | null }
 export type HistoricalAuditEvent = { id: string; occurredAtUtc: string; category: string; source: string; status: string }
+export type HistoricalPostTradePnlDrift = { sequence: number; comparedAtUtc: string; strategyId: string; strategyVersion: string; symbol: string; side: string; closingQuantity: number; state: 'GrossComparable' | 'FeeAdjustedComparable'; actualGrossPnl: number; simulatedGrossPnl: number; observedMinusSimulatedGrossPnl: number; feeAdjustedPnlComparable: boolean; observedMinusSimulatedFeeAdjustedPnl: number | null; netPnlComparable: false; reasonCode: string }
 
 export type HistoryProjection = {
   orders: PageState<HistoricalOrder>
@@ -29,6 +30,7 @@ export type HistoryProjection = {
   backtests: PageState<HistoricalBacktest>
   skillCalls: PageState<HistoricalSkillCall>
   auditEvents: PageState<HistoricalAuditEvent>
+  postTradePnlDrift: PageState<HistoricalPostTradePnlDrift>
 }
 
 const unsupported = (message: string): PageState<never> => ({ state: 'unsupported', items: [], message })
@@ -38,9 +40,10 @@ export const unsupportedHistoryProjection: HistoryProjection = {
   backtests: unsupported('Historical backtests are not exposed by the current host runtime.'),
   skillCalls: unsupported('Historical skill calls are not exposed by the current host runtime.'),
   auditEvents: unsupported('Historical audit events are not exposed by the current host runtime.'),
+  postTradePnlDrift: unsupported('Post-trade PnL drift is not exposed by the current host runtime.'),
 }
 
-const labels = { orders: 'Orders', equity: 'Equity', backtests: 'Backtests', skillCalls: 'Skill calls', auditEvents: 'Audit events' } as const
+const labels = { orders: 'Orders', equity: 'Equity', backtests: 'Backtests', skillCalls: 'Skill calls', auditEvents: 'Audit events', postTradePnlDrift: 'PnL drift' } as const
 const stateTone: Record<RuntimeCollectionState, string> = { available: 'success', unsupported: 'muted', stale: 'warning', error: 'danger' }
 const stateMessage: Record<Exclude<RuntimeCollectionState, 'available'>, string> = {
   unsupported: 'This historical collection is not supported by the host.',
@@ -102,11 +105,12 @@ export function HistoryCollectionsView({ projection }: { projection: HistoryProj
     backtests: projection?.backtests ?? unsupportedHistoryProjection.backtests,
     skillCalls: projection?.skillCalls ?? unsupportedHistoryProjection.skillCalls,
     auditEvents: projection?.auditEvents ?? unsupportedHistoryProjection.auditEvents,
+    postTradePnlDrift: projection?.postTradePnlDrift ?? unsupportedHistoryProjection.postTradePnlDrift,
   }
   const entries = Object.entries(labels) as [keyof HistoryProjection, string][]
   return (
     <div className="min-w-0 space-y-5">
-      <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-5" role="status" aria-live="polite" aria-atomic="true" aria-label="Historical collection capabilities">
+      <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-6" role="status" aria-live="polite" aria-atomic="true" aria-label="Historical collection capabilities">
         {entries.map(([key, label]) => <div key={key} className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-border bg-panel/40 p-3"><span className="min-w-0 break-words text-xs">{label}</span><StatusBadge token={stateTone[safeProjection[key].state]} label={safeProjection[key].state} /></div>)}
       </div>
 
@@ -114,6 +118,7 @@ export function HistoryCollectionsView({ projection }: { projection: HistoryProj
       <CollectionFrame title={labels.equity} page={safeProjection.equity}>{items => <Table headings={['Time', 'Equity', 'Available', 'Environment', 'Provider']}>{items.map(x => <tr key={x.sequence} className="border-b border-border/70 last:border-0"><Cell>{date(x.observedAtUtc)}</Cell><Cell>{number(x.equity, { maximumFractionDigits: 8 })}</Cell><Cell>{number(x.availableBalance, { maximumFractionDigits: 8 })}</Cell><Cell>{x.environment}</Cell><Cell mono>{x.providerId}</Cell></tr>)}</Table>}</CollectionFrame>
       <CollectionFrame title={labels.backtests} page={safeProjection.backtests}>{items => <Table headings={['Completed', 'Strategy', 'Symbol', 'Status', 'Coverage / trades', 'OOS / drawdown / Sharpe']}>{items.map(x => <tr key={x.backtestId} className="border-b border-border/70 last:border-0"><Cell>{date(x.completedAtUtc)}</Cell><Cell>{x.strategyId}<div className="text-muted-foreground">{x.strategyVersion}</div></Cell><Cell mono>{x.symbol}</Cell><Cell>{x.status}</Cell><Cell>{x.coverageDays} days / {x.trades}</Cell><Cell>{number(x.outOfSampleReturn, { style: 'percent', maximumFractionDigits: 2 })} / {number(x.maxDrawdown, { style: 'percent', maximumFractionDigits: 2 })} / {number(x.sharpe, { maximumFractionDigits: 2 })}</Cell></tr>)}</Table>}</CollectionFrame>
       <CollectionFrame title={labels.skillCalls} page={safeProjection.skillCalls}>{items => <Table headings={['Time', 'Skill', 'Status', 'Duration', 'Mode', 'Remote', 'Tokens / cost']}>{items.map(x => <tr key={x.id} className="border-b border-border/70 last:border-0"><Cell>{date(x.occurredAtUtc)}</Cell><Cell>{x.skill}</Cell><Cell>{x.status}</Cell><Cell>{x.durationMs} ms</Cell><Cell>{x.mode ?? 'Not provided'}</Cell><Cell>{x.remoteLlmUsed === null ? 'Not provided' : x.remoteLlmUsed ? 'Yes' : 'No'}</Cell><Cell>{x.tokens ?? 'Not provided'}{x.costUsd === null ? '' : ` / $${number(x.costUsd, { maximumFractionDigits: 6 })}`}</Cell></tr>)}</Table>}</CollectionFrame>
+      <CollectionFrame title={labels.postTradePnlDrift} page={safeProjection.postTradePnlDrift}>{items => <Table headings={['Compared', 'Strategy', 'Symbol / side', 'Quantity', 'Actual / simulated gross', 'Gross delta', 'Fee-adjusted delta', 'State / reason']}>{items.map(x => <tr key={x.sequence} className="border-b border-border/70 last:border-0"><Cell>{date(x.comparedAtUtc)}</Cell><Cell>{x.strategyId}<div className="text-muted-foreground">{x.strategyVersion}</div></Cell><Cell mono>{x.symbol}<div className="font-sans text-muted-foreground">{x.side}</div></Cell><Cell>{number(x.closingQuantity,{maximumFractionDigits:8})}</Cell><Cell>{number(x.actualGrossPnl,{maximumFractionDigits:8})} / {number(x.simulatedGrossPnl,{maximumFractionDigits:8})}</Cell><Cell>{number(x.observedMinusSimulatedGrossPnl,{maximumFractionDigits:8})}</Cell><Cell>{x.feeAdjustedPnlComparable&&x.observedMinusSimulatedFeeAdjustedPnl!==null?number(x.observedMinusSimulatedFeeAdjustedPnl,{maximumFractionDigits:8}):'Not comparable'}</Cell><Cell>{x.state}<div className="max-w-64 [overflow-wrap:anywhere] text-muted-foreground">{x.reasonCode}</div></Cell></tr>)}</Table>}</CollectionFrame>
       <CollectionFrame title={labels.auditEvents} page={safeProjection.auditEvents}>{items => <Table headings={['Time', 'Category', 'Source', 'Status']}>{items.map(x => <tr key={x.id} className="border-b border-border/70 last:border-0"><Cell>{date(x.occurredAtUtc)}</Cell><Cell>{x.category}</Cell><Cell>{x.source}</Cell><Cell>{x.status}</Cell></tr>)}</Table>}</CollectionFrame>
     </div>
   )

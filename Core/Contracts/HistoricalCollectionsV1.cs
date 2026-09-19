@@ -6,7 +6,8 @@ public enum HistoricalCollectionKindV1
     Equity,
     Backtests,
     SkillCalls,
-    AuditEvents
+    AuditEvents,
+    PostTradePnlDrift
 }
 
 public sealed record HistoricalCollectionRequestV1(int Limit = 50, string? Cursor = null)
@@ -80,3 +81,21 @@ public sealed record HistoricalAuditEventV1(
     string Source,
     string? CorrelationId,
     string Status);
+
+
+public sealed record HistoricalPostTradePnlDriftV1(
+    long Sequence,
+    DateTimeOffset ComparedAtUtc,
+    string StrategyId,
+    string StrategyVersion,
+    string Symbol,
+    string Side,
+    decimal ClosingQuantity,
+    string State,
+    decimal ActualGrossPnl,
+    decimal SimulatedGrossPnl,
+    decimal ObservedMinusSimulatedGrossPnl,
+    bool FeeAdjustedPnlComparable,
+    decimal? ObservedMinusSimulatedFeeAdjustedPnl,
+    bool NetPnlComparable,
+    string ReasonCode);
