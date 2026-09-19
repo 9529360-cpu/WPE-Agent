@@ -119,6 +119,63 @@ public sealed class StrategyAdaptiveIntelligenceTests : IDisposable
     }
 
     [Fact]
+    public async Task NewlyDemotedStrategyCannotRemainSelectableForCurrentCycle()
+    {
+        var store=new AgentSqliteStore(DatabasePath);
+        var parameters=LocalStrategyParameters.For(StrategyFamily.TrendBreakout,0);
+        var profile=new StrategyProfile
+        {
+            Id="demote-now",
+            Version="trend-v1",
+            Symbol="BTCUSDT",
+            Family=StrategyFamily.TrendBreakout,
+            Parameters=parameters,
+            ParametersHash=LocalStrategyParameters.Hash(parameters),
+            LineageHash=StrategyLineage.Hash("BTCUSDT",StrategyFamily.TrendBreakout,null,null,0,LocalStrategyParameters.Hash(parameters)),
+            Lifecycle=StrategyLifecycle.Active,
+            QualityScore=.8,
+            Expectancy=.01,
+            ShadowObservations=StrategyGovernor.MinimumShadowObservations
+        };
+        await store.UpsertStrategyAsync(profile,CancellationToken.None);
+
+        for(var index=0;index<StrategyGovernor.MinimumShadowObservations;index++)
+        {
+            var profitable=index<StrategyGovernor.MinimumShadowObservations-3;
+            await store.RecordStrategyObservationAsync("demote-now","BTCUSDT",1,100m,.8,MarketRegime.Trending,CancellationToken.None);
+            await store.RecordStrategyObservationAsync("demote-now","BTCUSDT",0,profitable?101m:99m,0,MarketRegime.Trending,CancellationToken.None);
+        }
+
+        var start=DateTime.UtcNow.AddMinutes(-80);
+        var candles=Enumerable.Range(0,80).Select(index=>
+        {
+            var close=100m+index*.1m;
+            return new CandleEvidence(start.AddMinutes(index),close-.1m,close+.1m,close-.2m,close,100m,10000m,10,50m);
+        }).ToArray();
+        var market=new MarketEvidence("BTCUSDT",candles[^1].Close,candles[^1].Close-5,candles[^1].Close+5,50,.001,.005,.01,new(0,1,1,1,1,1,0),DateTime.UtcNow)
+        {
+            Candles=candles,
+            Quality=new(){QualityScore=90,AtrPercent=.01,LiquidationIntensity=0}
+        };
+        var evidence=new EvidencePack
+        {
+            Completeness=100,
+            Markets=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",market}}
+        };
+        var research=new StrategyResearchAgent(store);
+        research.SetSchedulerHealth(true);
+
+        await research.ObserveAsync(evidence,CancellationToken.None);
+        var reloaded=await store.GetStrategiesAsync(CancellationToken.None);
+        var demoted=Assert.Single(reloaded,value=>value.Id=="demote-now");
+
+        Assert.Equal(StrategyLifecycle.Degraded,demoted.Lifecycle);
+        Assert.True(demoted.FailureStreak>=3);
+        var selected=await AdaptiveStrategySelector.SelectAsync(reloaded,evidence,research,CancellationToken.None);
+        Assert.Empty(selected);
+    }
+
+    [Fact]
     public async Task BadRegimeCalibrationCanOnlyReduceLiveSignalConfidence()
     {
         var store=new AgentSqliteStore(DatabasePath);
