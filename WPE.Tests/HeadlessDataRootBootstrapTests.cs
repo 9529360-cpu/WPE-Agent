@@ -78,6 +78,48 @@ public sealed class HeadlessDataRootBootstrapTests
     }
 
     [Fact]
+    public void ExistingReparseComponentIsRejected()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var testRoot = Path.Combine(
+            Path.GetTempPath(),
+            "wpe-data-root-link-" + Guid.NewGuid().ToString("N"));
+        var target = Path.Combine(testRoot, "target");
+        var link = Path.Combine(testRoot, "link");
+        Directory.CreateDirectory(target);
+
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(link, target);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException or
+                IOException or
+                PlatformNotSupportedException)
+            {
+                return;
+            }
+
+            var result = HeadlessDataRootBootstrap.Resolve(
+                new[] { "--data-root", Path.Combine(link, "state") },
+                null);
+
+            Assert.False(result.Success);
+            Assert.Equal("headless.data-root-argument-invalid", result.Code);
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+                Directory.Delete(link);
+            if (Directory.Exists(testRoot))
+                Directory.Delete(testRoot, true);
+        }
+    }
+
+    [Fact]
     public void MissingExplicitRootRemainsAvailableForInteractiveDefaultOnly()
     {
         var result = HeadlessDataRootBootstrap.Resolve(Array.Empty<string>(), null);
