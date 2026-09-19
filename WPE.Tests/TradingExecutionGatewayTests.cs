@@ -117,7 +117,7 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     public async Task AutomaticOrderObserverConfirmsMatchingExchangeOrderWithoutMutation()
     {
         var setup=Setup(TradingAuthorizationMode.Auto);var artifact=AutomaticArtifact();
-        setup.Exchange.ObservedOrder=new("BTCUSDT","order-observed","client-1","FILLED",.001m,50_000m,"MARKET",PositionSide.Long,false,Now.UtcDateTime);
+        setup.Exchange.ObservedOrder=new("BTCUSDT","order-observed","client-1","FILLED",0.001m,50_000m,"MARKET",PositionSide.Long,false,Now.UtcDateTime);
         var before=setup.Exchange.MutationCount;
 
         var evidence=await new TradingAutomaticExecutionGateway(setup.Gateway,setup.Exchange,setup.Store)
@@ -200,7 +200,7 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     [Fact]
     public async Task Review_ChangedExecutionPayloadRejectsBeforeApprovalConsumptionOrMutation()
     {
-        var setup=Setup(TradingAuthorizationMode.Review);await PersistApproval(setup.Store);var command=Command(TradingAuthorizationMode.Review);var changed=command.Intents[0] with{Quantity=.002m};
+        var setup=Setup(TradingAuthorizationMode.Review);await PersistApproval(setup.Store);var command=Command(TradingAuthorizationMode.Review);var changed=command.Intents[0] with{Quantity=0.002m};
 
         var result=await setup.Gateway.ExecutePlanAsync(command with{Intents=[changed]},CancellationToken.None);
 
@@ -333,7 +333,7 @@ public sealed class TradingExecutionGatewayTests:IDisposable
         intent=mutation switch
         {
             "opening"=>intent with{ReduceOnly=false,Action=DecisionAction.OpenLong},
-            "oversize"=>intent with{Quantity=.011m},
+            "oversize"=>intent with{Quantity=0.011m},
             "wrong-side"=>intent with{Side=PositionSide.Short,Action=DecisionAction.CloseShort},
             "limit"=>intent with{OrderType=ExecutionOrderType.Limit,LimitPrice=49_000m},
             _=>intent
@@ -404,7 +404,7 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     {
         var setup=Setup(TradingAuthorizationMode.Review);var command=SmokeOpeningCommand(SmokeAuthorization());
 
-        var result=await setup.Gateway.ExecuteTestnetSmokeAsync(command with{Intent=command.Intent with{Quantity=.002m}},CancellationToken.None);
+        var result=await setup.Gateway.ExecuteTestnetSmokeAsync(command with{Intent=command.Intent with{Quantity=0.002m}},CancellationToken.None);
 
         Assert.False(result.Executed);Assert.Equal("smoke.intent-invalid",result.Code);Assert.Equal(0,setup.Exchange.MutationCount);Assert.Equal(0,await ApprovalCount("trading_approval_requests","1=1"));
     }
@@ -419,9 +419,9 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     private static DeterministicRiskReceipt Risk()=>new("risk-1","correlation-1",IntentHash(),true,Now.AddMinutes(-5),Now.AddMinutes(5));
     private static TradingApprovalRequest Request()=>new("request-1",TradingAuthorizationMode.Review,"correlation-1",IntentHash(),"user-1","device-1","session-1",Now.AddMinutes(-5),Now.AddMinutes(5));
     private static TradingApprovalReceipt Receipt()=>new("receipt-1","correlation-1",IntentHash(),"user-1","device-1","session-1",true,Now.AddMinutes(-4),Now.AddMinutes(4));
-    private static ExecutionIntent Intent()=>new("BTCUSDT",PositionSide.Long,.001m,false,49_000m,51_000m,"client-1","gateway test",DecisionAction.OpenLong,ExpectedPrice:50_000m);
+    private static ExecutionIntent Intent()=>new("BTCUSDT",PositionSide.Long,0.001m,false,49_000m,51_000m,"client-1","gateway test",DecisionAction.OpenLong,ExpectedPrice:50_000m);
     private static DurableExecutionArtifactV2 AutomaticArtifact()=>new(2,"correlation-1",
-        [new(0,"BTCUSDT","Long",.001m,false,49_000m,51_000m,"client-1","strategy.entry","OpenLong","Market",0,50_000m)],
+        [new(0,"BTCUSDT","Long",0.001m,false,49_000m,51_000m,"client-1","strategy.entry","OpenLong","Market",0,50_000m)],
         5,true,"binance","Testnet","strategy","v1",Now.AddSeconds(-20),"market-v1",Now.AddSeconds(-10),Now.AddMinutes(2));
     private static DeterministicRiskReceipt AutomaticRiskReceipt(DurableExecutionArtifactV2 artifact)
     {
@@ -430,10 +430,10 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     }
     private static string IntentHash()=>TradingExecutionGateway.ComputeIntentHash([Intent()],5,true);
     private static ManualEmergencyConfirmation Confirmation(DateTimeOffset? confirmedAt=null)=>new("confirmation-1","emergency-correlation","user-1","device-1","session-1",confirmedAt??Now.AddMinutes(-1));
-    private static EmergencyReductionCommand EmergencyCommand()=>new(Confirmation(),new("BTCUSDT",PositionSide.Long,.01m,49_000m,50_000m,10m,5m,true,20_000m),new("BTCUSDT",PositionSide.Long,.01m,true,0,0,"emergency-client-1","manual emergency close",DecisionAction.CloseLong,ExpectedPrice:50_000m),5,true);
+    private static EmergencyReductionCommand EmergencyCommand()=>new(Confirmation(),new("BTCUSDT",PositionSide.Long,0.01m,49_000m,50_000m,10m,5m,true,20_000m),new("BTCUSDT",PositionSide.Long,0.01m,true,0,0,"emergency-client-1","manual emergency close",DecisionAction.CloseLong,ExpectedPrice:50_000m),5,true);
     private static TestnetSmokeAuthorization SmokeAuthorization()=>new("smoke-authorization-1","smoke-correlation","user-1","device-1","smoke-session-1",Now.AddMinutes(-1),Now.AddMinutes(9));
-    private static TestnetSmokeCommand SmokeOpeningCommand(TestnetSmokeAuthorization? authorization){var rule=new TradingRule("BTCUSDT",.001m,.1m,.001m,5m,20);var market=new MarketEvidence("BTCUSDT",50_000m,49_000m,51_000m,50,0,0,0,new(0,1,1,1,1,1,0),Now.UtcDateTime);var intent=new ExecutionIntent("BTCUSDT",PositionSide.Long,.001m,false,49_000m,51_000m,"smoke-open-1","testnet smoke",DecisionAction.OpenLong,ExpectedPrice:50_000m);return new(authorization,intent,10,true,rule,market);}
-    private static TestnetSmokeCommand SmokeCleanupCommand(TestnetSmokeAuthorization authorization){var position=new ManagedPosition("BTCUSDT",PositionSide.Long,.001m,50_000m,50_000m,0,10,true,20_000m);var intent=new ExecutionIntent("BTCUSDT",PositionSide.Long,.001m,true,0,0,"smoke-close-1","testnet smoke cleanup",DecisionAction.CloseLong,ExpectedPrice:50_000m);return new(authorization,intent,10,true,ObservedPosition:position);}
+    private static TestnetSmokeCommand SmokeOpeningCommand(TestnetSmokeAuthorization? authorization){var rule=new TradingRule("BTCUSDT",0.001m,0.1m,0.001m,5m,20);var market=new MarketEvidence("BTCUSDT",50_000m,49_000m,51_000m,50,0,0,0,new(0,1,1,1,1,1,0),Now.UtcDateTime);var intent=new ExecutionIntent("BTCUSDT",PositionSide.Long,0.001m,false,49_000m,51_000m,"smoke-open-1","testnet smoke",DecisionAction.OpenLong,ExpectedPrice:50_000m);return new(authorization,intent,10,true,rule,market);}
+    private static TestnetSmokeCommand SmokeCleanupCommand(TestnetSmokeAuthorization authorization){var position=new ManagedPosition("BTCUSDT",PositionSide.Long,0.001m,50_000m,50_000m,0,10,true,20_000m);var intent=new ExecutionIntent("BTCUSDT",PositionSide.Long,0.001m,true,0,0,"smoke-close-1","testnet smoke cleanup",DecisionAction.CloseLong,ExpectedPrice:50_000m);return new(authorization,intent,10,true,ObservedPosition:position);}
     private async Task<string?> ExecutionCorrelation(){await using var connection=new SqliteConnection($"Data Source={DatabasePath}");await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText="SELECT cycle_id FROM execution_events ORDER BY id DESC LIMIT 1";return (await command.ExecuteScalarAsync())?.ToString();}
     private async Task<int> ApprovalCount(string table,string condition){await using var connection=new SqliteConnection($"Data Source={DatabasePath}");await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText=$"SELECT COUNT(*) FROM {table} WHERE {condition}";return Convert.ToInt32(await command.ExecuteScalarAsync());}
     public void Dispose(){ServiceLocator.SystemState.Status=_originalStatus;SqliteConnection.ClearAllPools();if(Directory.Exists(_directory))Directory.Delete(_directory,true);}
@@ -478,7 +478,7 @@ public sealed class TradingExecutionGatewayTests:IDisposable
         public Task<AccountSnapshot> GetAccountAsync(CancellationToken ct)=>Task.FromResult(new AccountSnapshot(1_000,1_000,1_000,DateTime.UtcNow));
         public Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct)=>Task.FromResult<IReadOnlyList<ManagedPosition>>([]);
         public Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol,CancellationToken ct)=>Task.FromResult<IReadOnlyList<ExchangeOrder>>([]);
-        public Task<TradingRule> GetRulesAsync(string symbol,CancellationToken ct)=>Task.FromResult(new TradingRule(symbol,.001m,.1m,.001m,5m,20));
+        public Task<TradingRule> GetRulesAsync(string symbol,CancellationToken ct)=>Task.FromResult(new TradingRule(symbol,0.001m,0.1m,0.001m,5m,20));
         public Task<MarketEvidence> GetMarketAsync(string symbol,CancellationToken ct)=>Task.FromResult(new MarketEvidence(symbol,50_000m,49_000m,51_000m,50,0,0,0,new(0,1,1,1,1,1,0),DateTime.UtcNow){Quality=new(){QualityScore=100,LiquidityScore=1,SpreadBps=1,AtrPercent=.01,BestBid=49_999m,BestAsk=50_001m}});
         public Task<IReadOnlyList<DerivativesSnapshot>> GetDerivativeHistoryAsync(string symbol,CancellationToken ct)=>Task.FromResult<IReadOnlyList<DerivativesSnapshot>>([]);
         public Task<IReadOnlyList<CandleEvidence>> GetCandlesAsync(string symbol,string interval,int limit,CancellationToken ct)=>Task.FromResult<IReadOnlyList<CandleEvidence>>([]);
