@@ -30,10 +30,8 @@ try{
         accepted=$true
         reason=$null
     }
-    @(
-        ($sample|ConvertTo-Json -Compress),
-        ($sample|ConvertTo-Json -Compress)
-    )|Set-Content -LiteralPath $samplesPath -Encoding utf8
+    $sampleJson=$sample|ConvertTo-Json -Compress
+    @(1..54|ForEach-Object{$sampleJson})|Set-Content -LiteralPath $samplesPath -Encoding utf8
     $evidencePath=Join-Path $root 'headless-soak-evidence.json'
     function Write-Evidence([hashtable]$overrides){
         $e=[ordered]@{
@@ -45,12 +43,12 @@ try{
             completedAtUtc=$now.ToString('O')
             requestedDurationSeconds=3660
             observedDurationSeconds=3660
-            pollSeconds=5
+            pollSeconds=60
             startupGraceSeconds=60
             maximumHealthAgeSeconds=15
-            sampleCount=2
-            expectedMinimumSamples=2
-            readySamples=2
+            sampleCount=54
+            expectedMinimumSamples=54
+            readySamples=54
             graceSamples=0
             unhealthySamples=0
             invalidSamples=0
@@ -66,7 +64,7 @@ try{
     Write-Evidence @{}
     $result=& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60
     Assert $result.Valid 'valid evidence rejected'
-    Assert ($result.SampleCount -eq 2) 'sample count not verified'
+    Assert ($result.SampleCount -eq 54) 'sample count not verified'
 
 
     Write-Evidence @{}
