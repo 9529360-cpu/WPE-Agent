@@ -113,9 +113,11 @@ if ($zipHash -ne [string]$result.sha256 -or
 if (Test-Path -LiteralPath $verify) { Remove-Item -LiteralPath $verify -Recurse -Force }
 Assert-ZipEntriesSafe $zip $verify
 Expand-Archive -LiteralPath $zip -DestinationPath $verify
-$packageDirectories = @(Get-ChildItem -LiteralPath $verify -Directory -Force)
-if ($packageDirectories.Count -ne 1) { throw "Expected one package root in the archive." }
-$packageRoot = $packageDirectories[0].FullName
+$topLevelItems = @(Get-ChildItem -LiteralPath $verify -Force)
+if ($topLevelItems.Count -ne 1 -or -not $topLevelItems[0].PSIsContainer) {
+    throw "Archive must contain exactly one top-level package directory."
+}
+$packageRoot = $topLevelItems[0].FullName
 $payloadRoot = Join-Path $packageRoot "app"
 $headlessRoot = Join-Path $packageRoot "headless"
 $maintenanceRoot = Join-Path $packageRoot "maintenance"
