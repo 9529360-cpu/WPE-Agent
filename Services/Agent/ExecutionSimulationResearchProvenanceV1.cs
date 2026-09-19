@@ -293,8 +293,10 @@ public static class ExecutionSimulationResearchProvenanceCanonicalizerV1
             throw new InvalidOperationException("Shadow observation does not reference the supplied research source bytes.");
 
         if (shadow.ValidationAtUtc != validation.ValidatedAtUtc
-            || shadow.MarketCollectedAtUtc != market.CollectedAtUtc)
-            throw new InvalidOperationException("Shadow observation source timestamps do not match supplied evidence.");
+            || shadow.MarketCollectedAtUtc != market.CollectedAtUtc
+            || !string.Equals(shadow.MarketProviderId, market.ProviderId, StringComparison.Ordinal)
+            || shadow.MarketPrice != market.Price)
+            throw new InvalidOperationException("Shadow observation source market identity does not match supplied evidence.");
 
         if (timeline.LastTradableAtUtc > validation.ValidatedAtUtc
             || validation.ValidatedAtUtc > market.CollectedAtUtc
@@ -326,11 +328,32 @@ public static class ExecutionSimulationResearchProvenanceCanonicalizerV1
             throw new InvalidOperationException("Backtest validation source is not an approved unpromoted canonical v1.1 fact.");
 
         var validatedAt = DateTimeOffset.Parse(parts[4], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+        var sampleSize = int.Parse(parts[5], CultureInfo.InvariantCulture);
+        var trades = int.Parse(parts[6], CultureInfo.InvariantCulture);
+        var outOfSampleTrades = int.Parse(parts[7], CultureInfo.InvariantCulture);
+        var coverageDays = int.Parse(parts[8], CultureInfo.InvariantCulture);
+        var winRate = double.Parse(parts[9], CultureInfo.InvariantCulture);
+        var profitFactor = double.Parse(parts[10], CultureInfo.InvariantCulture);
+        var maxDrawdown = double.Parse(parts[12], CultureInfo.InvariantCulture);
+        var walkForward = double.Parse(parts[15], CultureInfo.InvariantCulture);
+        var monteCarloLoss = double.Parse(parts[16], CultureInfo.InvariantCulture);
+        var quality = double.Parse(parts[17], CultureInfo.InvariantCulture);
+
         if (validatedAt.Offset != TimeSpan.Zero
             || string.IsNullOrWhiteSpace(parts[1])
             || string.IsNullOrWhiteSpace(parts[2])
-            || string.IsNullOrWhiteSpace(parts[3]))
-            throw new InvalidOperationException("Backtest validation source identity is invalid.");
+            || string.IsNullOrWhiteSpace(parts[3])
+            || sampleSize < 1
+            || trades < 0 || trades > sampleSize
+            || outOfSampleTrades < 0 || outOfSampleTrades > trades
+            || coverageDays < 0
+            || !double.IsFinite(winRate) || winRate is < 0 or > 1
+            || !double.IsFinite(profitFactor) || profitFactor < 0
+            || !double.IsFinite(maxDrawdown) || maxDrawdown is < 0 or > 1
+            || !double.IsFinite(walkForward) || walkForward is < 0 or > 1
+            || !double.IsFinite(monteCarloLoss) || monteCarloLoss is < 0 or > 1
+            || !double.IsFinite(quality) || quality is < 0 or > 1)
+            throw new InvalidOperationException("Backtest validation source identity or metrics are invalid.");
 
         return new(parts[2], parts[3], parts[1], validatedAt);
     }
@@ -352,6 +375,38 @@ public static class ExecutionSimulationResearchProvenanceCanonicalizerV1
         if (count <= 0 || decisions.ValueKind != JsonValueKind.Array || decisions.GetArrayLength() != count || first > last)
             throw new InvalidOperationException("Strategy timeline source structure is invalid.");
 
+        DateTimeOffset? previousTradable = null;
+        var index = 0;
+        foreach (var decision in decisions.EnumerateArray())
+        {
+            if (decision.GetProperty("sequence").GetInt32() != index
+                || !string.Equals(Required(decision, "strategy_id"), strategyId, StringComparison.Ordinal)
+                || !string.Equals(Required(decision, "strategy_version"), strategyVersion, StringComparison.Ordinal)
+                || !string.Equals(Required(decision, "symbol"), symbol, StringComparison.Ordinal))
+                throw new InvalidOperationException("Strategy timeline decision identity is invalid.");
+
+            var source = ParseUtc(decision, "source_candle_open_time_utc");
+            var evidence = ParseUtc(decision, "evidence_available_at_utc");
+            var signal = ParseUtc(decision, "signal_generated_at_utc");
+            var tradable = ParseUtc(decision, "tradable_at_utc");
+            var exposure = decision.GetProperty("target_exposure").GetInt32();
+            var open = decision.GetProperty("execution_open_price").GetDecimal();
+            var close = decision.GetProperty("execution_close_price").GetDecimal();
+            var volume = decision.GetProperty("execution_volume").GetDecimal();
+
+            if (source >= evidence || evidence > signal || signal > tradable
+                || previousTradable is not null && tradable <= previousTradable.Value
+                || exposure is < -1 or > 1
+                || open <= 0 || close <= 0 || volume < 0)
+                throw new InvalidOperationException("Strategy timeline decision semantics are invalid.");
+
+            previousTradable = tradable;
+            index++;
+        }
+
+        if (previousTradable is null || first != ParseUtc(decisions[0], "tradable_at_utc") || last != previousTradable.Value)
+            throw new InvalidOperationException("Strategy timeline first/last tradable bounds are invalid.");
+
         return new(strategyId, strategyVersion, symbol, last);
     }
 
@@ -367,12 +422,31 @@ public static class ExecutionSimulationResearchProvenanceCanonicalizerV1
         var provider = Required(root, "provider_id");
         var collectedAt = ParseUtc(root, "collected_at_utc");
         var price = root.GetProperty("price").GetDecimal();
+        _ = root.GetProperty("resistance").GetDecimal();
+        _ = root.GetProperty("rsi").GetDouble();
+        _ = root.GetProperty("support").GetDecimal();
+        _ = root.GetProperty("trend_15m").GetDouble();
+        _ = root.GetProperty("trend_1h").GetDouble();
+        _ = root.GetProperty("trend_4h").GetDouble();
         var candleCount = root.GetProperty("candle_count").GetInt32();
         var candles = root.GetProperty("candles");
         if (price <= 0 || candleCount < 0 || candles.ValueKind != JsonValueKind.Array || candles.GetArrayLength() != candleCount)
             throw new InvalidOperationException("Market provenance source structure is invalid.");
 
-        return new(symbol, provider, collectedAt);
+        DateTimeOffset? previous = null;
+        foreach (var candle in candles.EnumerateArray())
+        {
+            if (candle.ValueKind != JsonValueKind.Array || candle.GetArrayLength() != 9)
+                throw new InvalidOperationException("Market provenance candle structure is invalid.");
+            var time = DateTimeOffset.Parse(candle[0].GetString() ?? string.Empty, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+            if (time.Offset != TimeSpan.Zero || previous is not null && time <= previous.Value)
+                throw new InvalidOperationException("Market provenance candle ordering is invalid.");
+            for (var i = 1; i < 9; i++)
+                _ = candle[i].GetDecimal();
+            previous = time;
+        }
+
+        return new(symbol, provider, collectedAt, price);
     }
 
     private static ShadowSource ParseShadow(byte[] bytes)
@@ -397,6 +471,8 @@ public static class ExecutionSimulationResearchProvenanceCanonicalizerV1
             Required(root, "backtest_validation_sha256"),
             Required(root, "timeline_sha256"),
             Required(root, "market_provenance_sha256"),
+            Required(root, "market_provider_id"),
+            marketPrice,
             ParseUtc(root, "validation_at_utc"),
             ParseUtc(root, "market_collected_at_utc"),
             ParseUtc(root, "observed_at_utc"));
@@ -465,7 +541,7 @@ public static class ExecutionSimulationResearchProvenanceCanonicalizerV1
 
     private sealed record BacktestSource(string StrategyId, string StrategyVersion, string Symbol, DateTimeOffset ValidatedAtUtc);
     private sealed record TimelineSource(string StrategyId, string StrategyVersion, string Symbol, DateTimeOffset LastTradableAtUtc);
-    private sealed record MarketSource(string Symbol, string ProviderId, DateTimeOffset CollectedAtUtc);
+    private sealed record MarketSource(string Symbol, string ProviderId, DateTimeOffset CollectedAtUtc, decimal Price);
     private sealed record ShadowSource(
         string StrategyId,
         string StrategyVersion,
@@ -473,6 +549,8 @@ public static class ExecutionSimulationResearchProvenanceCanonicalizerV1
         string BacktestValidationSha256,
         string TimelineSha256,
         string MarketProvenanceSha256,
+        string MarketProviderId,
+        decimal MarketPrice,
         DateTimeOffset ValidationAtUtc,
         DateTimeOffset MarketCollectedAtUtc,
         DateTimeOffset ObservedAtUtc);
