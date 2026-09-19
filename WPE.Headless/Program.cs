@@ -4,7 +4,10 @@ using Microsoft.Extensions.Hosting.WindowsServices;
 using WpeAgent.Headless;
 using 币安量化机器人.Services;
 
-if (args.Length > 0 && string.Equals(args[0], "control", StringComparison.Ordinal))\n    return await HeadlessLocalControlClient.RunAsync(args[1..]);\n\nvar runningAsService = WindowsServiceHelpers.IsWindowsService();
+if (args.Length > 0 && string.Equals(args[0], "control", StringComparison.Ordinal))
+    return await HeadlessLocalControlClient.RunAsync(args[1..]);
+
+var runningAsService = WindowsServiceHelpers.IsWindowsService();
 if (runningAsService)
 {
     var dataRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
