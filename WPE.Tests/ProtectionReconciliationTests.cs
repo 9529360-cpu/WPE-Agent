@@ -91,7 +91,9 @@ public sealed class ProtectionReconciliationTests : IDisposable
     public async Task CanonicalAuditIsRestartSafeAndRejectsFieldOrByteTampering()
     {
         var report=ProtectionReconciliationServiceV1.Reconcile([Position()],[Protection("p1","OCO")],Now,Now);var store=new AgentSqliteStore(Database);Assert.True(await store.SaveProtectionReconciliationAsync(report,default));Assert.False(await new AgentSqliteStore(Database).SaveProtectionReconciliationAsync(report,default));
-        await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveProtectionReconciliationAsync(report with{CanonicalBytes=[..report.CanonicalBytes,0]},default));await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveProtectionReconciliationAsync(report with{State=ProtectionReconciliationStateV1.Incomplete,AllowsRiskIncrease=false},default));
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveProtectionReconciliationAsync(report with{CanonicalBytes=[..report.CanonicalBytes,0]},default));
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveProtectionReconciliationAsync(report with{State=ProtectionReconciliationStateV1.Incomplete,AllowsRiskIncrease=false},default));
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>store.SaveProtectionReconciliationAsync(report with{Legs=[report.Legs[0] with{StopCoverageConfirmed=false}]},default));
     }
 
     [Fact]
