@@ -38,7 +38,9 @@ $sign=Get-Content -Raw -LiteralPath (Join-Path $root 'eng/sign-beta.ps1')
 foreach($required in @(
     'HeadlessPublishPath','MaintenancePublishPath','SigningResultPath',
     'Runtime bundle signature states must be all Valid or all NotSigned.',
-    'Runtime bundle signer identity does not match the approved publisher.'
+    'Runtime bundle signer identity does not match the approved publisher.',
+    'Runtime bundle signing attestation is missing.',
+    'SIGNING-RESULT.p7s'
 )){
     if($package.IndexOf($required,[StringComparison]::Ordinal) -lt 0){throw "package.contract-missing:$required"}
 }
@@ -53,12 +55,16 @@ foreach($required in @(
     '(Get-Item -LiteralPath $path).Length -ne [long]$entry.size',
     'Runtime package signature states are mixed.',
     'Runtime package executable timestamp is missing',
-    'Signed runtime bundle verification requires the approved signer subject and thumbprint.'
+    'Signed runtime bundle verification requires the approved signer subject and thumbprint.',
+    'Signing transition signature hash mismatch.',
+    'Unsigned runtime bundle must not contain a signing transition signature.'
 )){
     if($verify.IndexOf($required,[StringComparison]::Ordinal) -lt 0){throw "verify.contract-missing:$required"}
 }
 foreach($required in @(
-    'wpe.runtime-bundle-signing/1.0',
+    'wpe.runtime-bundle-signing/1.1',
+    'cms-detached-sha256',
+    'Write-AndVerifyDetachedAttestation',
     'Signing staging does not match release-readiness artifact',
     'Authenticode timestamp is missing',
     'Signing and verification passed for $($executables.Count) runtime executable(s).'
