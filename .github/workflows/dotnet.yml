@@ -126,6 +126,10 @@ jobs:
       shell: pwsh
       run: ./eng/test.ps1 -Configuration Release
 
+    - name: Verify release-readiness static gate
+      shell: pwsh
+      run: ./eng/release-readiness.ps1 -StaticGatesOnly
+
     - name: Verify soak evidence harness
       shell: pwsh
       run: ./eng/ops/tests/HeadlessSoak.Tests.ps1
