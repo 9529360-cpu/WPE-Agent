@@ -100,10 +100,12 @@ public sealed class RuntimeHistoricalCollectionStateStore
             var hasMore=raw.Count>limit;if(hasMore)raw.RemoveAt(raw.Count-1);
             var queueAvailable=await TableExists(connection,"automatic_execution_queue",ct);
             var eventsAvailable=await TableExists(connection,"automatic_execution_events",ct);
+            var evidenceAvailable=await TableExists(connection,"model_off_canonical_audits",ct);
             var items=new List<HistoricalPostTradeReviewV1>(raw.Count);
             foreach(var row in raw)
             {
                 var trace=await ReadPostTradeTraceAsync(connection,row.CycleId,queueAvailable,eventsAvailable,ct);
+                var evidence=await ReadModelOffEvidenceAsync(connection,row.CycleId,evidenceAvailable,ct);
                 items.Add(new(
                     trace.TraceId,
                     "wpe.post-trade-review/1.4",
@@ -112,7 +114,7 @@ public sealed class RuntimeHistoricalCollectionStateStore
                     row.FundingAmount,row.FundingBasis,row.NetPnl,row.ReturnPct,row.Outcome,row.ClosedAtUtc,
                     row.StrategyId,row.StrategyVersion,row.AttributionBasis,
                     trace.TraceState,trace.RiskDecision,trace.ExecutionStatus,trace.ExecutionCode,trace.ExecutionAttempts,
-                    trace.MarketCollectedAtUtc,trace.MarketDataVersion));
+                    trace.MarketCollectedAtUtc,trace.MarketDataVersion,evidence.State,evidence.Chain));
             }
             return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count):null,updatedAt,null);
         }
@@ -157,6 +159,35 @@ public sealed class RuntimeHistoricalCollectionStateStore
             risk=approved>0&&blocked==0?"Approved":blocked>0&&approved==0?"Blocked":approved==0&&blocked==0?"Unavailable":"Conflicting";
         }
         return new(traceId,"available",risk,row.Status,row.Code,row.Attempts,row.MarketAt,row.MarketVersion);
+    }
+
+    private static readonly string[] EvidenceStages=["market","research","strategy","risk"];
+
+    private async Task<PostTradeEvidenceTrace> ReadModelOffEvidenceAsync(SqliteConnection connection,string cycleId,bool tableAvailable,CancellationToken ct)
+    {
+        if(!tableAvailable)return new("unavailable",[]);
+        var links=new List<HistoricalEvidenceLinkV1>(EvidenceStages.Length);
+        var seen=new HashSet<string>(StringComparer.Ordinal);
+        await using var command=connection.CreateCommand();
+        command.CommandText="SELECT output_kind,status,canonical_sha256,as_of_utc,canonical_bytes FROM model_off_canonical_audits WHERE cycle_id=$cycle AND output_kind IN ('market','research','strategy','risk') ORDER BY as_of_utc,output_kind,output_id";
+        command.Parameters.AddWithValue("$cycle",cycleId);
+        await using var reader=await command.ExecuteReaderAsync(ct);
+        while(await reader.ReadAsync(ct))
+        {
+            var stage=Safe(reader.GetString(0),20).ToLowerInvariant();
+            if(!EvidenceStages.Contains(stage,StringComparer.Ordinal)||!seen.Add(stage))return new("ambiguous",[]);
+            var status=Safe(reader.GetString(1),40);
+            var hash=Hash(reader.GetString(2)).ToLowerInvariant();
+            if(reader.IsDBNull(4))return new("invalid",[]);
+            var bytes=(byte[])reader[4];
+            if(bytes.Length is 0 or > 262144)return new("invalid",[]);
+            var computed=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+            if(!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(hash),Convert.FromHexString(computed)))return new("invalid",[]);
+            links.Add(new(stage,status,hash,Instant(reader.GetString(3))));
+        }
+        if(links.Count==0)return new("legacy",[]);
+        var ordered=EvidenceStages.Select(stage=>links.SingleOrDefault(link=>link.Stage==stage)).Where(link=>link is not null).Cast<HistoricalEvidenceLinkV1>().ToArray();
+        return new(ordered.Length==EvidenceStages.Length?"available":"partial",ordered);
     }
 
     public async Task<HistoricalCollectionPageV1<HistoricalReconciliationV1>> ReadReconciliationsAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default)
@@ -259,6 +290,8 @@ public sealed class RuntimeHistoricalCollectionStateStore
         decimal NetPnl,decimal ReturnPct,string Outcome,DateTimeOffset ClosedAtUtc,string? StrategyId,string StrategyVersion,string AttributionBasis);
     private sealed record PostTradeExecutionTrace(
         string TraceId,string TraceState,string RiskDecision,string ExecutionStatus,string ExecutionCode,int? ExecutionAttempts,DateTimeOffset? MarketCollectedAtUtc,string? MarketDataVersion);
+
+    private sealed record PostTradeEvidenceTrace(string State,IReadOnlyList<HistoricalEvidenceLinkV1> Chain);
 
     private static DateTimeOffset Instant(string value)=>DateTimeOffset.Parse(value,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind).ToUniversalTime();
     private static decimal Decimal(SqliteDataReader r,int i)=>decimal.Parse(r.GetString(i),NumberStyles.Number,CultureInfo.InvariantCulture);
