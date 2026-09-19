@@ -14,6 +14,7 @@ public static class HeadlessRuntimeProcess
     public const int AccessNotReadyExitCode = 43;
     public const int RuntimeUnhealthyExitCode = 44;
     public const int ServiceDataRootRequiredExitCode = 45;
+    public const int ServiceDataRootInvalidExitCode = 46;
     public const int FatalExitCode = 50;
 
     private static readonly TimeSpan SupervisionInterval = TimeSpan.FromSeconds(5);
