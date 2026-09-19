@@ -28,7 +28,7 @@ public sealed class ExecutionRealityStabilityTests : IDisposable
         Assert.Equal(ExecutionRealityStabilityStatusV1.Observed,observed.Status);
         Assert.Equal(4,observed.Folds.Count);
         Assert.All(observed.Folds,x=>Assert.Equal(30,x.CompleteSamples));
-        Assert.Equal([0,1,2,3],observed.Folds.Select(x=>x.FoldIndex));
+        Assert.Equal(new[]{0,1,2,3},observed.Folds.Select(x=>x.FoldIndex));
         foreach(var pair in observed.Folds.Zip(observed.Folds.Skip(1)))
             Assert.True(pair.First.EndUtc<=pair.Second.StartUtc);
         Assert.True(observed.MedianFillRatioSpread>=0);
