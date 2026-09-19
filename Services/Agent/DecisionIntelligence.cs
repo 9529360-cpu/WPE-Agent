@@ -73,7 +73,7 @@ public sealed class SignalAggregationSkill
 
     private static bool ValidMarket(MarketEvidence? market)=>market is not null&&market.Derivatives is not null&&MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)&&
         !string.IsNullOrWhiteSpace(market.Symbol)&&market.Price>0&&market.CollectedAt!=default&&market.CollectedAt.Kind==DateTimeKind.Utc&&
-        market.Rsi is>=0 and<=100&&market.Support>0&&market.Support<=market.Price&&market.Resistance>=market.Price&&market.Quality.QualityScore is>=0 and<=100&&market.Quality.LiquidityScore is>=0 and<=1&&
+        market.Rsi is>=0 and<=100&&market.Support>0&&market.Resistance>0&&market.Support<=market.Resistance&&market.Quality.QualityScore is>=0 and<=100&&market.Quality.LiquidityScore is>=0 and<=1&&
         Finite(market.Rsi,market.Trend15m,market.Trend1h,market.Trend4h,market.Quality.OrderBookImbalance,market.Quality.RelativeVolume,market.Quality.AtrPercent,market.Quality.LiquidationIntensity);
     private static bool Finite(params double[] values)=>values.All(double.IsFinite);
     private static MarketDecisionAssessment InvalidMarket(string? symbol)=>new()

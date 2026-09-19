@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using 币安量化机器人;
 using 币安量化机器人.Services.Access;
 using 币安量化机器人.Services.Agent;
@@ -10,7 +9,7 @@ public sealed class PrivilegedCommandLineAccessTests : IDisposable
     private readonly string _directory=Path.Combine(Path.GetTempPath(),"wpe-privileged-cli-"+Guid.NewGuid().ToString("N"));
     private string SettingsPath=>Path.Combine(_directory,"agent-settings.json");
     private const string DeviceCode="WPE-DEV-UNIT-TEST";
-    private const string LicenseId="LICENSE-UNIT-1";
+    private static string LocalIdentity=>"LOCAL-"+DeviceCode;
 
     [Theory]
     [InlineData("--provider-readonly-access")]
@@ -21,9 +20,9 @@ public sealed class PrivilegedCommandLineAccessTests : IDisposable
     [InlineData("--execution-aggregate-acceptance")]
     [InlineData("--recovery-aggregate-acceptance")]
     [InlineData("--SMOKE-TEST")]
-    public void CredentialedOrMutatingCommands_RequireLicensedAccess(string flag)
+    public void CredentialedOrMutatingCommands_RequireLocalSetupAccess(string flag)
     {
-        Assert.True(PrivilegedCommandLineStartupGuard.RequiresLicensedAccess(["WPE.exe",flag]));
+        Assert.True(PrivilegedCommandLineStartupGuard.RequiresLocalSetupAccess(["WPE.exe",flag]));
     }
 
     [Theory]
@@ -33,53 +32,49 @@ public sealed class PrivilegedCommandLineAccessTests : IDisposable
     [InlineData("--device-code")]
     [InlineData("--activate-license")]
     [InlineData("--four-pillars-test")]
-    public void OfflinePublicAndActivationCommands_RemainAvailableWithoutLicense(string flag)
+    [InlineData("--configure-testnet-env")]
+    public void OfflinePublicAndBootstrapCommands_RemainAvailableBeforeSetup(string flag)
     {
-        Assert.False(PrivilegedCommandLineStartupGuard.RequiresLicensedAccess(["WPE.exe",flag]));
+        Assert.False(PrivilegedCommandLineStartupGuard.RequiresLocalSetupAccess(["WPE.exe",flag]));
     }
 
     [Fact]
-    public void MissingLicense_IsDenied()
+    public void MissingLocalIdentity_IsDenied()
     {
         Directory.CreateDirectory(_directory);
         var settingsStore=new AgentSettingsStore(SettingsPath);
-        settingsStore.Save(new AgentSettings{SetupCompleted=true,ActiveUser="DEVICE-"+LicenseId});
-        var licenseService=new DeviceLicenseService(_directory,CreatePublicKeyOnly(),DeviceCode);
+        settingsStore.Save(new AgentSettings{SetupCompleted=true,ActiveUser=""});
 
-        var result=PrivilegedLocalAccessPolicy.Evaluate(licenseService,settingsStore);
+        var result=PrivilegedLocalAccessPolicy.Evaluate(settingsStore,true,DeviceCode);
 
         Assert.False(result.Allowed);
-        Assert.Equal("privileged-cli.license-required",result.Code);
+        Assert.Equal("privileged-cli.identity-mismatch",result.Code);
         Assert.Null(result.Settings);
     }
 
     [Fact]
-    public void ValidLicenseAndMatchingPersistedIdentity_AreAllowed()
+    public void MatchingPersistedLocalIdentity_IsAllowed()
     {
         Directory.CreateDirectory(_directory);
-        using var key=ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var licenseService=CreateLicensedService(key);
         var settingsStore=new AgentSettingsStore(SettingsPath);
-        settingsStore.Save(new AgentSettings{SetupCompleted=true,ActiveUser="DEVICE-"+LicenseId});
+        settingsStore.Save(new AgentSettings{SetupCompleted=true,ActiveUser=LocalIdentity});
 
-        var result=PrivilegedLocalAccessPolicy.Evaluate(licenseService,settingsStore);
+        var result=PrivilegedLocalAccessPolicy.Evaluate(settingsStore,true,DeviceCode);
 
         Assert.True(result.Allowed);
         Assert.Equal("privileged-cli.allowed",result.Code);
-        Assert.Equal("DEVICE-"+LicenseId,result.UserId);
+        Assert.Equal(LocalIdentity,result.UserId);
         Assert.NotNull(result.Settings);
     }
 
     [Fact]
-    public void ValidLicenseCannotReuseAnotherPersistedIdentity()
+    public void PersistedIdentityFromAnotherDevice_IsDenied()
     {
         Directory.CreateDirectory(_directory);
-        using var key=ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var licenseService=CreateLicensedService(key);
         var settingsStore=new AgentSettingsStore(SettingsPath);
-        settingsStore.Save(new AgentSettings{SetupCompleted=true,ActiveUser="DEVICE-OTHER-LICENSE"});
+        settingsStore.Save(new AgentSettings{SetupCompleted=true,ActiveUser="LOCAL-WPE-DEV-OTHER"});
 
-        var result=PrivilegedLocalAccessPolicy.Evaluate(licenseService,settingsStore);
+        var result=PrivilegedLocalAccessPolicy.Evaluate(settingsStore,true,DeviceCode);
 
         Assert.False(result.Allowed);
         Assert.Equal("privileged-cli.identity-mismatch",result.Code);
@@ -90,12 +85,10 @@ public sealed class PrivilegedCommandLineAccessTests : IDisposable
     public void CorruptSettings_FailClosed()
     {
         Directory.CreateDirectory(_directory);
-        using var key=ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var licenseService=CreateLicensedService(key);
         File.WriteAllText(SettingsPath,"{not-json");
         var settingsStore=new AgentSettingsStore(SettingsPath);
 
-        var result=PrivilegedLocalAccessPolicy.Evaluate(licenseService,settingsStore);
+        var result=PrivilegedLocalAccessPolicy.Evaluate(settingsStore,true,DeviceCode);
 
         Assert.False(result.Allowed);
         Assert.Equal("privileged-cli.settings-invalid",result.Code);
@@ -103,40 +96,34 @@ public sealed class PrivilegedCommandLineAccessTests : IDisposable
     }
 
     [Fact]
-    public void IncompleteSetup_IsDeniedEvenWithValidLicense()
+    public void IncompleteSetup_IsDenied()
     {
         Directory.CreateDirectory(_directory);
-        using var key=ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var licenseService=CreateLicensedService(key);
         var settingsStore=new AgentSettingsStore(SettingsPath);
-        settingsStore.Save(new AgentSettings{SetupCompleted=false,ActiveUser="DEVICE-"+LicenseId});
+        settingsStore.Save(new AgentSettings{SetupCompleted=false,ActiveUser=LocalIdentity});
 
-        var result=PrivilegedLocalAccessPolicy.Evaluate(licenseService,settingsStore);
+        var result=PrivilegedLocalAccessPolicy.Evaluate(settingsStore,true,DeviceCode);
 
         Assert.False(result.Allowed);
         Assert.Equal("privileged-cli.setup-required",result.Code);
         Assert.Null(result.Settings);
     }
 
+    [Fact]
+    public void BootstrapAccess_CanValidateIdentityBeforeSetup()
+    {
+        Directory.CreateDirectory(_directory);
+        var settingsStore=new AgentSettingsStore(SettingsPath);
+        settingsStore.Save(new AgentSettings{SetupCompleted=false,ActiveUser=LocalIdentity});
+
+        var result=PrivilegedLocalAccessPolicy.Evaluate(settingsStore,false,DeviceCode);
+
+        Assert.True(result.Allowed);
+        Assert.Equal(LocalIdentity,result.UserId);
+    }
+
     public void Dispose()
     {
         if(Directory.Exists(_directory))Directory.Delete(_directory,true);
-    }
-
-    private DeviceLicenseService CreateLicensedService(ECDsa key)
-    {
-        var publicKey=Convert.ToBase64String(key.ExportSubjectPublicKeyInfo());
-        var service=new DeviceLicenseService(_directory,publicKey,DeviceCode);
-        var now=DateTime.UtcNow;
-        var code=DeviceLicenseCodec.Issue(new DeviceLicensePayload(
-            "WPE-AGENT",LicenseId,DeviceCode,now.AddMinutes(-1).Ticks,now.AddHours(1).Ticks,"Test"),key);
-        Assert.True(service.Activate(code).Success);
-        return service;
-    }
-
-    private static string CreatePublicKeyOnly()
-    {
-        using var key=ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        return Convert.ToBase64String(key.ExportSubjectPublicKeyInfo());
     }
 }

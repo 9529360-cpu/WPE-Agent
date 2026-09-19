@@ -7,7 +7,7 @@ public partial class App
     static App()
     {
         var args=Environment.GetCommandLineArgs();
-        if(!PrivilegedCommandLineStartupGuard.RequiresLicensedAccess(args))return;
+        if(!PrivilegedCommandLineStartupGuard.RequiresLocalSetupAccess(args))return;
 
         var access=PrivilegedLocalAccessPolicy.Evaluate();
         if(access.Allowed)return;
@@ -23,6 +23,7 @@ public static class PrivilegedCommandLineStartupGuard
     private static readonly HashSet<string> ProtectedFlags=new(StringComparer.OrdinalIgnoreCase)
     {
         "--provider-readonly-access",
+        "--testnet-state-diagnostic",
         "--access-live-test",
         "--four-pillars-live-test",
         "--smoke-test",
@@ -31,6 +32,6 @@ public static class PrivilegedCommandLineStartupGuard
         "--recovery-aggregate-acceptance"
     };
 
-    public static bool RequiresLicensedAccess(IEnumerable<string> args)
+    public static bool RequiresLocalSetupAccess(IEnumerable<string> args)
         =>args.Any(ProtectedFlags.Contains);
 }

@@ -129,7 +129,14 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
     }
     public async Task SetLeverageAsync(string symbol,int leverage,CancellationToken ct)=>_ = await _api.PostSignedRawAsync("/fapi/v1/leverage",new Dictionary<string,string?>{{"symbol",N(symbol)},{"leverage",leverage.ToString()}},ct);
     public async Task SetMarginModeAsync(string symbol,bool isolated,CancellationToken ct) { try { _=await _api.PostSignedRawAsync("/fapi/v1/marginType",new Dictionary<string,string?>{{"symbol",N(symbol)},{"marginType",isolated?"ISOLATED":"CROSSED"}},ct); } catch(global::币安量化机器人.Services.BinanceHttpException ex) when(ex.ExchangeCode==-4046){} }
-    public async Task SetHedgeModeAsync(bool enabled,CancellationToken ct) { try { _=await _api.PostSignedRawAsync("/fapi/v1/positionSide/dual",new Dictionary<string,string?>{{"dualSidePosition",enabled?"true":"false"}},ct); } catch(global::币安量化机器人.Services.BinanceHttpException ex) when(ex.ExchangeCode==-4059){} }
+    public Task SetHedgeModeAsync(bool enabled,CancellationToken ct)=>SetHedgeModeIfNeededAsync(_api,enabled,ct);
+    internal static async Task SetHedgeModeIfNeededAsync(BinanceApiClient api,bool enabled,CancellationToken ct)
+    {
+        using var current=JsonDocument.Parse(await api.GetSignedRawAsync("/fapi/v1/positionSide/dual",null,ct));
+        if(current.RootElement.TryGetProperty("dualSidePosition",out var value)&&(value.ValueKind is JsonValueKind.True or JsonValueKind.False)&&value.GetBoolean()==enabled)return;
+        try { _=await api.PostSignedRawAsync("/fapi/v1/positionSide/dual",new Dictionary<string,string?>{{"dualSidePosition",enabled?"true":"false"}},ct); }
+        catch(global::币安量化机器人.Services.BinanceHttpException ex) when(ex.ExchangeCode==-4059){}
+    }
     public async Task<ExchangeOrder> PlaceMarketAsync(string symbol,PositionSide side,decimal quantity,string clientOrderId,bool reduceOnly,CancellationToken ct)
     {
         // Hedge mode closes a leg by sending the opposite order side while keeping

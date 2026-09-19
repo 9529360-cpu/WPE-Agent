@@ -9,7 +9,6 @@ namespace WpeAgent.Headless;
 public static class HeadlessRuntimeProcess
 {
     public const int UnsupportedPlatformExitCode = 40;
-    public const int LicenseUnavailableExitCode = 41;
     public const int SetupIncompleteExitCode = 42;
     public const int AccessNotReadyExitCode = 43;
     public const int RuntimeUnhealthyExitCode = 44;
@@ -44,13 +43,6 @@ public static class HeadlessRuntimeProcess
 
         try
         {
-            var license = new DeviceLicenseService().TryLoad();
-            if (!license.Success || license.License is null)
-            {
-                await TryWriteHealthAsync("blocked", "headless.license-unavailable", null).ConfigureAwait(false);
-                return LicenseUnavailableExitCode;
-            }
-
             var settingsStore = new AgentSettingsStore();
             var settings = settingsStore.Load();
             if (settingsStore.LastLoadDiagnostic is not null || !settings.SetupCompleted || string.IsNullOrWhiteSpace(settings.ActiveUser))

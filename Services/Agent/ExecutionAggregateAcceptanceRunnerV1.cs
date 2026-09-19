@@ -31,11 +31,32 @@ public static class ExecutionAggregateAcceptanceRunnerV1
             provider=new BinanceFuturesAdapter(profile,key,secret);key=string.Empty;secret=string.Empty;
             var permissions=await provider.CheckPermissionsAsync(ct);var account=await provider.GetAccountAsync(ct);var initialPositions=await provider.GetPositionsAsync(ct);var initialOrders=await provider.GetOpenOrdersAsync(Symbol,ct);
             if(!permissions.CanRead||!permissions.CanTrade||permissions.CanWithdraw||account.Equity<=0)throw new InvalidOperationException("Execution acceptance permissions or account authority are ineligible.");
-            if(initialPositions.Any(x=>x.Symbol==Symbol&&x.Quantity>0)||initialOrders.Any(x=>x.Symbol==Symbol&&x.IsProtection))throw new InvalidOperationException("Execution acceptance requires an isolated flat BTCUSDT starting state.");
+            ManagedPosition? residualPosition=null;ExchangeOrder? residualOpening=null;
+            if(initialPositions.Any(x=>x.Symbol==Symbol&&x.Quantity>0)||initialOrders.Any(x=>x.Symbol==Symbol&&x.IsProtection))
+            {
+                var matchingPositions=initialPositions.Where(x=>x.Symbol==Symbol&&x.Quantity>0).ToArray();
+                if(matchingPositions.Length!=1||matchingPositions[0].Side!=PositionSide.Long)throw new InvalidOperationException("Execution acceptance found ambiguous residual position state.");
+                residualPosition=matchingPositions[0];
+                if(provider is not IRecentOrderProvider recentOrderProvider)throw new InvalidOperationException("Execution acceptance provider does not expose recent-order ownership evidence.");
+                var recent=await recentOrderProvider.GetRecentOrdersAsync(Symbol,50,ct);var candidates=recent.Where(x=>x.ClientOrderId.StartsWith("WPE-EXACC-OPEN-",StringComparison.Ordinal)&&x.Status=="FILLED"&&x.PositionSide==PositionSide.Long&&x.ExecutedQuantity==residualPosition.Quantity&&DateTime.UtcNow-x.UpdatedAt.ToUniversalTime()<TimeSpan.FromMinutes(30)).ToArray();
+                if(candidates.Length!=1)throw new InvalidOperationException("Execution acceptance could not prove ownership of the residual position.");
+                residualOpening=candidates[0];var stem=residualOpening.ClientOrderId[..Math.Min(33,residualOpening.ClientOrderId.Length)];
+                if(initialOrders.Count<2||initialOrders.Any(x=>!x.IsProtection||x.PositionSide!=PositionSide.Long||!x.ClientOrderId.StartsWith(stem,StringComparison.Ordinal)))throw new InvalidOperationException("Execution acceptance found ambiguous residual protection orders.");
+            }
             var capabilities=await new ProviderCapabilityProbe().ProbeAsync(provider,[Symbol],true,ct);if(!capabilities.TryGetValue(Symbol,out var capability)||capability.Status!=CapabilityStatus.Available||!capability.CanRead||!capability.CanTrade||!capability.TestnetAvailable)throw new InvalidOperationException("Execution acceptance provider capability is unavailable.");
             var rule=await provider.GetRulesAsync(Symbol,ct);var market=await provider.GetMarketAsync(Symbol,ct);if(rule.StepSize<=0||rule.MinQuantity<=0||rule.MinNotional<=0||market.Price<=0)throw new InvalidOperationException("Execution acceptance rule or market evidence is invalid.");
             var temp=Path.Combine(Path.GetTempPath(),"wpe-execution-acceptance-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(temp);var store=new AgentSqliteStore(Path.Combine(temp,"agent.db"));var executor=new ReliableOrderExecutor(provider,store,settings.Risk,SystemOrderPollScheduler.Instance,capabilities,true);gateway=new TradingExecutionGateway(executor,store);
             var correlation="execution-acceptance-"+Guid.NewGuid().ToString("N");var issued=DateTimeOffset.UtcNow;authorization=new("execution-auth-"+Guid.NewGuid().ToString("N"),correlation,"execution-acceptance",DeviceLicenseService.GetCurrentDeviceCode(),"execution-session-"+Guid.NewGuid().ToString("N"),issued,issued.AddMinutes(10));
+            if(residualPosition is not null&&residualOpening is not null)
+            {
+                ServiceLocator.SystemState.Status=AgentStatus.Running;opened=true;
+                var recoveryClose=new ExecutionIntent(Symbol,PositionSide.Long,residualPosition.Quantity,true,0,0,ClientId("RECOVER"),"formal execution acceptance owned-residual cleanup",DecisionAction.CloseLong,ExpectedPrice:residualPosition.MarkPrice);
+                var recovered=await gateway.ExecuteTestnetSmokeAsync(new(authorization,recoveryClose,Math.Max(1,(int)residualPosition.Leverage),residualPosition.Isolated,ObservedPosition:residualPosition),ct);
+                if(!recovered.Executed)throw new InvalidOperationException("Execution owned-residual cleanup was rejected: "+recovered.Code);
+                var remainingPositions=await provider.GetPositionsAsync(ct);var remainingOrders=await provider.GetOpenOrdersAsync(Symbol,ct);
+                if(remainingPositions.Any(x=>x.Symbol==Symbol&&x.Quantity>0)||remainingOrders.Any(x=>x.Symbol==Symbol&&x.IsProtection))throw new InvalidOperationException("Execution owned-residual cleanup left position or protection residue.");
+                opened=false;throw new InvalidOperationException("Execution owned residual was cleaned; rerun acceptance from a flat state.");
+            }
             var quantity=Ceiling(Math.Max(rule.MinQuantity,rule.MinNotional*1.10m/market.Price),rule.StepSize);var openingId=ClientId("OPEN");var opening=new ExecutionIntent(Symbol,PositionSide.Long,quantity,false,rule.RoundPrice(market.Price*.98m),rule.RoundPrice(market.Price*1.02m),openingId,"formal execution acceptance",DecisionAction.OpenLong,ExpectedPrice:market.Price);
             ServiceLocator.SystemState.Status=AgentStatus.Running;var openResult=await gateway.ExecuteTestnetSmokeAsync(new(authorization,opening,Math.Min(10,rule.MaxLeverage),true,rule,market),ct);if(!openResult.Executed)throw new InvalidOperationException("Execution opening was rejected: "+openResult.Code);opened=true;
             var openOrder=await provider.FindOrderAsync(Symbol,openingId,ct);if(!Exact(openOrder,opening))throw new InvalidOperationException("Execution opening is not exactly correlated with a filled exchange order.");
