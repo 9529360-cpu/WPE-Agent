@@ -237,7 +237,7 @@ public sealed class HistoricalCollectionContractsTests : IDisposable
         Directory.CreateDirectory(_directory);await ExecuteAsync("CREATE TABLE runtime_events(event_id TEXT,sequence INTEGER,correlation_id TEXT,event_type TEXT,source TEXT,payload_json TEXT,occurred_at TEXT)");
         const string secret="sk-secret-token-123456";await ExecuteAsync("INSERT INTO runtime_events VALUES('e1',1,$c,$type,$source,$p,$t)",( "$c",secret),("$type","token="+secret),("$source","Bearer "+secret),("$p",secret),("$t",Now.ToString("O")));
         var store=new RuntimeHistoricalCollectionStateStore(DatabasePath,()=>Now);var audit=await store.ReadAuditEventsAsync(new());var backtests=await store.ReadBacktestsAsync(new());
-        var item=Assert.Single(audit.Items);var json=System.Text.Json.JsonSerializer.Serialize(audit);Assert.DoesNotContain(secret,json);Assert.DoesNotContain("payload_json",json,StringComparison.OrdinalIgnoreCase);Assert.Equal("[REDACTED]",item.Category);Assert.Equal("[REDACTED]",item.Source);Assert.Equal("[REDACTED]",item.CorrelationId);Assert.Equal(RuntimeCollectionState.Unsupported,backtests.State);Assert.Empty(backtests.Items);
+        var item=Assert.Single(audit.Items);var json=System.Text.Json.JsonSerializer.Serialize(audit);Assert.DoesNotContain(secret,json);Assert.DoesNotContain("payload_json",json,StringComparison.OrdinalIgnoreCase);Assert.Equal("[REDACTED]",item.Category);Assert.Equal("[REDACTED]",item.Source);Assert.Matches("^correlation#[A-F0-9]{12}$",item.CorrelationId!);Assert.Equal(RuntimeCollectionState.Unsupported,backtests.State);Assert.Empty(backtests.Items);
     }
 
     private async Task InitializeAsync(){Directory.CreateDirectory(_directory);await ExecuteAsync("""
