@@ -139,21 +139,46 @@ public sealed class StrategyResearchAgent
         var regimePerformance = performance.Regimes?.FirstOrDefault(value =>
             string.Equals(value.Regime, regime.ToString(), StringComparison.Ordinal));
 
-        if (regimePerformance is null ||
-            regimePerformance.Observations < StrategyGovernor.MinimumRegimeCalibrationObservations)
-            return raw with
-            {
-                Reason = $"{raw.Reason}; regime={regime}; calibration=pending"
-            };
+        var calibratedConfidence = raw.Confidence;
+        var reasons = new List<string>
+        {
+            raw.Reason,
+            $"regime={regime}",
+            $"raw_confidence={raw.Confidence:F2}"
+        };
 
-        var reliabilityMultiplier = Math.Clamp(.55 + .45 * regimePerformance.CalibrationScore, .55, 1);
-        var expectancyMultiplier = regimePerformance.Expectancy < 0 ? .75 : 1d;
-        var calibratedConfidence = Math.Clamp(raw.Confidence * reliabilityMultiplier * expectancyMultiplier, 0, 1);
+        if (regimePerformance is not null &&
+            regimePerformance.Observations >= StrategyGovernor.MinimumRegimeCalibrationObservations)
+        {
+            var reliabilityMultiplier = Math.Clamp(.55 + .45 * regimePerformance.CalibrationScore, .55, 1);
+            var expectancyMultiplier = regimePerformance.Expectancy < 0 ? .75 : 1d;
+            calibratedConfidence *= reliabilityMultiplier * expectancyMultiplier;
+            reasons.Add($"shadow_calibration={regimePerformance.CalibrationScore:F2}");
+            reasons.Add($"regime_expectancy={regimePerformance.Expectancy:P2}");
+        }
+        else
+        {
+            reasons.Add("shadow_calibration=pending");
+        }
+
+        var execution = await _database.GetStrategyExecutionFeedbackAsync(profile.Id, ct);
+        if (execution.Trades >= StrategyGovernor.MinimumExecutionFeedbackTrades)
+        {
+            var executionMultiplier = Math.Clamp(.5 + execution.PosteriorWinRate, .65, 1);
+            calibratedConfidence *= executionMultiplier;
+            reasons.Add($"execution_trades={execution.Trades}");
+            reasons.Add($"execution_win_rate={execution.WinRate:P0}");
+            reasons.Add($"execution_feedback={execution.PosteriorWinRate:F2}");
+        }
+        else
+        {
+            reasons.Add($"execution_feedback=pending({execution.Trades}/{StrategyGovernor.MinimumExecutionFeedbackTrades})");
+        }
 
         return raw with
         {
-            Confidence = calibratedConfidence,
-            Reason = $"{raw.Reason}; regime={regime}; calibration={regimePerformance.CalibrationScore:F2}; regime_expectancy={regimePerformance.Expectancy:P2}; raw_confidence={raw.Confidence:F2}"
+            Confidence = Math.Clamp(calibratedConfidence, 0, raw.Confidence),
+            Reason = string.Join("; ", reasons)
         };
     }
 
