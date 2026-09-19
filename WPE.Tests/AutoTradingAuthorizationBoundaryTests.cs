@@ -31,6 +31,7 @@ public sealed class AutoTradingAuthorizationBoundaryTests
         foreach(var value in forbidden)Assert.DoesNotContain(value,automaticRun,StringComparison.Ordinal);
         Assert.Contains("settings.AuthorizationMode",automaticRun,StringComparison.Ordinal);
         Assert.Contains("new DurableExecutionArtifactV2",automaticRun,StringComparison.Ordinal);
+        Assert.Contains("HasAutomaticExecutionBlockingRepeatAsync(decisionContextId!,ct)",automaticRun,StringComparison.Ordinal);
         Assert.Contains("SaveAutomaticExecutionAsync(cycle,artifact,ct)",automaticRun,StringComparison.Ordinal);
         Assert.Contains("RecordAutomaticRiskDecisionAsync(cycle,receipt,ct)",automaticRun,StringComparison.Ordinal);
         Assert.Contains("AutomaticExecutionQueueStatus.RiskApproved",File.ReadAllText(Path.Combine(root,"Services","Agent","AutomaticExecutionProcessor.cs")),StringComparison.Ordinal);

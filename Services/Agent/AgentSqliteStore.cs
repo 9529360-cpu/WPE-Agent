@@ -530,6 +530,21 @@ public sealed partial class AgentSqliteStore
         var result=new List<PersistedAutomaticExecution>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=AutomaticQueueReadCommand(c,"WHERE status=$status",Math.Clamp(limit,1,100));q.Parameters.AddWithValue("$status",status.ToString());await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))result.Add(ReadAutomaticExecution(r));return result;
     }
 
+    public async Task<bool> HasAutomaticExecutionBlockingRepeatAsync(string strategyId,CancellationToken ct)
+    {
+        if(!QueueToken(strategyId,96))return true;
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="""
+            SELECT 1
+            FROM automatic_execution_queue
+            WHERE strategy_id=$strategy
+              AND status IN ('Proposed','RiskApproved','Claimed','Executing','Reconciling','Succeeded','UnknownOutcome')
+            LIMIT 1
+            """;
+        q.Parameters.AddWithValue("$strategy",strategyId);
+        return await q.ExecuteScalarAsync(ct) is not null;
+    }
+
     internal async Task<IReadOnlyList<AutomaticExecutionObservationCandidate>> GetAutomaticExecutionObservationPageAsync(long afterEventId,int limit,CancellationToken ct)
     {
         if(afterEventId<0)throw new ArgumentOutOfRangeException(nameof(afterEventId));var result=new List<AutomaticExecutionObservationCandidate>();
