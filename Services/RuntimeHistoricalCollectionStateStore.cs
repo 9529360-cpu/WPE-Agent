@@ -135,22 +135,36 @@ public sealed class RuntimeHistoricalCollectionStateStore
             return result;
         }
 
-        var queueRows=new Dictionary<string,List<ExecutionTraceRow>>(StringComparer.Ordinal);
+        var countsByCycle=new Dictionary<string,long>(StringComparer.Ordinal);
         await using(var command=connection.CreateCommand())
         {
-            var placeholders=AddListParameters(command,"cycle",cycleIds);
-            command.CommandText=$"SELECT correlation_id,execution_id,status,last_code,attempt_count,market_collected_at,market_data_version FROM automatic_execution_queue WHERE correlation_id IN ({placeholders}) ORDER BY correlation_id,updated_at DESC,execution_id DESC";
+            var placeholders=AddListParameters(command,"cycleCount",cycleIds);
+            command.CommandText=$"SELECT correlation_id,COUNT(*) FROM automatic_execution_queue WHERE correlation_id IN ({placeholders}) GROUP BY correlation_id";
             await using var reader=await command.ExecuteReaderAsync(ct);
             while(await reader.ReadAsync(ct))
             {
-                var cycleId=reader.GetString(0);if(!cycleIds.Contains(cycleId,StringComparer.Ordinal))throw new InvalidOperationException("Execution correlation is outside the requested batch.");
-                var attempts=reader.GetInt32(4);if(attempts<0)throw new InvalidOperationException("Execution attempt count is invalid.");
-                if(!queueRows.TryGetValue(cycleId,out var rows)){rows=[];queueRows[cycleId]=rows;}
-                rows.Add(new(reader.GetString(1),Safe(reader.GetString(2),40),Safe(reader.GetString(3),120),attempts,reader.IsDBNull(5)?null:Instant(reader.GetString(5)),Text(reader,6,80)));
+                var cycleId=reader.GetString(0);var count=reader.GetInt64(1);if(count<0)throw new InvalidOperationException("Execution correlation count is invalid.");
+                countsByCycle[cycleId]=count;
             }
         }
 
-        var uniqueExecutions=queueRows.Where(pair=>pair.Value.Count==1).Select(pair=>pair.Value[0].Id).Distinct(StringComparer.Ordinal).ToArray();
+        var uniqueCycles=cycleIds.Where(cycleId=>countsByCycle.GetValueOrDefault(cycleId)==1).ToArray();
+        var rowByCycle=new Dictionary<string,ExecutionTraceRow>(StringComparer.Ordinal);
+        if(uniqueCycles.Length>0)
+        {
+            await using var command=connection.CreateCommand();
+            var placeholders=AddListParameters(command,"cycleRow",uniqueCycles);
+            command.CommandText=$"SELECT correlation_id,execution_id,status,last_code,attempt_count,market_collected_at,market_data_version FROM automatic_execution_queue WHERE correlation_id IN ({placeholders})";
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var cycleId=reader.GetString(0);var attempts=reader.GetInt32(4);if(attempts<0)throw new InvalidOperationException("Execution attempt count is invalid.");
+                if(!rowByCycle.TryAdd(cycleId,new(reader.GetString(1),Safe(reader.GetString(2),40),Safe(reader.GetString(3),120),attempts,reader.IsDBNull(5)?null:Instant(reader.GetString(5)),Text(reader,6,80))))
+                    throw new InvalidOperationException("Execution correlation changed during the batch read.");
+            }
+        }
+
+        var uniqueExecutions=rowByCycle.Values.Select(row=>row.Id).Distinct(StringComparer.Ordinal).ToArray();
         var riskByExecution=new Dictionary<string,(int Approved,int Blocked)>(StringComparer.Ordinal);
         if(eventsAvailable&&uniqueExecutions.Length>0)
         {
@@ -171,17 +185,18 @@ public sealed class RuntimeHistoricalCollectionStateStore
         foreach(var cycleId in cycleIds)
         {
             var traceId=SensitiveDataRedactor.MaskIdentifier(cycleId,"trade");
-            if(!queueRows.TryGetValue(cycleId,out var rows)||rows.Count==0)
+            var count=countsByCycle.GetValueOrDefault(cycleId);
+            if(count==0)
             {
                 result[cycleId]=new(traceId,"legacy","Unavailable","Unavailable","trace.execution-unavailable",null,null,null);
                 continue;
             }
-            if(rows.Count!=1)
+            if(count!=1||!rowByCycle.TryGetValue(cycleId,out var row))
             {
                 result[cycleId]=new(traceId,"ambiguous","Ambiguous","Ambiguous","trace.multiple-executions",null,null,null);
                 continue;
             }
-            var row=rows[0];var risk="Unavailable";
+            var risk="Unavailable";
             if(eventsAvailable)
             {
                 riskByExecution.TryGetValue(row.Id,out var counts);
@@ -204,18 +219,32 @@ public sealed class RuntimeHistoricalCollectionStateStore
             return result;
         }
 
-        var linksByCycle=new Dictionary<string,List<HistoricalEvidenceLinkV1>>(StringComparer.Ordinal);
-        var invalidCycles=new HashSet<string>(StringComparer.Ordinal);
         var ambiguousCycles=new HashSet<string>(StringComparer.Ordinal);
         await using(var command=connection.CreateCommand())
         {
-            var placeholders=AddListParameters(command,"evidenceCycle",cycleIds);
-            command.CommandText=$"SELECT cycle_id,output_kind,status,canonical_sha256,as_of_utc,canonical_bytes FROM model_off_canonical_audits WHERE cycle_id IN ({placeholders}) AND output_kind IN ('market','research','strategy','risk') ORDER BY cycle_id,as_of_utc,output_kind,output_id";
+            var placeholders=AddListParameters(command,"evidenceCount",cycleIds);
+            command.CommandText=$"SELECT cycle_id,output_kind,COUNT(*) FROM model_off_canonical_audits WHERE cycle_id IN ({placeholders}) AND output_kind IN ('market','research','strategy','risk') GROUP BY cycle_id,output_kind";
             await using var reader=await command.ExecuteReaderAsync(ct);
             while(await reader.ReadAsync(ct))
             {
-                var cycleId=reader.GetString(0);if(!cycleIds.Contains(cycleId,StringComparer.Ordinal))throw new InvalidOperationException("Canonical evidence correlation is outside the requested batch.");
-                if(invalidCycles.Contains(cycleId)||ambiguousCycles.Contains(cycleId))continue;
+                var cycleId=reader.GetString(0);var stage=Safe(reader.GetString(1),20).ToLowerInvariant();var count=reader.GetInt64(2);
+                if(!EvidenceStages.Contains(stage,StringComparer.Ordinal)||count<0)throw new InvalidOperationException("Canonical evidence count is invalid.");
+                if(count!=1)ambiguousCycles.Add(cycleId);
+            }
+        }
+
+        var detailCycles=cycleIds.Where(cycleId=>!ambiguousCycles.Contains(cycleId)).ToArray();
+        var linksByCycle=new Dictionary<string,List<HistoricalEvidenceLinkV1>>(StringComparer.Ordinal);
+        var invalidCycles=new HashSet<string>(StringComparer.Ordinal);
+        if(detailCycles.Length>0)
+        {
+            await using var command=connection.CreateCommand();
+            var placeholders=AddListParameters(command,"evidenceRow",detailCycles);
+            command.CommandText=$"SELECT cycle_id,output_kind,status,canonical_sha256,as_of_utc,length(canonical_bytes),canonical_bytes FROM model_off_canonical_audits WHERE cycle_id IN ({placeholders}) AND output_kind IN ('market','research','strategy','risk') ORDER BY cycle_id,as_of_utc,output_kind";
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var cycleId=reader.GetString(0);if(invalidCycles.Contains(cycleId))continue;
                 var stage=Safe(reader.GetString(1),20).ToLowerInvariant();
                 if(!EvidenceStages.Contains(stage,StringComparer.Ordinal)){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
                 if(!linksByCycle.TryGetValue(cycleId,out var links)){links=[];linksByCycle[cycleId]=links;}
@@ -223,8 +252,11 @@ public sealed class RuntimeHistoricalCollectionStateStore
                 var status=Safe(reader.GetString(2),40);
                 var hash=Hash(reader.GetString(3)).ToLowerInvariant();
                 if(reader.IsDBNull(5)){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
-                var bytes=(byte[])reader[5];
-                if(bytes.Length is 0 or > 262144){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                var byteLength=reader.GetInt64(5);
+                if(byteLength is <=0 or >262144){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                if(reader.IsDBNull(6)){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                var bytes=(byte[])reader[6];
+                if(bytes.LongLength!=byteLength){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
                 var computed=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
                 if(!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(hash),Convert.FromHexString(computed))){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
                 links.Add(new(stage,status,hash,Instant(reader.GetString(4))));
@@ -246,7 +278,7 @@ public sealed class RuntimeHistoricalCollectionStateStore
     {
         if(values.Count==0)throw new ArgumentException("At least one value is required.",nameof(values));
         var names=new string[values.Count];
-        for(var i=0;i<values.Count;i++){names[i]=$"$"+prefix+i.ToString(CultureInfo.InvariantCulture);command.Parameters.AddWithValue(names[i],values[i]);}
+        for(var i=0;i<values.Count;i++){names[i]="$"+prefix+i.ToString(CultureInfo.InvariantCulture);command.Parameters.AddWithValue(names[i],values[i]);}
         return string.Join(",",names);
     }
 
