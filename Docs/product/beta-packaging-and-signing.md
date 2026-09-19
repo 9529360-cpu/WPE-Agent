@@ -4,7 +4,7 @@ This process creates an offline, side-by-side portable Beta package. It does not
 
 ## Current Package Boundary
 
-- Format: versioned `win-x64` portable ZIP derived from the exact publish directory that passed `eng/release-readiness.ps1`; debug symbols are excluded from the distribution copy.
+- Format: versioned `win-x64` portable ZIP containing the exact source-bound `app/`, `headless/`, and `maintenance/` runtime artifacts accepted by `eng/release-readiness.ps1`. Runtime roots are source/debug/state/secret free before packaging.
 - Certified host: Windows 11 x64 with .NET 8 Desktop Runtime and Microsoft Edge WebView2 Runtime.
 - Windows 10 x64: technically plausible for `net8.0-windows`, but untested and unsupported until a clean Windows 10 compatibility matrix passes.
 - Windows ARM64: unsupported. The application, publish runtime, WebView2 loader, SQLite and graphics native assets are currently `win-x64`; renaming the package is not an ARM64 build.
@@ -25,9 +25,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\eng\package-beta.ps1 -Runt
 powershell -NoProfile -ExecutionPolicy Bypass -File .\eng\verify-beta-package.ps1
 ```
 
-The output directory contains the portable ZIP, `SHA256SUMS`, and `package-result.json`. Inside the ZIP, `RELEASE-METADATA.json` records version/channel/architecture, commit and dirty-worktree state; `RELEASE-READINESS.json` preserves the gate result used by the package; `FILE-MANIFEST.json` and `PAYLOAD-SHA256SUMS` record every payload file and SHA-256; `sbom.cdx.json` is a CycloneDX 1.5 inventory generated from the restored NuGet graph and the pnpm production dependency graph. Unknown licenses remain `NOASSERTION`; the script does not guess.
+The output directory contains the portable ZIP, `SHA256SUMS`, and `package-result.json`. Inside the ZIP, `app/`, `headless/`, and `maintenance/` are the three runtime roots; `RELEASE-METADATA.json` records version/channel/architecture, source identity, runtime tree hashes and signing provenance; `RELEASE-READINESS.json` preserves the exact readiness report; a signed bundle also contains `SIGNING-RESULT.json`; `FILE-MANIFEST.json` and `PAYLOAD-SHA256SUMS` cover every file under all three runtime roots using package-root-relative paths; `sbom.cdx.json` is a CycloneDX 1.5 inventory generated from the Desktop, Headless, Maintenance NuGet graphs plus the pnpm production dependency graph. Unknown licenses remain `NOASSERTION`; the script does not guess.
 
-An unsigned package, a package from a dirty worktree, or a package without a passed release-readiness report is non-distributable. The generated unsigned archive is for internal evaluation only.
+An unsigned package is permitted only when all three executables are NotSigned and all three runtime trees still exactly match release-readiness bytes; it is internal-evaluation-only and non-distributable. A signed package requires all three executables to be Valid, one approved signer subject/thumbprint, a valid readiness-to-signing transition record, clean source, and no mixed signing state.
 
 ## Production Code-Signing Requirements
 
@@ -55,13 +55,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\eng\sign-beta.ps1 `
   -CertificateThumbprint '<40 hex characters>' `
   -ExpectedSubject 'CN=<approved legal publisher>'
 
-# Until the bundle packaging step is upgraded, package-beta.ps1 still consumes only the
-# Desktop staging directory and must not be described as a three-artifact distributable.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\eng\package-beta.ps1 `
-  -PublishPath "$SigningRoot\desktop"
+  -PublishPath "$SigningRoot\desktop" `
+  -HeadlessPublishPath "$SigningRoot\headless" `
+  -MaintenancePublishPath "$SigningRoot\maintenance" `
+  -SigningResultPath "$SigningRoot\signing-result.json" `
+  -ExpectedSignerSubject 'CN=<approved legal publisher>' `
+  -ExpectedSignerThumbprint '<40 hex characters>'
+
+powershell -NoProfile -ExecutionPolicy Bypass -File .\eng\verify-beta-package.ps1 `
+  -ExpectedSignerSubject 'CN=<approved legal publisher>' `
+  -ExpectedSignerThumbprint '<40 hex characters>'
 ```
 
-Before distribution, independently verify the signature and timestamp with `signtool verify /pa /all /v`, verify the ZIP against `SHA256SUMS`, and record a release go/no-go decision. The signing script does not upload the artifact.
+Before distribution, independently verify all three executable signatures and timestamps with `signtool verify /pa /all /v`, run `verify-beta-package.ps1` with the approved signer identity, verify the ZIP against `SHA256SUMS`, and record a release go/no-go decision. The signing and packaging scripts do not upload the artifact.
 
 The signing helper preflights every staging root before the first signature mutation. If signing or verification fails after mutation has begun, discard the entire signing staging tree and recreate it from the source-bound release-readiness artifacts; do not promote or package a partially signed tree. In bundle mode, `signing-result.json` additionally binds the readiness-report SHA-256 and exact source commit to each pre-sign tree hash and verified post-sign tree/executable hash. The later package verifier must consume this transition record rather than comparing signed bytes directly to pre-sign readiness hashes.
 
@@ -73,10 +80,11 @@ Authenticode establishes publisher identity and file integrity; it does not guar
 
 Portable install:
 
-1. Verify the ZIP SHA-256 and Authenticode signature.
+1. Verify the ZIP SHA-256, `FILE-MANIFEST.json`, and all three Authenticode signatures for a signed bundle.
 2. Extract to a versioned directory named from `RELEASE-METADATA.json.packageVersion` without overwriting an existing version.
-3. Confirm .NET 8 Desktop Runtime and WebView2 Runtime are installed.
-4. Start the executable, keep Mainnet disabled, configure only the approved Testnet credential slot, and run access/readiness checks before starting the Agent.
+3. Keep `app/`, `headless/`, and `maintenance/` under that immutable version directory; the package does not automatically register or change a Windows Service.
+4. Confirm .NET 8 Desktop Runtime and WebView2 Runtime are installed for Desktop use.
+5. Start the approved Desktop or Headless entry point with Mainnet disabled and the intended absolute data root; run access/readiness checks before starting the Agent.
 
 Portable uninstall removes only that versioned application directory after the Agent is stopped. User data, encrypted credentials, databases and logs must be identified and backed up separately; the release package intentionally contains none of them.
 
@@ -96,5 +104,4 @@ Rollback:
 - Credentialed Binance Futures Testnet smoke test on the target machine.
 - Windows 10 x64 certification if it will be marketed; ARM64-native publish and dependency certification if ARM64 will be supported.
 - Installer choice, upgrade/repair/uninstall tests and publisher identity continuity if MSIX or WiX is introduced later.
-- Migration of runtime database/log/settings writes away from the application installation directory before MSIX or `Program Files` packaging.
 - Legal review of every `NOASSERTION` SBOM component and generation of final third-party notices.
