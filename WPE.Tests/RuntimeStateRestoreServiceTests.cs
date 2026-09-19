@@ -172,6 +172,31 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task BackupRecoversInterruptedRestoreBeforeTakingSnapshot()
+    {
+        var target = Layout("backup-recovery-target");
+        await CreateDatabase(target.DataFile("agent.db"), "old");
+        var restoreId = "restore" + Guid.NewGuid().ToString("N");
+        var rollback = RuntimeStateRestoreRecovery.RollbackDirectory(target, restoreId);
+
+        Directory.Move(target.DataDirectory, rollback);
+        Directory.CreateDirectory(target.DataDirectory);
+        await CreateDatabase(target.DataFile("agent.db"), "uncommitted-new");
+        RuntimeStateRestoreRecovery.WriteJournal(
+            target,
+            Journal(restoreId, RuntimeStateRestorePhase.RestoredActivated),
+            _protector);
+
+        var backup = await Backup(target).CreateAsync(Path.Combine(_root, "post-crash-backups"));
+
+        Assert.Equal("old", await ReadDatabase(target.DataFile("agent.db")));
+        Assert.False(File.Exists(target.RuntimeFile(RuntimeStateRestoreRecovery.JournalFileName)));
+        var stage = Path.Combine(_root, "post-crash-verify");
+        var verified = await Verifier().VerifyToStagingAsync(backup.Directory, stage);
+        Assert.Equal("old", await ReadDatabase(Path.Combine(verified.StagingDataDirectory, "agent.db")));
+    }
+
+    [Fact]
     public async Task TamperedRestoreJournalFailsClosedWithoutMovingData()
     {
         var target = Layout("tamper-target");
