@@ -44,6 +44,29 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ExplicitBackupIdMismatchFailsBeforeSafetyBackupOrGenerationSwap()
+    {
+        var source = Layout("confirm-source");
+        var target = Layout("confirm-target");
+        await CreateDatabase(source.DataFile("agent.db"), "new");
+        await CreateDatabase(target.DataFile("agent.db"), "old");
+
+        var backup = await Backup(source).CreateAsync(Path.Combine(_root, "confirm-backups"));
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            Restore(target).RestoreAsync(backup.Directory, "wpe-state-wrong-confirmation"));
+
+        Assert.Contains("explicit restore confirmation", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("old", await ReadDatabase(target.DataFile("agent.db")));
+        Assert.Empty(Directory.EnumerateDirectories(target.BackupsDirectory));
+        Assert.False(File.Exists(target.RuntimeFile(RuntimeStateRestoreRecovery.JournalFileName)));
+        Assert.Empty(
+            Directory.EnumerateDirectories(target.RuntimeDirectory)
+                .Select(Path.GetFileName)
+                .Where(x => x is not null && x.StartsWith("restore-", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public async Task RestoreCommitsSecurityStorageEvidenceBeforeGenerationCommit()
     {
         var source = Layout("security-source");
