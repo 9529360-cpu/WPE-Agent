@@ -32,8 +32,7 @@ public static class HeadlessLocalControlProtocol
 
     public static HeadlessControlResponseV1 Handle(
         string requestJson,
-        Func<HeadlessProcessHealthV1?> readHealth,
-        Action requestShutdown)
+        Func<HeadlessProcessHealthV1?> readHealth)
     {
         if (string.IsNullOrWhiteSpace(requestJson) || requestJson.Length > HeadlessLocalControlWorker.MaximumRequestBytes)
             return Reject("control.request-invalid");
@@ -84,7 +83,6 @@ public static class HeadlessLocalControlProtocol
             {
                 if (!string.Equals(confirmation, ShutdownConfirmation, StringComparison.Ordinal))
                     return Reject("control.shutdown-confirmation-required");
-                requestShutdown();
                 return new(HeadlessControlResponseV1.CurrentSchema, true, "control.shutdown-requested");
             }
 
@@ -131,14 +129,15 @@ public sealed class HeadlessLocalControlWorker(IHostApplicationLifetime applicat
             {
                 await pipe.WaitForConnectionAsync(stoppingToken).ConfigureAwait(false);
                 var request = await ReadBoundedRequestAsync(pipe, stoppingToken).ConfigureAwait(false);
-                var response = HeadlessLocalControlProtocol.Handle(
-                    request,
-                    ReadHealth,
-                    applicationLifetime.StopApplication);
+                var response = HeadlessLocalControlProtocol.Handle(request, ReadHealth);
+                var shutdownRequested = response.Success &&
+                    string.Equals(response.Code, "control.shutdown-requested", StringComparison.Ordinal);
                 var bytes = JsonSerializer.SerializeToUtf8Bytes(response, Json);
                 await pipe.WriteAsync(bytes, stoppingToken).ConfigureAwait(false);
                 await pipe.WriteAsync(new byte[] { (byte)'\n' }, stoppingToken).ConfigureAwait(false);
                 await pipe.FlushAsync(stoppingToken).ConfigureAwait(false);
+                if (shutdownRequested)
+                    applicationLifetime.StopApplication();
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
