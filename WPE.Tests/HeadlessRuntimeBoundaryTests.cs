@@ -17,8 +17,7 @@ public sealed class HeadlessRuntimeBoundaryTests
         Assert.DoesNotContain("UseWPF",project,StringComparison.Ordinal);
         Assert.DoesNotContain("WebView2",project,StringComparison.Ordinal);
         Assert.DoesNotContain("ScottPlot",project,StringComparison.Ordinal);
-        Assert.DoesNotContain("Microsoft.Extensions.Hosting.WindowsServices",project,StringComparison.Ordinal);
-        Assert.Contains("HeadlessRuntimeProcess.RunAsync(args)",program,StringComparison.Ordinal);
+        Assert.Contains("builder.Services.AddHostedService<HeadlessRuntimeWorker>()",program,StringComparison.Ordinal);
         Assert.Contains("WPE.Headless\\WPE.Headless.csproj",solution,StringComparison.Ordinal);
         Assert.Contains("<Compile Remove=\"WPE.Headless\\**\\*.cs\" />",product,StringComparison.Ordinal);
 
@@ -48,6 +47,9 @@ public sealed class HeadlessRuntimeBoundaryTests
         Assert.Contains("!health.HeartbeatFresh",source,StringComparison.Ordinal);
         Assert.Contains("AppDataPaths.RuntimeFile(\"headless-health-v1.json\")",source,StringComparison.Ordinal);
         Assert.Contains("File.Move(temp, path, true)",source,StringComparison.Ordinal);
+        Assert.Contains("RunAsync(CancellationToken shutdownToken)",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("Console.CancelKeyPress",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("AppDomain.CurrentDomain.ProcessExit",source,StringComparison.Ordinal);
 
         foreach(var forbidden in new[]{"Activate(","ChangeAuthorizationModeAsync","EmergencyCloseAllAsync","MainnetTradingConfirmed","IExchangeAdapter","ExchangeProviderCatalog"})
             Assert.DoesNotContain(forbidden,source,StringComparison.Ordinal);

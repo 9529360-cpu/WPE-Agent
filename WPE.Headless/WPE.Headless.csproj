@@ -10,5 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\币安量化机器人.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
   </ItemGroup>
 </Project>

@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\币安量化机器人.csproj" />
+    <ProjectReference Include="..\WPE.Headless\WPE.Headless.csproj" />
   </ItemGroup>
 
 </Project>

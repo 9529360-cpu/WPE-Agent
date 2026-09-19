@@ -13,6 +13,8 @@ public static class HeadlessRuntimeProcess
     public const int SetupIncompleteExitCode = 42;
     public const int AccessNotReadyExitCode = 43;
     public const int RuntimeUnhealthyExitCode = 44;
+    public const int ServiceDataRootRequiredExitCode = 45;
+    public const int ServiceDataRootInvalidExitCode = 46;
     public const int FatalExitCode = 50;
 
     private static readonly TimeSpan SupervisionInterval = TimeSpan.FromSeconds(5);
@@ -23,24 +25,11 @@ public static class HeadlessRuntimeProcess
         WriteIndented = true
     };
 
-    public static async Task<int> RunAsync(string[] args)
+    public static async Task<int> RunAsync(CancellationToken shutdownToken)
     {
-        _ = args;
         if (!OperatingSystem.IsWindows()) return UnsupportedPlatformExitCode;
 
         RuntimeProcessBootstrap.Initialize("headless.log");
-        using var shutdown = new CancellationTokenSource();
-        ConsoleCancelEventHandler cancel = (_, e) =>
-        {
-            e.Cancel = true;
-            shutdown.Cancel();
-        };
-        EventHandler processExit = (_, _) =>
-        {
-            try { shutdown.Cancel(); } catch (ObjectDisposedException) { }
-        };
-        Console.CancelKeyPress += cancel;
-        AppDomain.CurrentDomain.ProcessExit += processExit;
 
         try
         {
@@ -76,13 +65,13 @@ public static class HeadlessRuntimeProcess
 
             if (!accessReady) return AccessNotReadyExitCode;
 
-            while (!shutdown.IsCancellationRequested)
+            while (!shutdownToken.IsCancellationRequested)
             {
                 try
                 {
-                    await Task.Delay(SupervisionInterval, shutdown.Token).ConfigureAwait(false);
+                    await Task.Delay(SupervisionInterval, shutdownToken).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+                catch (OperationCanceledException) when (shutdownToken.IsCancellationRequested)
                 {
                     break;
                 }
@@ -103,7 +92,7 @@ public static class HeadlessRuntimeProcess
             await TryWriteHealthAsync("stopping", "headless.shutdown-requested", host.ReadHealth()).ConfigureAwait(false);
             return 0;
         }
-        catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+        catch (OperationCanceledException) when (shutdownToken.IsCancellationRequested)
         {
             return 0;
         }
@@ -115,8 +104,6 @@ public static class HeadlessRuntimeProcess
         }
         finally
         {
-            Console.CancelKeyPress -= cancel;
-            AppDomain.CurrentDomain.ProcessExit -= processExit;
             Log.CloseAndFlush();
         }
     }
