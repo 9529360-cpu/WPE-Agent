@@ -40,10 +40,43 @@ $sourceManifestPath=Join-Path $source 'FILE-MANIFEST.json'
 if(-not(Test-Path -LiteralPath $sourceManifestPath -PathType Leaf)){throw 'package.manifest-missing'}
 if((Hash $sourceManifestPath) -ne $ExpectedSourceManifestHash.ToLowerInvariant()){throw 'package.manifest-hash-mismatch'}
 try{$parsedManifest=Get-Content -Raw -LiteralPath $sourceManifestPath|ConvertFrom-Json;$sourceManifest=@($parsedManifest|ForEach-Object {$_})}catch{throw 'package.manifest-malformed'}
+if($sourceManifest.Count -eq 0){throw 'package.manifest-empty'}
+$sourcePrefix=$source+[IO.Path]::DirectorySeparatorChar
+$manifestPaths=[Collections.Generic.List[string]]::new()
+$seenManifestPaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach($entry in $sourceManifest){
-    $file=[IO.Path]::GetFullPath((Join-Path $source ([string]$entry.path)))
-    if(-not $file.StartsWith($source+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'package.manifest-path-escape'}
-    if(-not(Test-Path -LiteralPath $file -PathType Leaf) -or (Hash $file) -ne $entry.sha256 -or (Get-Item $file).Length -ne $entry.bytes){throw "package.manifest-drift:$($entry.path)"}
+    $relative=([string]$entry.path).Replace('\\','/')
+    if([string]::IsNullOrWhiteSpace($relative) -or [IO.Path]::IsPathRooted($relative)){throw 'package.manifest-path-invalid'}
+    if(-not $seenManifestPaths.Add($relative)){throw 'package.manifest-path-duplicate'}
+    if($entry.PSObject.Properties.Name -notcontains 'size'){throw 'package.manifest-size-missing'}
+    try{$expectedSize=[long]$entry.size}catch{throw 'package.manifest-size-invalid'}
+    if($expectedSize -lt 0){throw 'package.manifest-size-invalid'}
+    $file=[IO.Path]::GetFullPath((Join-Path $source ($relative.Replace('/',[IO.Path]::DirectorySeparatorChar))))
+    if(-not $file.StartsWith($sourcePrefix,[StringComparison]::OrdinalIgnoreCase)){throw 'package.manifest-path-escape'}
+    if(-not(Test-Path -LiteralPath $file -PathType Leaf) -or (Hash $file) -ne [string]$entry.sha256 -or (Get-Item -LiteralPath $file).Length -ne $expectedSize){throw "package.manifest-drift:$relative"}
+    $manifestPaths.Add($relative)
+}
+$bundlePattern='^(app|headless|maintenance)/'
+$bundleManifestPaths=@($manifestPaths|Where-Object{$_ -match $bundlePattern})
+if($bundleManifestPaths.Count -gt 0 -and $bundleManifestPaths.Count -ne $manifestPaths.Count){throw 'package.manifest-mixed-root-model'}
+if($bundleManifestPaths.Count -gt 0){
+    $actualPayloadPaths=@(
+        foreach($bundleRoot in @('app','headless','maintenance')){
+            $bundlePath=Join-Path $source $bundleRoot
+            if(-not(Test-Path -LiteralPath $bundlePath -PathType Container)){throw "package.runtime-root-missing:$bundleRoot"}
+            Get-ChildItem -LiteralPath $bundlePath -Recurse -Force -File|ForEach-Object{
+                $_.FullName.Substring($sourcePrefix.Length).Replace('\\','/')
+            }
+        }
+    )
+}else{
+    $actualPayloadPaths=@(Get-ChildItem -LiteralPath $source -Recurse -Force -File|Where-Object{
+        -not $_.FullName.Equals($sourceManifestPath,[StringComparison]::OrdinalIgnoreCase)
+    }|ForEach-Object{$_.FullName.Substring($sourcePrefix.Length).Replace('\\','/')})
+}
+if($actualPayloadPaths.Count -ne $manifestPaths.Count -or
+   (Compare-Object @($actualPayloadPaths|Sort-Object) @($manifestPaths|Sort-Object) -SyncWindow 0).Count -ne 0){
+    throw 'package.manifest-inventory-drift'
 }
 $probePath=Join-Path $source $ProbeScript
 if(-not(Test-Path -LiteralPath $probePath -PathType Leaf)){throw 'probe.missing'}
