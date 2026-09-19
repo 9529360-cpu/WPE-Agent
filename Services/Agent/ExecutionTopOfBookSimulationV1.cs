@@ -2,6 +2,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
 using WpeAgent.TradingAuthorization;
+using 币安量化机器人.Services.Exchange;
 
 namespace 币安量化机器人.Services.Agent;
 
