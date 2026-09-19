@@ -63,6 +63,39 @@ public sealed class StrategyShadowObservationProvenanceTests : IDisposable
     }
 
     [Fact]
+    public void ActiveStrategyCannotBeEncodedAsShadowQualificationEvidence()
+    {
+        var profile=Profile();
+        profile.Lifecycle=StrategyLifecycle.Active;
+        var signal=new StrategySignal(profile.Id,profile.Symbol,0,.5,"active",profile.Version);
+
+        Assert.Throws<InvalidOperationException>(()=>
+            StrategyShadowObservationCanonicalizerV1.Create(
+                profile,
+                signal,
+                Market(Now.AddMinutes(-1)),
+                ValidationFact(profile,Now.AddMinutes(-10)),
+                Timeline(profile),
+                Now));
+    }
+
+    [Fact]
+    public async Task ActiveMonitoringDoesNotDependOnShadowProvenanceAuthority()
+    {
+        var profile=Profile();
+        profile.Lifecycle=StrategyLifecycle.Active;
+        var store=new AgentSqliteStore(Database,()=>Now);
+        await store.UpsertStrategyAsync(profile,default);
+        var agent=new StrategyResearchAgent(store,utcNow:()=>Now.UtcDateTime);
+        agent.SetSchedulerHealth(true);
+
+        await agent.ObserveAsync(Pack(Market(Now.AddMinutes(-1))),default);
+
+        Assert.Equal(1,await Count("strategy_observations"));
+        Assert.Equal(0,await CountIfExists("strategy_shadow_observation_artifacts"));
+    }
+
+    [Fact]
     public async Task ProductionObserveCountsOneCanonicalMarketOnlyOnce()
     {
         var profile=Profile();
