@@ -1,5 +1,8 @@
 param(
     [string]$PublishPath = "artifacts/release-readiness/publish",
+    [string]$HeadlessPublishPath = "artifacts/release-readiness/headless",
+    [string]$MaintenancePublishPath = "artifacts/release-readiness/maintenance",
+    [string]$SigningResultPath,
     [string]$OutputDirectory = "artifacts/beta-packages",
     [ValidatePattern('^[A-Za-z0-9.-]+$')]
     [string]$Channel = "beta",
@@ -28,6 +31,50 @@ function Resolve-InRoot([string]$Path) {
 
 function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+
+function Get-TextSha256([string]$Value) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-ArtifactTreeFacts([string]$Path) {
+    $prefix = $Path.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -File | Sort-Object FullName)
+    $lines = @($files | ForEach-Object {
+        $relative = $_.FullName.Substring($prefix.Length).Replace('\', '/')
+        $hash = Get-Sha256 $_.FullName
+        "$relative|$($_.Length)|$hash"
+    })
+    [pscustomobject]@{
+        FileCount = $files.Count
+        TotalBytes = [long](($files | Measure-Object -Property Length -Sum).Sum)
+        TreeSha256 = Get-TextSha256 ($lines -join [Environment]::NewLine)
+    }
+}
+
+function Assert-CleanRuntimeArtifact([string]$Path, [string]$Label) {
+    $forbiddenExtensions = @(".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12", ".pfx", ".env", ".pdb", ".cs", ".csproj", ".sln", ".ps1", ".log")
+    $forbiddenSuffixes = @(".db-wal", ".db-shm", ".sqlite-wal", ".sqlite-shm", ".sqlite3-wal", ".sqlite3-shm")
+    $forbidden = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -File | Where-Object {
+        $name = $_.Name.ToLowerInvariant()
+        $extension = $_.Extension.ToLowerInvariant()
+        $knownState = $name -match '^(agent-settings|appsettings|order-state|local-accounts|local-session|device-license|llm-calls|llm-cache)'
+        $secretData = ($name.Contains("secrets") -or $name.Contains("credentials")) -and
+            @(".json", ".dat", ".txt", ".xml", ".yaml", ".yml") -contains $extension
+        $knownState -or $secretData -or
+        $forbiddenExtensions -contains $extension -or
+        ($forbiddenSuffixes | Where-Object { $name.EndsWith($_) })
+    })
+    if ($forbidden.Count -gt 0) {
+        throw "$Label runtime artifact contains forbidden files: $($forbidden.FullName -join ', ')"
+    }
 }
 
 function Get-LicenseExpression([string]$ManifestPath) {
@@ -117,6 +164,9 @@ function Add-NpmDependencies([object]$Dependencies, [hashtable]$Components) {
 }
 
 $publish = Resolve-InRoot $PublishPath
+$headlessPublish = Resolve-InRoot $HeadlessPublishPath
+$maintenancePublish = Resolve-InRoot $MaintenancePublishPath
+$signingResultInput = if ([string]::IsNullOrWhiteSpace($SigningResultPath)) { $null } else { Resolve-InRoot $SigningResultPath }
 $output = Resolve-InRoot $OutputDirectory
 $releaseReportPath = Join-Path $root "artifacts/release-readiness/report/release-readiness.json"
 $webRoot = Join-Path $root "WebUi"
@@ -124,7 +174,16 @@ $projectFiles = @(Get-ChildItem -LiteralPath $root -File -Filter "*.csproj")
 
 & (Join-Path $PSScriptRoot "web-egress-gate.ps1") -WebRoot $webRoot
 
-if (-not (Test-Path -LiteralPath $publish -PathType Container)) { throw "Verified publish directory is missing: $publish" }
+foreach ($runtimeInput in @(
+    [pscustomobject]@{ Label = "Desktop"; Path = $publish },
+    [pscustomobject]@{ Label = "Headless"; Path = $headlessPublish },
+    [pscustomobject]@{ Label = "Maintenance"; Path = $maintenancePublish }
+)) {
+    if (-not (Test-Path -LiteralPath $runtimeInput.Path -PathType Container)) {
+        throw "$($runtimeInput.Label) publish directory is missing: $($runtimeInput.Path)"
+    }
+    Assert-CleanRuntimeArtifact $runtimeInput.Path $runtimeInput.Label
+}
 if (-not (Test-Path -LiteralPath $releaseReportPath -PathType Leaf)) { throw "Release-readiness report is missing." }
 if ($projectFiles.Count -ne 1) { throw "Expected exactly one application project file; found $($projectFiles.Count)." }
 $projectFile = $projectFiles[0].FullName
