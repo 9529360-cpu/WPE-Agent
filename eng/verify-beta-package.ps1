@@ -22,6 +22,36 @@ function Get-Sha256([string]$Path) {
     (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Assert-DetachedSigningAttestation(
+    [string]$ContentPath,
+    [string]$SignaturePath,
+    [string]$ExpectedSubject,
+    [string]$ExpectedThumbprint) {
+    if (-not (Test-Path -LiteralPath $SignaturePath -PathType Leaf)) {
+        throw "Runtime bundle signing attestation is missing."
+    }
+    Add-Type -AssemblyName System.Security.Cryptography.Pkcs
+    $contentBytes = [System.IO.File]::ReadAllBytes($ContentPath)
+    $cms = [System.Security.Cryptography.Pkcs.SignedCms]::new(
+        [System.Security.Cryptography.Pkcs.ContentInfo]::new($contentBytes),
+        $true)
+    try {
+        $cms.Decode([System.IO.File]::ReadAllBytes($SignaturePath))
+        $cms.CheckSignature($true)
+    } catch {
+        throw "Runtime bundle signing attestation signature is invalid."
+    }
+    if ($cms.SignerInfos.Count -ne 1) {
+        throw "Runtime bundle signing attestation must contain exactly one signer."
+    }
+    $certificate = $cms.SignerInfos[0].Certificate
+    if ($null -eq $certificate -or
+        $certificate.Subject -ne $ExpectedSubject -or
+        $certificate.Thumbprint.ToUpperInvariant() -ne $ExpectedThumbprint.ToUpperInvariant()) {
+        throw "Runtime bundle signing attestation identity does not match the approved publisher."
+    }
+}
+
 function Assert-ZipEntriesSafe([string]$ZipPath, [string]$DestinationRoot) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $destination = [System.IO.Path]::GetFullPath($DestinationRoot)
@@ -249,12 +279,20 @@ if ($allSigned) {
     }
     if ([string]$metadata.signing.status -ne "valid" -or -not [bool]$metadata.signing.distributable) { throw "Signed runtime bundle metadata is not distributable." }
     if ([bool]$metadata.source.dirty -or [bool]$readiness.source.dirty) { throw "Signed runtime bundle cannot come from dirty source." }
-    if ([string]$metadata.signing.transitionResultPath -ne "SIGNING-RESULT.json") { throw "Signed runtime bundle transition path is invalid." }
+    if ([string]$metadata.signing.transitionResultPath -ne "SIGNING-RESULT.json" -or
+        [string]$metadata.signing.transitionSignaturePath -ne "SIGNING-RESULT.p7s") {
+        throw "Signed runtime bundle transition path is invalid."
+    }
     $signingPath = Join-Path $packageRoot "SIGNING-RESULT.json"
+    $signingSignaturePath = Join-Path $packageRoot "SIGNING-RESULT.p7s"
     if (-not (Test-Path -LiteralPath $signingPath -PathType Leaf)) { throw "Signed runtime bundle is missing SIGNING-RESULT.json." }
+    if (-not (Test-Path -LiteralPath $signingSignaturePath -PathType Leaf)) { throw "Signed runtime bundle is missing SIGNING-RESULT.p7s." }
     if ((Get-Sha256 $signingPath) -ne [string]$metadata.signing.transitionResultSha256) { throw "Signing transition result hash mismatch." }
+    if ((Get-Sha256 $signingSignaturePath) -ne [string]$metadata.signing.transitionSignatureSha256) { throw "Signing transition signature hash mismatch." }
+    Assert-DetachedSigningAttestation $signingPath $signingSignaturePath $ExpectedSignerSubject $ExpectedSignerThumbprint
     $signingResult = Get-Content -Raw -LiteralPath $signingPath | ConvertFrom-Json
-    if ($signingResult.schemaVersion -ne "wpe.runtime-bundle-signing/1.0" -or
+    if ($signingResult.schemaVersion -ne "wpe.runtime-bundle-signing/1.1" -or
+        [string]$signingResult.attestationFormat -ne "cms-detached-sha256" -or
         [string]$signingResult.readinessReportSha256 -ne $embeddedReadinessHash -or
         [string]$signingResult.sourceCommit -ne [string]$metadata.source.commit -or
         [string]$signingResult.productVersion -ne [string]$metadata.productVersion -or
@@ -288,6 +326,10 @@ if ($allSigned) {
     }
     if ([string]$metadata.signing.status -ne "unsigned" -or [bool]$metadata.signing.distributable) { throw "Unsigned runtime bundle metadata is invalid." }
     if (Test-Path -LiteralPath (Join-Path $packageRoot "SIGNING-RESULT.json")) { throw "Unsigned runtime bundle must not contain a signing transition result." }
+    if (Test-Path -LiteralPath (Join-Path $packageRoot "SIGNING-RESULT.p7s")) { throw "Unsigned runtime bundle must not contain a signing transition signature." }
+    if ($null -ne $metadata.signing.transitionSignaturePath -or $null -ne $metadata.signing.transitionSignatureSha256) {
+        throw "Unsigned runtime bundle must not declare a signing transition signature."
+    }
     foreach ($state in $artifactStates) {
         if ($state.Facts.TreeSha256 -ne [string]$state.Readiness.treeSha256 -or
             $state.Facts.FileCount -ne [int]$state.Readiness.fileCount) {
