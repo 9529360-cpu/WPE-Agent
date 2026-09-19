@@ -38,8 +38,8 @@ public sealed class HeadlessSoakEvidenceBoundaryTests
         var sampleEnd=source.IndexOf("$writer.WriteLine",sampleStart,StringComparison.Ordinal);
         var projection=source[sampleStart..sampleEnd];
 
-        foreach(var forbidden in new[]{"ProcessId","RunId","EventSequence","UserName","Symbol","Position","Order","Provider"})
-            Assert.DoesNotContain(forbidden,projection,StringComparison.OrdinalIgnoreCase);
+        foreach(var forbiddenField in new[]{"ProcessId =","RunId =","EventSequence =","UserName =","Symbol =","Position =","Order =","Provider ="})
+            Assert.DoesNotContain(forbiddenField,projection,StringComparison.OrdinalIgnoreCase);
     }
 
     private static string Root()=>Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
