@@ -306,6 +306,7 @@
     "Stage.Research":  "Research：回测、样本外与压力验证",
     "Stage.PositionManagement":  "持仓管理：退出、移动保护与状态恢复",
     "Decision.MarketQuality":  "市场质量需达到 {0}/100（当前 {1}/100）",
+    "Decision.ExtremeRegime":  "极端波动或强平状态不允许新增风险敞口",
     "SignalName.order_book":  "订单簿",
     "SignalName.relative_volume":  "相对成交量",
     "Risk.RiskReward":  "风险收益比 {0:F2} 低于 {1:F2}",
