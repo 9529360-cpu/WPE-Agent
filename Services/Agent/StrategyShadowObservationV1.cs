@@ -17,10 +17,12 @@ internal sealed record StrategyShadowObservationV1(
     int Direction,
     double Confidence,
     string BacktestValidationSha256,
+    byte[] BacktestValidationCanonicalBytes,
     string TimelineSha256,
     string MarketProviderId,
     string Environment,
     string MarketProvenanceSha256,
+    byte[] MarketProvenanceCanonicalBytes,
     byte[] CanonicalBytes,
     string CanonicalSha256);
 
@@ -92,10 +94,12 @@ internal static class StrategyShadowObservationCanonicalizerV1
             signal.Direction,
             signal.Confidence,
             validation.CanonicalSha256,
+            validation.CanonicalBytes,
             timeline.CanonicalSha256,
             market.Provenance.ProviderId,
             market.Provenance.Environment,
             market.Provenance.CanonicalSha256,
+            market.Provenance.CanonicalBytes,
             [],
             string.Empty);
         var bytes=Serialize(draft);
@@ -119,8 +123,10 @@ internal static class StrategyShadowObservationCanonicalizerV1
            ||!double.IsFinite(value.Confidence)
            ||value.Confidence<0||value.Confidence>1
            ||!Sha(value.BacktestValidationSha256)
+           ||value.BacktestValidationCanonicalBytes.Length==0
            ||!Sha(value.TimelineSha256)
            ||!Sha(value.MarketProvenanceSha256)
+           ||value.MarketProvenanceCanonicalBytes.Length==0
            ||!Sha(value.CanonicalSha256)
            ||value.CanonicalBytes.Length==0
            ||string.IsNullOrWhiteSpace(value.StrategyId)
@@ -131,6 +137,13 @@ internal static class StrategyShadowObservationCanonicalizerV1
             return false;
         try
         {
+            if(!CryptographicOperations.FixedTimeEquals(
+                   SHA256.HashData(value.BacktestValidationCanonicalBytes),
+                   Convert.FromHexString(value.BacktestValidationSha256))
+               ||!CryptographicOperations.FixedTimeEquals(
+                   SHA256.HashData(value.MarketProvenanceCanonicalBytes),
+                   Convert.FromHexString(value.MarketProvenanceSha256)))
+                return false;
             var bytes=Serialize(value);
             return CryptographicOperations.FixedTimeEquals(bytes,value.CanonicalBytes)
                 &&CryptographicOperations.FixedTimeEquals(SHA256.HashData(bytes),Convert.FromHexString(value.CanonicalSha256));
