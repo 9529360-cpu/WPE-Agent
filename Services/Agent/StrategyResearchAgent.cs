@@ -68,15 +68,14 @@ public sealed class StrategyResearchAgent
                 newsBySymbol[profile.Symbol]=news;
             }
             var validation = _engine.Validate(profile, candles, news, limits);
-            var timelineArtifact=_engine.TimelineArtifact(profile,candles,news);
-            if(timelineArtifact is not null)
+            if(!string.IsNullOrEmpty(validation.TimelineSha256))
             {
-                if(!string.Equals(validation.TimelineSha256,timelineArtifact.CanonicalSha256,StringComparison.Ordinal))
+                var timelineArtifact=_engine.TimelineArtifact(profile,candles,news);
+                if(timelineArtifact is null
+                   ||!string.Equals(validation.TimelineSha256,timelineArtifact.CanonicalSha256,StringComparison.Ordinal))
                     throw new InvalidOperationException("Strategy validation timeline provenance mismatch.");
                 await _database.SaveStrategyExposureTimelineAsync(timelineArtifact,ct);
             }
-            else if(!string.IsNullOrEmpty(validation.TimelineSha256))
-                throw new InvalidOperationException("Strategy validation references missing timeline evidence.");
             await _database.SaveStrategyValidationAsync(validation, ct);
             var validationCompletedAt = _utcNow().ToUniversalTime();
             var coverageDays = candles.Count < 2 ? 0 : Math.Max(0, (int)Math.Floor((candles[^1].OpenTime.ToUniversalTime() - candles[0].OpenTime.ToUniversalTime()).TotalDays));
@@ -235,7 +234,11 @@ internal sealed class HistoricalResearchEngine
         var timeline=strategy.BuildResearchTimeline(profile,candles,news);
         var timelineArtifact=StrategyExposureTimelineV1.CreateArtifact(timeline);
         var returns=timelineArtifact is null?[]:_reality.Simulate(timelineArtifact.Decisions);
-        if(returns.Count<2)return new(profile.Id,candles.Count,0,0,0,0,1,0,0,0,1,0,false,"canonical research timeline unavailable or invalid",StrategyVersion:profile.Version);
+        if(returns.Count<2)return new(
+            profile.Id,candles.Count,0,0,0,0,1,0,0,0,1,0,false,
+            timelineArtifact is null?"canonical research timeline unavailable or invalid":$"canonical research timeline too short; timeline_sha256={timelineArtifact.CanonicalSha256}",
+            StrategyVersion:profile.Version,
+            TimelineSha256:timelineArtifact?.CanonicalSha256??string.Empty);
         var split = Math.Clamp((int)(returns.Count * .65), 1, returns.Count-1); var train = returns.Take(split).ToArray(); var test = returns.Skip(split).ToArray();
         var all = Metrics(returns); var trainMetrics=Metrics(train);var oos = Metrics(test); var walk = WalkForward(profile, candles, news); var mc = MonteCarlo(returns);var robustness=EvaluateRobustness(returns,trainMetrics.Expectancy,oos.Expectancy);var benchmark=candles[0].Close>0?(double)(candles[^1].Close/candles[0].Close-1):0;
         var score = Math.Clamp(.16 * Math.Min(1, all.ProfitFactor / 1.5) + .16 * Math.Max(0, (oos.TotalReturn + .10) / .30) + .16 * (1 - Math.Min(1, all.MaxDrawdown / .25)) + .16 * walk + .16 * (1 - mc)+.20*robustness.Score, 0, 1);
