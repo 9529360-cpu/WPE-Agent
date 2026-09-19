@@ -37,4 +37,5 @@ public sealed record RuntimeStateRestoreResult(
     string? SafetyBackupDirectory,
     DateTimeOffset CommittedAtUtc,
     int RestoredItemCount,
-    string ItemsSha256);
+    string ItemsSha256,
+    string? SecurityStorageEvidenceSha256);
