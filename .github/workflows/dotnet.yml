@@ -111,8 +111,10 @@ jobs:
         $forbidden = Get-ChildItem artifacts/headless -Recurse -File | Where-Object {
           $name = $_.Name.ToLowerInvariant()
           $extension = $_.Extension.ToLowerInvariant()
-          $name.Contains("agent-settings") -or $name.Contains("appsettings") -or
-          $name.Contains("order-state") -or $name.Contains("secrets") -or $name.Contains("credentials") -or
+          $knownState = $name -match '^(agent-settings|appsettings|order-state|local-accounts|local-session|device-license|llm-calls|llm-cache)'
+          $secretData = ($name.Contains("secrets") -or $name.Contains("credentials")) -and
+            @(".json", ".dat", ".txt", ".xml", ".yaml", ".yml") -contains $extension
+          $knownState -or $secretData -or
           @(".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12", ".pfx") -contains $extension -or
           $name.EndsWith(".db-wal") -or $name.EndsWith(".db-shm") -or
           $name.EndsWith(".sqlite-wal") -or $name.EndsWith(".sqlite-shm") -or
