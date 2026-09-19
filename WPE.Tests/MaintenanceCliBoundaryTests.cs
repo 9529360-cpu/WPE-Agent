@@ -16,6 +16,9 @@ public sealed class MaintenanceCliBoundaryTests
         Assert.Contains("RuntimeStateRestoreService", program, StringComparison.Ordinal);
         Assert.Contains("confirm-backup-id", program, StringComparison.Ordinal);
         Assert.Contains("OperatingSystem.IsWindows()", program, StringComparison.Ordinal);
+        var argumentPreflight = program.IndexOf("ValidateOperationArguments(parsed)", StringComparison.Ordinal);
+        var layoutConstruction = program.IndexOf("new AppDataLayout(dataRoot)", StringComparison.Ordinal);
+        Assert.True(argumentPreflight >= 0 && layoutConstruction > argumentPreflight);
         Assert.Contains("DeleteDirectoryOrFail(staging)", program, StringComparison.Ordinal);
         Assert.DoesNotContain("TryDeleteDirectory", program, StringComparison.Ordinal);
         var cleanup = program.IndexOf("DeleteDirectoryOrFail(staging)", StringComparison.Ordinal);
