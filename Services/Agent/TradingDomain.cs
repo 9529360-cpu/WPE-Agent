@@ -17,7 +17,12 @@ public sealed record TradingRule(string Symbol, decimal StepSize, decimal TickSi
 }
 public sealed record AccountSnapshot(decimal WalletBalance, decimal AvailableBalance, decimal Equity, DateTime Timestamp);
 public sealed record ManagedPosition(string Symbol, PositionSide Side, decimal Quantity, decimal EntryPrice, decimal MarkPrice, decimal UnrealizedPnl, decimal Leverage, bool Isolated, decimal LiquidationPrice);
-public sealed record ExchangeOrder(string Symbol, string OrderId, string ClientOrderId, string Status, decimal ExecutedQuantity, decimal AvgPrice, string Type, PositionSide? PositionSide, bool IsProtection, DateTime UpdatedAt);
+public enum ProtectionCoverageKind { Unknown,PositionWide,FixedQuantity }
+public sealed record ExchangeOrder(string Symbol, string OrderId, string ClientOrderId, string Status, decimal ExecutedQuantity, decimal AvgPrice, string Type, PositionSide? PositionSide, bool IsProtection, DateTime UpdatedAt)
+{
+    public ProtectionCoverageKind ProtectionCoverage { get; init; } = ProtectionCoverageKind.Unknown;
+    public decimal? ProtectionQuantity { get; init; }
+}
 public sealed record DerivativesSnapshot(decimal FundingRate, decimal OpenInterest, decimal LongShortRatio, decimal TopAccountRatio, decimal TopPositionRatio, decimal TakerBuySellRatio, decimal Basis);
 public sealed record CandleEvidence(DateTime OpenTime, decimal Open, decimal High, decimal Low, decimal Close, decimal Volume, decimal QuoteVolume, long Trades, decimal TakerBuyVolume);
 internal static class ConfirmedMarketCandlesV1
