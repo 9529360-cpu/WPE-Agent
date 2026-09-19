@@ -73,6 +73,31 @@ public sealed class StrategyResearchAuthorityTests : IDisposable
     }
 
     [Fact]
+    public async Task LegacyValidationWithoutCurrentTemporalPolicyCannotAuthorize()
+    {
+        var now=DateTimeOffset.UtcNow;
+        var store=new AgentSqliteStore(Database,()=>now);
+        var registry=new DeterministicStrategyRegistry();
+        var version=registry.BindProfileVersion(StrategyFamily.TrendBreakout,"candidate-legacy");
+        var profile=Profile("strategy-legacy",version,StrategyLifecycle.Active);
+        await store.UpsertStrategyAsync(profile,CancellationToken.None);
+        var legacy=Validation(profile,true) with
+        {
+            OosPurgeObservations=0,
+            OosEmbargoObservations=0
+        };
+        await store.SaveStrategyValidationAsync(legacy,CancellationToken.None);
+        await store.SaveBacktestRunAsync(Backtest(profile,now.AddMinutes(-1),"PASSED"),CancellationToken.None);
+
+        var result=await new StrategyResearchAuthority(store,utcNow:()=>now)
+            .ReadAsync(profile.Id,profile.Version,profile.Symbol,CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.False(result!.Approved);
+        Assert.False(result.Promoted);
+    }
+
+    [Fact]
     public void PrivilegedTradingPathsDoNotInstantiateLegacyLongHorizonResearch()
     {
         var root=ProjectRoot();
@@ -99,7 +124,10 @@ public sealed class StrategyResearchAuthorityTests : IDisposable
     private static StrategyValidation Validation(StrategyProfile profile,bool passed)=>new(
         profile.Id,1000,80,.58,1.5,.002,.10,1.2,.08,.70,.20,.80,passed,
         passed?"qualified exact strategy validation":"failed exact strategy validation",
-        -.02,.0005,4,4,profile.Version,30,.12,.05);
+        -.02,.0005,4,4,profile.Version,30,.12,.05,
+        TimelineSha256:string.Empty,
+        OosPurgeObservations:HistoricalResearchEngine.ProductionTemporalPolicy.OosPurgeObservations,
+        OosEmbargoObservations:HistoricalResearchEngine.ProductionTemporalPolicy.OosEmbargoObservations);
 
     private static PersistedBacktestRun Backtest(StrategyProfile profile,DateTimeOffset completed,string status)=>new(
         Guid.NewGuid().ToString("N"),profile.Id,profile.Version,profile.Symbol,status,completed.UtcDateTime,
