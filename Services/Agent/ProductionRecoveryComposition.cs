@@ -53,6 +53,8 @@ internal sealed class TrustedRecoveryMutationExecutor(ITradingMutationExecutor i
         inner.ExecutePlanAsync(correlationId,intents,leverage,isolated,ct);
     public Task<string> ExecuteReduceOnlyRecoveryAsync(string correlationId,ExecutionIntent intent,CancellationToken ct)=>
         inner.ExecuteReduceOnlyRecoveryAsync(correlationId,intent,ct);
+    public Task<string> ReplaceProtectionAsync(string correlationId,ProtectionAdjustment adjustment,CancellationToken ct)=>
+        inner.ReplaceProtectionAsync(correlationId,adjustment,ct);
 }
 
 internal sealed class ProductionRecoveryService(
@@ -76,6 +78,24 @@ internal sealed class ProductionRecoveryService(
         return await gateway.ExecuteReduceOnlyRecoveryAsync(
             new(correlationId,receipt,new(receipt.Symbol,receipt.Side,receipt.Quantity,0,0,0,
                 leverage,isolated,0),intent,leverage,isolated),ct);
+    }
+
+    internal async Task<TradingExecutionGatewayResult> ReplaceProtectionAsync(
+        string correlationId,ProtectionAdjustment adjustment,ManagedPosition observedPosition,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(correlationId)||adjustment is null||observedPosition is null||
+           string.IsNullOrWhiteSpace(adjustment.AdjustmentId)||
+           !string.Equals(adjustment.Symbol,observedPosition.Symbol,StringComparison.Ordinal)||
+           adjustment.Side!=observedPosition.Side||observedPosition.Quantity<=0)
+            return new(false,"recovery.protection-command-invalid","recovery.protection-command-invalid");
+
+        var adjustmentHash=TradingExecutionGateway.ComputeProtectionAdjustmentHash(adjustment);
+        var request=new RecoveryReconciliationRequest(
+            "recovery-protection-"+Guid.NewGuid().ToString("N"),correlationId,providerId,"Testnet",accountId,
+            adjustment.Symbol,adjustmentHash,DateTimeOffset.UtcNow);
+        var receipt=await reconciler.ReconcileAsync(request,ct);
+        return await gateway.ExecuteProtectionRecoveryAsync(
+            new(correlationId,receipt,observedPosition,adjustment),ct);
     }
 }
 
