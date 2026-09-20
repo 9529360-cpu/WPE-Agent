@@ -117,7 +117,6 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
         var audit = JsonSerializer.Serialize(new { provider = Name, decision.Action, decision.Instrument, decision.Confidence, decision.DecisionBasis, decision.Reason });
         return Task.FromResult(new BrainDecisionResult(decision, audit, audit));
     }
-    }
 }
 
 public sealed record AssistantAdapterDescriptor(string Id, string DisplayName, bool Local, string Protocol);
