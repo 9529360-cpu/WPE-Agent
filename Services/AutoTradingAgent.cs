@@ -276,11 +276,12 @@ public static class AutoTradingAgent
                 Stage("Stage.Evidence","OBSERVATION",32);var evidence=await SkillAsync("EvidenceCollector",string.Join(',',settings.Symbols),token=>collector.CollectAsync(token),x=>$"completeness={x.Completeness} markets={x.Markets.Count} missing={x.MissingSources.Count}",ct);await Db.SaveNewsAsync(evidence.News,ct);roles.Publish("strategy","running","Evaluating active signals and shadow candidates against fresh market evidence.");await strategyResearch.ObserveAsync(evidence,ct);var strategyProfiles=await Db.GetStrategiesAsync(ct);var strategySelections=await AdaptiveStrategySelector.SelectAsync(strategyProfiles,evidence,strategyResearch,ct);var strategyPortfolio=AdaptiveStrategyPortfolioAllocator.Allocate(strategySelections,evidence,settings.Risk.MarginTiers.Length);await Db.SetStateAsync("strategy-portfolio:last-plan",System.Text.Json.JsonSerializer.Serialize(strategyPortfolio),ct);var localSignals=strategySelections.ToDictionary(x=>x.Key,x=>x.Value.Signal,StringComparer.OrdinalIgnoreCase);var strategySnapshot=await Db.GetStrategySnapshotAsync(ct);ServiceLocator.SystemState.StrategyStatus=strategySnapshot.Status;ServiceLocator.SystemState.StrategySummary=strategySnapshot.ActiveStrategy;ServiceLocator.SystemState.StrategyCandidates=strategySnapshot.Candidates;roles.Publish("strategy","monitoring",$"Active and shadow strategies were evaluated; {strategySnapshot.Candidates} candidates remain under lifecycle monitoring.");await Db.StartCycleAsync(cycle,evidence,brain.Name,ct);await runtime.BeginCycleAsync(cycle,new{evidence.Completeness,Markets=evidence.Markets.Keys,brain=brain.Name,strategies=strategySnapshot.ActiveStrategy},ct);workflowStarted=true;
                 Stage("Stage.Research","OBSERVATION",36);await runtime.TransitionAsync(cycle,WorkflowNode.Research,new{evidence.Completeness,MarketCount=evidence.Markets.Count},ct);var research=new Dictionary<string,ResearchValidationResult>(StringComparer.OrdinalIgnoreCase);var histories=new Dictionary<string,IReadOnlyList<CandleEvidence>>(StringComparer.OrdinalIgnoreCase);foreach(var market in evidence.Markets.Values){var series=await Db.LoadHistoricalCandlesAsync(market.Symbol,"1h",30000,ct);histories[market.Symbol]=series;var validation=await SkillAsync("StrategyResearch",$"{market.Symbol} candles={series.Count}",_=>Task.FromResult(longResearch.Evaluate(market.Symbol,series,settings.Risk)),x=>$"promoted={x.Promoted} score={x.QualityScore:F2} trades={x.Trades} coverage={x.CoverageDays}d",ct);research[market.Symbol]=validation;await Db.SaveResearchAsync(validation,ct);}
                 var hypotheses=await SkillAsync("TradeHypothesis",$"markets={evidence.Markets.Count}",token=>hypothesisEngine.EvaluateAsync(evidence,token),x=>$"hypotheses={x.Count} actionable={x.Values.Count(h=>h.Actionable)}",ct);
-                Stage("Stage.PositionManagement","RISK",39);await runtime.TransitionAsync(cycle,WorkflowNode.PositionManagement,new{Positions=positions.Count,Research=research.Count},ct);var management=await SkillAsync("PositionManagement",$"positions={positions.Count}",token=>positionManager.EvaluateAsync(positions,evidence.Markets,Db,token,executionLedger,hypotheses),x=>$"intents={x.Intents.Count} adjustments={x.ProtectionAdjustments.Count}",ct);var managementActivity=false;
+                var positionTradingRules=await ReadPositionManagementRulesAsync(exchange,positions,ct);
+                Stage("Stage.PositionManagement","RISK",39);await runtime.TransitionAsync(cycle,WorkflowNode.PositionManagement,new{Positions=positions.Count,Research=research.Count},ct);var management=await SkillAsync("PositionManagement",$"positions={positions.Count}",token=>positionManager.EvaluateAsync(positions,evidence.Markets,Db,token,executionLedger,hypotheses,positionTradingRules),x=>$"intents={x.Intents.Count} adjustments={x.ProtectionAdjustments.Count}",ct);var managementActivity=false;
                 if(management.Intents.Count>0||management.ProtectionAdjustments.Count>0)
                 {
                     await runtime.TransitionAsync(cycle,WorkflowNode.SafetyExecution,new{RiskReducingIntents=management.Intents.Count,ProtectionAdjustments=management.ProtectionAdjustments.Count},ct);
-                    var reductionCount=await ExecutePositionManagementRecoveryAsync(recoveryServices.Recovery,cycle,management.Intents,positions,ct);
+                    var reductionCount=await ExecutePositionManagementRecoveryAsync(recoveryServices.Recovery,cycle,management.Intents,positions,positionTradingRules,ct);
                     var protectionCount=await ExecutePositionProtectionRecoveryAsync(recoveryServices.Recovery,cycle,management.ProtectionAdjustments,positions,ct);
                     managementActivity=reductionCount>0||protectionCount>0;
                     (safeToIncreaseRisk,safetyMessage)=ApplyPositionMutationInvalidation(safeToIncreaseRisk,safetyMessage,reductionCount>0);
@@ -436,9 +437,9 @@ public static class AutoTradingAgent
 
     internal static async Task<int> ExecutePositionManagementRecoveryAsync(
         ProductionRecoveryService recovery,string correlationId,IReadOnlyList<ExecutionIntent> intents,
-        IReadOnlyList<ManagedPosition> positions,CancellationToken ct)
+        IReadOnlyList<ManagedPosition> positions,IReadOnlyDictionary<string,TradingRule> tradingRules,CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(recovery);ArgumentNullException.ThrowIfNull(intents);ArgumentNullException.ThrowIfNull(positions);
+        ArgumentNullException.ThrowIfNull(recovery);ArgumentNullException.ThrowIfNull(intents);ArgumentNullException.ThrowIfNull(positions);ArgumentNullException.ThrowIfNull(tradingRules);
         await ExecutionGate.WaitAsync(ct);try
         {
             var completed=0;
@@ -447,6 +448,13 @@ public static class AutoTradingAgent
                 var matches=positions.Where(x=>string.Equals(x.Symbol,intent.Symbol,StringComparison.Ordinal)&&x.Side==intent.Side).ToArray();
                 if(matches.Length!=1)throw new InvalidOperationException("recovery.position-context-invalid");
                 var position=matches[0];
+                if(intent.Action is DecisionAction.ReduceLong or DecisionAction.ReduceShort)
+                {
+                    if(!tradingRules.TryGetValue(intent.Symbol,out var rule))throw new InvalidOperationException("recovery.reduce-rule-missing");
+                    if(rule.StepSize<=0||rule.MinQuantity<=0||intent.Quantity<rule.MinQuantity||
+                       intent.Quantity<=0||intent.Quantity>=position.Quantity||rule.RoundQuantity(intent.Quantity)!=intent.Quantity)
+                        throw new InvalidOperationException("recovery.reduce-quantity-invalid");
+                }
                 var result=await recovery.ExecuteAsync(correlationId,intent,Math.Max(1,(int)position.Leverage),position.Isolated,ct);
                 if(!result.Executed)throw new InvalidOperationException(result.Code);
                 completed++;
@@ -552,6 +560,23 @@ public static class AutoTradingAgent
         if(document.Utf8Bytes is not {Length:>0}||string.IsNullOrWhiteSpace(document.Sha256))return false;
         var hash=Convert.ToHexString(SHA256.HashData(document.Utf8Bytes)).ToLowerInvariant();
         return string.Equals(hash,document.Sha256,StringComparison.Ordinal);
+    }
+
+    private static async Task<IReadOnlyDictionary<string,TradingRule>> ReadPositionManagementRulesAsync(
+        IExchangeAdapter exchange,IReadOnlyList<ManagedPosition> positions,CancellationToken ct)
+    {
+        var rules=new Dictionary<string,TradingRule>(StringComparer.OrdinalIgnoreCase);
+        foreach(var symbol in positions.Where(x=>x.Quantity>0).Select(x=>x.Symbol).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var rule=await exchange.GetRulesAsync(symbol,ct);
+                if(rule.StepSize>0&&rule.MinQuantity>0)rules[symbol]=rule;
+            }
+            catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+            catch{ServiceLocator.RuntimeTrading.PublishError($"Provider trading rules unavailable for {symbol}; partial position reduction is disabled.");}
+        }
+        return rules;
     }
 
     private static async Task<IReadOnlyList<ManagedPosition>> ReadPositionsAsync(IExchangeAdapter exchange,CancellationToken ct)
