@@ -57,6 +57,42 @@ public sealed class PositionReconciliationTests : IDisposable
     }
 
     [Fact]
+    public async Task MissingManagedLegRevokesOpeningAndBlocksLaterSameQuantityOwnership()
+    {
+        var store=new AgentSqliteStore(Database);
+        var opening=Intent("open-ownership-a",false,1m);
+        await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
+        var local=new[]{new ExecutionPositionLegV1("BTCUSDT",PositionSide.Long,1m)};
+
+        var revoked=await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[],Now,Now,default);
+
+        Assert.Equal(1,revoked);
+        Assert.NotNull(await store.GetStateAsync(
+            PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId),default));
+        Assert.True(await 币安量化机器人.Services.AutoTradingAgent.HasRevokedManagedPositionOwnershipAsync(
+            store,[Position("BTCUSDT",PositionSide.Long,1m)],default));
+        Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[],Now,Now,default));
+    }
+
+    [Fact]
+    public async Task StaleMissingPositionObservationCannotRevokeOwnership()
+    {
+        var store=new AgentSqliteStore(Database);
+        var opening=Intent("open-ownership-stale",false,1m);
+        await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
+
+        var revoked=await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,[new("BTCUSDT",PositionSide.Long,1m)],[],
+            Now-PositionReconciliationServiceV1.MaximumAge-TimeSpan.FromMilliseconds(1),Now,default);
+
+        Assert.Equal(0,revoked);
+        Assert.Null(await store.GetStateAsync(
+            PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId),default));
+    }
+
+    [Fact]
     public void ProductionRiskIncreaseGateConsumesPositionReconciliation()
     {
         var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("PositionReconciliationServiceV1.Reconcile",source,StringComparison.Ordinal);Assert.Contains("&&positionReconciliation.AllowsRiskIncrease",source,StringComparison.Ordinal);Assert.Contains("ExecutePositionManagementRecoveryAsync",source,StringComparison.Ordinal);Assert.Contains("ApplyPositionMutationInvalidation",source,StringComparison.Ordinal);Assert.Contains("position.reconciliation-invalidated-by-recovery",source,StringComparison.Ordinal);
