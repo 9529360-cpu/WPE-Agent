@@ -215,8 +215,8 @@ public static class MarketStructureIntelligence
         var brokeDownRecently = recent.Any(x => x.Close < referenceLow - buffer);
         var retestUp = brokeUpRecently && last.Low <= referenceHigh + buffer && last.Close >= referenceHigh && last.Close > last.Open;
         var retestDown = brokeDownRecently && last.High >= referenceLow - buffer && last.Close <= referenceLow && last.Close < last.Open;
-        var sweepLow = last.Low < referenceLow - buffer && last.Close > referenceLow;
-        var sweepHigh = last.High > referenceHigh + buffer && last.Close < referenceHigh;
+        var sweepLow = last.Low < referenceLow - buffer && last.Close > referenceLow + buffer;
+        var sweepHigh = last.High > referenceHigh + buffer && last.Close < referenceHigh - buffer;
 
         var body = Math.Abs(last.Close - last.Open);
         var range = Math.Max(.00000001m, last.High - last.Low);
