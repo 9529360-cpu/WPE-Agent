@@ -117,6 +117,8 @@ public sealed class MarketStructureIntelligenceTests
         var result=await new DeterministicBrainProvider().DecideAsync(Evidence(current),context,CancellationToken.None);
 
         Assert.Equal(DecisionAction.OpenLong,result.Decision.Action);
+        Assert.Equal(current.Price,result.Decision.EntryPrice);
+        Assert.Equal(scout.InvalidationPrice,result.Decision.StopLossPrice);
         Assert.Equal(MarketStructureRead.DecisionBasis,scout.DecisionBasis);
         Assert.DoesNotContain("legacy_score",result.Decision.ConflictSummary,StringComparison.OrdinalIgnoreCase);
         Assert.Contains("basis=candles-structure-v2",result.Decision.ConflictSummary,StringComparison.Ordinal);
