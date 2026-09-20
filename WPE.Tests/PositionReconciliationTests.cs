@@ -312,7 +312,7 @@ public sealed class PositionReconciliationTests : IDisposable
     [Fact]
     public void ProductionRiskIncreaseGateConsumesPositionReconciliation()
     {
-        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("PositionReconciliationServiceV1.Reconcile",source,StringComparison.Ordinal);Assert.Contains("&&positionReconciliation.AllowsRiskIncrease",source,StringComparison.Ordinal);Assert.Contains("QuarantineConflictingManagedPositionOwnershipAsync",source,StringComparison.Ordinal);Assert.Contains("ExecutePositionManagementRecoveryAsync",source,StringComparison.Ordinal);Assert.Contains("ApplyPositionMutationInvalidation",source,StringComparison.Ordinal);Assert.Contains("position.reconciliation-invalidated-by-recovery",source,StringComparison.Ordinal);
+        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("PositionReconciliationServiceV1.Reconcile",source,StringComparison.Ordinal);Assert.Contains("&&positionReconciliation.AllowsRiskIncrease",source,StringComparison.Ordinal);Assert.Contains("positionSnapshotAt=DateTimeOffset.UtcNow",source,StringComparison.Ordinal);Assert.Contains("ownershipObservationFresh",source,StringComparison.Ordinal);Assert.Contains("GetExecutionPositionLedgerAsync(positionSnapshotAt",source,StringComparison.Ordinal);Assert.Contains("QuarantineConflictingManagedPositionOwnershipAsync",source,StringComparison.Ordinal);Assert.Contains("ExecutePositionManagementRecoveryAsync",source,StringComparison.Ordinal);Assert.Contains("ApplyPositionMutationInvalidation",source,StringComparison.Ordinal);Assert.Contains("position.reconciliation-invalidated-by-recovery",source,StringComparison.Ordinal);
     }
 
     [Fact]
