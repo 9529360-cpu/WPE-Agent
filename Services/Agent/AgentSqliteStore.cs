@@ -810,6 +810,20 @@ public sealed partial class AgentSqliteStore
         q.CommandText="SELECT exchange_updated_at,occurred_at FROM execution_events WHERE client_order_id=$id LIMIT 1";q.Parameters.AddWithValue("$id",clientOrderId);
         await using var r=await q.ExecuteReaderAsync(ct);return await r.ReadAsync(ct)?ExecutionEventTime(r,0,1):null;
     }
+    public async Task<DateTimeOffset?> GetLatestExecutionEventObservedAtAsync(string symbol,PositionSide side,DateTimeOffset asOfUtc,CancellationToken ct)
+    {
+        asOfUtc=asOfUtc.ToUniversalTime();
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="SELECT exchange_updated_at,occurred_at FROM execution_events WHERE symbol=$symbol COLLATE NOCASE AND side=$side AND status IN ('FILLED','PARTIALLY_FILLED') ORDER BY COALESCE(exchange_updated_at,occurred_at) DESC,id DESC LIMIT 100";
+        q.Parameters.AddWithValue("$symbol",symbol);q.Parameters.AddWithValue("$side",side.ToString());
+        await using var r=await q.ExecuteReaderAsync(ct);
+        while(await r.ReadAsync(ct))
+        {
+            var eventAt=ExecutionEventTime(r,0,1);
+            if(eventAt is not null&&eventAt.Value<=asOfUtc)return eventAt;
+        }
+        return null;
+    }
     public async Task<IReadOnlyList<PersistedIntent>> GetLegacyIntentIsolationCandidatesAsync(CancellationToken ct)
     {
         var list=new List<PersistedIntent>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT cycle_id,status,exchange_order_id,details FROM order_intents WHERE status='INTENT' ORDER BY updated_at,client_order_id";await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){try{var intent=JsonSerializer.Deserialize<ExecutionIntent>(r.GetString(3));if(intent is not null)list.Add(new(r.IsDBNull(0)?"LEGACY":r.GetString(0),intent,"INTENT",r.IsDBNull(2)?null:r.GetValue(2).ToString()));}catch(JsonException){}}return list;
