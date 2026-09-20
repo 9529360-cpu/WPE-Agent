@@ -351,7 +351,17 @@ public sealed class DecisionPolicy
     public int MinimumMarketQuality { get; set; } = 65;
     public double MinimumResearchScore { get; set; } = .45;
 }
-public sealed record ExecutionIntent(string Symbol, PositionSide Side, decimal Quantity, bool ReduceOnly, decimal StopLoss, decimal TakeProfit, string ClientOrderId, string Reason, DecisionAction Action = DecisionAction.Hold, ExecutionOrderType OrderType = ExecutionOrderType.Market, decimal LimitPrice = 0, decimal ExpectedPrice = 0);
+public static class PositionExitReasonCodes
+{
+    public const string StructureInvalidated = "position.structure-invalidated";
+    public const string LiquidationBuffer = "position.liquidation-buffer";
+    public const string PartialTake2R = "position.partial-take-2r";
+    public const string ProtectionStopLoss = "protection.fill-reconciled.stop-loss";
+    public const string ProtectionTakeProfit = "protection.fill-reconciled.take-profit";
+    public const string ProtectionFillReconciled = "protection.fill-reconciled";
+}
+
+public sealed record ExecutionIntent(string Symbol, PositionSide Side, decimal Quantity, bool ReduceOnly, decimal StopLoss, decimal TakeProfit, string ClientOrderId, string Reason, DecisionAction Action = DecisionAction.Hold, ExecutionOrderType OrderType = ExecutionOrderType.Market, decimal LimitPrice = 0, decimal ExpectedPrice = 0, string ReasonCode = "");
 public sealed record PersistedIntent(string CycleId, ExecutionIntent Intent, string Status, string? ExchangeOrderId);
 public sealed record PersistedBacktestRun(string Id,string StrategyId,string StrategyVersion,string Symbol,string Status,DateTime CompletedAtUtc,int CoverageDays,int Trades,double OutOfSampleReturn,double MaxDrawdown,double Sharpe);
 public sealed record RecoveryResult(bool SafeToIncreaseRisk, IReadOnlyList<string> Messages);
