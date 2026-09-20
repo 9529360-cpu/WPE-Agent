@@ -206,21 +206,24 @@ public sealed class MarketStructureIntelligenceTests
 
     private static IReadOnlyList<CandleEvidence> SweepLowReclaim15m()
     {
-        var values=Trend(39,112m,-.25m,TimeSpan.FromMinutes(15)).ToList();
-        var previous=values[^1];
-        var referenceLow=values.TakeLast(20).Min(x=>x.Low);
+        // Keep the reclaim candle fully closed at Now. The structure reader deliberately
+        // ignores the currently-open 15m candle, so the event must occupy the final
+        // confirmed slot (Now - 15m), not a candle opening exactly at Now.
+        var values=Trend(40,112m,-.25m,TimeSpan.FromMinutes(15)).ToList();
+        var previous=values[^2];
+        var referenceLow=values.TakeLast(21).SkipLast(1).Min(x=>x.Low);
         var open=previous.Close+.05m;
-        var close=previous.Close+.55m;
-        values.Add(new(
-            previous.OpenTime.AddMinutes(15),
+        var close=referenceLow+.75m;
+        values[^1]=new(
+            values[^1].OpenTime,
             open,
-            close+.35m,
+            Math.Max(open,close)+.35m,
             referenceLow-1.4m,
             close,
             300m,
             30_000m,
             450,
-            210m));
+            210m);
         return values;
     }
 
