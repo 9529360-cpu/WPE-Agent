@@ -221,7 +221,7 @@ public sealed class PositionReconciliationTests : IDisposable
         clock=Now.AddMinutes(5);
         await store.RecordExecutionAsync("replay",opening,exchangeOrder,"v1",default);
 
-        Assert.Equal(Now,await store.GetExecutionEventObservedAtAsync(opening.ClientOrderId,default));
+        Assert.Equal(Now,(await store.GetExecutionEventObservedAtAsync(opening.ClientOrderId,default))!.Value);
         Assert.Empty(await store.GetExecutionPositionLedgerAsync(default));
     }
 
