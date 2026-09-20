@@ -11,6 +11,8 @@ public sealed class RemoteBrainUsagePolicyTests
         Assert.Contains("if(positions.Count>0)return true;", source, StringComparison.Ordinal);
         Assert.Contains("if(consecutiveHolds>=3)return true;", source, StringComparison.Ordinal);
         Assert.Contains("return assessments.Any(x=>x.EntryReady);", source, StringComparison.Ordinal);
+        Assert.Contains("!HasLocalStructureHypothesis(hypotheses)", source, StringComparison.Ordinal);
+        Assert.Contains("x.IsLive&&string.Equals(x.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal)", source, StringComparison.Ordinal);
         Assert.Contains("var plannerBrain=useRemotePlanner?brain:localBrain;", source, StringComparison.Ordinal);
         Assert.Contains("remote={useRemotePlanner}", source, StringComparison.Ordinal);
     }
