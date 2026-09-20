@@ -250,6 +250,42 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     }
 
     [Fact]
+    public void LegacyIntentHashRemainsStableWhenReasonCodeIsAbsent()
+    {
+        var intent=Intent();
+        var legacyPayload=System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            Leverage=5,
+            Isolated=true,
+            Intents=new[]
+            {
+                new
+                {
+                    intent.Symbol,
+                    intent.Side,
+                    intent.Quantity,
+                    intent.ReduceOnly,
+                    intent.StopLoss,
+                    intent.TakeProfit,
+                    intent.ClientOrderId,
+                    intent.Reason,
+                    intent.Action,
+                    intent.OrderType,
+                    intent.LimitPrice,
+                    intent.ExpectedPrice
+                }
+            }
+        });
+        var legacyHash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(legacyPayload)).ToLowerInvariant();
+
+        Assert.Null(intent.ReasonCode);
+        Assert.Equal(legacyHash,TradingExecutionGateway.ComputeIntentHash([intent],5,true));
+
+        var coded=intent with{ReasonCode=PositionExitReasonCodes.StructureInvalidated};
+        Assert.NotEqual(legacyHash,TradingExecutionGateway.ComputeIntentHash([coded],5,true));
+    }
+
+    [Fact]
     public async Task EmergencyReduction_ConfirmedTestnetClosePersistsConsumesAndExecutes()
     {
         var setup=Setup(TradingAuthorizationMode.Review);
