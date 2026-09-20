@@ -196,7 +196,7 @@ function runtimeValueLabel(value: unknown): string {
 
 function strategyFamilyLabel(value: unknown): string {
   const labels: Record<string, string> = {
-    TrendBreakout: '趋势突破', MeanReversion: '均值回归', NewsMomentum: '新闻动量',
+    TrendBreakout: '趋势突破', MeanReversion: '均值回归', NewsMomentum: '新闻动量', NumericalStructure: '结构数值策略',
   }
   return labels[String(value)] ?? text(value)
 }

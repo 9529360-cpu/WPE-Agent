@@ -33,7 +33,7 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
         await agent.RunOnceAsync(["BTCUSDT"],limits,CancellationToken.None);
         var exhausted=await store.GetStrategiesAsync(CancellationToken.None);
 
-        Assert.Equal(Enum.GetValues<StrategyFamily>().Length*StrategyResearchAgent.MaximumVariantsPerFamily,exhausted.Count);
+        Assert.Equal(StrategyResearchAgent.ExplorableFamilies.Length*StrategyResearchAgent.MaximumVariantsPerFamily,exhausted.Count);
         Assert.All(exhausted,x=>Assert.Equal(StrategyLifecycle.Retired,x.Lifecycle));
         var events=await store.GetRecentStrategyLifecycleEventsAsync(100,CancellationToken.None);
         Assert.Equal(exhausted.Count,events.Count);
@@ -53,6 +53,16 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
         var transition=Assert.Single(await store.GetRecentStrategyLifecycleEventsAsync(100,CancellationToken.None),x=>x.StrategyId==degraded.Id);
         Assert.Equal("Degraded",transition.FromState);
         Assert.Equal("Retired",transition.ToState);
+    }
+
+    [Fact]
+    public void NumericalStructureIsNotGeneratedByLegacyParameterExploration()
+    {
+        Assert.DoesNotContain(StrategyFamily.NumericalStructure,StrategyResearchAgent.ExplorableFamilies);
+        var parameters=LocalStrategyParameters.For(StrategyFamily.NumericalStructure,0);
+        Assert.True(LocalStrategyParameters.IsValid(StrategyFamily.NumericalStructure,parameters));
+        Assert.Throws<InvalidOperationException>(()=>LocalStrategyParameters.Derive(StrategyFamily.NumericalStructure,parameters,1));
+        Assert.Throws<InvalidOperationException>(()=>StrategyResearchAgent.Explore(StrategyFamily.NumericalStructure,1));
     }
 
     [Fact]
@@ -114,7 +124,7 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
     public async Task ExhaustedBaseLadderCreatesOneBudgetedExplorationCandidatePerFamily()
     {
         var now=DateTime.UtcNow;var old=now-StrategyResearchAgent.ExplorationCooldown-TimeSpan.FromMinutes(1);var store=new AgentSqliteStore(DatabasePath);
-        foreach(var family in Enum.GetValues<StrategyFamily>())
+        foreach(var family in StrategyResearchAgent.ExplorableFamilies)
         for(var variant=0;variant<StrategyResearchAgent.MaximumVariantsPerFamily;variant++)
         {
             var parameters=family==StrategyFamily.MeanReversion
@@ -133,9 +143,9 @@ public sealed class StrategyFactoryLifecycleTests : IDisposable
         await new StrategyResearchAgent(store,utcNow:()=>now).RunOnceAsync(["BTCUSDT"],new RiskLimits(),CancellationToken.None);
         var rows=await store.GetStrategiesAsync(CancellationToken.None);var explored=rows.Where(x=>x.Id.Contains("-explore-",StringComparison.Ordinal)).ToArray();
 
-        Assert.Equal(Enum.GetValues<StrategyFamily>().Length,explored.Length);
-        Assert.All(Enum.GetValues<StrategyFamily>(),family=>Assert.Single(explored,x=>x.Family==family));
-        Assert.All(Enum.GetValues<StrategyFamily>(),family=>
+        Assert.Equal(StrategyResearchAgent.ExplorableFamilies.Length,explored.Length);
+        Assert.All(StrategyResearchAgent.ExplorableFamilies,family=>Assert.Single(explored,x=>x.Family==family));
+        Assert.All(StrategyResearchAgent.ExplorableFamilies,family=>
         {
             var familyRows=rows.Where(x=>x.Family==family).ToArray();
             Assert.Equal(familyRows.Length,familyRows.Select(x=>x.ParametersHash).Distinct(StringComparer.Ordinal).Count());
