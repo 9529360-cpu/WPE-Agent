@@ -782,12 +782,12 @@ public sealed partial class AgentSqliteStore
     {
         asOfUtc=asOfUtc.ToUniversalTime();
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
-        q.CommandText="SELECT oi.details,ee.occurred_at FROM order_intents oi JOIN execution_events ee ON ee.client_order_id=oi.client_order_id WHERE oi.symbol=$s AND oi.side=$side AND oi.status IN ('PROTECTED','PROTECTED_PARTIAL','PARTIALLY_FILLED_PROTECTED') AND ee.reduce_only=0 AND ee.status IN ('FILLED','PARTIALLY_FILLED') ORDER BY ee.id DESC LIMIT 50";
+        q.CommandText="SELECT oi.details,ee.exchange_updated_at,ee.occurred_at FROM order_intents oi JOIN execution_events ee ON ee.client_order_id=oi.client_order_id WHERE oi.symbol=$s AND oi.side=$side AND oi.status IN ('PROTECTED','PROTECTED_PARTIAL','PARTIALLY_FILLED_PROTECTED') AND ee.reduce_only=0 AND ee.status IN ('FILLED','PARTIALLY_FILLED') ORDER BY ee.id DESC LIMIT 50";
         q.Parameters.AddWithValue("$s",symbol);q.Parameters.AddWithValue("$side",side.ToString());
         await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))
         {
-            if(r.IsDBNull(1)||!DateTimeOffset.TryParse(r.GetString(1),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var occurredAtUtc))continue;
-            if(occurredAtUtc.ToUniversalTime()>asOfUtc)continue;
+            var eventAt=ExecutionEventTime(r,1,2);
+            if(eventAt is null||eventAt.Value>asOfUtc)continue;
             var intent=JsonSerializer.Deserialize<ExecutionIntent>(r.GetString(0));
             if(intent is{ReduceOnly:false,StopLoss:>0,TakeProfit:>0})return intent;
         }
@@ -801,14 +801,12 @@ public sealed partial class AgentSqliteStore
     {
         if(string.IsNullOrWhiteSpace(clientOrderId))return false;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT 1 FROM execution_events WHERE client_order_id=$id LIMIT 1";q.Parameters.AddWithValue("$id",clientOrderId);return await q.ExecuteScalarAsync(ct) is not null;
     }
-    public async Task<DateTimeOffset?> GetExecutionEventOccurredAtAsync(string clientOrderId,CancellationToken ct)
+    public async Task<DateTimeOffset?> GetExecutionEventObservedAtAsync(string clientOrderId,CancellationToken ct)
     {
         if(string.IsNullOrWhiteSpace(clientOrderId))return null;
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
-        q.CommandText="SELECT occurred_at FROM execution_events WHERE client_order_id=$id LIMIT 1";q.Parameters.AddWithValue("$id",clientOrderId);
-        var value=await q.ExecuteScalarAsync(ct);
-        if(value is null||value is DBNull||!DateTimeOffset.TryParse(Convert.ToString(value,CultureInfo.InvariantCulture),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var occurredAtUtc))return null;
-        return occurredAtUtc.ToUniversalTime();
+        q.CommandText="SELECT exchange_updated_at,occurred_at FROM execution_events WHERE client_order_id=$id LIMIT 1";q.Parameters.AddWithValue("$id",clientOrderId);
+        await using var r=await q.ExecuteReaderAsync(ct);return await r.ReadAsync(ct)?ExecutionEventTime(r,0,1):null;
     }
     public async Task<IReadOnlyList<PersistedIntent>> GetLegacyIntentIsolationCandidatesAsync(CancellationToken ct)
     {
@@ -1048,6 +1046,17 @@ public sealed partial class AgentSqliteStore
         if(!inserted){await EnsureIdenticalTradeOutcomeAsync(c,intent.ClientOrderId,cycle,intent.Symbol,intent.Side.ToString(),entry.Value,price,quantity,fees,slippage,intent.ExpectedPrice,funding,net,ret,excursion,exitReason,attribution.StrategyVersion,ct);return;}
         var outcome=net>0?"win":net<0?"loss":"flat";await SaveMemoryAsync(new("long-term",closedAt.UtcDateTime,intent.Symbol,null,attribution.StrategyId??attribution.StrategyVersion,outcome,"post-trade",$"schema=wpe.post-trade-review/1.5; symbol={intent.Symbol}; side={intent.Side}; outcome={outcome}; strategyId={attribution.StrategyId??"unknown"}; strategyVersion={attribution.StrategyVersion}; attributionBasis={attribution.Basis}; netPnl={net.ToString(CultureInfo.InvariantCulture)}; returnPct={ret.ToString(CultureInfo.InvariantCulture)}; mae={excursion.MaeReturnPct.ToString(CultureInfo.InvariantCulture)}; mfe={excursion.MfeReturnPct.ToString(CultureInfo.InvariantCulture)}; excursionBasis={excursion.Basis}; excursionSamples={excursion.SampleCount}; exitReason={exitReason}; fees={fees.ToString(CultureInfo.InvariantCulture)}; feeBasis={feeBasis}; funding={funding.Amount.ToString(CultureInfo.InvariantCulture)}; fundingBasis={funding.Basis}; slippageBasis={slippage.Basis}; totalSlippage={slippage.Total.ToString(CultureInfo.InvariantCulture)}"),ct);await PruneClosedPositionMarkObservationsAsync(c,intent.Symbol,intent.Side,closedAt,ct);
     }
+    private static DateTimeOffset? ExecutionEventTime(SqliteDataReader reader,int exchangeUpdatedIndex,int occurredIndex)
+    {
+        foreach(var index in new[]{exchangeUpdatedIndex,occurredIndex})
+        {
+            if(reader.IsDBNull(index))continue;
+            if(DateTimeOffset.TryParse(reader.GetString(index),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var value))
+                return value.ToUniversalTime();
+        }
+        return null;
+    }
+
     private const string ExecutionPositionRetiredThroughPrefix="execution-position-retired-through:";
     private static string ExecutionPositionRetiredThroughKey(string symbol,PositionSide side)=>
         ExecutionPositionRetiredThroughPrefix+symbol.Trim().ToUpperInvariant()+":"+side.ToString().ToLowerInvariant();
@@ -1076,16 +1085,14 @@ public sealed partial class AgentSqliteStore
             }
         }
         await using var q=c.CreateCommand();
-        q.CommandText="SELECT symbol,side,reduce_only,quantity,occurred_at FROM execution_events WHERE status IN ('FILLED','PARTIALLY_FILLED') ORDER BY symbol,side,id";
+        q.CommandText="SELECT symbol,side,reduce_only,quantity,exchange_updated_at,occurred_at FROM execution_events WHERE status IN ('FILLED','PARTIALLY_FILLED') ORDER BY symbol,side,id";
         await using var r=await q.ExecuteReaderAsync(ct);
         while(await r.ReadAsync(ct))
         {
-            DateTimeOffset? occurredAt=null;
-            if(!r.IsDBNull(4)&&DateTimeOffset.TryParse(r.GetString(4),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var parsedOccurredAt))
-                occurredAt=parsedOccurredAt.ToUniversalTime();
-            if(asOfUtc is not null&&occurredAt is not null&&occurredAt.Value>asOfUtc.Value)continue;
+            var eventAt=ExecutionEventTime(r,4,5);
+            if(asOfUtc is not null&&eventAt is not null&&eventAt.Value>asOfUtc.Value)continue;
             var symbol=r.GetString(0);var side=Enum.Parse<PositionSide>(r.GetString(1),true);
-            if(occurredAt is not null&&retiredThrough.TryGetValue(ExecutionPositionRetiredThroughKey(symbol,side),out var cutoff)&&occurredAt.Value<=cutoff)continue;
+            if(eventAt is not null&&retiredThrough.TryGetValue(ExecutionPositionRetiredThroughKey(symbol,side),out var cutoff)&&eventAt.Value<=cutoff)continue;
             if(!decimal.TryParse(r.GetString(3),NumberStyles.Number,CultureInfo.InvariantCulture,out var quantity)||quantity<0)
                 throw new InvalidOperationException("Execution position ledger quantity is invalid.");
             var key=(symbol,side);totals[key]=totals.GetValueOrDefault(key)+(r.GetInt32(2)==1?-quantity:quantity);
@@ -1114,13 +1121,13 @@ public sealed partial class AgentSqliteStore
         var eligible=false;
         await using(var evidence=c.CreateCommand())
         {
-            evidence.Transaction=tx;evidence.CommandText="SELECT occurred_at FROM execution_events WHERE symbol=$symbol COLLATE NOCASE AND side=$side AND status IN ('FILLED','PARTIALLY_FILLED') ORDER BY id";
+            evidence.Transaction=tx;evidence.CommandText="SELECT exchange_updated_at,occurred_at FROM execution_events WHERE symbol=$symbol COLLATE NOCASE AND side=$side AND status IN ('FILLED','PARTIALLY_FILLED') ORDER BY id";
             evidence.Parameters.AddWithValue("$symbol",symbol);evidence.Parameters.AddWithValue("$side",side.ToString());
             await using var er=await evidence.ExecuteReaderAsync(ct);
             while(await er.ReadAsync(ct))
             {
-                if(er.IsDBNull(0)||!DateTimeOffset.TryParse(er.GetString(0),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var occurredAt))continue;
-                if(occurredAt.ToUniversalTime()<=observedAtUtc){eligible=true;break;}
+                var eventAt=ExecutionEventTime(er,0,1);
+                if(eventAt is not null&&eventAt.Value<=observedAtUtc){eligible=true;break;}
             }
         }
         if(!eligible){await tx.RollbackAsync(ct);return false;}
