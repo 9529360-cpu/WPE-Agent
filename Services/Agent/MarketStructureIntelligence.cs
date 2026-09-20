@@ -308,9 +308,11 @@ public static class MarketStructureIntelligence
     {
         if (bias == MarketStructureBias.Range)
         {
-            if (nearDemand && phase == MarketStructurePhase.BullishReversalAttempt)
+            if (phase == MarketStructurePhase.BullishReversalAttempt &&
+                (nearDemand || m15.Event == MarketStructureEvent.LiquiditySweepLowReclaim))
                 return MarketStructureScenario.RangeReversionLong;
-            if (nearSupply && phase == MarketStructurePhase.BearishReversalAttempt)
+            if (phase == MarketStructurePhase.BearishReversalAttempt &&
+                (nearSupply || m15.Event == MarketStructureEvent.LiquiditySweepHighReject))
                 return MarketStructureScenario.RangeReversionShort;
         }
 
@@ -318,7 +320,10 @@ public static class MarketStructureIntelligence
         {
             if (m15.Event is MarketStructureEvent.BullishBreak or MarketStructureEvent.BullishRetest)
                 return MarketStructureScenario.BreakoutRetestLong;
-            if (nearDemand && phase is MarketStructurePhase.BullishPullback or MarketStructurePhase.BullishReversalAttempt)
+            if (phase == MarketStructurePhase.BullishReversalAttempt &&
+                (nearDemand || m15.Event == MarketStructureEvent.LiquiditySweepLowReclaim))
+                return MarketStructureScenario.TrendPullbackLong;
+            if (nearDemand && phase == MarketStructurePhase.BullishPullback)
                 return MarketStructureScenario.TrendPullbackLong;
         }
 
@@ -326,7 +331,10 @@ public static class MarketStructureIntelligence
         {
             if (m15.Event is MarketStructureEvent.BearishBreak or MarketStructureEvent.BearishRetest)
                 return MarketStructureScenario.BreakoutRetestShort;
-            if (nearSupply && phase is MarketStructurePhase.BearishPullback or MarketStructurePhase.BearishReversalAttempt)
+            if (phase == MarketStructurePhase.BearishReversalAttempt &&
+                (nearSupply || m15.Event == MarketStructureEvent.LiquiditySweepHighReject))
+                return MarketStructureScenario.TrendPullbackShort;
+            if (nearSupply && phase == MarketStructurePhase.BearishPullback)
                 return MarketStructureScenario.TrendPullbackShort;
         }
 
