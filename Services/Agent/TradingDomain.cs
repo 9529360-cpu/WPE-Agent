@@ -382,7 +382,7 @@ public static class ExecutionReasonCode
         TryNormalize(value,out var code)?code:fallback;
 }
 
-public sealed record ExecutionIntent(string Symbol, PositionSide Side, decimal Quantity, bool ReduceOnly, decimal StopLoss, decimal TakeProfit, string ClientOrderId, string Reason, DecisionAction Action = DecisionAction.Hold, ExecutionOrderType OrderType = ExecutionOrderType.Market, decimal LimitPrice = 0, decimal ExpectedPrice = 0, string ReasonCode = "");
+public sealed record ExecutionIntent(string Symbol, PositionSide Side, decimal Quantity, bool ReduceOnly, decimal StopLoss, decimal TakeProfit, string ClientOrderId, string Reason, DecisionAction Action = DecisionAction.Hold, ExecutionOrderType OrderType = ExecutionOrderType.Market, decimal LimitPrice = 0, decimal ExpectedPrice = 0, [property:JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] string? ReasonCode = null);
 public sealed record PersistedIntent(string CycleId, ExecutionIntent Intent, string Status, string? ExchangeOrderId);
 public sealed record PersistedBacktestRun(string Id,string StrategyId,string StrategyVersion,string Symbol,string Status,DateTime CompletedAtUtc,int CoverageDays,int Trades,double OutOfSampleReturn,double MaxDrawdown,double Sharpe);
 public sealed record RecoveryResult(bool SafeToIncreaseRisk, IReadOnlyList<string> Messages);
