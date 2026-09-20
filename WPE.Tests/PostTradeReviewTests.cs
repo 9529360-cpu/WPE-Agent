@@ -158,6 +158,27 @@ public sealed class PostTradeReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task ProtectionFillCannotBeRelabeledAsNonProtectionExit()
+    {
+        var store=new AgentSqliteStore(Database);
+        var entry=Intent("entry-protection-class",false,1m,100m);
+        await store.RecordExecutionAsync("open-protection-class",entry,Order(entry,"FILLED",1m,100m),"v1",default);
+        var close=new ExecutionIntent(
+            "BTCUSDT",PositionSide.Long,1m,true,0,0,"close-protection-class",
+            "unexpected display text",
+            DecisionAction.CloseLong,
+            ExpectedPrice:90m,
+            ReasonCode:PositionExitReasonCodes.StructureInvalidated);
+        var protectionOrder=new ExchangeOrder(
+            "BTCUSDT","order-close-protection-class",close.ClientOrderId,"FILLED",1m,90m,
+            "STOP_MARKET",PositionSide.Long,true,DateTime.UtcNow);
+        await store.RecordExecutionAsync("close-protection-class",close,protectionOrder,"v1",default);
+
+        var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));
+        Assert.Equal(PositionExitReasonCodes.ProtectionFillReconciled,review.ExitReason);
+    }
+
+    [Fact]
     public async Task ReplayedCloseCannotChangeExpectedPriceOnly()
     {
         var store=new AgentSqliteStore(Database);var entry=Intent("entry",false,1m,100m);var close=Intent("close",true,1m,110m);await store.RecordExecutionAsync("open",entry,Order(entry,"FILLED",1m,100m),"v1",default);var fill=Order(close,"FILLED",1m,110m);await store.RecordExecutionAsync("close",close,fill,"v1",default);await Assert.ThrowsAsync<InvalidOperationException>(()=>store.RecordExecutionAsync("close",close with{ExpectedPrice=111m},fill,"v1",default));
