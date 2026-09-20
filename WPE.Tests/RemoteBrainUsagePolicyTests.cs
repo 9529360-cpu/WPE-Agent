@@ -3,18 +3,18 @@ namespace WPE.Tests;
 public sealed class RemoteBrainUsagePolicyTests
 {
     [Fact]
-    public void AutoTradingAgent_SkipsRemoteBrain_WhenNoEntryReadySignalsNoPositionsAndLowHoldCount()
+    public void AutoTradingAgent_NeverRoutesAutonomousPlannerToRemoteBrain()
     {
         var source = File.ReadAllText(SourcePath());
 
-        Assert.Contains("ShouldUseRemotePlanner", source, StringComparison.Ordinal);
-        Assert.Contains("if(positions.Count>0)return true;", source, StringComparison.Ordinal);
-        Assert.Contains("if(consecutiveHolds>=3)return true;", source, StringComparison.Ordinal);
-        Assert.Contains("return assessments.Any(x=>x.EntryReady);", source, StringComparison.Ordinal);
-        Assert.Contains("!HasLocalStructureHypothesis(hypotheses)", source, StringComparison.Ordinal);
-        Assert.Contains("x.IsLive&&string.Equals(x.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal)", source, StringComparison.Ordinal);
-        Assert.Contains("var plannerBrain=useRemotePlanner?brain:localBrain;", source, StringComparison.Ordinal);
-        Assert.Contains("remote={useRemotePlanner}", source, StringComparison.Ordinal);
+        Assert.Contains("IAssistantProvider brain=localBrain;", source, StringComparison.Ordinal);
+        Assert.Contains("state.BrainEffectiveMode=AiRuntimeMode.LocalOnly;", source, StringComparison.Ordinal);
+        Assert.Contains("state.BrainRemoteAllowed=false;", source, StringComparison.Ordinal);
+        Assert.Contains("configured remote Brain remains outside the trading execution path", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ShouldUseRemotePlanner", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("useRemotePlanner", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateConfiguredBrain", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("plannerBrain=", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -30,12 +30,13 @@ public sealed class RemoteBrainUsagePolicyTests
     }
 
     [Fact]
-    public void AutoTradingAgent_RecordsActualBrainPlannerRemoteFlag()
+    public void AutoTradingAgent_RecordsBrainPlannerAsLocalExecution()
     {
         var source = File.ReadAllText(SourcePath());
 
         Assert.Contains("SkillAsync(\"BrainPlanner\"", source, StringComparison.Ordinal);
-        Assert.Contains("ct,useRemotePlanner", source, StringComparison.Ordinal);
+        Assert.Contains("local=true", source, StringComparison.Ordinal);
+        Assert.Contains("ct,false", source, StringComparison.Ordinal);
         Assert.Contains("bool? remoteLlmUsed=null", source, StringComparison.Ordinal);
         Assert.Contains("var remote=remoteLlmUsed??(name==\"BrainPlanner\"&&ServiceLocator.SystemState.BrainRemoteAllowed);", source, StringComparison.Ordinal);
     }

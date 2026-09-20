@@ -23,6 +23,7 @@ internal static class ModelOffLiveCycleInputComposerV1
 {
     internal const string InputSchema = "wpe.live-cycle-snapshot/1.0";
     private static readonly TimeSpan MaximumMarketAge = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MaximumStructureEvidenceAge = TimeSpan.FromMinutes(20);
     private static readonly TimeSpan MaximumNewsAge = TimeSpan.FromDays(7);
     private static readonly IReadOnlyDictionary<string,string[]> NewsSourceHosts=new Dictionary<string,string[]>(StringComparer.OrdinalIgnoreCase)
     {
@@ -182,7 +183,7 @@ internal static class ModelOffLiveCycleInputComposerV1
                 if(!string.Equals(targetHypothesis.Version,decision.StrategyVersion,StringComparison.Ordinal))strategyReasons.Add("live.strategy.hypothesis-version-conflict");
                 if(!targetHypothesis.Actionable)strategyReasons.Add("live.strategy.hypothesis-not-actionable");
                 if(!targetHypothesis.DirectionMatches(decision.Action))strategyReasons.Add("live.strategy.direction-conflict");
-                if(targetHypothesis.UpdatedAtUtc>request.EvaluationTimeUtc||request.EvaluationTimeUtc-targetHypothesis.UpdatedAtUtc>MaximumMarketAge)strategyReasons.Add("live.strategy.hypothesis-stale");
+                if(!HypothesisFresh(targetHypothesis,request.EvaluationTimeUtc))strategyReasons.Add("live.strategy.hypothesis-stale");
             }
         }
         else if(targetAssessment is not null&&!RecommendationMatches(decision.Action,targetAssessment.RecommendedAction))
@@ -347,10 +348,20 @@ internal static class ModelOffLiveCycleInputComposerV1
         SafeIdentityToken(value.Id)&&SafeIdentityToken(value.Version)&&SafeIdentityToken(value.DecisionBasis)&&
         Enum.IsDefined(value.Kind)&&value.Kind!=TradeHypothesisKind.None&&Enum.IsDefined(value.Stage)&&
         value.Direction is -1 or 1&&Enum.IsDefined(value.Regime)&&
-        value.UpdatedAtUtc!=default&&value.UpdatedAtUtc.Offset==TimeSpan.Zero&&value.UpdatedAtUtc<=now&&now-value.UpdatedAtUtc<=MaximumMarketAge&&
+        value.UpdatedAtUtc!=default&&value.UpdatedAtUtc.Offset==TimeSpan.Zero&&value.UpdatedAtUtc<=now&&
+        HypothesisFresh(value,now)&&
         value.Support>0&&value.Resistance>value.Support&&value.InvalidationPrice>0&&value.TriggerPrice>0&&
         Finite(value.RiskBudgetMultiplier)&&value.RiskBudgetMultiplier is>=0 and<=1&&
         value.Evidence is {Count:>0};
+
+    private static bool HypothesisFresh(TradeHypothesis value,DateTimeOffset now)
+    {
+        var structureBased=string.Equals(value.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal);
+        var evidenceAt=structureBased?value.LastStructureEvidenceAtUtc:value.UpdatedAtUtc;
+        var maximumAge=structureBased?MaximumStructureEvidenceAge:MaximumMarketAge;
+        if(evidenceAt==default||evidenceAt.Offset!=TimeSpan.Zero||evidenceAt>now||now-evidenceAt>maximumAge)return false;
+        return !structureBased||evidenceAt<=value.UpdatedAtUtc;
+    }
 
     private static bool TryUtc(DateTime value, out DateTimeOffset result)
     {

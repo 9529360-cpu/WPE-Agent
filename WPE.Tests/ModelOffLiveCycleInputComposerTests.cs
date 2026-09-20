@@ -409,6 +409,98 @@ public sealed class ModelOffLiveCycleInputComposerTests
     }
 
     [Fact]
+    public void StructureHypothesisFreshnessUsesConfirmedCandleTimeInsteadOfLoopUpdateTime()
+    {
+        var request=Request();
+
+        TradeHypothesis Hypothesis(DateTimeOffset structureEvidenceAt)=>new(
+            "HYP-BTCUSDT-STRUCTURE-FRESHNESS",
+            TradeHypothesis.CurrentVersion,
+            "BTCUSDT",
+            TradeHypothesisKind.TrendPullbackLong,
+            TradeHypothesisStage.ScoutReady,
+            1,
+            MarketRegime.Trending,
+            Now.AddHours(-1),
+            Now.AddSeconds(-1),
+            100,
+            100000m,
+            98000m,
+            102000m,
+            97500m,
+            98000m,
+            -.12,
+            -.05,
+            1.25,
+            36,
+            -.05,
+            1.01m,
+            .18,
+            "Structure pullback thesis.",
+            "Wait for confirmed demand response.",
+            "Invalidate below structural support.",
+            ["structure_basis=candles-structure-v2","structure_phase=BullishReversalAttempt"])
+        {
+            DecisionBasis=MarketStructureRead.DecisionBasis,
+            LastStructureEvidenceAtUtc=structureEvidenceAt,
+            LastStructurePhase=MarketStructurePhase.BullishReversalAttempt
+        };
+
+        DecisionReview Review(TradeHypothesis hypothesis)=>new()
+        {
+            Accepted=true,
+            Decision=new()
+            {
+                Action=DecisionAction.OpenLong,
+                Instrument="BTCUSDT",
+                TargetTier=1,
+                Confidence=0,
+                EntryPrice=100000m,
+                StopLossPrice=98000m,
+                TakeProfitPrice=104000m,
+                RiskRewardRatio=2,
+                StrategyVersion=hypothesis.Version,
+                DecisionContextKind=TradeHypothesisEngine.DecisionContextKind,
+                DecisionContextId=hypothesis.Id,
+                HypothesisStage=hypothesis.Stage.ToString(),
+                RiskBudgetMultiplier=hypothesis.RiskBudgetMultiplier,
+                Reason=hypothesis.Thesis,
+                Invalidation=hypothesis.Invalidation
+            }
+        };
+
+        IReadOnlyList<ModelOffProductionInputV1> Compose(TradeHypothesis hypothesis)=>
+            ModelOffLiveCycleInputComposerV1.Compose(request with
+            {
+                Assessments=[],
+                DecisionReview=Review(hypothesis),
+                TradeHypotheses=new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["BTCUSDT"]=hypothesis
+                }
+            });
+
+        var fresh=Hypothesis(Now.AddMinutes(-19));
+        var freshInputs=Compose(fresh);
+        Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(
+            freshInputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output));
+        Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(
+            freshInputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Strategy).Output));
+
+        var stale=Hypothesis(Now.AddMinutes(-21));
+        var staleInputs=Compose(stale);
+        var staleResearch=staleInputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;
+        var staleStrategy=staleInputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Strategy).Output;
+
+        Assert.True(stale.UpdatedAtUtc>Now.AddMinutes(-1));
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(staleResearch));
+        Assert.Contains("live.research.hypothesis-invalid",staleResearch.Uncertainty.ReasonCodes);
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(staleStrategy));
+        Assert.Contains("live.strategy.hypothesis-stale",staleStrategy.Uncertainty.ReasonCodes);
+        Assert.Contains("live.strategy.research-invalid",staleStrategy.Uncertainty.ReasonCodes);
+    }
+
+    [Fact]
     public async Task ProductionShadowPersistsSevenOutputsWithoutChangingExecution()
     {
         var directory = Path.Combine(Path.GetTempPath(), "wpe-live-shadow-" + Guid.NewGuid().ToString("N"));

@@ -393,6 +393,7 @@
     "RiskReview.TradeRisk":  "取引リスク {0:N2} が {1:N2} を超過",
     "RiskReview.Approved":  "独立 Risk Manager 承認 · {0} · リスク {1:N2} · エクスポージャー {2:P1}",
     "RiskReview.Blocked":  "独立 Risk Manager が拒否：{0}",
+    "Position.StructureInvalidated":  "ローカルのチャート構造が保有中の取引仮説を無効化したため、リスクを解消します",
     "Position.LiquidationBuffer":  "清算安全余裕を下回りました",
     "Position.PartialTake":  "2R 自動部分利確",
     "Position.Breakeven":  "自動建値保護",

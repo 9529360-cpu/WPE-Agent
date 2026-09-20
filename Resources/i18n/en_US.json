@@ -328,6 +328,7 @@
     "RiskReview.TradeRisk":  "Trade risk {0:N2} exceeds {1:N2}",
     "RiskReview.Approved":  "Independent Risk Manager approved · {0} · risk {1:N2} · exposure {2:P1}",
     "RiskReview.Blocked":  "Independent Risk Manager vetoed: {0}",
+    "Position.StructureInvalidated":  "Local chart structure invalidated the active trade thesis",
     "Position.LiquidationBuffer":  "Liquidation buffer breached",
     "Position.PartialTake":  "Automatic 2R partial take-profit",
     "Position.Breakeven":  "Automatic break-even protection",
