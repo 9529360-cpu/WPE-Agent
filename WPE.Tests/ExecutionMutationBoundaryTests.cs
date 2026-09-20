@@ -64,6 +64,33 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
     }
 
     [Fact]
+    public async Task ReplaceProtection_CancelFailureEmergencyClosesManagedPosition()
+    {
+        var position=new ManagedPosition("SOLUSDT",PositionSide.Long,1m,150m,151m,1m,5m,true,120m);
+        var protection=new ExchangeOrder(
+            "SOLUSDT","protection-stop","protection-client","NEW",0,0,"STOP_MARKET",
+            PositionSide.Long,true,DateTime.UtcNow);
+        var exchange=new RecordingExchange
+        {
+            OpenOrders=[protection],
+            Positions=[position],
+            FailCancel=true
+        };
+        var executor=CreateExecutor(exchange,out var store,CapabilityStatus.Available);
+        var adjustment=new ProtectionAdjustment(
+            "SOLUSDT",PositionSide.Long,150.075m,160m,"breakeven","WPE-PM-BE-cancelfail");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>
+            executor.ReplaceProtectionAsync("cycle",adjustment,CancellationToken.None));
+
+        Assert.Equal(1,exchange.MarketOrderSubmissions);
+        Assert.True(exchange.LastReduceOnly);
+        Assert.Equal("FAILED",await store.GetStateAsync(
+            PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId!),
+            CancellationToken.None));
+    }
+
+    [Fact]
     public async Task ReplaceProtection_ExistingDurableStateRejectsBeforeProviderMutation()
     {
         var exchange=new RecordingExchange();
@@ -476,17 +503,24 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         public int MutationCount { get; private set; }
         public int MarketOrderSubmissions { get; private set; }
         public bool LastReduceOnly { get; private set; }
+        public bool FailCancel { get; init; }
         public ExchangeOrder? FoundOrder { get; init; }
+        public IReadOnlyList<ExchangeOrder> OpenOrders { get; init; }=[];
+        public IReadOnlyList<ManagedPosition> Positions { get; init; }=[];
         public Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct) => Task.FromResult(FoundOrder);
-        public Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol,CancellationToken ct) => Task.FromResult<IReadOnlyList<ExchangeOrder>>([]);
-        public Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<ManagedPosition>>([]);
+        public Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol,CancellationToken ct) => Task.FromResult(OpenOrders);
+        public Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct) => Task.FromResult(Positions);
         public Task SetHedgeModeAsync(bool enabled,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
         public Task SetMarginModeAsync(string symbol,bool isolated,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
         public Task SetLeverageAsync(string symbol,int leverage,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
         public Task<ExchangeOrder> PlaceMarketAsync(string symbol,PositionSide side,decimal quantity,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;MarketOrderSubmissions++;LastReduceOnly=reduceOnly;return Task.FromResult(FilledOrder() with{ClientOrderId=clientOrderId,ExecutedQuantity=quantity,PositionSide=side});}
         public Task<ExchangeOrder> PlaceLimitAsync(string symbol,PositionSide side,decimal quantity,decimal price,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;return Task.FromResult(FilledOrder());}
         public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide sideToClose,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct){MutationCount++;return Task.FromResult(FilledOrder());}
-        public Task CancelOrderAsync(string symbol,string orderId,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
+        public Task CancelOrderAsync(string symbol,string orderId,CancellationToken ct)
+        {
+            MutationCount++;
+            return FailCancel?Task.FromException(new InvalidOperationException("cancel failed")):Task.CompletedTask;
+        }
         public Task<AccountSnapshot> GetAccountAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<TradingRule> GetRulesAsync(string symbol,CancellationToken ct) => throw new NotSupportedException();
         public Task<MarketEvidence> GetMarketAsync(string symbol,CancellationToken ct) => throw new NotSupportedException();
