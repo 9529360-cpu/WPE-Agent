@@ -4,6 +4,8 @@ param(
     [Parameter(Mandatory)][string]$OutputDirectory,
     [Parameter(Mandatory)][ValidatePattern('^[0-9A-Za-z][0-9A-Za-z._/-]{0,127}$')][string]$SourceIdentity,
     [Parameter(Mandatory)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$CandidateManifestSha256,
+    [Parameter(Mandatory)][string]$ExpectedExecutablePath,
+    [Parameter(Mandatory)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedExecutableSha256,
     [ValidateRange(60,172800)][int]$DurationSeconds = 3600,
     [ValidateRange(2,60)][int]$PollSeconds = 5,
     [ValidateRange(0,600)][int]$StartupGraceSeconds = 60,
@@ -25,9 +27,14 @@ function Is-True($value) {
 
 if (-not [IO.Path]::IsPathRooted($DataRoot)) { throw 'soak.data-root-must-be-absolute' }
 if (-not [IO.Path]::IsPathRooted($OutputDirectory)) { throw 'soak.output-must-be-absolute' }
+if (-not [IO.Path]::IsPathRooted($ExpectedExecutablePath)) { throw 'soak.executable-path-must-be-absolute' }
 
 $dataRootFull = Full $DataRoot
 $outputFull = Full $OutputDirectory
+$expectedExecutableFull = Full $ExpectedExecutablePath
+if (-not (Test-Path -LiteralPath $expectedExecutableFull -PathType Leaf)) { throw 'soak.executable-missing' }
+$expectedExecutableHash = $ExpectedExecutableSha256.ToLowerInvariant()
+if ((Get-FileHash -LiteralPath $expectedExecutableFull -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedExecutableHash) { throw 'soak.executable-hash-mismatch' }
 $dataDirectory = (Join-Path $dataRootFull 'Data').TrimEnd([IO.Path]::DirectorySeparatorChar)
 $dataPrefix = $dataDirectory + [IO.Path]::DirectorySeparatorChar
 if ($outputFull -eq $dataDirectory -or $outputFull.StartsWith($dataPrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -73,6 +80,7 @@ try {
         $accessFresh = $false
         $heartbeatFresh = $false
         $leaseLost = $false
+        $executableSha256 = $null
         $accepted = $false
 
         try {
@@ -92,6 +100,14 @@ try {
             if ($health.schema -ne 'wpe.headless-process-health/1.0') {
                 throw [InvalidDataException]::new('health.schema-invalid')
             }
+            try { $healthProcessId = [int]$health.processId } catch { throw [InvalidDataException]::new('health.process-id-invalid') }
+            if ($healthProcessId -le 0) { throw [InvalidDataException]::new('health.process-id-invalid') }
+            $process = Get-CimInstance Win32_Process -Filter "ProcessId = $healthProcessId" -ErrorAction Stop
+            if ($null -eq $process -or [string]::IsNullOrWhiteSpace([string]$process.ExecutablePath)) { throw [InvalidDataException]::new('health.process-missing') }
+            $actualExecutableFull = Full ([string]$process.ExecutablePath)
+            if (-not $actualExecutableFull.Equals($expectedExecutableFull,[StringComparison]::OrdinalIgnoreCase)) { throw [InvalidDataException]::new('health.executable-path-mismatch') }
+            $executableSha256 = (Get-FileHash -LiteralPath $actualExecutableFull -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($executableSha256 -ne $expectedExecutableHash) { throw [InvalidDataException]::new('health.executable-hash-mismatch') }
 
             try {
                 $parsedObserved = [DateTimeOffset]::Parse(
@@ -183,6 +199,7 @@ try {
             healthAgeSeconds = $healthAgeSeconds
             processState = $processState
             processCode = $processCode
+            executableSha256 = $executableSha256
             runtimeReady = $runtimeReady
             agentRunning = $agentRunning
             accessFresh = $accessFresh
@@ -218,6 +235,7 @@ $summary = [ordered]@{
     status = $status
     sourceIdentity = $SourceIdentity
     candidateManifestSha256 = $CandidateManifestSha256.ToLowerInvariant()
+    executableSha256 = $expectedExecutableHash
     startedAtUtc = Utc $started
     completedAtUtc = Utc $completed
     requestedDurationSeconds = $DurationSeconds

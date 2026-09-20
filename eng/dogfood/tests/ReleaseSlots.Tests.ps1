@@ -67,6 +67,7 @@ function Write-SoakEvidence([string]$path,$candidate,[hashtable]$overrides){
             healthAgeSeconds=1
             processState='ready'
             processCode='headless.ready'
+            executableSha256=('c'*64)
             runtimeReady=$true
             agentRunning=$true
             accessFresh=$true
@@ -84,6 +85,7 @@ function Write-SoakEvidence([string]$path,$candidate,[hashtable]$overrides){
         status='passed'
         sourceIdentity=[string]$manifest.sourceIdentity
         candidateManifestSha256=$candidate.ManifestSha256
+        executableSha256=('c'*64)
         startedAtUtc=$now.AddHours(-25).ToString('O')
         completedAtUtc=$now.ToString('O')
         requestedDurationSeconds=90000

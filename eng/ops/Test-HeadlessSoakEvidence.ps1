@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory)][string]$EvidencePath,
     [Parameter(Mandatory)][string]$ExpectedSourceIdentity,
     [Parameter(Mandatory)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedCandidateManifestSha256,
+    [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedExecutableSha256,
     [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedEvidenceSha256,
     [ValidateRange(1,2880)][int]$MinimumDurationMinutes = 60,
     [ValidateRange(0,1000)][int]$MaximumUnhealthySamples = 0
@@ -60,7 +61,7 @@ try{
 }
 
 $allowed=@(
-    'schemaVersion','status','sourceIdentity','candidateManifestSha256','startedAtUtc','completedAtUtc',
+    'schemaVersion','status','sourceIdentity','candidateManifestSha256','executableSha256','startedAtUtc','completedAtUtc',
     'requestedDurationSeconds','observedDurationSeconds','pollSeconds','startupGraceSeconds',
     'maximumHealthAgeSeconds','sampleCount','expectedMinimumSamples','readySamples','graceSamples',
     'unhealthySamples','invalidSamples','maximumObservedHealthAgeSeconds','samplesFile','samplesSha256',
@@ -74,6 +75,10 @@ if($evidence.status -ne 'passed'){throw 'soak.evidence-not-passed'}
 if([string]$evidence.sourceIdentity -ne $ExpectedSourceIdentity){throw 'soak.source-identity-mismatch'}
 if([string]$evidence.candidateManifestSha256 -ne $ExpectedCandidateManifestSha256.ToLowerInvariant()){
     throw 'soak.candidate-manifest-mismatch'
+}
+if([string]$evidence.executableSha256 -notmatch '^[a-f0-9]{64}$'){throw 'soak.executable-hash-invalid'}
+if(-not [string]::IsNullOrWhiteSpace($ExpectedExecutableSha256) -and [string]$evidence.executableSha256 -ne $ExpectedExecutableSha256.ToLowerInvariant()){
+    throw 'soak.executable-hash-mismatch'
 }
 
 $started=Parse-Utc $evidence.startedAtUtc 'soak.started-at-invalid'
@@ -129,7 +134,7 @@ $samplesSnapshot=Get-FileSnapshot $samples
 if($samplesSnapshot.Hash -ne [string]$evidence.samplesSha256){throw 'soak.samples-hash-mismatch'}
 
 $sampleAllowed=@(
-    'schemaVersion','sampledAtUtc','observedAtUtc','healthAgeSeconds','processState','processCode',
+    'schemaVersion','sampledAtUtc','observedAtUtc','healthAgeSeconds','processState','processCode','executableSha256',
     'runtimeReady','agentRunning','accessFresh','heartbeatFresh','leaseLost','inStartupGrace','accepted','reason'
 )
 $booleanFields=@('runtimeReady','agentRunning','accessFresh','heartbeatFresh','leaseLost','inStartupGrace','accepted')
@@ -157,6 +162,7 @@ try{
         foreach($field in $booleanFields){
             if($sample.$field -isnot [bool]){throw 'soak.sample-boolean-invalid'}
         }
+        if([string]$sample.executableSha256 -ne [string]$evidence.executableSha256){throw 'soak.sample-executable-hash-mismatch'}
 
         $sampledAt=Parse-Utc $sample.sampledAtUtc 'soak.sample-sampled-at-invalid'
         if($sampledAt -lt $started -or $sampledAt -gt $completed.AddSeconds(1)){
@@ -248,6 +254,7 @@ if([Math]::Abs($maximumSampleHealthAge-[double]$evidence.maximumObservedHealthAg
     EvidenceSha256=$evidenceSnapshot.Hash
     SourceIdentity=[string]$evidence.sourceIdentity
     CandidateManifestSha256=[string]$evidence.candidateManifestSha256
+    ExecutableSha256=[string]$evidence.executableSha256
     DurationSeconds=[Math]::Round(($completed-$started).TotalSeconds,3)
     SampleCount=$count
     SamplesSha256=[string]$evidence.samplesSha256

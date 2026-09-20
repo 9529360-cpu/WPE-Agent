@@ -11,6 +11,13 @@ $verify=Join-Path $tool 'Test-HeadlessSoakEvidence.ps1'
 $root=Join-Path ([IO.Path]::GetTempPath()) ('wpe-soak-test-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root -Force|Out-Null
 try{
+    $expectedExecutablePath=Join-Path $root 'WPE-Headless.exe'
+    'fixture-binary'|Set-Content -LiteralPath $expectedExecutablePath -Encoding ascii
+    $expectedExecutableSha256=Hash $expectedExecutablePath
+    $watcher=Get-Content -Raw -LiteralPath (Join-Path $tool 'Watch-HeadlessSoak.ps1')
+    Assert ($watcher.Contains('$ExpectedExecutablePath')) 'watcher executable path binding missing'
+    Assert ($watcher.Contains('health.executable-path-mismatch')) 'watcher process executable path gate missing'
+    Assert ($watcher.Contains('health.executable-hash-mismatch')) 'watcher executable hash gate missing'
     $samplesPath=Join-Path $root 'headless-soak-samples.jsonl'
     $now=[DateTimeOffset]::UtcNow
     $started=$now.AddMinutes(-61)
@@ -26,6 +33,7 @@ try{
                 healthAgeSeconds=1
                 processState='ready'
                 processCode='headless.ready'
+                executableSha256=$expectedExecutableSha256
                 runtimeReady=$true
                 agentRunning=$true
                 accessFresh=$true
@@ -56,6 +64,7 @@ try{
             status='passed'
             sourceIdentity='commit/test-candidate'
             candidateManifestSha256=('a'*64)
+            executableSha256=$expectedExecutableSha256
             startedAtUtc=$started.ToString('O')
             completedAtUtc=$now.ToString('O')
             requestedDurationSeconds=3660
@@ -80,9 +89,10 @@ try{
 
     Write-ValidSamples
     Write-Evidence @{}
-    $result=& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -ExpectedEvidenceSha256 (Hash $evidencePath) -MinimumDurationMinutes 60
+    $result=& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -ExpectedExecutableSha256 $expectedExecutableSha256 -ExpectedEvidenceSha256 (Hash $evidencePath) -MinimumDurationMinutes 60
     Assert $result.Valid 'valid evidence rejected'
     Assert ($result.SampleCount -eq 54) 'sample count not verified'
+    Assert ($result.ExecutableSha256 -eq $expectedExecutableSha256) 'executable hash not verified'
     Assert ($result.SourceIdentity -eq 'commit/test-candidate') 'source identity not returned'
     Assert ($result.CandidateManifestSha256 -eq ('a'*64)) 'candidate manifest identity not returned'
 
@@ -94,6 +104,9 @@ try{
 
     Write-Evidence @{}
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('b'*64) -MinimumDurationMinutes 60} 'soak.candidate-manifest-mismatch'
+
+    Write-Evidence @{}
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -ExpectedExecutableSha256 ('f'*64) -MinimumDurationMinutes 60} 'soak.executable-hash-mismatch'
 
     Write-Evidence @{samplesSha256=('0'*64)}
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.samples-hash-mismatch'
@@ -116,6 +129,11 @@ try{
     Write-Evidence @{}
     Add-Content -LiteralPath $samplesPath -Value (Get-Content -LiteralPath $samplesPath -TotalCount 1)
     Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.samples-hash-mismatch'
+
+    Write-ValidSamples
+    Rewrite-Samples {param($sample) $sample.executableSha256=('f'*64)}
+    Write-Evidence @{}
+    Throws {& $verify -EvidencePath $evidencePath -ExpectedSourceIdentity 'commit/test-candidate' -ExpectedCandidateManifestSha256 ('a'*64) -MinimumDurationMinutes 60} 'soak.sample-executable-hash-mismatch'
 
     Write-ValidSamples
     Rewrite-Samples {param($sample) $sample.accepted=$false}
