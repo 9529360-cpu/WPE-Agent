@@ -210,6 +210,7 @@ public sealed class OkxBybitCertificationContractTests
         var contract = Contract("bybit");
         await using var provider = Assert.IsType<BybitExchangeProvider>(Create(contract, contract.OfficialTestnetEndpoint));
 
+        Assert.IsAssignableFrom<IInPlaceProtectionUpdateAdapter>(provider);
         await Assert.ThrowsAsync<NotSupportedException>(() =>
             provider.CancelOrderAsync("BTCUSDT", "position-tpsl:offline", CancellationToken.None));
         await Assert.ThrowsAsync<NotSupportedException>(() =>
