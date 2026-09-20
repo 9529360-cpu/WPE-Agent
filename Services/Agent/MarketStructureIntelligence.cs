@@ -248,9 +248,9 @@ public static class MarketStructureIntelligence
     {
         if (bias == MarketStructureBias.Range)
         {
-            if (nearDemand && m15.Event is MarketStructureEvent.LiquiditySweepLowReclaim or MarketStructureEvent.BullishRejection)
+            if (nearDemand && m15.Event is (MarketStructureEvent.LiquiditySweepLowReclaim or MarketStructureEvent.BullishRejection))
                 return MarketStructureScenario.RangeReversionLong;
-            if (nearSupply && m15.Event is MarketStructureEvent.LiquiditySweepHighReject or MarketStructureEvent.BearishRejection)
+            if (nearSupply && m15.Event is (MarketStructureEvent.LiquiditySweepHighReject or MarketStructureEvent.BearishRejection))
                 return MarketStructureScenario.RangeReversionShort;
         }
 
@@ -258,7 +258,7 @@ public static class MarketStructureIntelligence
         {
             if (m15.Event is MarketStructureEvent.BullishBreak or MarketStructureEvent.BullishRetest)
                 return MarketStructureScenario.BreakoutRetestLong;
-            if (nearDemand || m15.Event is MarketStructureEvent.LiquiditySweepLowReclaim or MarketStructureEvent.BullishRejection)
+            if (nearDemand || m15.Event is (MarketStructureEvent.LiquiditySweepLowReclaim or MarketStructureEvent.BullishRejection))
                 return MarketStructureScenario.TrendPullbackLong;
         }
 
@@ -266,7 +266,7 @@ public static class MarketStructureIntelligence
         {
             if (m15.Event is MarketStructureEvent.BearishBreak or MarketStructureEvent.BearishRetest)
                 return MarketStructureScenario.BreakoutRetestShort;
-            if (nearSupply || m15.Event is MarketStructureEvent.LiquiditySweepHighReject or MarketStructureEvent.BearishRejection)
+            if (nearSupply || m15.Event is (MarketStructureEvent.LiquiditySweepHighReject or MarketStructureEvent.BearishRejection))
                 return MarketStructureScenario.TrendPullbackShort;
         }
 
@@ -307,8 +307,8 @@ public static class MarketStructureIntelligence
     {
         if (h4 == PriceStructureState.Bullish && h1 != PriceStructureState.Bearish) return MarketStructureBias.Bullish;
         if (h4 == PriceStructureState.Bearish && h1 != PriceStructureState.Bullish) return MarketStructureBias.Bearish;
-        if (h1 == PriceStructureState.Bullish && h4 is PriceStructureState.Range or PriceStructureState.Transition) return MarketStructureBias.Bullish;
-        if (h1 == PriceStructureState.Bearish && h4 is PriceStructureState.Range or PriceStructureState.Transition) return MarketStructureBias.Bearish;
+        if (h1 == PriceStructureState.Bullish && h4 is (PriceStructureState.Range or PriceStructureState.Transition)) return MarketStructureBias.Bullish;
+        if (h1 == PriceStructureState.Bearish && h4 is (PriceStructureState.Range or PriceStructureState.Transition)) return MarketStructureBias.Bearish;
         if (h1 == PriceStructureState.Range && h4 == PriceStructureState.Range) return MarketStructureBias.Range;
         if (h1 == PriceStructureState.Unknown || h4 == PriceStructureState.Unknown) return MarketStructureBias.Unknown;
         return MarketStructureBias.Mixed;
