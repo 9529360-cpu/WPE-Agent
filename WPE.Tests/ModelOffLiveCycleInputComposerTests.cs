@@ -351,19 +351,6 @@ public sealed class ModelOffLiveCycleInputComposerTests
                 "Support held and short-horizon behavior improved.",
                 "Invalidate below the volatility-adjusted support break.",
                 ["price=100000","support=98000","trend4h=1.25%"]);
-            var assessment=new MarketDecisionAssessment
-            {
-                Symbol="BTCUSDT",
-                Regime=MarketRegime.Trending,
-                NetScore=-.42,
-                Confidence=.30,
-                ConflictRatio=.72,
-                Fresh=true,
-                EntryReady=false,
-                RecommendedAction=DecisionAction.Hold,
-                MissingConditions=["legacy thresholds not met"],
-                Summary="legacy aggregation remains non-actionable"
-            };
             var decision=new DecisionPlan
             {
                 Action=DecisionAction.OpenLong,
@@ -393,14 +380,18 @@ public sealed class ModelOffLiveCycleInputComposerTests
                 {
                     ["ETHUSDT"]=Research("ETHUSDT")
                 },
-                Assessments=[assessment],
+                Assessments=[],
                 DecisionReview=review,
                 TradeHypotheses=hypotheses
             };
 
             var inputs=ModelOffLiveCycleInputComposerV1.Compose(hypothesisRequest);
-            Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(inputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output));
-            Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(inputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Strategy).Output));
+            var researchInput=inputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Research);
+            var strategyInput=inputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Strategy);
+            Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(researchInput.Output));
+            Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(strategyInput.Output));
+            Assert.Contains("market-hypothesis-btcusdt",researchInput.Document.Json,StringComparison.Ordinal);
+            Assert.DoesNotContain("technical-assessment-btcusdt",researchInput.Document.Json,StringComparison.Ordinal);
 
             var result=await new ModelOffProductionCycleOrchestratorV1(
                 new AgentSqliteStore(Path.Combine(directory,"agent.db"),()=>Now))
