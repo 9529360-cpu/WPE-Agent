@@ -78,13 +78,15 @@ internal static class ModelOffLiveCycleInputComposerV1
         var macro=request.MacroObservations??[];
         var target=request.DecisionReview.Decision.Instrument;
         var numericalDecision=NumericalStrategySkill.IsNumerical(request.DecisionReview.Decision);
+        var remoteEvidenceDecision=RemoteEvidenceDecisionPolicy.IsRemote(request.DecisionReview.Decision);
+        var structureLedDecision=numericalDecision||remoteEvidenceDecision;
         var assessmentMatches=request.Assessments.Where(x=>string.Equals(x.Symbol,target,StringComparison.OrdinalIgnoreCase)).ToArray();
         var targetAssessment=assessmentMatches.Length==1?assessmentMatches[0]:null;
-        var targetAssessmentValid=targetAssessment is not null&&ValidAssessment(targetAssessment,target,!numericalDecision);
+        var targetAssessmentValid=targetAssessment is not null&&ValidAssessment(targetAssessment,target,!structureLedDecision);
         request.Evidence.Markets.TryGetValue(target,out var technicalMarket);
         var targetStructure=marketStructures.FirstOrDefault(x=>string.Equals(x.Symbol,target,StringComparison.OrdinalIgnoreCase));
         var targetHypotheses=technicalMarket is not null&&targetStructure is not null?hypothesisSkill.Build(technicalMarket,targetStructure):Array.Empty<MarketHypothesis>();
-        var technicalEvidenceValid=targetAssessmentValid&&technicalMarket is not null&&MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(technicalMarket)&&(!numericalDecision||targetStructure is{Ready:true});
+        var technicalEvidenceValid=targetAssessmentValid&&technicalMarket is not null&&MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(technicalMarket)&&(!structureLedDecision||targetStructure is{Ready:true});
         if(assessmentMatches.Length==0)researchReasons.Add("live.research.technical-missing");
         if(assessmentMatches.Length>1)researchReasons.Add("live.research.technical-conflicting");
         if(targetAssessment is not null&&!targetAssessmentValid)researchReasons.Add("live.research.technical-invalid");
@@ -153,8 +155,8 @@ internal static class ModelOffLiveCycleInputComposerV1
         if(assessmentMatches.Length==0)strategyReasons.Add("live.strategy.assessment-missing");
         if(assessmentMatches.Length>1)strategyReasons.Add("live.strategy.assessment-conflicting");
         if(targetAssessment is not null&&!targetAssessmentValid)strategyReasons.Add("live.strategy.assessment-ineligible");
-        if(!numericalDecision&&targetAssessment is not null&&!RecommendationMatches(decision.Action,targetAssessment.RecommendedAction))strategyReasons.Add("live.strategy.direction-conflict");
-        if(numericalDecision&&DeterministicPlanSkill.IsRiskIncreasing(decision.Action)&&NumericalStrategySkill.ValidateDecision(decision,request.Evidence,null).Count>0)strategyReasons.Add("live.strategy.structure-invalid");
+        if(!structureLedDecision&&targetAssessment is not null&&!RecommendationMatches(decision.Action,targetAssessment.RecommendedAction))strategyReasons.Add("live.strategy.direction-conflict");
+        if(structureLedDecision&&DeterministicPlanSkill.IsRiskIncreasing(decision.Action)&&NumericalStrategySkill.ValidateStructureDecision(decision,request.Evidence,null,false).Count>0)strategyReasons.Add("live.strategy.structure-invalid");
         if(DeterministicPlanSkill.IsRiskIncreasing(decision.Action)&&!ValidPlanGeometry(decision))strategyReasons.Add("live.strategy.plan-geometry-invalid");
         if (!ModelOffEligibilityV1.IsEligibleForDownstream(research)) strategyReasons.Add("live.strategy.research-invalid");
         var strategy = Output(ModelOffAgentV1.Strategy, request,

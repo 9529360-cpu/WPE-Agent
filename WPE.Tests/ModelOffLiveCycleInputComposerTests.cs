@@ -193,6 +193,49 @@ public sealed class ModelOffLiveCycleInputComposerTests
         var strategy=ModelOffLiveCycleInputComposerV1.Compose(request with{Assessments=assessments,DecisionReview=review}).Single(x=>x.Output.Agent==ModelOffAgentV1.Strategy).Output;Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(strategy));Assert.Contains(strategy.Decision.ReasonCodes,reason=>reason.StartsWith("live.strategy.",StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void RemoteStructureLedDecision_DoesNotReintroduceLegacyEntryReadyOrDirectionAuthority()
+    {
+        var request=Request();var bullish=StructuredBullishMarket();
+        var markets=request.Evidence.Markets.ToDictionary(x=>x.Key,x=>x.Value);markets["BTCUSDT"]=bullish;
+        var evidence=CopyEvidence(request.Evidence,markets:markets);
+        var research=request.Research.ToDictionary(x=>x.Key,x=>x.Value);
+        research["BTCUSDT"]=CopyResearch(research["BTCUSDT"],strategyVersion:NumericalStrategySkill.Version);
+        var assessment=Assessment(recommended:DecisionAction.OpenShort,entryReady:false,netScore:-.9);
+        var review=RemoteReview();
+
+        var inputs=ModelOffLiveCycleInputComposerV1.Compose(request with{Evidence=evidence,Research=research,Assessments=[assessment],DecisionReview=review});
+        var researchOutput=inputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;
+        var strategyOutput=inputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Strategy).Output;
+
+        Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(researchOutput));
+        Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(strategyOutput));
+        Assert.DoesNotContain("live.research.technical-invalid",researchOutput.Decision.ReasonCodes);
+        Assert.DoesNotContain("live.strategy.assessment-ineligible",strategyOutput.Decision.ReasonCodes);
+        Assert.DoesNotContain("live.strategy.direction-conflict",strategyOutput.Decision.ReasonCodes);
+        Assert.DoesNotContain("live.strategy.structure-invalid",strategyOutput.Decision.ReasonCodes);
+    }
+
+    [Fact]
+    public void RemoteStructureLedDecision_StillRequiresFreshAssessment()
+    {
+        var request=Request();var bullish=StructuredBullishMarket();
+        var markets=request.Evidence.Markets.ToDictionary(x=>x.Key,x=>x.Value);markets["BTCUSDT"]=bullish;
+        var evidence=CopyEvidence(request.Evidence,markets:markets);
+        var research=request.Research.ToDictionary(x=>x.Key,x=>x.Value);
+        research["BTCUSDT"]=CopyResearch(research["BTCUSDT"],strategyVersion:NumericalStrategySkill.Version);
+        var assessment=Assessment(fresh:false,recommended:DecisionAction.OpenShort,entryReady:false,netScore:-.9);
+
+        var inputs=ModelOffLiveCycleInputComposerV1.Compose(request with{Evidence=evidence,Research=research,Assessments=[assessment],DecisionReview=RemoteReview()});
+        var researchOutput=inputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;
+        var strategyOutput=inputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Strategy).Output;
+
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(researchOutput));
+        Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(strategyOutput));
+        Assert.Contains("live.research.technical-invalid",researchOutput.Decision.ReasonCodes);
+        Assert.Contains("live.strategy.assessment-ineligible",strategyOutput.Decision.ReasonCodes);
+    }
+
     [Theory]
     [InlineData("zero-quantity")]
     [InlineData("zero-risk")]
@@ -488,14 +531,57 @@ public sealed class ModelOffLiveCycleInputComposerTests
     private static NewsEvidence News()=>new("SEC","Official digital asset market update","https://www.sec.gov/news/press-release/test",Now.AddMinutes(-2).UtcDateTime,Now.AddMinutes(-1).UtcDateTime,"official",new string('a',64),["BTC"],"Private full article body must not enter canonical audit.",.9,1,"REGULATION",false,.1);
     private static ResearchValidationResult Research(string symbol) => new()
     { ValidatedAtUtc=Now.AddMinutes(-1),Symbol = symbol, StrategyVersion = "strategy-v1", SampleSize = 200, Trades = 30, QualityScore = .8, Approved = true, Promoted = true, CoverageDays = 90 };
-    private static ResearchValidationResult CopyResearch(ResearchValidationResult value,bool? approved=null,bool? promoted=null,double? qualityScore=null,DateTimeOffset? validatedAt=null)=>new(){ValidatedAtUtc=validatedAt??value.ValidatedAtUtc,Symbol=value.Symbol,StrategyVersion=value.StrategyVersion,SampleSize=value.SampleSize,Trades=value.Trades,WinRate=value.WinRate,ProfitFactor=value.ProfitFactor,Expectancy=value.Expectancy,MaxDrawdown=value.MaxDrawdown,Sharpe=value.Sharpe,OutOfSampleReturn=value.OutOfSampleReturn,WalkForwardScore=value.WalkForwardScore,MonteCarloLossProbability=value.MonteCarloLossProbability,QualityScore=qualityScore??value.QualityScore,Approved=approved??value.Approved,Promoted=promoted??value.Promoted,CoverageDays=value.CoverageDays,OutOfSampleTrades=value.OutOfSampleTrades,StrategyReturn=value.StrategyReturn,BenchmarkReturn=value.BenchmarkReturn,RegimeReturns=value.RegimeReturns,Summary=value.Summary};
-    private static MarketDecisionAssessment Assessment(bool fresh=true,DecisionAction recommended=DecisionAction.OpenLong,string symbol="BTCUSDT",double confidence=.8)=>new(){Symbol=symbol,Fresh=fresh,EntryReady=true,RecommendedAction=recommended,Confidence=confidence,NetScore=.5,ConflictRatio=.1};
+    private static ResearchValidationResult CopyResearch(ResearchValidationResult value,bool? approved=null,bool? promoted=null,double? qualityScore=null,DateTimeOffset? validatedAt=null,string? strategyVersion=null)=>new(){ValidatedAtUtc=validatedAt??value.ValidatedAtUtc,Symbol=value.Symbol,StrategyVersion=strategyVersion??value.StrategyVersion,SampleSize=value.SampleSize,Trades=value.Trades,WinRate=value.WinRate,ProfitFactor=value.ProfitFactor,Expectancy=value.Expectancy,MaxDrawdown=value.MaxDrawdown,Sharpe=value.Sharpe,OutOfSampleReturn=value.OutOfSampleReturn,WalkForwardScore=value.WalkForwardScore,MonteCarloLossProbability=value.MonteCarloLossProbability,QualityScore=qualityScore??value.QualityScore,Approved=approved??value.Approved,Promoted=promoted??value.Promoted,CoverageDays=value.CoverageDays,OutOfSampleTrades=value.OutOfSampleTrades,StrategyReturn=value.StrategyReturn,BenchmarkReturn=value.BenchmarkReturn,RegimeReturns=value.RegimeReturns,Summary=value.Summary};
+    private static MarketDecisionAssessment Assessment(bool fresh=true,DecisionAction recommended=DecisionAction.OpenLong,string symbol="BTCUSDT",double confidence=.8,bool entryReady=true,double netScore=.5)=>new(){Symbol=symbol,Fresh=fresh,EntryReady=entryReady,RecommendedAction=recommended,Confidence=confidence,NetScore=netScore,ConflictRatio=.1};
     private static DecisionReview Review(bool accepted,decimal stop=98000m,decimal take=104000m,double riskReward=2,double confidence=.8,int targetTier=1,string strategyVersion="strategy-v1") => new()
     {
         Accepted = accepted,
         Decision = new DecisionPlan { Action = DecisionAction.OpenLong, Instrument = "BTCUSDT", Confidence = confidence,TargetTier=targetTier,StrategyVersion=strategyVersion,
             EntryPrice = 100000m, StopLossPrice = stop, TakeProfitPrice = take, RiskRewardRatio = riskReward }
     };
+    private static DecisionReview RemoteReview()=>new()
+    {
+        Accepted=true,
+        Decision=new DecisionPlan
+        {
+            Action=DecisionAction.OpenLong,Instrument="BTCUSDT",Confidence=.8,TargetTier=1,
+            StrategyVersion=NumericalStrategySkill.Version,DecisionBasis=RemoteEvidenceDecisionPolicy.Basis,
+            EntryPrice=103.55m,StopLossPrice=101.8m,TakeProfitPrice=107.2m,RiskRewardRatio=2.08,
+            Reason="confirmed bullish structure",Invalidation="close below structural support",
+            EvidenceReferences=["market-structure:v1","bias:bullish","event:breakoutup"]
+        }
+    };
+
+    private static MarketEvidence StructuredBullishMarket()
+    {
+        var candles=new List<CandleEvidence>();var start=Now.UtcDateTime.AddMinutes(-15*48);
+        for(var i=0;i<42;i++)
+        {
+            var close=100m+i*.05m;var open=close-.04m;
+            candles.Add(new(start.AddMinutes(15*i),open,close+.35m,open-.30m,close,100m,10000m,100,55m));
+        }
+        var recent=new[]
+        {
+            (102.08m,102.18m,101.85m,102.12m,115m),
+            (102.12m,102.30m,101.95m,102.22m,120m),
+            (102.25m,103.55m,102.20m,103.20m,175m),
+            (103.18m,103.35m,102.35m,103.02m,165m),
+            (103.02m,103.75m,102.95m,103.55m,180m),
+            (103.55m,104.05m,103.45m,103.85m,190m)
+        };
+        for(var i=0;i<recent.Length;i++)
+        {
+            var value=recent[i];
+            candles.Add(new(start.AddMinutes(15*(42+i)),value.Item1,value.Item2,value.Item3,value.Item4,value.Item5,value.Item5*value.Item4,150,value.Item5*.58m));
+        }
+        var market=new MarketEvidence("BTCUSDT",103.85m,99m,110m,58,.012,.018,.025,new(.0001m,1000m,1.1m,1.05m,1.02m,1.15m,.001m),Now.UtcDateTime)
+        {
+            Candles=candles,
+            Quality=new MarketQualityEvidence{QualityScore=92,LiquidityScore=.9,RelativeVolume=1.4,AtrPercent=.012,BestBid=103.84m,BestAsk=103.86m,SpreadBps=1.9}
+        };
+        return market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,"test-provider","Testnet")};
+    }
+
     private static IndependentRiskReview Risk(bool approved) => new()
     { Approved = approved, RiskLevel = approved ? "NORMAL" : "BLOCKED", PlannedQuantity = approved ? .01m : 0, RiskAmount=approved ? 10m : 0, ExposureAfter=approved ? .1m : 0, Checks = ["risk-gate"] };
     private static IndependentRiskReview CopyRisk(IndependentRiskReview value,decimal? quantity=null,decimal? riskAmount=null,decimal? exposure=null,IReadOnlyList<string>? checks=null,IReadOnlyList<string>? blocks=null,string? level=null)=>new(){Approved=value.Approved,RiskLevel=level??value.RiskLevel,PlannedQuantity=quantity??value.PlannedQuantity,RiskAmount=riskAmount??value.RiskAmount,ExposureAfter=exposure??value.ExposureAfter,Checks=checks??value.Checks,BlockingReasons=blocks??value.BlockingReasons,Summary=value.Summary};
