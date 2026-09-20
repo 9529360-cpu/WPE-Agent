@@ -78,9 +78,11 @@ public sealed class HeadlessRuntimeBoundaryTests
         Assert.Equal("lease-lost",Reason(true,true,true,TimeSpan.FromSeconds(1)));
         Assert.Null(Reason(false,false,false,TimeSpan.FromSeconds(10)));
         Assert.Null(Reason(false,false,false,TimeSpan.FromSeconds(30)));
-        Assert.Equal("agent-not-running",Reason(false,false,false,TimeSpan.FromSeconds(31)));
+        Assert.Null(Reason(false,false,false,TimeSpan.FromSeconds(60)));
+        Assert.Equal("agent-not-running",Reason(false,false,false,TimeSpan.FromSeconds(61)));
         Assert.Null(Reason(false,true,false,TimeSpan.FromSeconds(20)));
-        Assert.Equal("heartbeat-stale",Reason(false,true,false,TimeSpan.FromSeconds(31)));
+        Assert.Null(Reason(false,true,false,TimeSpan.FromSeconds(60)));
+        Assert.Equal("heartbeat-stale",Reason(false,true,false,TimeSpan.FromSeconds(61)));
         Assert.Null(Reason(false,true,true,TimeSpan.FromMinutes(5)));
     }
 

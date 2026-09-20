@@ -104,6 +104,44 @@ public sealed class SecurityBoundaryRegressionTests
     }
 
     [Fact]
+    public async Task TradingKernel_WaitsForStaleDatabaseLeaseAfterProcessLeaseIsFree()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "wpe-kernel-stale-db-lease-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var database = new AgentSqliteStore(Path.Combine(directory, "agent.db"));
+        var processLease = Path.Combine(directory, "autonomous-trading-kernel.lock");
+        var staleOwner = "stale-owner-" + Guid.NewGuid().ToString("N");
+        var supervisor = new AgentRuntimeSupervisor(
+            database,
+            new InProcessAgentEventBus(),
+            processLease,
+            TimeSpan.FromMilliseconds(250),
+            TimeSpan.FromSeconds(2),
+            TimeSpan.FromMilliseconds(25));
+
+        try
+        {
+            Assert.True(await database.TryAcquireRuntimeLeaseAsync(
+                "autonomous-trading-kernel",
+                staleOwner,
+                TimeSpan.FromMilliseconds(150),
+                CancellationToken.None));
+
+            await supervisor.StartAsync(CancellationToken.None);
+
+            Assert.NotEqual("NOT_STARTED", supervisor.Health.RecoveryStatus);
+            Assert.NotEqual(staleOwner, supervisor.Health.InstanceId);
+        }
+        finally
+        {
+            await supervisor.DisposeAsync();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+
+    [Fact]
     public void TradingKernel_LeaseLossIsFailClosedAndNotOnlyTelemetry()
     {
         var root = RepositoryRoot();

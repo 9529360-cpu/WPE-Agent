@@ -17,7 +17,7 @@ public static class HeadlessRuntimeProcess
     public const int FatalExitCode = 50;
 
     private static readonly TimeSpan SupervisionInterval = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan StartupHeartbeatGrace = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan StartupHeartbeatGrace = TimeSpan.FromSeconds(60);
     private static readonly JsonSerializerOptions HealthJson = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
