@@ -116,6 +116,33 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task FailedLaterOpeningDoesNotReplaceManagedOpeningIdentity()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open-a",OpeningIntent("open-partial-a"),"PROTECTED","1006",CancellationToken.None);
+            var market=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(120m)}};
+
+            var first=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None);
+            var firstPartial=Assert.Single(first.Intents);
+            await db.SaveIntentAsync("cycle-partial-a",firstPartial,"COMPLETED_PARTIAL","2006",CancellationToken.None);
+
+            await Task.Delay(20);
+            await db.SaveIntentAsync("cycle-open-rejected",OpeningIntent("open-partial-rejected"),"REJECTED",null,CancellationToken.None);
+
+            var second=await new PositionManagementSkill().EvaluateAsync([Position() with{Quantity=.5m}],market,db,CancellationToken.None);
+
+            Assert.DoesNotContain(second.Intents,value=>value.ReasonCode==PositionExitReasonCodes.PartialTakeProfit2R);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task ReopenedSameSideGetsFreshTwoRActionIdentity()
     {
         var path=TempDb();
