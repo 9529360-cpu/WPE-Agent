@@ -64,6 +64,25 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
     }
 
     [Fact]
+    public async Task ReplaceProtection_ExistingDurableStateRejectsBeforeProviderMutation()
+    {
+        var exchange=new RecordingExchange();
+        var executor=CreateExecutor(exchange,out var store,CapabilityStatus.Available);
+        var adjustment=new ProtectionAdjustment(
+            "SOLUSDT",PositionSide.Long,150.075m,160m,"breakeven","WPE-PM-BE-existing");
+        await store.SetStateAsync(
+            PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId!),
+            "PENDING",
+            CancellationToken.None);
+
+        var error=await Assert.ThrowsAsync<InvalidOperationException>(()=>
+            executor.ReplaceProtectionAsync("cycle",adjustment,CancellationToken.None));
+
+        Assert.Contains("durable state",error.Message,StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0,exchange.MutationCount);
+    }
+
+    [Fact]
     public async Task RecoverPending_UnsupportedCapabilityDoesNotReplaceProtection()
     {
         var exchange = new RecordingExchange { FoundOrder = FilledOrder() };
