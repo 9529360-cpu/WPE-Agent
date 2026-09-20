@@ -388,6 +388,10 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             }
             var leg=orders.Where(o=>o.Symbol==position.Symbol&&o.PositionSide==position.Side&&o.IsProtection).ToArray();var combined=leg.Any(o=>o.Type.Contains("OCO",StringComparison.OrdinalIgnoreCase)||o.Type.Contains("POSITION_TPSL",StringComparison.OrdinalIgnoreCase));var hasSl=combined||leg.Any(o=>o.Type.Contains("STOP",StringComparison.OrdinalIgnoreCase)||o.Type.Contains("LOSS",StringComparison.OrdinalIgnoreCase));var hasTp=combined||leg.Any(o=>o.Type.Contains("TAKE",StringComparison.OrdinalIgnoreCase)||o.Type.Contains("PROFIT",StringComparison.OrdinalIgnoreCase));if(hasSl&&hasTp)continue;
             var intent=await _db.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);if(intent is null){safe=false;messages.Add(L("Execution.ProtectionMissing",position.Symbol,position.Side,!hasSl,!hasTp));continue;}
+            if(await _db.HasStateAsync(PositionManagementDurableState.OwnershipRevocationKey(intent.ClientOrderId),ct))
+            {
+                safe=false;messages.Add($"recovery.position-ownership-revoked:{position.Symbol}:{position.Side}");continue;
+            }
             try{EnsureCapability(intent);await _ex.PlaceProtectionAsync(position.Symbol,position.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);messages.Add(L("Execution.ProtectionRepaired",position.Symbol,position.Side));}catch(Exception ex){safe=false;messages.Add(L("Execution.ProtectionRepairFailed",position.Symbol,position.Side,SensitiveDataRedactor.ForLog(ex.Message,180)));}
         }return new(safe,messages);
     }
