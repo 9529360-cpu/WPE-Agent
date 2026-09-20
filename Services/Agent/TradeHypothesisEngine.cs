@@ -241,10 +241,10 @@ public sealed class TradeHypothesisEngine
 
         if (biasBroken || priceBroken)
         {
-            var thesis = longSide
+            var invalidationThesis = longSide
                 ? $"Long candle-structure thesis invalidated: price={market.Price:F2}, invalidation={previous.InvalidationPrice:F2}, bias={structure.HigherTimeframeBias}."
                 : $"Short candle-structure thesis invalidated: price={market.Price:F2}, invalidation={previous.InvalidationPrice:F2}, bias={structure.HigherTimeframeBias}.";
-            return Snapshot(previous, market, regime, TradeHypothesisStage.Invalidated, 0, thesis,
+            return Snapshot(previous, market, regime, TradeHypothesisStage.Invalidated, 0, invalidationThesis,
                 previous.Trigger, previous.Invalidation, now, structure);
         }
 
