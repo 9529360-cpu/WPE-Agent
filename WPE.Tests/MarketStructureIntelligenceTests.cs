@@ -35,7 +35,7 @@ public sealed class MarketStructureIntelligenceTests
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
         var first=Market(Pullback15m(),h1,h4);
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
-        var current=Market(SweepLowReclaim15m(),h1,h4);
+        var current=Market(SweepLowReclaimNext15m(),h1,h4,Now.AddMinutes(15));
 
         var structure=MarketStructureIntelligence.Analyze(current);
         var scout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
@@ -45,6 +45,22 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Equal(TradeHypothesisStage.ScoutReady,scout.Stage);
         Assert.True(scout.Actionable);
         Assert.Equal(.16,scout.RiskBudgetMultiplier,10);
+    }
+
+    [Fact]
+    public void RepeatedReadOfSameConfirmedCandleCannotEscalateHypothesisStage()
+    {
+        var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
+        var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
+        var first=Market(Pullback15m(),h1,h4);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var repeated=Market(SweepLowReclaim15m(),h1,h4);
+
+        var stillWatching=TradeHypothesisEngine.EvaluateMarket(repeated,watching,[],Now.AddMinutes(1));
+
+        Assert.Equal(TradeHypothesisStage.Watching,stillWatching.Stage);
+        Assert.False(stillWatching.Actionable);
+        Assert.Equal(watching.LastStructureEvidenceAtUtc,stillWatching.LastStructureEvidenceAtUtc);
     }
 
     [Fact]
@@ -200,8 +216,10 @@ public sealed class MarketStructureIntelligenceTests
     private static MarketEvidence Market(
         IReadOnlyList<CandleEvidence> m15,
         IReadOnlyList<CandleEvidence> h1,
-        IReadOnlyList<CandleEvidence> h4)
+        IReadOnlyList<CandleEvidence> h4,
+        DateTimeOffset? observedAt=null)
     {
+        var observed=observedAt??Now;
         var price=m15[^1].Close;
         return new(
             "BTCUSDT",
@@ -213,7 +231,7 @@ public sealed class MarketStructureIntelligenceTests
             0,
             0,
             new DerivativesSnapshot(.00003m,400_000_000m,0,0,0,1.05m,-.0005m),
-            Now.UtcDateTime)
+            observed.UtcDateTime)
         {
             Candles=m15,
             Candles1h=h1,
@@ -236,6 +254,26 @@ public sealed class MarketStructureIntelligenceTests
 
     private static IReadOnlyList<CandleEvidence> Pullback15m() =>
         Trend(40,112m,-.28m,TimeSpan.FromMinutes(15));
+
+    private static IReadOnlyList<CandleEvidence> SweepLowReclaimNext15m()
+    {
+        var values=Pullback15m().ToList();
+        var previous=values[^1];
+        var referenceLow=values.TakeLast(20).Min(x=>x.Low);
+        var open=previous.Close+.05m;
+        var close=referenceLow+.75m;
+        values.Add(new(
+            Now.UtcDateTime,
+            open,
+            Math.Max(open,close)+.35m,
+            referenceLow-1.4m,
+            close,
+            300m,
+            30_000m,
+            450,
+            210m));
+        return values;
+    }
 
     private static IReadOnlyList<CandleEvidence> SweepLowReclaim15m()
     {
