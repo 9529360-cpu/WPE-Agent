@@ -53,6 +53,7 @@ public sealed record TradeHypothesis(
     public const string CurrentVersion = "hypothesis-v2";
     public string DecisionBasis { get; init; } = "summary-v1";
     public bool LastOrderBookAvailable { get; init; }
+    public DateTimeOffset LastStructureEvidenceAtUtc { get; init; }
     public bool Actionable => Stage is TradeHypothesisStage.ScoutReady or TradeHypothesisStage.Confirmed;
     public bool IsLive => Kind != TradeHypothesisKind.None && Stage != TradeHypothesisStage.Invalidated;
     public bool DirectionMatches(DecisionAction action) => action switch
@@ -259,19 +260,31 @@ public sealed class TradeHypothesisEngine
             ? eventKind is MarketStructureEvent.BearishBreak or MarketStructureEvent.BearishDisplacement or MarketStructureEvent.LiquiditySweepHighReject
             : eventKind is MarketStructureEvent.BullishBreak or MarketStructureEvent.BullishDisplacement or MarketStructureEvent.LiquiditySweepLowReclaim;
         var microstructureReady = MicrostructureReady(market, longSide);
+        var structureEvidenceAt = StructureEvidenceTimeUtc(market, structure);
+        var hasNewStructureEvidence =
+            previous.LastStructureEvidenceAtUtc != default &&
+            structureEvidenceAt != default &&
+            structureEvidenceAt > previous.LastStructureEvidenceAtUtc;
 
         var nextStage = previous.Stage;
         if (!sameSidePosition)
         {
-            if (previous.Stage == TradeHypothesisStage.Watching && structuralTrigger && microstructureReady)
+            if (previous.Stage == TradeHypothesisStage.Watching &&
+                hasNewStructureEvidence &&
+                structuralTrigger &&
+                microstructureReady)
+            {
                 nextStage = TradeHypothesisStage.ScoutReady;
+            }
             else if (previous.Stage == TradeHypothesisStage.ScoutReady)
             {
                 if (!microstructureReady || adverseEvent) nextStage = TradeHypothesisStage.Watching;
-                else if (structuralConfirmation) nextStage = TradeHypothesisStage.Confirmed;
+                else if (hasNewStructureEvidence && structuralConfirmation) nextStage = TradeHypothesisStage.Confirmed;
             }
             else if (previous.Stage == TradeHypothesisStage.Confirmed && (!microstructureReady || adverseEvent))
+            {
                 nextStage = TradeHypothesisStage.ScoutReady;
+            }
         }
 
         var risk = nextStage switch
@@ -626,7 +639,8 @@ public sealed class TradeHypothesisEngine
             Evidence(market, structure))
         {
             DecisionBasis = structure is { Available: true } ? MarketStructureRead.DecisionBasis : "summary-v1",
-            LastOrderBookAvailable = BookAvailable(market)
+            LastOrderBookAvailable = BookAvailable(market),
+            LastStructureEvidenceAtUtc = StructureEvidenceTimeUtc(market, structure)
         };
     }
 
@@ -662,7 +676,10 @@ public sealed class TradeHypothesisEngine
             Invalidation = invalidation,
             Evidence = Evidence(market, structure),
             DecisionBasis = structure is { Available: true } ? MarketStructureRead.DecisionBasis : previous.DecisionBasis,
-            LastOrderBookAvailable = BookAvailable(market)
+            LastOrderBookAvailable = BookAvailable(market),
+            LastStructureEvidenceAtUtc = structure is { Available: true }
+                ? StructureEvidenceTimeUtc(market, structure)
+                : previous.LastStructureEvidenceAtUtc
         };
 
     private static TradeHypothesis Observing(MarketEvidence market, DateTimeOffset now, string thesis, MarketStructureRead? structure = null) =>
@@ -703,6 +720,14 @@ public sealed class TradeHypothesisEngine
     private static bool BookAvailable(MarketEvidence market) =>
         !market.Quality.Anomalies.Contains("order_book_missing",StringComparer.OrdinalIgnoreCase);
 
+    private static DateTimeOffset StructureEvidenceTimeUtc(MarketEvidence market, MarketStructureRead? structure)
+    {
+        if (structure is not { Available: true }) return default;
+        var candles = ConfirmedMarketCandlesV1.Select(market.Candles, "15m", market.CollectedAt);
+        if (candles.Count == 0) return default;
+        return new DateTimeOffset(candles[^1].OpenTime).Add(ConfirmedMarketCandlesV1.Duration("15m"));
+    }
+
     private static decimal InvalidationPrice(MarketEvidence market, bool longSide)
     {
         var volatility = (decimal)Math.Clamp(market.Quality.AtrPercent * 1.5, .0015, .02);
@@ -736,7 +761,13 @@ public sealed class TradeHypothesisEngine
             ? "order_book=unavailable"
             : $"order_book={market.Quality.OrderBookImbalance:F3}";
         var result = new List<string>();
-        if (structure is { Available: true }) result.AddRange(structure.Evidence);
+        if (structure is { Available: true })
+        {
+            result.AddRange(structure.Evidence);
+            var structureEvidenceAt = StructureEvidenceTimeUtc(market, structure);
+            if (structureEvidenceAt != default)
+                result.Add($"structure_evidence_at_utc={structureEvidenceAt:O}");
+        }
         result.AddRange(
         [
             $"price={market.Price:F2}",
