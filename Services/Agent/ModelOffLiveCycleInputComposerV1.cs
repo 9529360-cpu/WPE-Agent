@@ -84,7 +84,7 @@ internal static class ModelOffLiveCycleInputComposerV1
         request.Evidence.Markets.TryGetValue(target,out var technicalMarket);
         var targetStructure=marketStructures.FirstOrDefault(x=>string.Equals(x.Symbol,target,StringComparison.OrdinalIgnoreCase));
         var targetHypotheses=technicalMarket is not null&&targetStructure is not null?hypothesisSkill.Build(technicalMarket,targetStructure):Array.Empty<MarketHypothesis>();
-        var technicalEvidenceValid=targetAssessmentValid&&technicalMarket is not null&&MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(technicalMarket)&&targetStructure is{Ready:true};
+        var technicalEvidenceValid=targetAssessmentValid&&technicalMarket is not null&&MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(technicalMarket)&&(!numericalDecision||targetStructure is{Ready:true});
         if(assessmentMatches.Length==0)researchReasons.Add("live.research.technical-missing");
         if(assessmentMatches.Length>1)researchReasons.Add("live.research.technical-conflicting");
         if(targetAssessment is not null&&!targetAssessmentValid)researchReasons.Add("live.research.technical-invalid");
