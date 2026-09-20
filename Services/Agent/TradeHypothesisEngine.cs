@@ -161,13 +161,7 @@ public sealed class TradeHypothesisEngine
         MarketStructureRead structure,
         DateTimeOffset now)
     {
-        var regime = structure.HigherTimeframeBias switch
-        {
-            MarketStructureBias.Bullish or MarketStructureBias.Bearish => MarketRegime.Trending,
-            MarketStructureBias.Range => MarketRegime.Ranging,
-            MarketStructureBias.Mixed => MarketRegime.Transition,
-            _ => MarketRegime.Unknown
-        };
+        var regime = StructureRegime(structure);
 
         if (previous is not null &&
             previous.Symbol.Equals(market.Symbol, StringComparison.OrdinalIgnoreCase) &&
@@ -186,6 +180,15 @@ public sealed class TradeHypothesisEngine
 
         return DetectStructuredNew(market, structure, regime, now);
     }
+
+    private static MarketRegime StructureRegime(MarketStructureRead structure) =>
+        structure.HigherTimeframeBias switch
+        {
+            MarketStructureBias.Bullish or MarketStructureBias.Bearish => MarketRegime.Trending,
+            MarketStructureBias.Range => MarketRegime.Ranging,
+            MarketStructureBias.Mixed => MarketRegime.Transition,
+            _ => MarketRegime.Unknown
+        };
 
     private static TradeHypothesis DetectStructuredNew(
         MarketEvidence market,
@@ -670,7 +673,9 @@ public sealed class TradeHypothesisEngine
             TradeHypothesisKind.None,
             TradeHypothesisStage.Observing,
             0,
-            Valid(market) ? MarketRegimeClassifier.Detect(market) : MarketRegime.Unknown,
+            Valid(market)
+                ? structure is { Available: true } ? StructureRegime(structure) : MarketRegimeClassifier.Detect(market)
+                : MarketRegime.Unknown,
             now,
             now,
             1,
