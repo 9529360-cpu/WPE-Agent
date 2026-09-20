@@ -22,6 +22,7 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Equal(MarketStructureScenario.TrendPullbackLong,structure.Scenario);
         Assert.Equal(TradeHypothesisKind.TrendPullbackLong,hypothesis.Kind);
         Assert.Equal(TradeHypothesisStage.Watching,hypothesis.Stage);
+        Assert.Equal("hypothesis-v2",hypothesis.Version);
         Assert.Equal(MarketStructureRead.DecisionBasis,hypothesis.DecisionBasis);
         Assert.Contains("structure_basis=candles-structure-v2",hypothesis.Evidence);
         Assert.Contains("4h=Bullish",hypothesis.Thesis,StringComparison.Ordinal);
