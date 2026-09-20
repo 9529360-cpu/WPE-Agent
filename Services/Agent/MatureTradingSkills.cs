@@ -266,7 +266,10 @@ public sealed class PositionManagementSkill
                 }
                 var rawStop=position.Side==PositionSide.Long?position.EntryPrice*1.0005m:position.EntryPrice*.9995m;
                 var stop=RoundProtectiveStop(rawStop,rule.TickSize,position.Side);
-                if(stop<=0)
+                var validStop=stop>0&&(position.Side==PositionSide.Long
+                    ?stop>=position.EntryPrice&&stop<market.Price
+                    :stop<=position.EntryPrice&&stop>market.Price);
+                if(!validStop)
                 {
                     notes.Add($"breakeven-price-unavailable:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
                     continue;
