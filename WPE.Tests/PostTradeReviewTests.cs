@@ -179,6 +179,32 @@ public sealed class PostTradeReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task LegacyAutomaticRiskApprovedCodeCannotBecomeExitCause()
+    {
+        var store=new AgentSqliteStore(Database);
+        var entry=Intent("entry-legacy-authority",false,1m,100m);
+        await store.RecordExecutionAsync("open-legacy-authority",entry,Order(entry,"FILLED",1m,100m),"v1",default);
+        var close=new ExecutionIntent(
+            "BTCUSDT",PositionSide.Long,1m,true,0,0,"close-legacy-authority",
+            "automatic.risk-approved",
+            DecisionAction.CloseLong,
+            ExpectedPrice:99m,
+            ReasonCode:"automatic.risk-approved");
+        await store.RecordExecutionAsync(
+            "close-legacy-authority",
+            close,
+            new ExchangeOrder("BTCUSDT","order-close-legacy-authority",close.ClientOrderId,"FILLED",1m,99m,"MARKET",PositionSide.Long,false,DateTime.UtcNow),
+            "v1",
+            default);
+
+        var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));
+        Assert.Equal("action.closelong",review.ExitReason);
+        var memory=Assert.Single(await store.SearchMemoriesAsync(new(Tier:"long-term",Symbol:"BTCUSDT"),default));
+        Assert.Contains("exitReason=action.closelong",memory.Summary,StringComparison.Ordinal);
+        Assert.DoesNotContain("automatic.risk-approved",memory.Summary,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ReplayedCloseCannotChangeExpectedPriceOnly()
     {
         var store=new AgentSqliteStore(Database);var entry=Intent("entry",false,1m,100m);var close=Intent("close",true,1m,110m);await store.RecordExecutionAsync("open",entry,Order(entry,"FILLED",1m,100m),"v1",default);var fill=Order(close,"FILLED",1m,110m);await store.RecordExecutionAsync("close",close,fill,"v1",default);await Assert.ThrowsAsync<InvalidOperationException>(()=>store.RecordExecutionAsync("close",close with{ExpectedPrice=111m},fill,"v1",default));
