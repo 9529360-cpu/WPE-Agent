@@ -57,9 +57,24 @@ public static class MarketTeacherRuntimeV2
 {
     public static async Task<TeacherLessonV2?> GenerateDueLocalLessonAsync(AgentSqliteStore store,string cycleId,DateTimeOffset nowUtc,CancellationToken ct,string language="zh_CN",string teachingLevel="intermediate",string timeZoneId=MarketTeacherScheduleV2.DefaultTimeZone)
     {
-        ArgumentNullException.ThrowIfNull(store);var due=MarketTeacherScheduleV2.Due(nowUtc,timeZoneId);if(due is null)return null;
-        var expectedId=$"teacher-{due.Value.ScheduledForUtc:yyyyMMddHHmm}-{due.Value.Kind.ToString().ToLowerInvariant()}";var existing=await store.GetTeacherLessonAsync(expectedId,ct);if(existing is not null)return existing;
-        var evidence=await store.GetTeacherEvidenceForCycleAsync(cycleId,nowUtc,ct);var lesson=MarketTeacherComposerV2.Compose(due.Value.Kind,due.Value.ScheduledForUtc,evidence,language,teachingLevel,timeZoneId,nowUtc);var saved=await store.SaveTeacherLessonAsync(lesson,ct);if(!saved.Succeeded)throw new InvalidOperationException(saved.Code);return lesson;
+        ArgumentNullException.ThrowIfNull(store);nowUtc=nowUtc.ToUniversalTime();var due=MarketTeacherScheduleV2.Due(nowUtc,timeZoneId);if(due is null)return null;
+        var scheduled=due.Value.ScheduledForUtc.ToUniversalTime();var expectedId=$"teacher-{scheduled:yyyyMMddHHmm}-{due.Value.Kind.ToString().ToLowerInvariant()}";var existing=await store.GetTeacherLessonAsync(expectedId,ct);if(existing is not null)return existing;
+
+        var candidateIds=new List<string>();if(!string.IsNullOrWhiteSpace(cycleId))candidateIds.Add(cycleId);candidateIds.AddRange(await store.GetRecentTeacherCandidateCycleIdsAsync(scheduled,32,ct));
+        foreach(var candidateId in candidateIds.Distinct(StringComparer.Ordinal))
+        {
+            var evidence=await store.GetTeacherEvidenceForCycleAsync(candidateId,scheduled,ct);
+            if(!IsEvidenceEligible(evidence,scheduled))continue;
+            var lesson=MarketTeacherComposerV2.Compose(due.Value.Kind,scheduled,evidence,language,teachingLevel,timeZoneId,nowUtc);var saved=await store.SaveTeacherLessonAsync(lesson,ct);if(!saved.Succeeded)throw new InvalidOperationException(saved.Code);return lesson;
+        }
+        return null;
+    }
+
+    internal static bool IsEvidenceEligible(IReadOnlyList<TeacherEvidenceReferenceV2> evidence,DateTimeOffset asOfUtc)
+    {
+        if(evidence is null)return false;asOfUtc=asOfUtc.ToUniversalTime();var roles=new[]{"market","research","strategy","risk","execution","recovery","audit"};
+        if(evidence.Count!=roles.Length||roles.Any(role=>evidence.Count(x=>x.Agent==role)!=1)||evidence.Select(x=>x.CycleId).Distinct(StringComparer.Ordinal).Count()!=1)return false;
+        return evidence.All(item=>item.Availability==TeacherEvidenceAvailabilityV2.Available&&item.AsOfUtc.Offset==TimeSpan.Zero&&item.AsOfUtc<=asOfUtc&&asOfUtc-item.AsOfUtc<=TimeSpan.FromMinutes(30)&&item.CanonicalSha256.Length==64&&item.CanonicalSha256.All(Uri.IsHexDigit));
     }
 }
 

@@ -1,4 +1,6 @@
 using Microsoft.Data.Sqlite;
+using System.Security.Cryptography;
+using System.Text;
 using 币安量化机器人.Services.Agent;
 using WpeAgent.Notifications;
 
@@ -33,6 +35,59 @@ public sealed class MarketTeacherV2Tests:IDisposable
         Assert.Throws<InvalidOperationException>(()=>MarketTeacherComposerV2.Compose(TeacherLessonKindV2.Morning,Now,Refs().Select((x,i)=>i==0?x with{CanonicalSha256="bad"}:x).ToArray(),generatedAtUtc:Now));
     }
 
+    [Fact] public async Task BlockedCurrentCycleIsAQuietNoLessonCondition()
+    {
+        var store=new AgentSqliteStore(Db);var scheduled=Now;var now=Now.AddMinutes(5);
+        await SeedCycleAsync("blocked-current",scheduled.AddSeconds(-20),scheduled.AddSeconds(-10),role=>role=="market"?"succeeded":"blocked");
+
+        var lesson=await MarketTeacherRuntimeV2.GenerateDueLocalLessonAsync(store,"blocked-current",now,default);
+
+        Assert.Null(lesson);
+        Assert.Null(await store.GetTeacherLessonAsync("teacher-202607270600-afternoon",default));
+    }
+
+    [Fact] public async Task DueLessonUsesLatestEligibleEvidenceAvailableAtScheduledTime()
+    {
+        var store=new AgentSqliteStore(Db);var scheduled=Now;var now=Now.AddMinutes(5);
+        await SeedCycleAsync("eligible-prior",scheduled.AddMinutes(-2),scheduled.AddMinutes(-1),_=>"succeeded");
+        await SeedCycleAsync("blocked-nearer",scheduled.AddSeconds(-30),scheduled.AddSeconds(-20),role=>role=="market"?"succeeded":"blocked");
+        await SeedCycleAsync("future-cycle",scheduled.AddMinutes(1),scheduled.AddMinutes(1),_=>"succeeded");
+
+        var lesson=await MarketTeacherRuntimeV2.GenerateDueLocalLessonAsync(store,"future-cycle",now,default);
+
+        Assert.NotNull(lesson);
+        Assert.Equal("teacher-202607270600-afternoon",lesson!.LessonId);
+        Assert.Equal(scheduled,lesson.ScheduledForUtc);
+        Assert.Equal(now,lesson.GeneratedAtUtc);
+        Assert.All(lesson.Evidence,x=>{Assert.Equal("eligible-prior",x.CycleId);Assert.True(x.AsOfUtc<=scheduled);Assert.Equal(TeacherEvidenceAvailabilityV2.Available,x.Availability);});
+        Assert.NotNull(await store.GetTeacherLessonAsync(lesson.LessonId,default));
+    }
+
+    [Fact] public async Task TeacherEvidenceSelectsLatestRoleReferenceWithoutPointInTimeLookahead()
+    {
+        var store=new AgentSqliteStore(Db);var scheduled=Now;
+        await SeedCycleAsync("amended-cycle",scheduled.AddMinutes(-10),scheduled.AddMinutes(-9),_=>"succeeded");
+        await SeedAuditRowAsync("amended-cycle","audit","audit-pre-cutoff",scheduled.AddMinutes(-5),scheduled.AddMinutes(-4),"succeeded");
+        await SeedAuditRowAsync("amended-cycle","audit","audit-post-cutoff",scheduled.AddMinutes(1),scheduled.AddMinutes(1),"succeeded");
+
+        var evidence=await store.GetTeacherEvidenceForCycleAsync("amended-cycle",scheduled,default);
+
+        Assert.Equal(7,evidence.Count);
+        Assert.Equal("audit-pre-cutoff",Assert.Single(evidence,x=>x.Agent=="audit").OutputId);
+        Assert.True(MarketTeacherRuntimeV2.IsEvidenceEligible(evidence,scheduled));
+    }
+
+    [Fact] public async Task LatestEligibleCycleRequiresFreshCompleteSucceededEvidence()
+    {
+        var store=new AgentSqliteStore(Db,()=>Now);
+        await SeedCycleAsync("stale-success",Now.AddMinutes(-31),Now.AddMinutes(-31),_=>"succeeded");
+        await SeedCycleAsync("fresh-blocked",Now.AddMinutes(-2),Now.AddMinutes(-1),role=>role=="market"?"succeeded":"blocked");
+        Assert.Null(await store.GetLatestTeacherEligibleCycleIdAsync(default));
+
+        await SeedCycleAsync("fresh-success",Now.AddMinutes(-2),Now.AddMinutes(-1),_=>"succeeded");
+        Assert.Equal("fresh-success",await store.GetLatestTeacherEligibleCycleIdAsync(default));
+    }
+
     [Fact] public async Task LessonPersistenceIsAppendOnlyRestartSafeAndIdempotent()
     {
         var lesson=MarketTeacherComposerV2.Compose(TeacherLessonKindV2.Afternoon,Now,Refs(),generatedAtUtc:Now);var store=new AgentSqliteStore(Db);
@@ -56,6 +111,21 @@ public sealed class MarketTeacherV2Tests:IDisposable
         var recommendation=TeacherRecommendationEngineV2.CreateCrypto("rec-notify","BTCUSDT",TeacherRecommendationStateV2.WaitForConfirmation,"4h",Now,TimeSpan.FromHours(4),"研究候选",Refs(),["确认"],["失效"],["风险"]);var recPublisher=new TeacherLessonNotificationPublisherV2(store,observer,x=>x==NotificationEventKind.TeacherRecommendation);Assert.True(await recPublisher.PublishRecommendationIfAllowedAsync(lesson.LessonId,recommendation,"binance","Testnet",default));Assert.False(await recPublisher.PublishRecommendationIfAllowedAsync(lesson.LessonId,recommendation,"binance","Testnet",default));Assert.Contains(observer.Events,x=>x.Kind==NotificationEventKind.TeacherRecommendation);
     }
     [Fact] public void DesktopSettingsExposeIndependentTeacherConsentKinds(){var source=File.ReadAllText(Path.Combine(ProjectRoot(),"SetupWindow.xaml.cs"));foreach(var kind in new[]{"TeacherMorningLesson","TeacherAfternoonLesson","TeacherEveningLesson","TeacherEventLesson","TeacherRecommendation","TeacherCorrection"})Assert.Contains(kind,source,StringComparison.Ordinal);}
+
+    private async Task SeedCycleAsync(string cycle,DateTimeOffset asOfUtc,DateTimeOffset recordedAtUtc,Func<string,string> status)
+    {
+        foreach(var role in new[]{"market","research","strategy","risk","execution","recovery","audit"})
+            await SeedAuditRowAsync(cycle,role,$"{cycle}-{role}",asOfUtc,recordedAtUtc,status(role));
+    }
+
+    private async Task SeedAuditRowAsync(string cycle,string role,string outputId,DateTimeOffset asOfUtc,DateTimeOffset recordedAtUtc,string status)
+    {
+        var bytes=Encoding.UTF8.GetBytes($"{cycle}|{role}|{outputId}|{status}|{asOfUtc:O}");
+        var hash=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        await using var connection=new SqliteConnection($"Data Source={Db}");await connection.OpenAsync();await using var command=connection.CreateCommand();
+        command.CommandText="INSERT INTO model_off_canonical_audits(output_id,cycle_id,schema,template_version,canonical_sha256,status,output_kind,sources_json,as_of_utc,recorded_at_utc,canonical_bytes) VALUES($id,$cycle,'wpe.model-off-agent-output/1.0','teacher-test',$hash,$status,$kind,'[]',$asof,$recorded,$bytes)";
+        command.Parameters.AddWithValue("$id",outputId);command.Parameters.AddWithValue("$cycle",cycle);command.Parameters.AddWithValue("$hash",hash);command.Parameters.AddWithValue("$status",status);command.Parameters.AddWithValue("$kind",role);command.Parameters.AddWithValue("$asof",asOfUtc.ToUniversalTime().ToString("O"));command.Parameters.AddWithValue("$recorded",recordedAtUtc.ToUniversalTime().ToString("O"));command.Parameters.Add("$bytes",SqliteType.Blob).Value=bytes;await command.ExecuteNonQueryAsync();
+    }
 
     private static TeacherEvidenceReferenceV2[] Refs()=>new[]{"market","research","strategy","risk","execution","recovery","audit"}.Select((role,i)=>new TeacherEvidenceReferenceV2(role,role+"-output","cycle-1",new string("abcdef0"[i],64),Now.AddMinutes(-7+i),TeacherEvidenceAvailabilityV2.Available)).ToArray();private static string ProjectRoot()=>Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
     private sealed class RecordingObserver:IConfirmedNotificationObserver{public List<ConfirmedNotificationEvent> Events{get;}=[];public Task ObserveAsync(ConfirmedNotificationEvent value,CancellationToken ct){Events.Add(value);return Task.CompletedTask;}}
