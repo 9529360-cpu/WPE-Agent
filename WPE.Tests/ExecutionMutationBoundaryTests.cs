@@ -64,6 +64,30 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
     }
 
     [Fact]
+    public async Task ReplaceProtection_InPlaceProviderSkipsCancelAndUpdatesDirectly()
+    {
+        var protection=new ExchangeOrder(
+            "SOLUSDT","position-protection:SOLUSDT:long:position_tpsl","position-protection",
+            "NEW",0,0,"POSITION_TPSL",PositionSide.Long,true,DateTime.UtcNow);
+        var exchange=new RecordingInPlaceProtectionExchange
+        {
+            OpenOrders=[protection],
+            FailCancel=true
+        };
+        var executor=CreateExecutor(exchange,out var store,CapabilityStatus.Available);
+        var adjustment=new ProtectionAdjustment(
+            "SOLUSDT",PositionSide.Long,150.075m,160m,"breakeven","WPE-PM-BE-inplace");
+
+        await executor.ReplaceProtectionAsync("cycle",adjustment,CancellationToken.None);
+
+        Assert.Equal(0,exchange.CancelAttempts);
+        Assert.Equal(1,exchange.ProtectionSubmissions);
+        Assert.Equal("COMPLETED",await store.GetStateAsync(
+            PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId!),
+            CancellationToken.None));
+    }
+
+    [Fact]
     public async Task ReplaceProtection_CancelFailureEmergencyClosesManagedPosition()
     {
         var position=new ManagedPosition("SOLUSDT",PositionSide.Long,1m,150m,151m,1m,5m,true,120m);
@@ -502,6 +526,8 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         public ExchangeEnvironment Environment => ExchangeEnvironment.Testnet;
         public int MutationCount { get; private set; }
         public int MarketOrderSubmissions { get; private set; }
+        public int ProtectionSubmissions { get; private set; }
+        public int CancelAttempts { get; private set; }
         public bool LastReduceOnly { get; private set; }
         public bool FailCancel { get; init; }
         public ExchangeOrder? FoundOrder { get; init; }
@@ -515,10 +541,10 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         public Task SetLeverageAsync(string symbol,int leverage,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
         public Task<ExchangeOrder> PlaceMarketAsync(string symbol,PositionSide side,decimal quantity,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;MarketOrderSubmissions++;LastReduceOnly=reduceOnly;return Task.FromResult(FilledOrder() with{ClientOrderId=clientOrderId,ExecutedQuantity=quantity,PositionSide=side});}
         public Task<ExchangeOrder> PlaceLimitAsync(string symbol,PositionSide side,decimal quantity,decimal price,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;return Task.FromResult(FilledOrder());}
-        public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide sideToClose,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct){MutationCount++;return Task.FromResult(FilledOrder());}
+        public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide sideToClose,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct){MutationCount++;ProtectionSubmissions++;return Task.FromResult(FilledOrder());}
         public Task CancelOrderAsync(string symbol,string orderId,CancellationToken ct)
         {
-            MutationCount++;
+            MutationCount++;CancelAttempts++;
             return FailCancel?Task.FromException(new InvalidOperationException("cancel failed")):Task.CompletedTask;
         }
         public Task<AccountSnapshot> GetAccountAsync(CancellationToken ct) => throw new NotSupportedException();
@@ -528,6 +554,10 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         public Task<IReadOnlyList<CandleEvidence>> GetCandlesAsync(string symbol,string interval,int limit,CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<CandleEvidence>> GetCandlesRangeAsync(string symbol,string interval,DateTime start,DateTime end,int limit,CancellationToken ct) => throw new NotSupportedException();
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class RecordingInPlaceProtectionExchange:RecordingExchange,IInPlaceProtectionUpdateAdapter
+    {
     }
 
     private sealed class RecordingMutationExecutor(bool isTestnet):ITradingMutationExecutor
