@@ -386,6 +386,38 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task MissingOwnershipCandidateCannotRecaptureReappearedSameQuantityPosition()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            var opening=OpeningIntent("open-uncertain-ownership");
+            await db.SaveIntentAsync("cycle-open",opening,"PROTECTED","1011-candidate",CancellationToken.None);
+            await db.SetStateAsync(
+                PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId),
+                Now.ToString("O"),
+                CancellationToken.None);
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(120m)}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(),
+                tradingRules:Rules());
+
+            Assert.Empty(result.Intents);
+            Assert.Empty(result.ProtectionAdjustments);
+            Assert.Contains(result.Notes,x=>x.StartsWith("position-ownership-uncertain:",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task RevokedOpeningCannotManageLaterSameQuantityPosition()
     {
         var path=TempDb();
