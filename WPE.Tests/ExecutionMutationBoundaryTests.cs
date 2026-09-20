@@ -160,6 +160,21 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         Assert.Equal(0, exchange.MutationCount);
     }
 
+    [Fact]
+    public async Task ProtectionAudit_AvailableCapabilityDoesNotRepairUnownedPosition()
+    {
+        var exchange=new RecordingExchange();
+        var executor=CreateExecutor(exchange,out var store,CapabilityStatus.Available);
+        await store.SaveIntentAsync("cycle-old",OpeningIntent(),"PROTECTED","old-order",CancellationToken.None);
+        var position=new ManagedPosition("SOLUSDT",PositionSide.Long,1m,150m,151m,1m,5m,true,120m);
+
+        var result=await executor.AuditAndRepairProtectionAsync([position],[],CancellationToken.None);
+
+        Assert.False(result.SafeToIncreaseRisk);
+        Assert.Contains(result.Messages,x=>x.StartsWith("recovery.position-ownership-conflict:",StringComparison.Ordinal));
+        Assert.Equal(0,exchange.MutationCount);
+    }
+
     [Theory]
     [InlineData(ReduceOnlyRecoveryResult.Unknown,"recovery.reconciliation-unknown")]
     [InlineData(ReduceOnlyRecoveryResult.Stale,"recovery.reconciliation-stale")]
