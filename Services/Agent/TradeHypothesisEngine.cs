@@ -671,10 +671,28 @@ public sealed class TradeHypothesisEngine
             Invalidation = invalidation,
             Evidence = Evidence(market, structure),
             DecisionBasis = structure is { Available: true } ? MarketStructureRead.DecisionBasis : previous.DecisionBasis,
-            LastStructureBarClosedAtUtc = structure is { Available: true } ? new DateTimeOffset(structure.FifteenMinute.LastBarClosedAtUtc) : previous.LastStructureBarClosedAtUtc,
-            LastStructureEvent = structure is { Available: true } ? structure.FifteenMinute.Event : previous.LastStructureEvent,
+            LastStructureBarClosedAtUtc = LatestStructureBar(previous,structure),
+            LastStructureEvent = LatestStructureEvent(previous,structure),
             LastOrderBookAvailable = BookAvailable(market)
         };
+
+    private static DateTimeOffset? LatestStructureBar(TradeHypothesis previous,MarketStructureRead? structure)
+    {
+        if(structure is not {Available:true})return previous.LastStructureBarClosedAtUtc;
+        var current=new DateTimeOffset(structure.FifteenMinute.LastBarClosedAtUtc);
+        return previous.LastStructureBarClosedAtUtc is null||current>=previous.LastStructureBarClosedAtUtc.Value
+            ?current
+            :previous.LastStructureBarClosedAtUtc;
+    }
+
+    private static MarketStructureEvent LatestStructureEvent(TradeHypothesis previous,MarketStructureRead? structure)
+    {
+        if(structure is not {Available:true})return previous.LastStructureEvent;
+        var current=new DateTimeOffset(structure.FifteenMinute.LastBarClosedAtUtc);
+        return previous.LastStructureBarClosedAtUtc is null||current>=previous.LastStructureBarClosedAtUtc.Value
+            ?structure.FifteenMinute.Event
+            :previous.LastStructureEvent;
+    }
 
     private static TradeHypothesis Observing(MarketEvidence market, DateTimeOffset now, string thesis, MarketStructureRead? structure = null) =>
         new(
