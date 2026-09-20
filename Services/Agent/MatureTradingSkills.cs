@@ -189,7 +189,6 @@ public sealed class PositionManagementSkill
         foreach(var position in positions)
         {
             if(!IsExactlyManaged(position,positions,managedLegs))continue;
-            if(!markets.TryGetValue(position.Symbol,out var market))continue;
             var opening=await db.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);
             if(opening is null)continue;
             if(await db.HasStateAsync(PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId),ct))
@@ -214,11 +213,13 @@ public sealed class PositionManagementSkill
                         position.Symbol,position.Side,position.Quantity,true,0,0,actionId,
                         LocalizationService.Current.T("Execution.ProtectionReplaceFailed",protectionState),
                         position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
-                        ExpectedPrice:market.Price,
+                        ExpectedPrice:position.MarkPrice>0?position.MarkPrice:position.EntryPrice,
                         ReasonCode:PositionExitReasonCodes.ProtectionReplaceFailed));
                 notes.Add($"protection-recovery-close:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:{protectionState}");
                 continue;
             }
+
+            if(!markets.TryGetValue(position.Symbol,out var market))continue;
 
             if(hypotheses is not null &&
                hypotheses.TryGetValue(position.Symbol,out var hypothesis) &&
