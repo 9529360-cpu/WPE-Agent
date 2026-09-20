@@ -361,6 +361,27 @@ public static class PositionExitReasonCodes
     public const string ProtectionFillReconciled = "protection.fill-reconciled";
 }
 
+public static class ExecutionReasonCode
+{
+    public static bool TryNormalize(string? value, out string code)
+    {
+        code=(value??string.Empty).Trim();
+        if(code.Length is 0 or >96)return false;
+        var segments=code.Split('.');
+        if(segments.Length==0)return false;
+        foreach(var segment in segments)
+        {
+            if(segment.Length==0||segment[0] is not (>= 'a' and <= 'z'))return false;
+            if(segment[^1] is not (>= 'a' and <= 'z' or >= '0' and <= '9'))return false;
+            if(segment.Any(character=>character is not (>= 'a' and <= 'z' or >= '0' and <= '9' or '-')))return false;
+        }
+        return true;
+    }
+
+    public static string NormalizeOrFallback(string? value,string fallback)=>
+        TryNormalize(value,out var code)?code:fallback;
+}
+
 public sealed record ExecutionIntent(string Symbol, PositionSide Side, decimal Quantity, bool ReduceOnly, decimal StopLoss, decimal TakeProfit, string ClientOrderId, string Reason, DecisionAction Action = DecisionAction.Hold, ExecutionOrderType OrderType = ExecutionOrderType.Market, decimal LimitPrice = 0, decimal ExpectedPrice = 0, string ReasonCode = "");
 public sealed record PersistedIntent(string CycleId, ExecutionIntent Intent, string Status, string? ExchangeOrderId);
 public sealed record PersistedBacktestRun(string Id,string StrategyId,string StrategyVersion,string Symbol,string Status,DateTime CompletedAtUtc,int CoverageDays,int Trades,double OutOfSampleReturn,double MaxDrawdown,double Sharpe);
