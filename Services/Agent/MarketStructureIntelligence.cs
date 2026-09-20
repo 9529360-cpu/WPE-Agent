@@ -34,6 +34,19 @@ public enum MarketStructureBias
     Mixed
 }
 
+public enum MarketStructurePhase
+{
+    Unknown,
+    BullishImpulse,
+    BearishImpulse,
+    BullishPullback,
+    BearishPullback,
+    Balance,
+    Compression,
+    BullishReversalAttempt,
+    BearishReversalAttempt
+}
+
 public enum MarketStructureScenario
 {
     None,
@@ -65,6 +78,7 @@ public sealed record TimeframeStructureRead(
 public sealed record MarketStructureRead(
     bool Available,
     MarketStructureBias HigherTimeframeBias,
+    MarketStructurePhase Phase,
     MarketStructureScenario Scenario,
     bool TriggerPresent,
     bool ConfirmationPresent,
@@ -91,7 +105,7 @@ public static class MarketStructureIntelligence
                         h1.State != PriceStructureState.Unknown &&
                         h4.State != PriceStructureState.Unknown;
         if (!available)
-            return new(false, MarketStructureBias.Unknown, MarketStructureScenario.None, false, false,
+            return new(false, MarketStructureBias.Unknown, MarketStructurePhase.Unknown, MarketStructureScenario.None, false, false,
                 market.Support, market.Resistance, m15, h1, h4,
                 "Multi-timeframe candle structure is not yet complete.",
                 ["structure_basis=unavailable"]);
@@ -99,14 +113,16 @@ public static class MarketStructureIntelligence
         var bias = HigherTimeframeBias(h1.State, h4.State);
         var nearDemand = Near(m15.LastClose, m15.Demand, m15.Atr);
         var nearSupply = Near(m15.LastClose, m15.Supply, m15.Atr);
-        var scenario = DetectScenario(bias, m15, nearDemand, nearSupply);
+        var phase = DetectPhase(bias, m15);
+        var scenario = DetectScenario(bias, phase, m15, nearDemand, nearSupply);
         var trigger = HasTrigger(scenario, m15);
         var confirmation = HasConfirmation(scenario, m15);
-        var narrative = BuildNarrative(bias, scenario, m15, h1, h4, nearDemand, nearSupply);
+        var narrative = BuildNarrative(bias, phase, scenario, m15, h1, h4, nearDemand, nearSupply);
         var evidence = new List<string>
         {
             $"structure_basis={MarketStructureRead.DecisionBasis}",
             $"structure_bias={bias}",
+            $"structure_phase={phase}",
             $"structure_scenario={scenario}",
             $"15m_structure={m15.State}",
             $"15m_event={m15.Event}",
@@ -120,7 +136,7 @@ public static class MarketStructureIntelligence
             $"structure_confirmation={(confirmation ? "present" : "waiting")}"
         };
 
-        return new(true, bias, scenario, trigger, confirmation,
+        return new(true, bias, phase, scenario, trigger, confirmation,
             m15.Demand > 0 ? m15.Demand : market.Support,
             m15.Supply > 0 ? m15.Supply : market.Resistance,
             m15, h1, h4, narrative, evidence);
@@ -241,17 +257,60 @@ public static class MarketStructureIntelligence
         return MarketStructureEvent.None;
     }
 
+    private static MarketStructurePhase DetectPhase(
+        MarketStructureBias bias,
+        TimeframeStructureRead m15)
+    {
+        if (m15.Compression) return MarketStructurePhase.Compression;
+
+        if (m15.Event is MarketStructureEvent.LiquiditySweepLowReclaim or MarketStructureEvent.BullishRejection)
+            return MarketStructurePhase.BullishReversalAttempt;
+        if (m15.Event is MarketStructureEvent.LiquiditySweepHighReject or MarketStructureEvent.BearishRejection)
+            return MarketStructurePhase.BearishReversalAttempt;
+
+        if (bias == MarketStructureBias.Bullish)
+        {
+            if (m15.Event is MarketStructureEvent.BullishBreak or MarketStructureEvent.BullishRetest or MarketStructureEvent.BullishDisplacement ||
+                m15.State == PriceStructureState.Bullish)
+                return MarketStructurePhase.BullishImpulse;
+            if (m15.State is PriceStructureState.Bearish or PriceStructureState.Transition)
+                return MarketStructurePhase.BullishPullback;
+            if (m15.State == PriceStructureState.Range)
+                return MarketStructurePhase.Balance;
+        }
+
+        if (bias == MarketStructureBias.Bearish)
+        {
+            if (m15.Event is MarketStructureEvent.BearishBreak or MarketStructureEvent.BearishRetest or MarketStructureEvent.BearishDisplacement ||
+                m15.State == PriceStructureState.Bearish)
+                return MarketStructurePhase.BearishImpulse;
+            if (m15.State is PriceStructureState.Bullish or PriceStructureState.Transition)
+                return MarketStructurePhase.BearishPullback;
+            if (m15.State == PriceStructureState.Range)
+                return MarketStructurePhase.Balance;
+        }
+
+        if (m15.State == PriceStructureState.Range)
+            return MarketStructurePhase.Balance;
+        if (m15.State == PriceStructureState.Bullish)
+            return MarketStructurePhase.BullishImpulse;
+        if (m15.State == PriceStructureState.Bearish)
+            return MarketStructurePhase.BearishImpulse;
+        return MarketStructurePhase.Unknown;
+    }
+
     private static MarketStructureScenario DetectScenario(
         MarketStructureBias bias,
+        MarketStructurePhase phase,
         TimeframeStructureRead m15,
         bool nearDemand,
         bool nearSupply)
     {
         if (bias == MarketStructureBias.Range)
         {
-            if (nearDemand && m15.Event is (MarketStructureEvent.LiquiditySweepLowReclaim or MarketStructureEvent.BullishRejection))
+            if (nearDemand && phase == MarketStructurePhase.BullishReversalAttempt)
                 return MarketStructureScenario.RangeReversionLong;
-            if (nearSupply && m15.Event is (MarketStructureEvent.LiquiditySweepHighReject or MarketStructureEvent.BearishRejection))
+            if (nearSupply && phase == MarketStructurePhase.BearishReversalAttempt)
                 return MarketStructureScenario.RangeReversionShort;
         }
 
@@ -259,7 +318,7 @@ public static class MarketStructureIntelligence
         {
             if (m15.Event is MarketStructureEvent.BullishBreak or MarketStructureEvent.BullishRetest)
                 return MarketStructureScenario.BreakoutRetestLong;
-            if (nearDemand || m15.Event is (MarketStructureEvent.LiquiditySweepLowReclaim or MarketStructureEvent.BullishRejection))
+            if (nearDemand && phase is MarketStructurePhase.BullishPullback or MarketStructurePhase.BullishReversalAttempt)
                 return MarketStructureScenario.TrendPullbackLong;
         }
 
@@ -267,7 +326,7 @@ public static class MarketStructureIntelligence
         {
             if (m15.Event is MarketStructureEvent.BearishBreak or MarketStructureEvent.BearishRetest)
                 return MarketStructureScenario.BreakoutRetestShort;
-            if (nearSupply || m15.Event is (MarketStructureEvent.LiquiditySweepHighReject or MarketStructureEvent.BearishRejection))
+            if (nearSupply && phase is MarketStructurePhase.BearishPullback or MarketStructurePhase.BearishReversalAttempt)
                 return MarketStructureScenario.TrendPullbackShort;
         }
 
@@ -375,6 +434,7 @@ public static class MarketStructureIntelligence
 
     private static string BuildNarrative(
         MarketStructureBias bias,
+        MarketStructurePhase phase,
         MarketStructureScenario scenario,
         TimeframeStructureRead m15,
         TimeframeStructureRead h1,
@@ -383,7 +443,7 @@ public static class MarketStructureIntelligence
         bool nearSupply)
     {
         var location = nearDemand ? "near 15m demand" : nearSupply ? "near 15m supply" : "between structural zones";
-        return $"4h={h4.State}, 1h={h1.State}, 15m={m15.State}; higher-timeframe bias={bias}; " +
+        return $"4h={h4.State}, 1h={h1.State}, 15m={m15.State}; higher-timeframe bias={bias}; phase={phase}; " +
                $"price is {location}; latest 15m event={m15.Event}; scenario={scenario}.";
     }
 
