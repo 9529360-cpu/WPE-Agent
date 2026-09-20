@@ -355,7 +355,7 @@ public static class PositionExitReasonCodes
 {
     public const string StructureInvalidated = "position.structure-invalidated";
     public const string LiquidationBuffer = "position.liquidation-buffer";
-    public const string PartialTake2R = "position.partial-take-2r";
+    public const string PartialTakeProfit2R = "position.partial-take-profit-2r";
     public const string ProtectionStopLoss = "protection.fill-reconciled.stop-loss";
     public const string ProtectionTakeProfit = "protection.fill-reconciled.take-profit";
     public const string ProtectionFillReconciled = "protection.fill-reconciled";
