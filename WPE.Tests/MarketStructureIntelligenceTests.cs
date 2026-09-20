@@ -68,6 +68,29 @@ public sealed class MarketStructureIntelligenceTests
     }
 
     [Fact]
+    public void FreshBullishBreakAfterScoutCanConfirmTheSameHypothesis()
+    {
+        var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
+        var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
+        var first=Market(Pullback15m(),h1,h4);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var sweep=Market(SweepLowReclaimNext15m(),h1,h4,Now.AddMinutes(15));
+        var scout=TradeHypothesisEngine.EvaluateMarket(sweep,watching,[],Now.AddMinutes(15));
+        var breakMarket=Market(BullishBreakAfterSweep15m(),h1,h4,Now.AddMinutes(30));
+
+        var structure=MarketStructureIntelligence.Analyze(breakMarket);
+        var confirmed=TradeHypothesisEngine.EvaluateMarket(breakMarket,scout,[],Now.AddMinutes(30));
+
+        Assert.Equal(TradeHypothesisStage.ScoutReady,scout.Stage);
+        Assert.Equal(MarketStructureEvent.BullishBreak,structure.FifteenMinute.Event);
+        Assert.Equal(MarketStructurePhase.BullishImpulse,structure.Phase);
+        Assert.Equal(TradeHypothesisStage.Confirmed,confirmed.Stage);
+        Assert.Equal(scout.Id,confirmed.Id);
+        Assert.True(confirmed.LastStructureEvidenceAtUtc>scout.LastStructureEvidenceAtUtc);
+        Assert.Equal(.40,confirmed.RiskBudgetMultiplier,10);
+    }
+
+    [Fact]
     public void RepeatedReadOfSameConfirmedCandleCannotEscalateHypothesisStage()
     {
         var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
@@ -292,6 +315,26 @@ public sealed class MarketStructureIntelligenceTests
             30_000m,
             450,
             210m));
+        return values;
+    }
+
+    private static IReadOnlyList<CandleEvidence> BullishBreakAfterSweep15m()
+    {
+        var values=SweepLowReclaimNext15m().ToList();
+        var previous=values[^1];
+        var referenceHigh=values.TakeLast(20).Max(x=>x.High);
+        var open=previous.Close+.10m;
+        var close=referenceHigh+2.5m;
+        values.Add(new(
+            previous.OpenTime.AddMinutes(15),
+            open,
+            close+.45m,
+            Math.Min(open,close)-.20m,
+            close,
+            700m,
+            close*700m,
+            900,
+            560m));
         return values;
     }
 
