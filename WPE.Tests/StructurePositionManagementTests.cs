@@ -91,6 +91,57 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task TwoRPartialTakeDoesNotReplayAfterDurableAttemptForSameOpening()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent("open-partial-a"),"PROTECTED","1005",CancellationToken.None);
+            var market=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(120m)}};
+
+            var first=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None);
+            var partial=Assert.Single(first.Intents);
+            Assert.StartsWith("WPE-PM-TP2-",partial.ClientOrderId,StringComparison.Ordinal);
+            await db.SaveIntentAsync("cycle-partial",partial,"COMPLETED_PARTIAL","2005",CancellationToken.None);
+
+            var second=await new PositionManagementSkill().EvaluateAsync([Position() with{Quantity=.5m}],market,db,CancellationToken.None);
+            Assert.DoesNotContain(second.Intents,value=>value.ReasonCode==PositionExitReasonCodes.PartialTakeProfit2R);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public async Task ReopenedSameSideGetsFreshTwoRActionIdentity()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open-a",OpeningIntent("open-partial-a"),"PROTECTED","1006",CancellationToken.None);
+            var market=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(120m)}};
+
+            var first=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None);
+            var firstPartial=Assert.Single(first.Intents);
+            await db.SaveIntentAsync("cycle-partial-a",firstPartial,"COMPLETED_PARTIAL","2006",CancellationToken.None);
+            await Task.Delay(20);
+            await db.SaveIntentAsync("cycle-open-b",OpeningIntent("open-partial-b"),"PROTECTED","1007",CancellationToken.None);
+
+            var reopened=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None);
+            var secondPartial=Assert.Single(reopened.Intents);
+            Assert.Equal(PositionExitReasonCodes.PartialTakeProfit2R,secondPartial.ReasonCode);
+            Assert.NotEqual(firstPartial.ClientOrderId,secondPartial.ClientOrderId);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task InvalidatedStructureNeverClosesExternalPositionWithoutWpeOpeningIntent()
     {
         var path=TempDb();
@@ -141,8 +192,8 @@ public sealed class StructurePositionManagementTests
         }
     }
 
-    private static ExecutionIntent OpeningIntent()=>new(
-        "BTCUSDT",PositionSide.Long,1m,false,90m,120m,"open-structure-1","test opening",
+    private static ExecutionIntent OpeningIntent(string clientOrderId="open-structure-1")=>new(
+        "BTCUSDT",PositionSide.Long,1m,false,90m,120m,clientOrderId,"test opening",
         DecisionAction.OpenLong,ExpectedPrice:100m);
 
     private static ManagedPosition Position()=>new(
