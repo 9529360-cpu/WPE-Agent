@@ -247,11 +247,33 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
 
     public async Task<string> ReplaceProtectionAsync(string cycle,ProtectionAdjustment adjustment,CancellationToken ct)
     {
-        EnsureTestnet();EnsureCapability(adjustment.Symbol);
-        await CancelProtectionOrdersAsync(adjustment.Symbol,adjustment.Side,ct);var group=EmergencyId($"WPE-PROT-{DateTime.UtcNow:yyMMddHHmmss}");
+        EnsureTestnet();ArgumentNullException.ThrowIfNull(adjustment);
+        var group=string.IsNullOrWhiteSpace(adjustment.AdjustmentId)
+            ?EmergencyId($"WPE-PROT-{DateTime.UtcNow:yyMMddHHmmss}")
+            :adjustment.AdjustmentId;
+        var stateKey=string.IsNullOrWhiteSpace(adjustment.AdjustmentId)
+            ?null
+            :PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId);
+        if(stateKey is not null&&await _db.GetStateAsync(stateKey,ct) is not null)
+            throw new InvalidOperationException("Protection adjustment already has durable state and must be reconciled.");
+
+        var capabilityIntent=new ExecutionIntent(adjustment.Symbol,adjustment.Side,0,true,0,0,group,"protection adjustment capability refresh");
+        await EnsureFreshCapabilityAsync(capabilityIntent,ct);
+        if(stateKey is not null)await _db.SetStateAsync(stateKey,"PENDING",ct);
+        try
+        {
+            await CancelProtectionOrdersAsync(adjustment.Symbol,adjustment.Side,ct);
+        }
+        catch
+        {
+            if(stateKey is not null)await _db.SetStateAsync(stateKey,"FAILED",CancellationToken.None);
+            throw;
+        }
+
         try
         {
             await _ex.PlaceProtectionAsync(adjustment.Symbol,adjustment.Side,adjustment.StopLoss,adjustment.TakeProfit,group,ct);
+            if(stateKey is not null)await _db.SetStateAsync(stateKey,"COMPLETED",ct);
             var value=ConfirmedNotificationTruth.Protection(
                 ConfirmedNotificationTruth.EventKey(cycle,group,NotificationEventKind.ProtectionUpdated),
                 NotificationEventKind.ProtectionUpdated,ProviderName(),_ex.Environment.ToString(),
@@ -262,6 +284,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         }
         catch(Exception ex)
         {
+            if(stateKey is not null)await _db.SetStateAsync(stateKey,"FAILED",CancellationToken.None);
             var value=ConfirmedNotificationTruth.Protection(
                 ConfirmedNotificationTruth.EventKey(cycle,group,NotificationEventKind.ProtectionFailed),
                 NotificationEventKind.ProtectionFailed,ProviderName(),_ex.Environment.ToString(),
