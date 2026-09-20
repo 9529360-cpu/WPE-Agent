@@ -62,7 +62,7 @@ public sealed class PositionReconciliationTests : IDisposable
         var clock=Now.AddMinutes(-1);
         var store=new AgentSqliteStore(Database,()=>clock);
         var opening=Intent("open-ownership-a",false,1m);
-        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m),"v1",default);
+        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m,clock),"v1",default);
         clock=Now;
         await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
         var local=new[]{new ExecutionPositionLegV1("BTCUSDT",PositionSide.Long,1m)};
@@ -95,7 +95,7 @@ public sealed class PositionReconciliationTests : IDisposable
         var clock=Now.AddMinutes(-1);
         var store=new AgentSqliteStore(Database,()=>clock);
         var opening=Intent("open-ownership-transient",false,1m);
-        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m),"v1",default);
+        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m,clock),"v1",default);
         clock=Now;
         await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
         var local=new[]{new ExecutionPositionLegV1("BTCUSDT",PositionSide.Long,1m)};
@@ -150,7 +150,7 @@ public sealed class PositionReconciliationTests : IDisposable
         var clock=Now.AddMinutes(-1);
         var store=new AgentSqliteStore(Database,()=>clock);
         var opening=Intent("open-ownership-stale",false,1m);
-        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m),"v1",default);
+        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m,clock),"v1",default);
         clock=Now;
         await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
 
@@ -179,7 +179,7 @@ public sealed class PositionReconciliationTests : IDisposable
 
         clock=Now.AddSeconds(10);
         var freshOpening=Intent("open-retired-fresh",false,.4m);
-        await store.RecordExecutionAsync("fresh",freshOpening,Order(freshOpening,"FILLED",.4m),"v1",default);
+        await store.RecordExecutionAsync("fresh",freshOpening,Order(freshOpening,"FILLED",.4m,clock),"v1",default);
 
         Assert.Equal(.4m,Assert.Single(await store.GetExecutionPositionLedgerAsync(default)).Quantity);
         await using var connection=new SqliteConnection($"Data Source={Database}");
@@ -200,11 +200,29 @@ public sealed class PositionReconciliationTests : IDisposable
 
         clock=Now.AddSeconds(2);
         var concurrentOpening=Intent("open-observed-new",false,.5m);
-        await store.RecordExecutionAsync("new",concurrentOpening,Order(concurrentOpening,"FILLED",.5m),"v1",default);
+        await store.RecordExecutionAsync("new",concurrentOpening,Order(concurrentOpening,"FILLED",.5m,clock),"v1",default);
 
         Assert.Equal(1m,Assert.Single(await store.GetExecutionPositionLedgerAsync(observedAt,default)).Quantity);
         Assert.True(await store.RetireExecutionPositionLedgerAsync("BTCUSDT",PositionSide.Long,observedAt,default));
         Assert.Equal(.5m,Assert.Single(await store.GetExecutionPositionLedgerAsync(default)).Quantity);
+    }
+
+    [Fact]
+    public async Task ReplayedOpeningKeepsExchangeGenerationTimeAndStaysRetired()
+    {
+        var clock=Now;
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var opening=Intent("open-replay-retired",false,1m);
+        var exchangeOrder=Order(opening,"FILLED",1m,Now);
+        await store.RecordExecutionAsync("first",opening,exchangeOrder,"v1",default);
+        Assert.True(await store.RetireExecutionPositionLedgerAsync("BTCUSDT",PositionSide.Long,Now.AddSeconds(1),default));
+        Assert.Empty(await store.GetExecutionPositionLedgerAsync(default));
+
+        clock=Now.AddMinutes(5);
+        await store.RecordExecutionAsync("replay",opening,exchangeOrder,"v1",default);
+
+        Assert.Equal(Now,await store.GetExecutionEventObservedAtAsync(opening.ClientOrderId,default));
+        Assert.Empty(await store.GetExecutionPositionLedgerAsync(default));
     }
 
     [Fact]
@@ -289,7 +307,7 @@ public sealed class PositionReconciliationTests : IDisposable
 
     private static ManagedPosition Position(string symbol,PositionSide side,decimal quantity)=>new(symbol,side,quantity,100m,101m,1m,2m,true,50m);
     private static ExecutionIntent Intent(string id,bool reduceOnly,decimal quantity)=>new("BTCUSDT",PositionSide.Long,quantity,reduceOnly,90m,120m,id,"test",reduceOnly?DecisionAction.ReduceLong:DecisionAction.OpenLong,ExpectedPrice:100m);
-    private static ExchangeOrder Order(ExecutionIntent intent,string status,decimal quantity)=>new(intent.Symbol,"order-"+intent.ClientOrderId,intent.ClientOrderId,status,quantity,100m,"MARKET",intent.Side,false,DateTime.UtcNow);
+    private static ExchangeOrder Order(ExecutionIntent intent,string status,decimal quantity,DateTimeOffset? updatedAt=null)=>new(intent.Symbol,"order-"+intent.ClientOrderId,intent.ClientOrderId,status,quantity,100m,"MARKET",intent.Side,false,(updatedAt??Now).UtcDateTime);
     private static string ProjectRoot()=>Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
     public void Dispose(){SqliteConnection.ClearAllPools();if(Directory.Exists(_directory))Directory.Delete(_directory,true);}
 }
