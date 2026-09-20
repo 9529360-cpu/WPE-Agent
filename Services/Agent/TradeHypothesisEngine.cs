@@ -54,6 +54,7 @@ public sealed record TradeHypothesis(
     public string DecisionBasis { get; init; } = "summary-v1";
     public bool LastOrderBookAvailable { get; init; }
     public DateTimeOffset LastStructureEvidenceAtUtc { get; init; }
+    public MarketStructurePhase LastStructurePhase { get; init; } = MarketStructurePhase.Unknown;
     public bool Actionable => Stage is TradeHypothesisStage.ScoutReady or TradeHypothesisStage.Confirmed;
     public bool IsLive => Kind != TradeHypothesisKind.None && Stage != TradeHypothesisStage.Invalidated;
     public bool DirectionMatches(DecisionAction action) => action switch
@@ -259,6 +260,13 @@ public sealed class TradeHypothesisEngine
         var adverseEvent = longSide
             ? eventKind is MarketStructureEvent.BearishBreak or MarketStructureEvent.BearishDisplacement or MarketStructureEvent.LiquiditySweepHighReject
             : eventKind is MarketStructureEvent.BullishBreak or MarketStructureEvent.BullishDisplacement or MarketStructureEvent.LiquiditySweepLowReclaim;
+        var adversePhase = longSide
+            ? structure.Phase is MarketStructurePhase.BearishImpulse or MarketStructurePhase.BearishReversalAttempt
+            : structure.Phase is MarketStructurePhase.BullishImpulse or MarketStructurePhase.BullishReversalAttempt;
+        var phaseTriggerReady = PhaseTransitionSupportsTrigger(previous.Kind, previous.LastStructurePhase, structure.Phase);
+        var confirmationPhaseReady = longSide
+            ? structure.Phase == MarketStructurePhase.BullishImpulse
+            : structure.Phase == MarketStructurePhase.BearishImpulse;
         var microstructureReady = MicrostructureReady(market, longSide);
         var structureEvidenceAt = StructureEvidenceTimeUtc(market, structure);
         var hasNewStructureEvidence =
@@ -272,16 +280,17 @@ public sealed class TradeHypothesisEngine
             if (previous.Stage == TradeHypothesisStage.Watching &&
                 hasNewStructureEvidence &&
                 structuralTrigger &&
+                phaseTriggerReady &&
                 microstructureReady)
             {
                 nextStage = TradeHypothesisStage.ScoutReady;
             }
             else if (previous.Stage == TradeHypothesisStage.ScoutReady)
             {
-                if (!microstructureReady || adverseEvent) nextStage = TradeHypothesisStage.Watching;
-                else if (hasNewStructureEvidence && structuralConfirmation) nextStage = TradeHypothesisStage.Confirmed;
+                if (!microstructureReady || adverseEvent || adversePhase) nextStage = TradeHypothesisStage.Watching;
+                else if (hasNewStructureEvidence && structuralConfirmation && confirmationPhaseReady) nextStage = TradeHypothesisStage.Confirmed;
             }
-            else if (previous.Stage == TradeHypothesisStage.Confirmed && (!microstructureReady || adverseEvent))
+            else if (previous.Stage == TradeHypothesisStage.Confirmed && (!microstructureReady || adverseEvent || adversePhase))
             {
                 nextStage = TradeHypothesisStage.ScoutReady;
             }
@@ -298,6 +307,36 @@ public sealed class TradeHypothesisEngine
             ? "Keep risk off until 15m price action confirms demand/retest strength and aggressive flow is not extremely opposed."
             : "Keep risk off until 15m price action confirms supply/retest weakness and aggressive flow is not extremely opposed.";
         return Snapshot(previous, market, regime, nextStage, risk, thesis, trigger, previous.Invalidation, now, structure);
+    }
+
+    private static bool PhaseTransitionSupportsTrigger(
+        TradeHypothesisKind kind,
+        MarketStructurePhase previous,
+        MarketStructurePhase current)
+    {
+        var legacy = previous == MarketStructurePhase.Unknown;
+        return kind switch
+        {
+            TradeHypothesisKind.TrendPullbackLong =>
+                (legacy || previous is MarketStructurePhase.BullishPullback or MarketStructurePhase.Balance or MarketStructurePhase.Compression or MarketStructurePhase.BullishReversalAttempt) &&
+                current is MarketStructurePhase.BullishReversalAttempt or MarketStructurePhase.BullishImpulse,
+            TradeHypothesisKind.TrendPullbackShort =>
+                (legacy || previous is MarketStructurePhase.BearishPullback or MarketStructurePhase.Balance or MarketStructurePhase.Compression or MarketStructurePhase.BearishReversalAttempt) &&
+                current is MarketStructurePhase.BearishReversalAttempt or MarketStructurePhase.BearishImpulse,
+            TradeHypothesisKind.RangeReversionLong =>
+                (legacy || previous is MarketStructurePhase.Balance or MarketStructurePhase.Compression) &&
+                current is MarketStructurePhase.BullishReversalAttempt or MarketStructurePhase.BullishImpulse,
+            TradeHypothesisKind.RangeReversionShort =>
+                (legacy || previous is MarketStructurePhase.Balance or MarketStructurePhase.Compression) &&
+                current is MarketStructurePhase.BearishReversalAttempt or MarketStructurePhase.BearishImpulse,
+            TradeHypothesisKind.BreakoutRetestLong =>
+                (legacy || previous is MarketStructurePhase.Compression or MarketStructurePhase.Balance or MarketStructurePhase.BullishImpulse) &&
+                current == MarketStructurePhase.BullishImpulse,
+            TradeHypothesisKind.BreakoutRetestShort =>
+                (legacy || previous is MarketStructurePhase.Compression or MarketStructurePhase.Balance or MarketStructurePhase.BearishImpulse) &&
+                current == MarketStructurePhase.BearishImpulse,
+            _ => false
+        };
     }
 
     private static bool BullishTrigger(MarketStructureEvent value) =>
@@ -640,7 +679,8 @@ public sealed class TradeHypothesisEngine
         {
             DecisionBasis = structure is { Available: true } ? MarketStructureRead.DecisionBasis : "summary-v1",
             LastOrderBookAvailable = BookAvailable(market),
-            LastStructureEvidenceAtUtc = StructureEvidenceTimeUtc(market, structure)
+            LastStructureEvidenceAtUtc = StructureEvidenceTimeUtc(market, structure),
+            LastStructurePhase = structure is { Available: true } ? structure.Phase : MarketStructurePhase.Unknown
         };
     }
 
@@ -679,7 +719,10 @@ public sealed class TradeHypothesisEngine
             LastOrderBookAvailable = BookAvailable(market),
             LastStructureEvidenceAtUtc = structure is { Available: true }
                 ? StructureEvidenceTimeUtc(market, structure)
-                : previous.LastStructureEvidenceAtUtc
+                : previous.LastStructureEvidenceAtUtc,
+            LastStructurePhase = structure is { Available: true }
+                ? structure.Phase
+                : previous.LastStructurePhase
         };
 
     private static TradeHypothesis Observing(MarketEvidence market, DateTimeOffset now, string thesis, MarketStructureRead? structure = null) =>
@@ -714,7 +757,9 @@ public sealed class TradeHypothesisEngine
             Evidence(market, structure))
         {
             DecisionBasis = structure is { Available: true } ? MarketStructureRead.DecisionBasis : "summary-v1",
-            LastOrderBookAvailable = BookAvailable(market)
+            LastOrderBookAvailable = BookAvailable(market),
+            LastStructureEvidenceAtUtc = StructureEvidenceTimeUtc(market, structure),
+            LastStructurePhase = structure is { Available: true } ? structure.Phase : MarketStructurePhase.Unknown
         };
 
     private static bool BookAvailable(MarketEvidence market) =>
