@@ -14,6 +14,7 @@ using WpeAgent.FinancialEvidence;
 using WpeAgent.ModelOff;
 using WpeAgent.RuntimeServices;
 using System.Security.Cryptography;
+using System.Globalization;
 using 币安量化机器人.Services.Access;
 
 namespace 币安量化机器人.Services;
@@ -443,14 +444,33 @@ public static class AutoTradingAgent
         observedAtUtc=observedAtUtc.ToUniversalTime();evaluatedAtUtc=evaluatedAtUtc.ToUniversalTime();
         if(observedAtUtc>evaluatedAtUtc||evaluatedAtUtc-observedAtUtc>PositionReconciliationServiceV1.MaximumAge)return 0;
         var revoked=0;
+        var confirmationAge=TimeSpan.FromSeconds(5);
         foreach(var leg in managedLegs.Where(x=>x.Quantity>0))
         {
-            if(positions.Any(x=>string.Equals(x.Symbol,leg.Symbol,StringComparison.OrdinalIgnoreCase)&&x.Side==leg.Side&&x.Quantity>0))continue;
             var opening=await db.GetLatestOpeningIntentAsync(leg.Symbol,leg.Side,ct);
             if(opening is null)continue;
-            var key=PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId);
-            if(await db.HasStateAsync(key,ct))continue;
-            await db.SetStateAsync(key,$"position.missing-on-exchange:{observedAtUtc:O}",ct);
+            var revocationKey=PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId);
+            if(await db.HasStateAsync(revocationKey,ct))continue;
+            var candidateKey=PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId);
+            var positionPresent=positions.Any(x=>string.Equals(x.Symbol,leg.Symbol,StringComparison.OrdinalIgnoreCase)&&x.Side==leg.Side&&x.Quantity>0);
+            if(positionPresent)
+            {
+                var candidate=await db.GetStateAsync(candidateKey,ct);
+                if(candidate is not null&&DateTimeOffset.TryParseExact(candidate,"O",CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out _))
+                    await db.SetStateAsync(candidateKey,"cleared",ct);
+                continue;
+            }
+
+            var firstMissing=await db.GetStateAsync(candidateKey,ct);
+            if(firstMissing is null||
+               !DateTimeOffset.TryParseExact(firstMissing,"O",CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out var firstObservedAtUtc)||
+               firstObservedAtUtc>observedAtUtc)
+            {
+                await db.SetStateAsync(candidateKey,observedAtUtc.ToString("O",CultureInfo.InvariantCulture),ct);
+                continue;
+            }
+            if(observedAtUtc-firstObservedAtUtc<confirmationAge)continue;
+            await db.SetStateAsync(revocationKey,$"position.missing-on-exchange:{observedAtUtc:O}",ct);
             revoked++;
         }
         return revoked;
