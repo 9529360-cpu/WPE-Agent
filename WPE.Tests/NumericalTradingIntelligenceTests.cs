@@ -109,6 +109,34 @@ public sealed class NumericalTradingIntelligenceTests
         Assert.Equal("signal-aggregation-v1", result.Decision.DecisionBasis);
     }
 
+    [Fact]
+    public void HistoricalDataService_UsesActualIntervalDuration()
+    {
+        Assert.Equal(TimeSpan.FromMinutes(15), HistoricalDataService.IntervalDuration("15m"));
+        Assert.Equal(TimeSpan.FromHours(1), HistoricalDataService.IntervalDuration("1h"));
+        Assert.Equal(TimeSpan.FromHours(4), HistoricalDataService.IntervalDuration("4h"));
+        Assert.Equal(TimeSpan.FromDays(1), HistoricalDataService.IntervalDuration("1d"));
+        Assert.Throws<ArgumentOutOfRangeException>(() => HistoricalDataService.IntervalDuration("bad"));
+    }
+
+    [Fact]
+    public void NumericalResearch_BindsValidationToNumericalStrategyVersion()
+    {
+        var start=CollectedAt.AddDays(-20);var candles=new List<CandleEvidence>();var price=100m;
+        for(var i=0;i<2200;i++)
+        {
+            var cycle=i%160;var drift=cycle<100?.0008m:cycle<130?-.0003m:.0014m;var open=price;price=Math.Max(1m,price*(1m+drift));var high=Math.Max(open,price)*1.002m;var low=Math.Min(open,price)*.998m;var volume=cycle>=130?180m:100m;candles.Add(new(start.AddMinutes(15*i),open,high,low,price,volume,volume*price,100,volume*.55m));
+        }
+
+        var result=new NumericalStrategyResearchSkill().Evaluate("BTCUSDT",candles,new RiskLimits{MinimumHistoricalDays=0,MinimumBacktestTrades=0},new DateTimeOffset(CollectedAt));
+
+        Assert.Equal(NumericalStrategySkill.Version,result.StrategyVersion);
+        Assert.Equal(candles.Count,result.SampleSize);
+        Assert.True(double.IsFinite(result.QualityScore));
+        Assert.True(double.IsFinite(result.MaxDrawdown));
+        Assert.True(double.IsFinite(result.MonteCarloLossProbability));
+    }
+
     private static EvidencePack Pack(MarketEvidence market) => new()
     {
         Completeness = 100,

@@ -8,15 +8,34 @@ public sealed class HistoricalDataService(IExchangeAdapter exchange,AgentSqliteS
 {
     public async Task<IReadOnlyList<HistoricalSyncResult>> SyncAsync(IEnumerable<string> symbols,string interval,int years,CancellationToken ct)
     {
+        var step=IntervalDuration(interval);var clampedYears=Math.Clamp(years,1,3);var maxPages=RequiredPages(step,clampedYears);
         var results=new List<HistoricalSyncResult>();foreach(var symbol in symbols)
         {
-            var latest=await db.GetLatestHistoricalCandleAsync(symbol,interval,ct);var start=latest?.AddHours(1)??DateTime.UtcNow.AddYears(-Math.Clamp(years,1,3));var downloaded=0;var cursor=start;var pages=0;
-            while(cursor<DateTime.UtcNow.AddHours(-1)&&pages++<40&&!ct.IsCancellationRequested)
+            var now=DateTime.UtcNow;var cutoff=now-step;var latest=await db.GetLatestHistoricalCandleAsync(symbol,interval,ct);var start=latest?.Add(step)??now.AddYears(-clampedYears);var downloaded=0;var cursor=start;var pages=0;
+            while(cursor<=cutoff&&pages++<maxPages&&!ct.IsCancellationRequested)
             {
-                var page=await exchange.GetCandlesRangeAsync(symbol,interval,cursor,DateTime.UtcNow,1000,ct);var fresh=page.Where(x=>x.OpenTime>=cursor).OrderBy(x=>x.OpenTime).ToArray();if(fresh.Length==0)break;await db.UpsertHistoricalCandlesAsync(symbol,interval,fresh,ct);downloaded+=fresh.Length;var next=fresh[^1].OpenTime.AddHours(1);if(next<=cursor)break;cursor=next;await Task.Delay(80,ct);
+                var page=await exchange.GetCandlesRangeAsync(symbol,interval,cursor,cutoff,1000,ct);
+                var fresh=page.Where(x=>x.OpenTime>=cursor&&x.OpenTime<=cutoff).GroupBy(x=>x.OpenTime).Select(x=>x.Last()).OrderBy(x=>x.OpenTime).ToArray();
+                if(fresh.Length==0)break;
+                await db.UpsertHistoricalCandlesAsync(symbol,interval,fresh,ct);downloaded+=fresh.Length;
+                var next=fresh[^1].OpenTime.Add(step);if(next<=cursor)break;cursor=next;
+                await Task.Delay(80,ct);
             }
-            var stored=await db.LoadHistoricalCandlesAsync(symbol,interval,100000,ct);var first=stored.FirstOrDefault()?.OpenTime;var last=stored.LastOrDefault()?.OpenTime;var coverage=first is null||last is null?0:(int)(last.Value-first.Value).TotalDays;results.Add(new(symbol,downloaded,stored.Count,first,last,coverage,stored.Count>=1000?"READY":"LIMITED"));
+            var stored=await db.LoadHistoricalCandlesAsync(symbol,interval,100000,ct);var first=stored.FirstOrDefault()?.OpenTime;var last=stored.LastOrDefault()?.OpenTime;var coverage=first is null||last is null?0:(int)(last.Value-first.Value).TotalDays;var readyDays=Math.Max(1,Math.Min(365,clampedYears*365-2));results.Add(new(symbol,downloaded,stored.Count,first,last,coverage,coverage>=readyDays?"READY":"LIMITED"));
         }return results;
+    }
+
+    internal static TimeSpan IntervalDuration(string interval)
+    {
+        if(string.IsNullOrWhiteSpace(interval)||interval.Length<2)throw new ArgumentOutOfRangeException(nameof(interval),"Historical interval is invalid.");
+        var token=interval.Trim().ToLowerInvariant();if(!int.TryParse(token[..^1],out var value)||value<=0||value>10000)throw new ArgumentOutOfRangeException(nameof(interval),"Historical interval is invalid.");
+        return token[^1] switch{'m'=>TimeSpan.FromMinutes(value),'h'=>TimeSpan.FromHours(value),'d'=>TimeSpan.FromDays(value),_=>throw new ArgumentOutOfRangeException(nameof(interval),"Historical interval unit is unsupported.")};
+    }
+
+    private static int RequiredPages(TimeSpan step,int years)
+    {
+        var bars=Math.Ceiling(TimeSpan.FromDays(366d*years).TotalMinutes/step.TotalMinutes);
+        return Math.Clamp((int)Math.Ceiling(bars/1000d)+2,4,140);
     }
 }
 

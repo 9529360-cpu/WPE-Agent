@@ -251,6 +251,93 @@ public sealed class MarketHypothesisSkill
     }
 }
 
+
+public sealed class NumericalStrategyResearchSkill
+{
+    private const double RoundTripCost=.0014;
+    private const int WarmupBars=192;
+    private const int HorizonBars=16;
+    private const int ReplayStrideBars=4;
+    private sealed record ReplayResult(double Return,string Regime);
+
+    public ResearchValidationResult Evaluate(string symbol,IReadOnlyList<CandleEvidence> candles,RiskLimits limits,DateTimeOffset? validatedAtUtc=null)
+    {
+        var validatedAt=(validatedAtUtc??DateTimeOffset.UtcNow).ToUniversalTime();
+        var ordered=candles.OrderBy(x=>x.OpenTime).ToArray();var coverage=Coverage(ordered);
+        if(ordered.Length<WarmupBars+HorizonBars+1||ordered.Any(x=>!Valid(x))||ordered.GroupBy(x=>x.OpenTime).Any(x=>x.Count()!=1))
+            return new(){ValidatedAtUtc=validatedAt,Symbol=symbol,StrategyVersion=NumericalStrategySkill.Version,SampleSize=ordered.Length,CoverageDays=coverage,Approved=false,Promoted=false,Summary=$"{symbol} numerical replay coverage insufficient or invalid: {ordered.Length} 15m candles"};
+
+        var returns=Replay(symbol,ordered,limits);var split=returns.Count==0?0:Math.Clamp((int)(returns.Count*.65),1,returns.Count);var test=split<returns.Count?returns.Skip(split).ToArray():Array.Empty<ReplayResult>();var all=Metrics(returns.Select(x=>x.Return).ToArray());var oos=Metrics(test.Select(x=>x.Return).ToArray());var walk=WalkForward(returns);var mc=MonteCarlo(returns.Select(x=>x.Return).ToArray());var benchmark=ordered[0].Close>0?(double)(ordered[^1].Close/ordered[0].Close-1):0;
+        var score=Math.Clamp(.20*Math.Min(1,all.ProfitFactor/1.5)+.20*Math.Max(0,(oos.TotalReturn+.08)/.20)+.20*(1-Math.Min(1,all.MaxDrawdown/.25))+.20*walk+.20*(1-mc),0,1);
+        var promoted=coverage>=limits.MinimumHistoricalDays&&returns.Count>=limits.MinimumBacktestTrades&&test.Length>0&&oos.Expectancy>0&&all.ProfitFactor>=1.05&&all.MaxDrawdown<=.25&&walk>=.5&&mc<=.50;
+        var regimes=returns.GroupBy(x=>x.Regime,StringComparer.Ordinal).ToDictionary(x=>x.Key,x=>x.Aggregate(1d,(equity,r)=>equity*Math.Max(.01,1+r.Return))-1,StringComparer.Ordinal);
+        return new(){ValidatedAtUtc=validatedAt,Symbol=symbol,StrategyVersion=NumericalStrategySkill.Version,SampleSize=ordered.Length,Trades=returns.Count,OutOfSampleTrades=test.Length,CoverageDays=coverage,WinRate=all.WinRate,ProfitFactor=all.ProfitFactor,Expectancy=all.Expectancy,MaxDrawdown=all.MaxDrawdown,Sharpe=all.Sharpe,OutOfSampleReturn=oos.TotalReturn,WalkForwardScore=walk,MonteCarloLossProbability=mc,QualityScore=score,Approved=promoted,Promoted=promoted,StrategyReturn=all.TotalReturn,BenchmarkReturn=benchmark,RegimeReturns=regimes,Summary=$"{symbol} numerical-15m {coverage}d/{ordered.Length} bars trades={returns.Count} OOS={oos.TotalReturn:P1} PF={all.ProfitFactor:F2} DD={all.MaxDrawdown:P1} WF={walk:F2} MC-loss={mc:P0} promoted={promoted}"};
+    }
+
+    private static List<ReplayResult> Replay(string symbol,IReadOnlyList<CandleEvidence> candles,RiskLimits limits)
+    {
+        var results=new List<ReplayResult>();var strategy=new NumericalStrategySkill();var geometry=new DeterministicPlanSkill();var structureSkill=new NumericalMarketStructureSkill();var context=new AgentContext("numerical-replay",false,null,Array.Empty<StructuredOutcomeMemory>(),Array.Empty<MarketDecisionAssessment>(),0);
+        for(var i=WarmupBars;i+HorizonBars<candles.Count;)
+        {
+            var market=BuildMarket(symbol,candles,i);var pack=new EvidencePack{CollectedAt=market.CollectedAt,Completeness=100,Markets=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{symbol,market}}};var plan=strategy.Decide(pack,context);
+            if(plan.Action is not DecisionAction.OpenLong and not DecisionAction.OpenShort){i+=ReplayStrideBars;continue;}
+            plan=geometry.Complete(plan,market,null,limits);var longSide=plan.Action==DecisionAction.OpenLong;var exit=candles[i+HorizonBars].Close;
+            for(var j=i+1;j<=i+HorizonBars;j++)
+            {
+                var bar=candles[j];
+                if(longSide)
+                {
+                    if(plan.StopLossPrice>0&&bar.Low<=plan.StopLossPrice){exit=plan.StopLossPrice;break;}
+                    if(plan.TakeProfitPrice>0&&bar.High>=plan.TakeProfitPrice){exit=plan.TakeProfitPrice;break;}
+                }
+                else
+                {
+                    if(plan.StopLossPrice>0&&bar.High>=plan.StopLossPrice){exit=plan.StopLossPrice;break;}
+                    if(plan.TakeProfitPrice>0&&bar.Low<=plan.TakeProfitPrice){exit=plan.TakeProfitPrice;break;}
+                }
+            }
+            var gross=plan.EntryPrice>0?(double)((exit-plan.EntryPrice)/plan.EntryPrice)*(longSide?1:-1):0;var structure=structureSkill.Analyze(market);results.Add(new(gross-RoundTripCost,$"{structure.Bias}:{structure.Event}"));i+=HorizonBars;
+        }
+        return results;
+    }
+
+    private static MarketEvidence BuildMarket(string symbol,IReadOnlyList<CandleEvidence> candles,int index)
+    {
+        var start=Math.Max(0,index-239);var window=candles.Skip(start).Take(index-start+1).ToArray();var last=window[^1];var recent=window.TakeLast(Math.Min(40,window.Length)).ToArray();var price=last.Close;var support=recent.Min(x=>x.Low);var resistance=recent.Max(x=>x.High);var atr=price>0?(double)(window.TakeLast(Math.Min(24,window.Length)).Average(x=>x.High-x.Low)/price):0;var recentVolume=window.TakeLast(Math.Min(8,window.Length)).Average(x=>x.QuoteVolume);var baselineVolume=window.TakeLast(Math.Min(96,window.Length)).Average(x=>x.QuoteVolume);var relative=baselineVolume>0?(double)(recentVolume/baselineVolume):1;
+        var market=new MarketEvidence(symbol,price,support,resistance,Rsi(window),Trend(candles,index,10),Trend(candles,index,40),Trend(candles,index,160),new DerivativesSnapshot(0,0,1,1,1,1,0),last.OpenTime.AddMinutes(15))
+        {
+            Candles=window,
+            Quality=new MarketQualityEvidence{QualityScore=90,LiquidityScore=.9,RelativeVolume=relative,AtrPercent=atr,BestBid=price*.9999m,BestAsk=price*1.0001m,SpreadBps=2}
+        };
+        return market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,"numerical-replay","Testnet")};
+    }
+
+    private static double Trend(IReadOnlyList<CandleEvidence> candles,int index,int lookback)
+    {
+        var reference=index-lookback;return reference>=0&&candles[reference].Close>0?(double)(candles[index].Close/candles[reference].Close-1):0;
+    }
+
+    private static double Rsi(IReadOnlyList<CandleEvidence> candles)
+    {
+        var sample=candles.TakeLast(Math.Min(15,candles.Count)).ToArray();if(sample.Length<2)return 50;var changes=sample.Skip(1).Select((x,i)=>(double)(x.Close-sample[i].Close)).ToArray();var gains=changes.Select(x=>Math.Max(0,x)).Average();var losses=changes.Select(x=>Math.Max(0,-x)).Average();return losses==0?100:100-100/(1+gains/losses);
+    }
+
+    private static bool Valid(CandleEvidence x)=>x.OpenTime.Kind==DateTimeKind.Utc&&x.Open>0&&x.High>=Math.Max(x.Open,x.Close)&&x.Low<=Math.Min(x.Open,x.Close)&&x.Close>0&&x.Volume>=0&&x.QuoteVolume>=0&&x.Trades>=0&&x.TakerBuyVolume>=0;
+    private static int Coverage(IReadOnlyList<CandleEvidence> candles)=>candles.Count<2?0:(int)(candles[^1].OpenTime-candles[0].OpenTime).TotalDays;
+    private static (double WinRate,double ProfitFactor,double Expectancy,double MaxDrawdown,double Sharpe,double TotalReturn) Metrics(IReadOnlyList<double> values)
+    {
+        if(values.Count==0)return(0,0,0,0,0,0);var wins=values.Where(x=>x>0).Sum();var losses=-values.Where(x=>x<0).Sum();var equity=1d;var high=1d;var drawdown=0d;foreach(var value in values){equity*=Math.Max(.01,1+value);high=Math.Max(high,equity);drawdown=Math.Max(drawdown,(high-equity)/high);}var average=values.Average();var variance=values.Select(x=>(x-average)*(x-average)).Average();var deviation=Math.Sqrt(variance);return(values.Count(x=>x>0)/(double)values.Count,losses>0?wins/losses:wins>0?9:0,average,drawdown,deviation>0?average/deviation*Math.Sqrt(values.Count):0,equity-1);
+    }
+    private static double WalkForward(IReadOnlyList<ReplayResult> values)
+    {
+        if(values.Count<4)return 0;var scores=new List<double>();for(var part=0;part<4;part++){var start=part*values.Count/4;var end=(part+1)*values.Count/4;var segment=values.Skip(start).Take(Math.Max(0,end-start)).Select(x=>x.Return).ToArray();var metrics=Metrics(segment);scores.Add(Math.Clamp(.5+metrics.Expectancy*50-metrics.MaxDrawdown,0,1));}return scores.Average();
+    }
+    private static double MonteCarlo(IReadOnlyList<double> values)
+    {
+        if(values.Count==0)return 1;var random=new Random(71);var losses=0;for(var run=0;run<400;run++){var equity=1d;for(var i=0;i<Math.Min(values.Count,1000);i++)equity*=Math.Max(.01,1+values[random.Next(values.Count)]);if(equity<1)losses++;}return losses/400d;
+    }
+}
+
 public sealed class NumericalStrategySkill
 {
     public const string Basis = "market-structure-hypothesis-v1";
