@@ -66,7 +66,7 @@ public sealed class NumericalTradingIntelligenceTests
     {
         var market = BullishMarket();
         var evidence = Pack(market);
-        var assessment = LegacyAssessment(entryReady: false, netScore: -.9) with { };
+        var assessment = LegacyAssessment(entryReady: false, netScore: -.9);
         assessment = new MarketDecisionAssessment
         {
             Symbol = assessment.Symbol,
