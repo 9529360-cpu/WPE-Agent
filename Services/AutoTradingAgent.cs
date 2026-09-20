@@ -222,7 +222,7 @@ public static class AutoTradingAgent
             foreach(var position in positions)
             {
                 var rule=await exchange.GetRulesAsync(position.Symbol,ct);var quantity=rule.RoundQuantity(position.Quantity);var raw=$"WPE-EMG-{DateTime.UtcNow:yyMMddHHmmss}-{Guid.NewGuid():N}";var id=raw[..Math.Min(36,raw.Length)];var action=position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort;
-                var intent=new ExecutionIntent(position.Symbol,position.Side,quantity,true,0,0,id,L("Agent.EmergencyIntent"),action,ExpectedPrice:position.MarkPrice);var command=new EmergencyReductionCommand(confirmation,position,intent,Math.Max(1,(int)position.Leverage),position.Isolated);var execution=await executionGateway.ExecuteEmergencyReductionAsync(command,ct);if(!execution.Executed)throw new InvalidOperationException(execution.Code);closed.Add($"{position.Symbol} {position.Side} {quantity}");
+                var intent=new ExecutionIntent(position.Symbol,position.Side,quantity,true,0,0,id,L("Agent.EmergencyIntent"),action,ExpectedPrice:position.MarkPrice,ReasonCode:PositionExitReasonCodes.ManualEmergencyClose);var command=new EmergencyReductionCommand(confirmation,position,intent,Math.Max(1,(int)position.Leverage),position.Isolated);var execution=await executionGateway.ExecuteEmergencyReductionAsync(command,ct);if(!execution.Executed)throw new InvalidOperationException(execution.Code);closed.Add($"{position.Symbol} {position.Side} {quantity}");
             }
             var (account,remaining,orders)=await ReadAccountStateAsync(exchange,ct);UpdateAccount(account,remaining,orders);var result=L("Agent.EmergencyCompleted",string.Join("; ",closed));Set(AgentStatus.Paused,result);return result;
         }
