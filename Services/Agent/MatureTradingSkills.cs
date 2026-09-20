@@ -227,7 +227,7 @@ public sealed class PositionManagementSkill
                     L("Position.PartialTake"),
                     position.Side==PositionSide.Long?DecisionAction.ReduceLong:DecisionAction.ReduceShort,
                     ExpectedPrice:market.Price,
-                    ReasonCode:PositionExitReasonCodes.PartialTake2R));
+                    ReasonCode:PositionExitReasonCodes.PartialTakeProfit2R));
                 notes.Add(partialKey);
             }
 
