@@ -259,7 +259,13 @@ public sealed class PositionManagementSkill
             var protectionStateKey=PositionManagementDurableState.ProtectionAdjustmentKey(protectionId);
             if(favorable>=1&&await db.GetStateAsync(protectionStateKey,ct) is null)
             {
-                var stop=position.Side==PositionSide.Long?position.EntryPrice*1.0005m:position.EntryPrice*.9995m;
+                if(tradingRules is null||!tradingRules.TryGetValue(position.Symbol,out var rule)||rule.TickSize<=0)
+                {
+                    notes.Add($"breakeven-rule-unavailable:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
+                    continue;
+                }
+                var rawStop=position.Side==PositionSide.Long?position.EntryPrice*1.0005m:position.EntryPrice*.9995m;
+                var stop=RoundProtectiveStop(rawStop,rule.TickSize,position.Side);
                 protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.Breakeven"),protectionId));
                 notes.Add($"breakeven:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
             }
@@ -276,6 +282,13 @@ public sealed class PositionManagementSkill
         if(localMatches.Length!=1||localMatches[0].Quantity<=0)return false;
         var tolerance=Math.Max(.00000001m,Math.Max(localMatches[0].Quantity,position.Quantity)*.000001m);
         return position.Quantity>0&&Math.Abs(localMatches[0].Quantity-position.Quantity)<=tolerance;
+    }
+
+    private static decimal RoundProtectiveStop(decimal value,decimal tickSize,PositionSide side)
+    {
+        if(value<=0||tickSize<=0)return 0;
+        var units=value/tickSize;
+        return (side==PositionSide.Long?Math.Ceiling(units):Math.Floor(units))*tickSize;
     }
 
     private static bool StructureHypothesisInvalidated(ManagedPosition position,TradeHypothesis hypothesis)
