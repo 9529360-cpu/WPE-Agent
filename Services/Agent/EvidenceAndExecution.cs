@@ -254,12 +254,20 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         var stateKey=string.IsNullOrWhiteSpace(adjustment.AdjustmentId)
             ?null
             :PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId);
-        if(stateKey is not null&&await _db.GetStateAsync(stateKey,ct) is not null)
-            throw new InvalidOperationException("Protection adjustment already has durable state and must be reconciled.");
-
-        var capabilityIntent=new ExecutionIntent(adjustment.Symbol,adjustment.Side,0,true,0,0,group,"protection adjustment capability refresh");
-        await EnsureFreshCapabilityAsync(capabilityIntent,ct);
-        if(stateKey is not null)await _db.SetStateAsync(stateKey,"PENDING",ct);
+        var durableGate=stateKey is null?null:IntentLocks.GetOrAdd("protection:"+adjustment.AdjustmentId!,_=>new SemaphoreSlim(1,1));
+        if(durableGate is not null)await durableGate.WaitAsync(ct);
+        try
+        {
+            if(stateKey is not null&&await _db.GetStateAsync(stateKey,ct) is not null)
+                throw new InvalidOperationException("Protection adjustment already has durable state and must be reconciled.");
+            var capabilityIntent=new ExecutionIntent(adjustment.Symbol,adjustment.Side,0,true,0,0,group,"protection adjustment capability refresh");
+            await EnsureFreshCapabilityAsync(capabilityIntent,ct);
+            if(stateKey is not null)await _db.SetStateAsync(stateKey,"PENDING",ct);
+        }
+        finally
+        {
+            durableGate?.Release();
+        }
         try
         {
             await CancelProtectionOrdersAsync(adjustment.Symbol,adjustment.Side,ct);
