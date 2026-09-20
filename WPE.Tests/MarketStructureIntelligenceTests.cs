@@ -154,6 +154,38 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Contains("basis=candles-structure-v2",result.Decision.ConflictSummary,StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task LocalBrainPrefersStructureGroundedHypothesisOverLegacyPeerAtSameStage()
+    {
+        var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
+        var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
+        var first=Market(Pullback15m(),h1,h4);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var current=Market(SweepLowReclaim15m(),h1,h4);
+        var structureScout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
+        var legacyPeer=structureScout with
+        {
+            Id="HYP-ETHUSDT-LEGACY",
+            Symbol="ETHUSDT",
+            DecisionBasis="summary-v1",
+            Revision=structureScout.Revision+100,
+            UpdatedAtUtc=structureScout.UpdatedAtUtc.AddSeconds(1)
+        };
+        var context=new AgentContext(
+            "WPE Local Brain",false,null,[],[],0,null,null,
+            new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ETHUSDT"]=legacyPeer,
+                ["BTCUSDT"]=structureScout
+            });
+
+        var result=await new DeterministicBrainProvider().DecideAsync(Evidence(current),context,CancellationToken.None);
+
+        Assert.Equal("BTCUSDT",result.Decision.Instrument);
+        Assert.Equal(structureScout.Id,result.Decision.DecisionContextId);
+        Assert.Equal(MarketStructureRead.DecisionBasis,structureScout.DecisionBasis);
+    }
+
     private static EvidencePack Evidence(MarketEvidence market)=>new()
     {
         CollectedAt=market.CollectedAt,
