@@ -106,6 +106,58 @@ public sealed class PostTradeReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task StableReasonCodeWinsOverLocalizedDisplayReasonAndFlowsToMemory()
+    {
+        var store=new AgentSqliteStore(Database);
+        var entry=Intent("entry-structure-code",false,1m,100m);
+        await store.RecordExecutionAsync("open-structure-code",entry,Order(entry,"FILLED",1m,100m),"hypothesis-v1",default);
+
+        var close=new ExecutionIntent(
+            "BTCUSDT",PositionSide.Long,1m,true,0,0,"close-structure-code",
+            "本地K线结构已否定当前持仓逻辑，执行风险退出",
+            DecisionAction.CloseLong,
+            ExpectedPrice:98m,
+            ReasonCode:PositionExitReasonCodes.StructureInvalidated);
+        await store.RecordExecutionAsync(
+            "close-structure-code",
+            close,
+            new ExchangeOrder("BTCUSDT","order-close-structure-code",close.ClientOrderId,"FILLED",1m,98m,"MARKET",PositionSide.Long,false,DateTime.UtcNow),
+            "hypothesis-v1",
+            default);
+
+        var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));
+        Assert.Equal(PositionExitReasonCodes.StructureInvalidated,review.ExitReason);
+        var memory=Assert.Single(await store.SearchMemoriesAsync(new(Tier:"long-term",Symbol:"BTCUSDT"),default));
+        Assert.Contains($"exitReason={PositionExitReasonCodes.StructureInvalidated}",memory.Summary,StringComparison.Ordinal);
+        Assert.DoesNotContain("本地K线结构",memory.Summary,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LocalizedDisplayReasonWithoutCodeCannotBecomeMachineExitReason()
+    {
+        var store=new AgentSqliteStore(Database);
+        var entry=Intent("entry-localized-fallback",false,1m,100m);
+        await store.RecordExecutionAsync("open-localized-fallback",entry,Order(entry,"FILLED",1m,100m),"v1",default);
+        var close=new ExecutionIntent(
+            "BTCUSDT",PositionSide.Long,1m,true,0,0,"close-localized-fallback",
+            "强平安全缓冲不足",
+            DecisionAction.CloseLong,
+            ExpectedPrice:99m);
+        await store.RecordExecutionAsync(
+            "close-localized-fallback",
+            close,
+            new ExchangeOrder("BTCUSDT","order-close-localized-fallback",close.ClientOrderId,"FILLED",1m,99m,"MARKET",PositionSide.Long,false,DateTime.UtcNow),
+            "v1",
+            default);
+
+        var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));
+        Assert.Equal("action.closelong",review.ExitReason);
+        var memory=Assert.Single(await store.SearchMemoriesAsync(new(Tier:"long-term",Symbol:"BTCUSDT"),default));
+        Assert.Contains("exitReason=action.closelong",memory.Summary,StringComparison.Ordinal);
+        Assert.DoesNotContain("强平安全缓冲不足",memory.Summary,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ReplayedCloseCannotChangeExpectedPriceOnly()
     {
         var store=new AgentSqliteStore(Database);var entry=Intent("entry",false,1m,100m);var close=Intent("close",true,1m,110m);await store.RecordExecutionAsync("open",entry,Order(entry,"FILLED",1m,100m),"v1",default);var fill=Order(close,"FILLED",1m,110m);await store.RecordExecutionAsync("close",close,fill,"v1",default);await Assert.ThrowsAsync<InvalidOperationException>(()=>store.RecordExecutionAsync("close",close with{ExpectedPrice=111m},fill,"v1",default));
