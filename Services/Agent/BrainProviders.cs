@@ -85,27 +85,38 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
 
     public Task<BrainDecisionResult> DecideAsync(EvidencePack evidence, AgentContext context, CancellationToken ct)
     {
-        var selected = context.MarketAssessments.Where(x => x.EntryReady && x.Fresh)
-            .OrderByDescending(x => x.Confidence * (1 - x.ConflictRatio))
-            .ThenByDescending(x => Math.Abs(x.NetScore))
-            .FirstOrDefault();
-        var blocked = context.CircuitBreakerActive || selected is null;
-        var decision = new DecisionPlan
+        var numerical = new NumericalStrategySkill();
+        DecisionPlan decision;
+        if (numerical.CanAnalyze(evidence))
         {
-            Action = blocked ? DecisionAction.Hold : selected!.RecommendedAction,
-            Instrument = selected?.Symbol ?? evidence.Markets.Keys.FirstOrDefault() ?? "BTCUSDT",
-            TargetTier = blocked ? 0 : 1,
-            Confidence = selected?.Confidence ?? 0,
-            Regime = selected?.Regime.ToString() ?? MarketRegime.Unknown.ToString(),
-            Reason = context.CircuitBreakerActive ? "local risk circuit breaker is active" : selected?.Summary ?? "no locally validated entry is ready",
-            Invalidation = "local signal, data freshness, strategy health, or risk gate becomes invalid",
-            EvidenceReferences = selected?.Signals.OrderByDescending(x => Math.Abs(x.WeightedScore)).Take(5).Select(x => x.Name).ToList() ?? [],
-            MissingConditions = selected?.MissingConditions.ToList() ?? context.MarketAssessments.SelectMany(x => x.MissingConditions).Distinct().ToList(),
-            ConflictSummary = selected is null ? "no executable local assessment" : $"conflict={selected.ConflictRatio:F3}; score={selected.NetScore:F3}",
-            StrategyVersion = "wpe-local-deterministic-v1"
-        };
-        var audit = JsonSerializer.Serialize(new { provider = Name, decision.Action, decision.Instrument, decision.Confidence, decision.Reason });
+            decision = numerical.Decide(evidence, context);
+        }
+        else
+        {
+            var selected = context.MarketAssessments.Where(x => x.EntryReady && x.Fresh)
+                .OrderByDescending(x => x.Confidence * (1 - x.ConflictRatio))
+                .ThenByDescending(x => Math.Abs(x.NetScore))
+                .FirstOrDefault();
+            var blocked = context.CircuitBreakerActive || selected is null;
+            decision = new DecisionPlan
+            {
+                Action = blocked ? DecisionAction.Hold : selected!.RecommendedAction,
+                Instrument = selected?.Symbol ?? evidence.Markets.Keys.FirstOrDefault() ?? "BTCUSDT",
+                TargetTier = blocked ? 0 : 1,
+                Confidence = selected?.Confidence ?? 0,
+                Regime = selected?.Regime.ToString() ?? MarketRegime.Unknown.ToString(),
+                Reason = context.CircuitBreakerActive ? "local risk circuit breaker is active" : selected?.Summary ?? "no locally validated entry is ready",
+                Invalidation = "local signal, data freshness, strategy health, or risk gate becomes invalid",
+                EvidenceReferences = selected?.Signals.OrderByDescending(x => Math.Abs(x.WeightedScore)).Take(5).Select(x => x.Name).ToList() ?? [],
+                MissingConditions = selected?.MissingConditions.ToList() ?? context.MarketAssessments.SelectMany(x => x.MissingConditions).Distinct().ToList(),
+                ConflictSummary = selected is null ? "no executable local assessment" : "conflict=" + selected.ConflictRatio.ToString("F3") + "; score=" + selected.NetScore.ToString("F3"),
+                StrategyVersion = "wpe-local-deterministic-v1",
+                DecisionBasis = "signal-aggregation-v1"
+            };
+        }
+        var audit = JsonSerializer.Serialize(new { provider = Name, decision.Action, decision.Instrument, decision.Confidence, decision.DecisionBasis, decision.Reason });
         return Task.FromResult(new BrainDecisionResult(decision, audit, audit));
+    }
     }
 }
 
