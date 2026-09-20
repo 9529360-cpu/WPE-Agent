@@ -276,7 +276,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             }
             catch(OperationCanceledException) when(ct.IsCancellationRequested)
             {
-                if(stateKey is not null)await _db.SetStateAsync(stateKey,"FAILED",CancellationToken.None);
+                if(stateKey is not null)await _db.SetStateAsync(stateKey,"CANCELED",CancellationToken.None);
                 throw;
             }
             catch(Exception ex)
@@ -298,6 +298,11 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
                 DateTime.UtcNow,UiDiagnostic.FromText("protection updated","Protection updated").Code);
             await ObserveSafelyAsync(value);
             return L("Execution.ProtectionAdjusted",adjustment.StopLoss,adjustment.TakeProfit);
+        }
+        catch(OperationCanceledException) when(ct.IsCancellationRequested)
+        {
+            if(stateKey is not null)await _db.SetStateAsync(stateKey,"CANCELED",CancellationToken.None);
+            throw;
         }
         catch(Exception ex)
         {
