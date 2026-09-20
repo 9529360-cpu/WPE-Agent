@@ -73,7 +73,7 @@ internal sealed class ProductionRecoveryService(
         var intentHash=TradingExecutionGateway.ComputeIntentHash([intent],leverage,isolated);
         var request=new RecoveryReconciliationRequest(
             "recovery-receipt-"+Guid.NewGuid().ToString("N"),correlationId,providerId,"Testnet",accountId,
-            intent.Symbol,intentHash,DateTimeOffset.UtcNow);
+            intent.Symbol,intentHash,DateTimeOffset.UtcNow,intent.Side);
         var receipt=await reconciler.ReconcileAsync(request,ct);
         return await gateway.ExecuteReduceOnlyRecoveryAsync(
             new(correlationId,receipt,new(receipt.Symbol,receipt.Side,receipt.Quantity,0,0,0,
@@ -92,7 +92,7 @@ internal sealed class ProductionRecoveryService(
         var adjustmentHash=TradingExecutionGateway.ComputeProtectionAdjustmentHash(adjustment);
         var request=new RecoveryReconciliationRequest(
             "recovery-protection-"+Guid.NewGuid().ToString("N"),correlationId,providerId,"Testnet",accountId,
-            adjustment.Symbol,adjustmentHash,DateTimeOffset.UtcNow);
+            adjustment.Symbol,adjustmentHash,DateTimeOffset.UtcNow,adjustment.Side);
         var receipt=await reconciler.ReconcileAsync(request,ct);
         return await gateway.ExecuteProtectionRecoveryAsync(
             new(correlationId,receipt,observedPosition,adjustment),ct);
@@ -119,7 +119,8 @@ internal sealed class AuthenticatedProviderRecoveryObservationSource(
            !string.Equals(permissions.AccountId,expectedAccountId,StringComparison.Ordinal))
             throw new InvalidOperationException("Recovery provider permissions are unsafe or unavailable.");
         var positions=await provider.GetPositionsAsync(ct);
-        var matches=positions.Where(x=>string.Equals(x.Symbol,request.Symbol,StringComparison.Ordinal)).ToArray();
+        var matches=positions.Where(x=>string.Equals(x.Symbol,request.Symbol,StringComparison.Ordinal)&&
+            (request.Side is null||x.Side==request.Side.Value)).ToArray();
         if(matches.Length!=1||matches[0].Quantity<=0)
             throw new InvalidOperationException("Recovery position observation is missing or conflicting.");
         return new(matches[0],_utcNow().ToUniversalTime(),ReduceOnlyRecoveryResult.Verified);
