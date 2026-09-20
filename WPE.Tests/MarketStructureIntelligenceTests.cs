@@ -23,6 +23,7 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Equal(MarketStructureScenario.TrendPullbackLong,structure.Scenario);
         Assert.Equal(TradeHypothesisKind.TrendPullbackLong,hypothesis.Kind);
         Assert.Equal(TradeHypothesisStage.Watching,hypothesis.Stage);
+        Assert.Equal(MarketStructurePhase.BullishPullback,hypothesis.LastStructurePhase);
         Assert.Equal("hypothesis-v2",hypothesis.Version);
         Assert.Equal(MarketStructureRead.DecisionBasis,hypothesis.DecisionBasis);
         Assert.Contains("structure_basis=candles-structure-v2",hypothesis.Evidence);
@@ -63,6 +64,7 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Equal(MarketStructurePhase.BullishReversalAttempt,structure.Phase);
         Assert.True(structure.TriggerPresent);
         Assert.Equal(TradeHypothesisStage.ScoutReady,scout.Stage);
+        Assert.Equal(MarketStructurePhase.BullishReversalAttempt,scout.LastStructurePhase);
         Assert.True(scout.Actionable);
         Assert.Equal(.16,scout.RiskBudgetMultiplier,10);
     }
@@ -85,6 +87,7 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Equal(MarketStructureEvent.BullishBreak,structure.FifteenMinute.Event);
         Assert.Equal(MarketStructurePhase.BullishImpulse,structure.Phase);
         Assert.Equal(TradeHypothesisStage.Confirmed,confirmed.Stage);
+        Assert.Equal(MarketStructurePhase.BullishImpulse,confirmed.LastStructurePhase);
         Assert.Equal(scout.Id,confirmed.Id);
         Assert.True(confirmed.LastStructureEvidenceAtUtc>scout.LastStructureEvidenceAtUtc);
         Assert.Equal(.40,confirmed.RiskBudgetMultiplier,10);
@@ -104,6 +107,7 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Equal(TradeHypothesisStage.Watching,stillWatching.Stage);
         Assert.False(stillWatching.Actionable);
         Assert.Equal(watching.LastStructureEvidenceAtUtc,stillWatching.LastStructureEvidenceAtUtc);
+        Assert.Equal(watching.LastStructurePhase,stillWatching.LastStructurePhase);
     }
 
     [Fact]
