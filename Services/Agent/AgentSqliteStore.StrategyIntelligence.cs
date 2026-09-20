@@ -162,6 +162,7 @@ public sealed partial class AgentSqliteStore
         var excursions=new List<(decimal Mae,decimal Mfe)>();
         var stopLosses=0;
         var takeProfits=0;
+        var structureInvalidations=0;
         await using var connection=new SqliteConnection(_cs);
         await connection.OpenAsync(ct);
         await using var command=connection.CreateCommand();
@@ -181,6 +182,7 @@ public sealed partial class AgentSqliteStore
             var exitReason=reader.GetString(4);
             if(exitReason.Contains("stop-loss",StringComparison.OrdinalIgnoreCase))stopLosses++;
             if(exitReason.Contains("take-profit",StringComparison.OrdinalIgnoreCase))takeProfits++;
+            if(string.Equals(exitReason,PositionExitReasonCodes.StructureInvalidated,StringComparison.Ordinal))structureInvalidations++;
         }
 
         if(returns.Count==0)return new(0,0,0,.5);
@@ -197,7 +199,8 @@ public sealed partial class AgentSqliteStore
             excursions.Count==0?0:(double)excursions.Average(value=>value.Mae),
             excursions.Count==0?0:(double)excursions.Average(value=>value.Mfe),
             stopLosses/(double)returns.Count,
-            takeProfits/(double)returns.Count);
+            takeProfits/(double)returns.Count,
+            structureInvalidations/(double)returns.Count);
     }
 
     private static StrategyObservationPerformance PendingPerformance(int rawObservations)
@@ -242,4 +245,4 @@ public sealed partial class AgentSqliteStore
 }
 
 internal sealed record StrategyExecutionFeedback(int Trades,double AverageReturn,double WinRate,double PosteriorWinRate);
-internal sealed record HypothesisExecutionFeedback(int Trades,double AverageReturn,double WinRate,double PosteriorWinRate,int ExcursionTrades=0,double AverageMae=0,double AverageMfe=0,double StopLossRate=0,double TakeProfitRate=0);
+internal sealed record HypothesisExecutionFeedback(int Trades,double AverageReturn,double WinRate,double PosteriorWinRate,int ExcursionTrades=0,double AverageMae=0,double AverageMfe=0,double StopLossRate=0,double TakeProfitRate=0,double StructureInvalidationRate=0);
