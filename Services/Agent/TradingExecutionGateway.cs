@@ -14,6 +14,8 @@ public interface ITradingMutationExecutor
     Task<string> ExecutePlanAsync(string correlationId,IReadOnlyList<ExecutionIntent> intents,int leverage,bool isolated,CancellationToken ct);
     Task<string> ExecuteReduceOnlyRecoveryAsync(string correlationId,ExecutionIntent intent,CancellationToken ct)=>
         throw new NotSupportedException("The executor does not provide the mutation-minimal recovery path.");
+    Task<string> ReplaceProtectionAsync(string correlationId,ProtectionAdjustment adjustment,CancellationToken ct)=>
+        throw new NotSupportedException("The executor does not provide the protection-replacement recovery path.");
 }
 
 public sealed record TradingExecutionCommand(
@@ -82,6 +84,12 @@ public sealed record ReduceOnlyRecoveryCommand(
     ExecutionIntent Intent,
     int Leverage,
     bool Isolated);
+
+public sealed record ProtectionRecoveryCommand(
+    string CorrelationId,
+    ReduceOnlyRecoveryReceipt? Receipt,
+    ManagedPosition ObservedPosition,
+    ProtectionAdjustment Adjustment);
 
 public sealed record TestnetSmokeAuthorization(
     string AuthorizationId,
@@ -446,6 +454,66 @@ public sealed class TradingExecutionGateway
         }
     }
 
+    public async Task<TradingExecutionGatewayResult> ExecuteProtectionRecoveryAsync(ProtectionRecoveryCommand command,CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        if(!_executor.IsTestnet)return Deny("recovery.testnet-required");
+        if(string.IsNullOrWhiteSpace(command.CorrelationId)||command.ObservedPosition is null||command.Adjustment is null)
+            return Deny("recovery.protection-command-invalid");
+
+        var receipt=command.Receipt;var now=_utcNow().ToUniversalTime();
+        if(receipt is null||_recoveryReceiptVerifier is null||!_recoveryReceiptVerifier.Verify(receipt))
+            return Deny("recovery.receipt-invalid");
+        if(receipt.Result!=ReduceOnlyRecoveryResult.Verified)
+            return Deny($"recovery.reconciliation-{receipt.Result.ToString().ToLowerInvariant()}");
+        var observedAt=receipt.ObservedAtUtc.ToUniversalTime();
+        if(observedAt>now||now-observedAt>MaximumRecoveryObservationAge)
+            return Deny("recovery.observation-stale");
+        if(receipt.IssuedAtUtc>now||receipt.ExpiresAtUtc<=now||receipt.ExpiresAtUtc-receipt.IssuedAtUtc>MaximumRecoveryObservationAge)
+            return Deny("recovery.receipt-expired");
+
+        var adjustment=command.Adjustment;
+        if(string.IsNullOrWhiteSpace(adjustment.AdjustmentId)||adjustment.StopLoss<=0||adjustment.TakeProfit<=0)
+            return Deny("recovery.protection-adjustment-invalid");
+        var adjustmentHash=ComputeProtectionAdjustmentHash(adjustment);
+        if(!FixedHash(receipt.IntentHash,adjustmentHash)||
+           !string.Equals(receipt.CorrelationId,command.CorrelationId,StringComparison.Ordinal)||
+           !string.Equals(receipt.ProviderId,_executor.ProviderId,StringComparison.Ordinal)||
+           !string.Equals(receipt.Environment,"Testnet",StringComparison.Ordinal)||
+           !string.Equals(receipt.AccountId,_executor.AccountId,StringComparison.Ordinal)||
+           !string.Equals(receipt.Symbol,command.ObservedPosition.Symbol,StringComparison.Ordinal)||
+           receipt.Side!=command.ObservedPosition.Side||
+           receipt.Quantity!=command.ObservedPosition.Quantity||
+           !string.Equals(adjustment.Symbol,command.ObservedPosition.Symbol,StringComparison.Ordinal)||
+           adjustment.Side!=command.ObservedPosition.Side)
+            return Deny("recovery.protection-receipt-mismatch");
+
+        var opening=await _approvals.GetLatestOpeningIntentAsync(adjustment.Symbol,adjustment.Side,ct);
+        if(opening is null||opening.ReduceOnly||opening.StopLoss<=0||opening.TakeProfit<=0)
+            return Deny("recovery.protection-opening-missing");
+        var entry=opening.ExpectedPrice>0?opening.ExpectedPrice:command.ObservedPosition.EntryPrice;
+        var riskReducing=entry>0&&adjustment.TakeProfit==opening.TakeProfit&&
+            (adjustment.Side==PositionSide.Long
+                ?adjustment.StopLoss>=entry&&adjustment.StopLoss>opening.StopLoss&&adjustment.TakeProfit>entry
+                :adjustment.StopLoss<=entry&&adjustment.StopLoss<opening.StopLoss&&adjustment.TakeProfit<entry);
+        if(!riskReducing)return Deny("recovery.protection-risk-increase");
+
+        var stateKey=PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId);
+        var gate=_recoveryLocks.GetOrAdd("protection:"+adjustment.AdjustmentId,_=>new SemaphoreSlim(1,1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            if(await _approvals.GetStateAsync(stateKey,ct) is not null)
+                return Deny("recovery.protection-existing");
+            var result=await _executor.ReplaceProtectionAsync(command.CorrelationId,adjustment,ct);
+            return new(true,"recovery.protection-adjusted",result);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     public async Task<TradingExecutionGatewayResult> ExecuteTestnetSmokeAsync(TestnetSmokeCommand command,CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(command);
@@ -511,6 +579,14 @@ public sealed class TradingExecutionGateway
             userId,deviceId,sessionId,issued,issued.Add(lifetime));
     }
 
+    public static string ComputeProtectionAdjustmentHash(ProtectionAdjustment adjustment)
+    {
+        ArgumentNullException.ThrowIfNull(adjustment);
+        var payload=JsonSerializer.SerializeToUtf8Bytes(new ProtectionAdjustmentHashPayload(
+            adjustment.Symbol,adjustment.Side,adjustment.StopLoss,adjustment.TakeProfit,adjustment.AdjustmentId??string.Empty));
+        return Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant();
+    }
+
     public static string ComputeIntentHash(IReadOnlyList<ExecutionIntent> intents,int leverage,bool isolated)
     {
         ArgumentNullException.ThrowIfNull(intents);
@@ -574,5 +650,6 @@ public sealed class TradingExecutionGateway
         var hash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
         return prefix+hash[..24];
     }
+    private sealed record ProtectionAdjustmentHashPayload(string Symbol,PositionSide Side,decimal StopLoss,decimal TakeProfit,string AdjustmentId);
     private sealed record IntentHashPayload(int Leverage,bool Isolated,IReadOnlyList<ExecutionIntent> Intents);
 }
