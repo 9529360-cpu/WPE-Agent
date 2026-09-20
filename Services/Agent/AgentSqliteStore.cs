@@ -786,7 +786,7 @@ public sealed partial class AgentSqliteStore
         q.Parameters.AddWithValue("$s",symbol);q.Parameters.AddWithValue("$side",side.ToString());
         await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))
         {
-            if(!DateTimeOffset.TryParse(r.GetString(1),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var occurredAtUtc))throw new InvalidOperationException("Execution opening timestamp is invalid.");
+            if(r.IsDBNull(1)||!DateTimeOffset.TryParse(r.GetString(1),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var occurredAtUtc))continue;
             if(occurredAtUtc.ToUniversalTime()>asOfUtc)continue;
             var intent=JsonSerializer.Deserialize<ExecutionIntent>(r.GetString(0));
             if(intent is{ReduceOnly:false,StopLoss:>0,TakeProfit:>0})return intent;
@@ -1071,12 +1071,12 @@ public sealed partial class AgentSqliteStore
         await using var r=await q.ExecuteReaderAsync(ct);
         while(await r.ReadAsync(ct))
         {
-            if(!DateTimeOffset.TryParse(r.GetString(4),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var occurredAt))
-                throw new InvalidOperationException("Execution position ledger timestamp is invalid.");
-            occurredAt=occurredAt.ToUniversalTime();
-            if(asOfUtc is not null&&occurredAt>asOfUtc.Value)continue;
+            DateTimeOffset? occurredAt=null;
+            if(!r.IsDBNull(4)&&DateTimeOffset.TryParse(r.GetString(4),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var parsedOccurredAt))
+                occurredAt=parsedOccurredAt.ToUniversalTime();
+            if(asOfUtc is not null&&occurredAt is not null&&occurredAt.Value>asOfUtc.Value)continue;
             var symbol=r.GetString(0);var side=Enum.Parse<PositionSide>(r.GetString(1),true);
-            if(retiredThrough.TryGetValue(ExecutionPositionRetiredThroughKey(symbol,side),out var cutoff)&&occurredAt<=cutoff)continue;
+            if(occurredAt is not null&&retiredThrough.TryGetValue(ExecutionPositionRetiredThroughKey(symbol,side),out var cutoff)&&occurredAt.Value<=cutoff)continue;
             if(!decimal.TryParse(r.GetString(3),NumberStyles.Number,CultureInfo.InvariantCulture,out var quantity)||quantity<0)
                 throw new InvalidOperationException("Execution position ledger quantity is invalid.");
             var key=(symbol,side);totals[key]=totals.GetValueOrDefault(key)+(r.GetInt32(2)==1?-quantity:quantity);
@@ -1110,8 +1110,7 @@ public sealed partial class AgentSqliteStore
             await using var er=await evidence.ExecuteReaderAsync(ct);
             while(await er.ReadAsync(ct))
             {
-                if(!DateTimeOffset.TryParse(er.GetString(0),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var occurredAt))
-                    throw new InvalidOperationException("Execution position retirement evidence timestamp is invalid.");
+                if(er.IsDBNull(0)||!DateTimeOffset.TryParse(er.GetString(0),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var occurredAt))continue;
                 if(occurredAt.ToUniversalTime()<=observedAtUtc){eligible=true;break;}
             }
         }
