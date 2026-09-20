@@ -31,6 +31,7 @@ public sealed class StructurePositionManagementTests
             Assert.Equal(DecisionAction.CloseLong,intent.Action);
             Assert.Equal(position.Symbol,intent.Symbol);
             Assert.Equal(market.Price,intent.ExpectedPrice);
+            Assert.Equal(PositionExitReasonCodes.StructureInvalidated,intent.ReasonCode);
             Assert.Contains("structure-invalidated:",Assert.Single(result.Notes),StringComparison.Ordinal);
         }
         finally
