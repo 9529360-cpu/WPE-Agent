@@ -83,11 +83,12 @@ public static class ProtectionFillReconciliationServiceV1
                     0,
                     0,
                     order.ClientOrderId,
-                    kind==ProtectionFillKind.StopLoss?"protection.fill-reconciled.stop-loss":"protection.fill-reconciled.take-profit",
+                    kind==ProtectionFillKind.StopLoss?PositionExitReasonCodes.ProtectionStopLoss:PositionExitReasonCodes.ProtectionTakeProfit,
                     parent.Intent.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
                     ExecutionOrderType.Market,
                     0,
-                    expected);
+                    expected,
+                    kind==ProtectionFillKind.StopLoss?PositionExitReasonCodes.ProtectionStopLoss:PositionExitReasonCodes.ProtectionTakeProfit);
 
                 await CaptureFeeEvidenceAsync(exchange,store,order,ct);
                 await CaptureFundingEvidenceAsync(exchange,store,closeIntent,ct);

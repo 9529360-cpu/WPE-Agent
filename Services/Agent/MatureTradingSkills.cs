@@ -196,7 +196,8 @@ public sealed class PositionManagementSkill
                     Id("STRUCT"),
                     L("Position.StructureInvalidated"),
                     position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
-                    ExpectedPrice:market.Price));
+                    ExpectedPrice:market.Price,
+                    ReasonCode:PositionExitReasonCodes.StructureInvalidated));
                 notes.Add($"structure-invalidated:{position.Symbol}:{position.Side}:{hypothesis.Id}:{hypothesis.Revision}");
                 continue;
             }
@@ -213,7 +214,8 @@ public sealed class PositionManagementSkill
                     position.Symbol,position.Side,position.Quantity,true,0,0,Id("LIQ"),
                     L("Position.LiquidationBuffer"),
                     position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
-                    ExpectedPrice:market.Price));
+                    ExpectedPrice:market.Price,
+                    ReasonCode:PositionExitReasonCodes.LiquidationBuffer));
                 continue;
             }
 
@@ -224,7 +226,8 @@ public sealed class PositionManagementSkill
                     position.Symbol,position.Side,position.Quantity*.5m,true,0,0,Id("TP2"),
                     L("Position.PartialTake"),
                     position.Side==PositionSide.Long?DecisionAction.ReduceLong:DecisionAction.ReduceShort,
-                    ExpectedPrice:market.Price));
+                    ExpectedPrice:market.Price,
+                    ReasonCode:PositionExitReasonCodes.PartialTakeProfit2R));
                 notes.Add(partialKey);
             }
 

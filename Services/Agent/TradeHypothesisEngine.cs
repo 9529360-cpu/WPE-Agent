@@ -448,6 +448,7 @@ public sealed class TradeHypothesisEngine
             evidence.Add($"family_stop_loss_rate={feedback.StopLossRate:P1}");
             evidence.Add($"family_take_profit_rate={feedback.TakeProfitRate:P1}");
         }
+        evidence.Add($"family_structure_invalidation_rate={feedback.StructureInvalidationRate:P1}");
         evidence.Add($"family_trigger_shift={triggerShift:P3}");
         evidence.Add($"family_risk_factor={riskFactor:F3}");
 

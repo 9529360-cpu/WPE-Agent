@@ -83,7 +83,7 @@ public sealed class ActiveTradingReviewRiskValidator : ITradingReviewRiskValidat
         return new(true,"review.risk-valid",receipt);
     }
 
-    private static ExecutionIntent ToIntent(DurableExecutionIntentSnapshotV1 value)=>new(value.Symbol,Enum.Parse<PositionSide>(value.Side),value.Quantity,value.ReduceOnly,value.StopLoss,value.TakeProfit,value.ClientOrderId,value.ReasonCode,Enum.Parse<DecisionAction>(value.Action),Enum.Parse<ExecutionOrderType>(value.OrderType),value.LimitPrice,value.ExpectedPrice);
+    private static ExecutionIntent ToIntent(DurableExecutionIntentSnapshotV1 value)=>new(value.Symbol,Enum.Parse<PositionSide>(value.Side),value.Quantity,value.ReduceOnly,value.StopLoss,value.TakeProfit,value.ClientOrderId,value.ReasonCode,Enum.Parse<DecisionAction>(value.Action),Enum.Parse<ExecutionOrderType>(value.OrderType),value.LimitPrice,value.ExpectedPrice,value.ReasonCode);
     private static double RiskReward(ExecutionIntent value){var risk=Math.Abs(value.ExpectedPrice-value.StopLoss);return risk<=0?0:(double)(Math.Abs(value.TakeProfit-value.ExpectedPrice)/risk);}
     private static TradingReviewRiskValidation Deny(string code)=>new(false,code,null);
 }

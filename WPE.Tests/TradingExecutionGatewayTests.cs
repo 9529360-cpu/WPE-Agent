@@ -250,6 +250,65 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     }
 
     [Fact]
+    public void DurableReasonMappingDoesNotConfuseRiskApprovalWithExitCause()
+    {
+        var opening=Intent();
+        Assert.Equal("automatic.risk-approved",ExecutionReasonCode.ResolveForDurableIntent(opening,"automatic.risk-approved"));
+
+        var localizedClose=opening with
+        {
+            ReduceOnly=true,
+            StopLoss=0,
+            TakeProfit=0,
+            Reason="本地结构退出",
+            Action=DecisionAction.CloseLong
+        };
+        Assert.Equal("action.closelong",ExecutionReasonCode.ResolveForDurableIntent(localizedClose,"automatic.risk-approved"));
+
+        var legacyMachineClose=localizedClose with{Reason="strategy.exit"};
+        Assert.Equal("strategy.exit",ExecutionReasonCode.ResolveForDurableIntent(legacyMachineClose,"automatic.risk-approved"));
+
+        var explicitClose=localizedClose with{ReasonCode=PositionExitReasonCodes.StructureInvalidated};
+        Assert.Equal(PositionExitReasonCodes.StructureInvalidated,ExecutionReasonCode.ResolveForDurableIntent(explicitClose,"automatic.risk-approved"));
+    }
+
+    [Fact]
+    public void LegacyIntentHashRemainsStableWhenReasonCodeIsAbsent()
+    {
+        var intent=Intent();
+        var legacyPayload=System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            Leverage=5,
+            Isolated=true,
+            Intents=new[]
+            {
+                new
+                {
+                    intent.Symbol,
+                    intent.Side,
+                    intent.Quantity,
+                    intent.ReduceOnly,
+                    intent.StopLoss,
+                    intent.TakeProfit,
+                    intent.ClientOrderId,
+                    intent.Reason,
+                    intent.Action,
+                    intent.OrderType,
+                    intent.LimitPrice,
+                    intent.ExpectedPrice
+                }
+            }
+        });
+        var legacyHash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(legacyPayload)).ToLowerInvariant();
+
+        Assert.Null(intent.ReasonCode);
+        Assert.Equal(legacyHash,TradingExecutionGateway.ComputeIntentHash([intent],5,true));
+
+        var coded=intent with{ReasonCode=PositionExitReasonCodes.StructureInvalidated};
+        Assert.NotEqual(legacyHash,TradingExecutionGateway.ComputeIntentHash([coded],5,true));
+    }
+
+    [Fact]
     public async Task EmergencyReduction_ConfirmedTestnetClosePersistsConsumesAndExecutes()
     {
         var setup=Setup(TradingAuthorizationMode.Review);

@@ -119,11 +119,24 @@ public sealed partial class AgentSqliteStore
 
     private static string ResolveExitReason(ExecutionIntent intent, ExchangeOrder order)
     {
-        var reason = SensitiveDataRedactor.ForLog(intent.Reason ?? string.Empty,160).Trim();
-        if (!string.IsNullOrWhiteSpace(reason)) return reason;
-        if (order.IsProtection) return "protection.fill-reconciled";
+        if (order.IsProtection)
+        {
+            if (ExecutionReasonCode.TryNormalize(intent.ReasonCode, out var explicitProtectionCode) &&
+                explicitProtectionCode.StartsWith("protection.", StringComparison.Ordinal))
+                return explicitProtectionCode;
+            if (ExecutionReasonCode.TryNormalize(intent.Reason, out var legacyProtectionCode) &&
+                legacyProtectionCode.StartsWith("protection.", StringComparison.Ordinal))
+                return legacyProtectionCode;
+            return PositionExitReasonCodes.ProtectionFillReconciled;
+        }
+
+        if (ExecutionReasonCode.TryNormalize(intent.ReasonCode, out var explicitCode) && !IsAuthorityOnlyExitCode(explicitCode)) return explicitCode;
+        if (ExecutionReasonCode.TryNormalize(intent.Reason, out var legacyCode) && !IsAuthorityOnlyExitCode(legacyCode)) return legacyCode;
         return "action." + intent.Action.ToString().ToLowerInvariant();
     }
+
+    private static bool IsAuthorityOnlyExitCode(string code)=>
+        string.Equals(code,"automatic.risk-approved",StringComparison.Ordinal);
 
     private static async Task<(DateTimeOffset Opened, DateTimeOffset Closed)?> ResolveUnambiguousPositionWindowAsync(
         SqliteConnection connection,
