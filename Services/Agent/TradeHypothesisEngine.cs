@@ -50,7 +50,7 @@ public sealed record TradeHypothesis(
     string Invalidation,
     IReadOnlyList<string> Evidence)
 {
-    public const string CurrentVersion = "hypothesis-v1";
+    public const string CurrentVersion = "hypothesis-v2";
     public string DecisionBasis { get; init; } = "summary-v1";
     public bool LastOrderBookAvailable { get; init; }
     public bool Actionable => Stage is TradeHypothesisStage.ScoutReady or TradeHypothesisStage.Confirmed;
