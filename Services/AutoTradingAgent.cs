@@ -557,6 +557,17 @@ public static class AutoTradingAgent
     private static void UpdateDecisionUi(DecisionPlan decision,DecisionReview review,MarketDecisionAssessment? selected,ResearchValidationResult? research)
     {
         var state=ServiceLocator.SystemState;state.LastDecision=decision.Action.ToString();state.LastReason=review.Explanation;state.DecisionDiagnostics=review.Explanation;state.BrainConfidence=decision.Confidence*100;state.PlannedEntry=decision.EntryPrice;state.PlannedStop=decision.StopLossPrice;state.PlannedTakeProfit=decision.TakeProfitPrice;state.RiskRewardRatio=decision.RiskRewardRatio;state.ReviewerStatus=review.Accepted?"APPROVED":"REJECTED";state.ResearchScore=(research?.QualityScore??0)*100;
+        var hypothesisDriven=string.Equals(decision.DecisionContextKind,TradeHypothesisEngine.DecisionContextKind,StringComparison.Ordinal);
+        if(hypothesisDriven)
+        {
+            state.DecisionScore=0;
+            state.ConflictRate=0;
+            state.RiskLoad=Math.Clamp(decision.RiskBudgetMultiplier,0,1)*100;
+            state.MarketRegime=string.IsNullOrWhiteSpace(decision.Regime)?MarketRegime.Unknown.ToString().ToUpperInvariant():decision.Regime.ToUpperInvariant();
+            state.SignalContributions=new Dictionary<string,double>();
+            state.MissingConditions=string.Join("; ",review.BlockingReasons.Concat(decision.MissingConditions).Distinct());
+            return;
+        }
         if(selected is null)return;state.DecisionScore=selected.NetScore*100;state.ConflictRate=selected.ConflictRatio*100;state.RiskLoad=Math.Clamp(selected.ConflictRatio*.60+(1-selected.Confidence)*.40,0,1)*100;state.MarketRegime=selected.Regime.ToString().ToUpperInvariant();state.SignalContributions=selected.Signals.ToDictionary(x=>x.Name,x=>x.WeightedScore);state.MissingConditions=string.Join("; ",review.BlockingReasons.Concat(selected.MissingConditions).Distinct());
     }
 
