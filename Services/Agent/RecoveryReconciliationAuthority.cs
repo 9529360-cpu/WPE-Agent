@@ -12,7 +12,8 @@ internal sealed record RecoveryReconciliationRequest(
     string AccountId,
     string Symbol,
     string IntentHash,
-    DateTimeOffset RequestedAtUtc);
+    DateTimeOffset RequestedAtUtc,
+    PositionSide? Side=null);
 
 internal sealed record TrustedRecoveryObservation(
     ManagedPosition Position,
