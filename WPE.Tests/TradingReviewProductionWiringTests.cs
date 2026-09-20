@@ -56,6 +56,8 @@ public sealed class TradingReviewProductionWiringTests
         Assert.Contains("ProductionRecoveryComposition.CreateAsync(exchange,executor,Db",run,StringComparison.Ordinal);
         Assert.Contains("var executionGateway=recoveryServices.Gateway",run,StringComparison.Ordinal);
         Assert.Contains("ExecutePositionManagementRecoveryAsync(recoveryServices.Recovery",run,StringComparison.Ordinal);
+        Assert.Contains("ExecutePositionProtectionRecoveryAsync(recoveryServices.Recovery",run,StringComparison.Ordinal);
+        Assert.DoesNotContain("AssessUnverifiedAutomaticMutation(AutomaticMutationPath.PositionManagement",run,StringComparison.Ordinal);
         Assert.Contains("new AutomaticExecutionProcessor(Db,automaticValidator,automaticGateway)",run,StringComparison.Ordinal);
         Assert.Contains("new DurableExecutionArtifactV2",run,StringComparison.Ordinal);
         Assert.Contains("SaveAutomaticExecutionAsync(cycle,artifact,ct)",run,StringComparison.Ordinal);
