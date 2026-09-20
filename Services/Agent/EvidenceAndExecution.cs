@@ -268,20 +268,23 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         {
             durableGate?.Release();
         }
-        try
+        if(_ex is not IInPlaceProtectionUpdateAdapter)
         {
-            await CancelProtectionOrdersAsync(adjustment.Symbol,adjustment.Side,ct);
-        }
-        catch(OperationCanceledException) when(ct.IsCancellationRequested)
-        {
-            if(stateKey is not null)await _db.SetStateAsync(stateKey,"FAILED",CancellationToken.None);
-            throw;
-        }
-        catch(Exception ex)
-        {
-            if(stateKey is not null)await _db.SetStateAsync(stateKey,"FAILED",CancellationToken.None);
-            await EmergencyCloseAfterProtectionFailureAsync(cycle,adjustment,group,ex,ct);
-            throw;
+            try
+            {
+                await CancelProtectionOrdersAsync(adjustment.Symbol,adjustment.Side,ct);
+            }
+            catch(OperationCanceledException) when(ct.IsCancellationRequested)
+            {
+                if(stateKey is not null)await _db.SetStateAsync(stateKey,"FAILED",CancellationToken.None);
+                throw;
+            }
+            catch(Exception ex)
+            {
+                if(stateKey is not null)await _db.SetStateAsync(stateKey,"FAILED",CancellationToken.None);
+                await EmergencyCloseAfterProtectionFailureAsync(cycle,adjustment,group,ex,ct);
+                throw;
+            }
         }
 
         try
