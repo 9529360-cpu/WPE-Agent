@@ -16,6 +16,7 @@ public sealed class RecoveryProductionWiringTests
         {
             var provider=new RecordingProvider();
             var store=new AgentSqliteStore(Path.Combine(root,"agent.db"));
+            await SeedManagedOpeningAsync(store);
             var executor=new ReliableOrderExecutor(provider,store,new RiskLimits(),SystemOrderPollScheduler.Instance,
                 new Dictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability>(StringComparer.OrdinalIgnoreCase)
                 {
@@ -48,6 +49,7 @@ public sealed class RecoveryProductionWiringTests
         {
             var provider=new RecordingProvider();
             var store=new AgentSqliteStore(Path.Combine(root,"agent.db"));
+            await SeedManagedOpeningAsync(store);
             var executor=new ReliableOrderExecutor(provider,store,new RiskLimits(),SystemOrderPollScheduler.Instance,
                 new Dictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability>(StringComparer.OrdinalIgnoreCase)
                 {
@@ -86,6 +88,7 @@ public sealed class RecoveryProductionWiringTests
                 ]
             };
             var store=new AgentSqliteStore(Path.Combine(root,"agent.db"));
+            await SeedManagedOpeningAsync(store);
             var executor=Executor(provider,store);
             var services=await ProductionRecoveryComposition.CreateAsync(provider,executor,store,Path.Combine(root,"receipt-key.json"));
             var intent=new ExecutionIntent("SOLUSDT",PositionSide.Long,1m,true,0,0,"hedge-long-close","position management",
@@ -111,11 +114,7 @@ public sealed class RecoveryProductionWiringTests
         {
             var provider=new RecordingProvider();
             var store=new AgentSqliteStore(Path.Combine(root,"agent.db"));
-            await store.SaveIntentAsync(
-                "cycle-open",
-                new ExecutionIntent("SOLUSDT",PositionSide.Long,1m,false,140m,170m,"open-protection-1","opening",
-                    DecisionAction.OpenLong,ExpectedPrice:150m),
-                "PROTECTED","opening-order",CancellationToken.None);
+            await SeedManagedOpeningAsync(store,"open-protection-1",170m);
             var executor=Executor(provider,store);
             var services=await ProductionRecoveryComposition.CreateAsync(provider,executor,store,Path.Combine(root,"receipt-key.json"));
             var adjustment=new ProtectionAdjustment(
@@ -149,6 +148,19 @@ public sealed class RecoveryProductionWiringTests
             Assert.Equal(0,executor.MutationCount);
         }
         finally{TryDelete(root);}
+    }
+
+    private static async Task SeedManagedOpeningAsync(
+        AgentSqliteStore store,string clientOrderId="open-recovery",decimal takeProfit=170m)
+    {
+        var intent=new ExecutionIntent(
+            "SOLUSDT",PositionSide.Long,1m,false,140m,takeProfit,clientOrderId,"opening",
+            DecisionAction.OpenLong,ExpectedPrice:150m);
+        var order=new ExchangeOrder(
+            "SOLUSDT","opening-order",clientOrderId,"FILLED",1m,150m,"MARKET",
+            PositionSide.Long,false,DateTime.UtcNow);
+        await store.RecordExecutionAsync("cycle-open",intent,order,"test",CancellationToken.None);
+        await store.SaveIntentAsync("cycle-open",intent,"PROTECTED",order.OrderId,CancellationToken.None);
     }
 
     private static ReliableOrderExecutor Executor(RecordingProvider provider,AgentSqliteStore store)
