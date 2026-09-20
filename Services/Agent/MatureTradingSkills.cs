@@ -212,7 +212,7 @@ public sealed class PositionManagementSkill
                 if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
                     intents.Add(new(
                         position.Symbol,position.Side,position.Quantity,true,0,0,actionId,
-                        L("Execution.ProtectionReplaceFailed",protectionState),
+                        LocalizationService.Current.T("Execution.ProtectionReplaceFailed",protectionState),
                         position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
                         ExpectedPrice:market.Price,
                         ReasonCode:PositionExitReasonCodes.ProtectionReplaceFailed));
