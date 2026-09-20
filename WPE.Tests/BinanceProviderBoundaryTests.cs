@@ -36,12 +36,11 @@ public sealed class BinanceProviderBoundaryTests
     }
 
     [Fact]
-    public void ProviderPrivateSkill_AcceptsOnlyNarrowPublicMarketTransport()
+    public void RemovedLegacyProviderPrivateMarketSkill_DoesNotRemainInProductionAssembly()
     {
-        var skill = typeof(BinanceFuturesAdapter).Assembly.GetTypes().Single(type => type.Name == "MarketStructureSkill");
-        Assert.False(skill.IsPublic);
-        var constructor = Assert.Single(skill.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic));
-        Assert.Equal("IBinancePublicMarketTransport", Assert.Single(constructor.GetParameters()).ParameterType.Name);
+        var assembly = typeof(BinanceFuturesAdapter).Assembly;
+        Assert.DoesNotContain(assembly.GetTypes(), type => type.Name == "MarketStructureSkill");
+        Assert.Contains(assembly.GetTypes(), type => type.Name == "NumericalMarketStructureSkill" && type.IsPublic);
     }
 
     [Fact]

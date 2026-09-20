@@ -59,7 +59,15 @@ function Read-VerifiedManifest([string]$root,[string]$label,[string]$expectedHas
     [pscustomobject]@{Root=$resolved;Manifest=$m;ManifestHash=$actualHash}
 }
 function Convert-RoundtripTimestamp($value,[string]$code){
-    try{return [DateTimeOffset]::Parse([string]$value,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind)}catch{throw $code}
+    try{
+        if($value -is [DateTimeOffset]){return ([DateTimeOffset]$value).ToUniversalTime()}
+        if($value -is [DateTime]){
+            $date=[DateTime]$value
+            if($date.Kind -eq [DateTimeKind]::Unspecified){throw $code}
+            return ([DateTimeOffset]$date).ToUniversalTime()
+        }
+        return [DateTimeOffset]::Parse([string]$value,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind)
+    }catch{throw $code}
 }
 function Read-TrustedRuntimeProof($candidate,$lkg){
     $path=[IO.Path]::GetFullPath($TrustedRuntimeProofPath)

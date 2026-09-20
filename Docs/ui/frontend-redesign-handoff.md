@@ -28,7 +28,7 @@ The WPE backend owns runtime truth, permissions, data freshness, trading authori
 - Production browser network access: forbidden. The Web UI must not call `fetch`, XHR, WebSocket, EventSource, exchange endpoints, localhost APIs or remote analytics.
 - Development preview: the normal Next.js development port may be used for visual work. Development preview data must never ship in `WebUi/out`.
 - Host-to-Web update: WPF dispatches the complete runtime snapshot through the `wpe-runtime` window event.
-- Web-to-host commands are emitted only through the shared typed bridge in `WebUi/lib/host-command.ts`.
+- Web-to-host messages are emitted only through the shared typed bridge in `WebUi/lib/host-command.ts`.
 
 The production UI is a projection of one complete host snapshot. It is not a separately authenticated web service and must not create a second source of truth.
 
@@ -41,7 +41,7 @@ The production UI is a projection of one complete host snapshot. It is not a sep
 | `agent-start` | Request Agent start | Host revalidates readiness, Testnet environment and current authority |
 | `agent-stop` | Request Agent stop | Host owns lifecycle transition and resulting runtime state |
 
-No other Web-to-host command is supported. In particular, the Web UI cannot save credentials, place orders directly, bypass Risk Gate, modify strategies, approve risk, enable Mainnet or edit SQLite.
+No other control command is supported. A separate read-only `history-page` message may carry only a request id, one fixed historical collection key and a host-signed opaque cursor; the host chooses the bounded page size and validates cursor signature/version. The Web UI cannot supply offsets/SQL, save credentials, place orders directly, bypass Risk Gate, modify strategies, approve risk, enable Mainnet or edit SQLite.
 
 ## Runtime contract
 
@@ -128,6 +128,20 @@ Equities, broad cross-asset research, commercial distribution and unsupported pr
 - Keep focus order and heading hierarchy logical; temporary UI must restore focus to its trigger.
 - No oversized marketing headlines, decorative gradient orbs, fake candlestick charts, placeholder assets, fake notifications or invented Agent thoughts.
 
+## Execution command center
+
+The home command view is execution-first. Its primary trading surface is a read-only command center that composes existing host-authoritative projections rather than introducing another trading state:
+
+- current provider/environment and authorization mode;
+- deterministic Risk Gate and execution-gate state;
+- current provider positions and open orders;
+- recent persisted execution events from the historical order projection;
+- links to deeper position, order, risk, and history views.
+
+The command center must not add an order-entry form, direct exchange calls, approval mutation, cancellation mutation, or a second ledger. Settlement detail is exposed through the canonical read-only `historicalPostTradeReviews` projection from persisted `trade_outcomes`; each closed trade may include an opaque trace id, verified canonical Market/Research/Strategy/Risk evidence metadata, historical risk decision, execution terminal state, market-data version, and post-trade accounting. The command center shows only a compact evidence summary; History owns the per-stage hash prefixes. Reconciliation status is exposed through `historicalReconciliations` from the append-only Position, protection and external-position-isolation audit tables. React must not recompute those facts. Strategy identity is attribution metadata only, not a causal performance claim. Historical reconciliation never represents current authorization; current authority remains the live Risk Gate and execution gate. Raw cycle/client-order/report/execution identifiers, canonical payload bytes, source JSON, and Agent free-text explanations stay backend-owned.
+
+Mature exchange terminals, including OpenDAX-style layouts, may be studied for information hierarchy, density and interaction patterns. Do not copy or vendor third-party frontend source unless its exact license permits WPE's intended use and the dependency/license review is recorded. The current command-center implementation is original WPE code and does not reuse BaseApp components.
+
 ## Acceptance gates
 
 1. `pnpm lint`, `pnpm typecheck`, Web contract tests and `pnpm build` pass in `WebUi`.
@@ -136,7 +150,7 @@ Equities, broad cross-asset research, commercial distribution and unsupported pr
 4. Malformed or stale runtime evidence fails closed rather than partially rendering actionable values.
 5. The exact seven-Agent chain is shown, with Teacher outside the trading chain.
 6. No browser network API exists in production code.
-7. Only the four allowlisted host commands are emitted, through the shared typed bridge.
+7. Only the four allowlisted control commands plus the bounded read-only history-page query are emitted, through the shared typed bridge.
 8. Start/stop controls remain disabled unless the host runtime reports the corresponding action as allowed.
 9. Representative desktop and narrow/mobile layouts show no overlap, clipped controls or unreadable long localized text.
 10. Security, execution, risk and persistence authority remain with their existing backend/WPF owners unless a separate accepted change explicitly moves that authority.

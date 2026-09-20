@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "rootDir": ".",
+    "outDir": ".bridge-test-dist",
+    "plugins": []
+  },
+  "include": [
+    "components/**/*.test.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    ".bridge-test-dist"
+  ]
+}

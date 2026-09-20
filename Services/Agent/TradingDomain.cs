@@ -115,6 +115,7 @@ public sealed class DecisionPlan
     public double RiskRewardRatio { get; set; }
     public ExecutionOrderType OrderType { get; set; } = ExecutionOrderType.Market;
     public string StrategyVersion { get; set; } = "wpe-core-v2";
+    public string DecisionBasis { get; set; } = "signal-aggregation-v1";
 }
 public enum MarketRegime { Trending, Ranging, Transition, Extreme, Unknown }
 public sealed record SignalContribution(string Name,string Horizon,double RawValue,double Weight,double WeightedScore,string Direction,string Explanation);

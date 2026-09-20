@@ -37,7 +37,8 @@ public static class RuntimeSnapshotFactory
         RuntimeCrossAssetResearchState? crossAssetResearchState = null,
         RuntimeDistributionState? distributionState = null,
         PublicMarketState? publicMarketState = null,
-        SecurityStorageRuntimeStatus? securityStorageState = null)
+        SecurityStorageRuntimeStatus? securityStorageState = null,
+        RuntimeBrokerState? brokerState = null)
     {
         ArgumentNullException.ThrowIfNull(state);
         generatedAtUtc = generatedAtUtc.ToUniversalTime();
@@ -111,6 +112,12 @@ public static class RuntimeSnapshotFactory
                 equityMarket.Halts.FirstOrDefault(halt=>string.Equals(halt.InstrumentId,quote.InstrumentId,StringComparison.Ordinal))?.Status.ToString()??"Unknown",
                 quote.AsOfUtc,quote.SourceId)).ToArray()
             : Array.Empty<RuntimeEquityMarketV1>();
+        var runtimeBroker=brokerState??RuntimeBrokerState.Unsupported("No paper or sandbox equity broker is connected.");
+        var brokerFuture=runtimeBroker.UpdatedAt is not null&&runtimeBroker.UpdatedAt.Value>generatedAtUtc;
+        var brokerAge=runtimeBroker.UpdatedAt is null?double.PositiveInfinity:Math.Max(0,(generatedAtUtc-runtimeBroker.UpdatedAt.Value.UtcDateTime).TotalSeconds);
+        var brokerStale=runtimeBroker.State==RuntimeCollectionState.Available&&brokerAge>RuntimeBrokerStateStore.StaleAfter.TotalSeconds;
+        var brokerCollectionState=brokerFuture?RuntimeCollectionState.Error:brokerStale?RuntimeCollectionState.Stale:runtimeBroker.State;
+        var brokerMessage=brokerFuture?"Broker capability timestamp is later than the snapshot timestamp.":brokerStale?"Broker capability projection is stale.":runtimeBroker.Message;
         var history=historicalCollections??RuntimeHistoricalCollectionsSnapshot.Unsupported();
         var runtimeResearch = crossAssetResearchState ?? RuntimeCrossAssetResearchState.Unsupported("Cross-asset research has not been published.");
         var runtimeDistribution = distributionState ?? RuntimeDistributionState.DefaultDenied(generatedAtUtc);
@@ -173,11 +180,14 @@ public static class RuntimeSnapshotFactory
             Distribution = new(runtimeDistribution.State,runtimeDistribution.Value,runtimeDistribution.Message),
             EquityHistory = new(equityCollectionState,equityCollectionState==RuntimeCollectionState.Available?runtimeEquity.Items:Array.Empty<RuntimeEquityPointV1>(),SafeMessage(equityCollectionState,equityMessage,"Equity history read failed.",generatedAtUtc)),
             EquityMarkets = new(equityMarketState,equityMarketItems,SafeMessage(equityMarketState,equityMarket.Message,"Equity market-data read failed.",generatedAtUtc)),
+            EquityBroker = new(brokerCollectionState,brokerCollectionState==RuntimeCollectionState.Available?runtimeBroker.Value:null,SafeMessage(brokerCollectionState,brokerMessage,"Equity broker capability read failed.",generatedAtUtc)),
             HistoricalOrders = Historical(history.Orders),
             HistoricalEquity = Historical(history.Equity),
             HistoricalBacktests = Historical(history.Backtests),
             HistoricalSkillCalls = Historical(history.SkillCalls),
             HistoricalAuditEvents = Historical(history.AuditEvents),
+            HistoricalPostTradeReviews = Historical(history.PostTradeReviews),
+            HistoricalReconciliations = Historical(history.Reconciliations),
             ConnectionStatus = new(connectionCollectionState,connectionCollectionState==RuntimeCollectionState.Available?runtimeConnection.Value:null,SafeMessage(connectionCollectionState,connectionMessage,"Connection readiness check failed.",generatedAtUtc)),
             StrategyRegistry = new(strategyRegistryCollectionState,strategyRegistryCollectionState==RuntimeCollectionState.Available?runtimeStrategyRegistry.Profiles.Select(x=>x with{LastReason=UiDiagnostic.SafeText(x.LastReason)}).ToArray():Array.Empty<RuntimeStrategyProfileV1>(),SafeMessage(strategyRegistryCollectionState,strategyRegistryMessage,"Strategy registry read failed.",generatedAtUtc)),
             StrategyLifecycleEvents = new(strategyRegistryCollectionState,strategyRegistryCollectionState==RuntimeCollectionState.Available?runtimeStrategyRegistry.Events.Select(x=>x with{Reason=UiDiagnostic.SafeText(x.Reason)}).ToArray():Array.Empty<RuntimeStrategyLifecycleEventV1>(),SafeMessage(strategyRegistryCollectionState,strategyRegistryMessage,"Strategy lifecycle read failed.",generatedAtUtc)),

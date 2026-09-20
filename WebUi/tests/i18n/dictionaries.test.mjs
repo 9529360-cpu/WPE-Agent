@@ -72,6 +72,16 @@ test('converged route tree preserves accepted Teacher, notification, settings an
   for(const unaccepted of ['/equities','/distribution','/research'])assert.ok(!nav.includes(`href:'${unaccepted}'`),`unaccepted route exposed in primary navigation: ${unaccepted}`)
 })
 
+test('execution cockpit settlement and reconciliation copy is localized in all six locales',()=>{
+  const keys=['dashboard.closedTradeAttribution','dashboard.closedTradeHelp','dashboard.noClosedTradeReviews','dashboard.reconciliationGates','dashboard.reconciliationHelp','dashboard.auditRiskAllowed','dashboard.auditRiskBlocked','dashboard.strategyIdentity','dashboard.entryExit','dashboard.netPnl','dashboard.feeFundingSlippage','dashboard.positionReconciliation','dashboard.protectionReconciliation','dashboard.externalPositionIsolation','dashboard.legacyVersionOnly','dashboard.tradeTrace','dashboard.riskAtTrade','dashboard.executionAtTrade','dashboard.marketEvidenceAtTrade','dashboard.canonicalEvidenceAtTrade']
+  for(const locale of locales)for(const key of keys){
+    const value=translate(locale,key)
+    assert.notEqual(value,key,`${locale}:${key} returned raw key`)
+    assert.ok(value.trim(),`${locale}:${key} returned empty copy`)
+    if(locale!=='en_US')assert.notEqual(value,translate('en_US',key),`${locale}:${key} fell back to English`)
+  }
+})
+
 test('authorization copy and read-only approval projection stay complete',()=>{
   const keys=['settings.authorizationHelp','settings.authorizationStale','settings.authorizationError','settings.authorizationUnsupported','settings.modeResearch','settings.modeSignal','settings.modeReview','settings.modeAutoTestnet','settings.approvalId','settings.created','settings.reasonCode','settings.statusPending','settings.statusRevoked','settings.statusExpired','settings.statusArtifactUnavailable']
   for(const locale of locales.filter(value=>value!=='en_US'))for(const key of keys){const value=translate(locale,key);assert.notEqual(value,key,`${locale}:${key} returned raw key`);assert.notEqual(value,translate('en_US',key),`${locale}:${key} fell back to English`)}

@@ -8,6 +8,7 @@ public sealed class StrategyResearchAgent
     internal const int MaximumVariantsPerFamily = 6;
     internal const int TargetConcurrentCandidatesPerFamily = 2;
     internal static readonly TimeSpan ExplorationCooldown=TimeSpan.FromHours(6);
+    internal static readonly StrategyFamily[] ExplorableFamilies=[StrategyFamily.TrendBreakout,StrategyFamily.MeanReversion,StrategyFamily.NewsMomentum];
     public static WpeAgent.ModelOff.ModelOffAgentOutputV1 ProduceTechnicalModelOff(ModelOffResearchInputV1 input)
         => input.Capability == ModelOffResearchCapabilityV1.Technical
             ? DeterministicResearchCapabilityProducerV1.Produce(input)
@@ -39,14 +40,14 @@ public sealed class StrategyResearchAgent
     public async Task<StrategyResearchSnapshot> RunOnceAsync(IReadOnlyList<string> symbols, RiskLimits limits, CancellationToken ct)
     {
         var candidates = await EnsureCandidatesAsync(symbols, ct);
-        foreach(var profile in candidates.Where(x=>x.Lifecycle==StrategyLifecycle.Degraded).ToArray())
+        foreach(var profile in candidates.Where(x=>x.Family!=StrategyFamily.NumericalStructure&&x.Lifecycle==StrategyLifecycle.Degraded).ToArray())
         {
             var previous=profile.Lifecycle;profile.Lifecycle=StrategyLifecycle.Retired;profile.StateChangedAtUtc=DateTime.UtcNow;profile.LastReason="degraded strategy archived before bounded replacement";
             await _database.UpsertStrategyAsync(profile,ct);await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
         }
         var newsBySymbol=new Dictionary<string,IReadOnlyList<NewsFeature>>(StringComparer.Ordinal);
         var validated = 0;
-        foreach (var profile in candidates.Where(x => x.Lifecycle == StrategyLifecycle.Draft || (x.BuiltIn && x.ValidationTrades == 0)).ToArray())
+        foreach (var profile in candidates.Where(x => x.Family!=StrategyFamily.NumericalStructure&&(x.Lifecycle == StrategyLifecycle.Draft || (x.BuiltIn && x.ValidationTrades == 0))).ToArray())
         {
             var candles = await _database.LoadHistoricalCandlesAsync(profile.Symbol, "1h", 5000, ct);
             if(!newsBySymbol.TryGetValue(profile.Symbol,out var news))
@@ -84,7 +85,7 @@ public sealed class StrategyResearchAgent
     public async Task<StrategyResearchSnapshot> ObserveAsync(EvidencePack evidence, CancellationToken ct)
     {
         var profiles = await _database.GetStrategiesAsync(ct);
-        foreach (var profile in profiles.Where(x => x.Lifecycle is StrategyLifecycle.Shadow or StrategyLifecycle.Active))
+        foreach (var profile in profiles.Where(x => x.Family!=StrategyFamily.NumericalStructure&&x.Lifecycle is StrategyLifecycle.Shadow or StrategyLifecycle.Active))
         {
             var market = evidence.Markets.GetValueOrDefault(profile.Symbol);
             if (market is null) continue;
@@ -106,7 +107,7 @@ public sealed class StrategyResearchAgent
             var hasActive = profiles.Any(x => x.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase) && x.Lifecycle == StrategyLifecycle.Active);
             if (hasActive) continue;
             var challenger = profiles.Where(x => x.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase))
-                .Where(x => _governor.CanActivateFromShadow(x))
+                .Where(x => x.Family!=StrategyFamily.NumericalStructure&&_governor.CanActivateFromShadow(x))
                 .OrderByDescending(x => x.QualityScore)
                 .ThenByDescending(x => x.Expectancy)
                 .FirstOrDefault();
@@ -121,14 +122,67 @@ public sealed class StrategyResearchAgent
     }
 
     public StrategySignal GetSignal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
-        => _schedulerHealthy ? _engine.Signal(profile, market, news) : new StrategySignal(profile.Id, profile.Symbol, 0, 0, "strategy research heartbeat is stale; hold");
+    {
+        if(!_schedulerHealthy)return new(profile.Id,profile.Symbol,0,0,"strategy research heartbeat is stale; hold");
+        return profile.Family==StrategyFamily.NumericalStructure?NumericalSignal(profile,market):_engine.Signal(profile,market,news);
+    }
+
+    public async Task<IReadOnlyList<StrategyProfile>> SyncNumericalStrategiesAsync(EvidencePack evidence,IReadOnlyDictionary<string,ResearchValidationResult> validations,RiskLimits limits,CancellationToken ct)
+    {
+        var profiles=(await _database.GetStrategiesAsync(ct)).ToList();
+        foreach(var market in evidence.Markets.Values.OrderBy(x=>x.Symbol,StringComparer.OrdinalIgnoreCase))
+        {
+            if(!validations.TryGetValue(market.Symbol,out var validation)||!string.Equals(validation.StrategyVersion,NumericalStrategySkill.Version,StringComparison.Ordinal))continue;
+            var id=NumericalStrategyProfileId(market.Symbol);var profile=profiles.FirstOrDefault(x=>x.Id.Equals(id,StringComparison.OrdinalIgnoreCase));
+            if(profile is null)
+            {
+                var parameters=LocalStrategyParameters.For(StrategyFamily.NumericalStructure,0);
+                profile=new StrategyProfile{Id=id,Version=NumericalStrategySkill.Version,Symbol=market.Symbol.ToUpperInvariant(),Family=StrategyFamily.NumericalStructure,Parameters=parameters,ParametersHash=LocalStrategyParameters.Hash(parameters),Lifecycle=StrategyLifecycle.Draft,BuiltIn=true,CreatedAtUtc=_utcNow(),LastReason="numerical strategy awaiting historical validation"};
+                profiles.Add(profile);
+            }
+            var initial=profile.Lifecycle;var historicalEligible=NumericalHistoricalGate(validation,limits);
+            profile.QualityScore=validation.QualityScore;profile.Expectancy=validation.Expectancy;profile.MaxDrawdown=validation.MaxDrawdown;profile.Sharpe=validation.Sharpe;profile.ValidationTrades=validation.Trades;profile.LastReason=validation.Summary;
+            if(profile.Lifecycle==StrategyLifecycle.Draft&&historicalEligible){profile.Lifecycle=StrategyLifecycle.Shadow;profile.StateChangedAtUtc=_utcNow();profile.LastReason="numerical historical validation passed; entering shadow observation";}
+            else if(profile.Lifecycle==StrategyLifecycle.Shadow&&!historicalEligible){profile.Lifecycle=StrategyLifecycle.Retired;profile.StateChangedAtUtc=_utcNow();profile.LastReason="numerical historical validation no longer qualifies";}
+            else if(profile.Lifecycle==StrategyLifecycle.Active&&!historicalEligible){profile.Lifecycle=StrategyLifecycle.Degraded;profile.StateChangedAtUtc=_utcNow();profile.LastReason="numerical historical validation degraded";}
+
+            if(profile.Lifecycle is StrategyLifecycle.Shadow or StrategyLifecycle.Active&&MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market))
+            {
+                var signal=NumericalSignal(profile,market);await _database.RecordStrategyObservationAsync(profile.Id,profile.Symbol,signal.Direction,market.Price,signal.Confidence,ct);var performance=await _database.GetStrategyObservationPerformanceAsync(profile.Id,ct);profile.ShadowObservations=performance.Observations;
+                if(performance.Observations>=2){profile.Expectancy=performance.Expectancy;profile.MaxDrawdown=Math.Max(validation.MaxDrawdown,performance.MaxDrawdown);profile.FailureStreak=performance.FailureStreak;profile.QualityScore=Math.Min(validation.QualityScore,performance.QualityScore);}
+                var next=_governor.NextLifecycle(profile);if(next==profile.Lifecycle&&_governor.ShouldRetireShadow(profile,_utcNow()))next=StrategyLifecycle.Retired;
+                if(next!=profile.Lifecycle){profile.Lifecycle=next;profile.StateChangedAtUtc=_utcNow();profile.LastReason=next==StrategyLifecycle.Active?"numerical shadow observations qualified for active execution identity":next==StrategyLifecycle.Retired?"numerical shadow observations exhausted without qualification":$"numerical live performance: {performance.Summary}";}
+            }
+            await _database.UpsertStrategyAsync(profile,ct);
+            await _database.SaveBacktestRunAsync(new PersistedBacktestRun(Guid.NewGuid().ToString("N"),profile.Id,profile.Version,profile.Symbol,historicalEligible?"PASSED":"FAILED",validation.ValidatedAtUtc.UtcDateTime,validation.CoverageDays,validation.Trades,validation.OutOfSampleReturn,validation.MaxDrawdown,validation.Sharpe),ct);
+            if(profile.Lifecycle!=initial)await _database.RecordStrategyLifecycleAsync(profile,initial,profile.LastReason,ct);
+        }
+        return await _database.GetStrategiesAsync(ct);
+    }
+
+    internal static string NumericalStrategyProfileId(string symbol)=>$"{symbol.Trim().ToUpperInvariant()}-NumericalStructure-{NumericalStrategySkill.Version}";
+
+    private static bool NumericalHistoricalGate(ResearchValidationResult validation,RiskLimits limits)=>
+        validation.Approved&&validation.Promoted&&
+        validation.CoverageDays>=limits.MinimumHistoricalDays&&
+        validation.Trades>=Math.Max(StrategyGovernor.MinimumValidationTrades,limits.MinimumBacktestTrades)&&
+        validation.QualityScore>=StrategyGovernor.MinimumQualityScore&&
+        validation.Expectancy>0&&validation.MaxDrawdown<=StrategyGovernor.MaximumPromotedDrawdown;
+
+    private static StrategySignal NumericalSignal(StrategyProfile profile,MarketEvidence market)
+    {
+        var evidence=new EvidencePack{CollectedAt=market.CollectedAt,Completeness=100,Markets=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{market.Symbol,market}}};
+        var context=new AgentContext("numerical-registry-shadow",false,null,Array.Empty<StructuredOutcomeMemory>(),Array.Empty<MarketDecisionAssessment>(),0);var plan=new NumericalStrategySkill().Decide(evidence,context);
+        var direction=plan.Action==DecisionAction.OpenLong?1:plan.Action==DecisionAction.OpenShort?-1:0;
+        return new(profile.Id,profile.Symbol,direction,plan.Confidence,$"basis={plan.DecisionBasis}; {plan.Reason}");
+    }
 
     private async Task<IReadOnlyList<StrategyProfile>> EnsureCandidatesAsync(IReadOnlyList<string> symbols, CancellationToken ct)
     {
         var existing = await _database.GetStrategiesAsync(ct);
         var result = new List<StrategyProfile>(existing);
         foreach (var symbolValue in symbols.Distinct(StringComparer.OrdinalIgnoreCase))
-        foreach (var family in Enum.GetValues<StrategyFamily>())
+        foreach (var family in ExplorableFamilies)
         {
             var symbol=symbolValue.ToUpperInvariant();
             var live=result.Count(x=>x.Symbol.Equals(symbol,StringComparison.OrdinalIgnoreCase)&&x.Family==family&&x.Lifecycle is StrategyLifecycle.Draft or StrategyLifecycle.Shadow or StrategyLifecycle.Active);
@@ -164,6 +218,7 @@ public sealed class StrategyResearchAgent
     internal static LocalStrategyParameters Explore(StrategyFamily family,int index)
     {
         if(index<0)throw new ArgumentOutOfRangeException(nameof(index));
+        if(family==StrategyFamily.NumericalStructure)throw new InvalidOperationException("NumericalStructure is code-versioned and is not explored through legacy parameter variants.");
         if(family==StrategyFamily.TrendBreakout)
         {
             var trendFast=8+2*(index%21);var trendSlow=48+8*((index/21)%15);if(trendSlow<=trendFast)trendSlow=Math.Min(160,trendFast+8);

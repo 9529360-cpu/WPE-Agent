@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
+using WpeAgent.RuntimeContracts;
 using 币安量化机器人.Services;
 
 namespace WpeAgent
@@ -14,18 +15,21 @@ namespace WpeAgent
         private readonly Action _openSetup;
         private readonly Action _openNotificationSetup;
         private readonly Func<System.Threading.Tasks.Task<bool>> _startAgent;
+        private readonly Func<string,HistoricalCollectionKindV1,string,System.Threading.Tasks.Task<string>>? _readHistoricalPage;
         private DispatcherTimer? _runtimeTimer;
 
         public ReferenceUiWindow(
             Func<string> stateJson,
             Action? openSetup = null,
             Action? openNotificationSetup = null,
-            Func<System.Threading.Tasks.Task<bool>>? startAgent = null)
+            Func<System.Threading.Tasks.Task<bool>>? startAgent = null,
+            Func<string,HistoricalCollectionKindV1,string,System.Threading.Tasks.Task<string>>? readHistoricalPage = null)
         {
             _stateJson = stateJson;
             _openSetup = openSetup ?? (() => { });
             _openNotificationSetup = openNotificationSetup ?? _openSetup;
             _startAgent = startAgent ?? (() => System.Threading.Tasks.Task.FromResult(false));
+            _readHistoricalPage = readHistoricalPage;
             InitializeComponent();
             Loaded += async (_, _) => await InitializeAsync();
             Closed += (_, _) => StopRuntimeTimer();
@@ -58,13 +62,23 @@ namespace WpeAgent
             {
                 try
                 {
-                    if (!IsTrustedWebViewSource(e.Source) || !TryGetHostCommand(e.WebMessageAsJson, out var command)) return;
-                    if (command == "open-settings") Dispatcher.Invoke(_openSetup);
-                    else if (command == "open-notification-settings") Dispatcher.Invoke(_openNotificationSetup);
-                    else if (command == "agent-start")
-                        await _startAgent();
-                    else if (command == "agent-stop")
-                        await AutoTradingAgent.StopAsync();
+                    if (!IsTrustedWebViewSource(e.Source)) return;
+                    if (TryGetHostCommand(e.WebMessageAsJson, out var command))
+                    {
+                        if (command == "open-settings") Dispatcher.Invoke(_openSetup);
+                        else if (command == "open-notification-settings") Dispatcher.Invoke(_openNotificationSetup);
+                        else if (command == "agent-start")
+                            await _startAgent();
+                        else if (command == "agent-stop")
+                            await AutoTradingAgent.StopAsync();
+                        return;
+                    }
+                    if (_readHistoricalPage is not null && TryGetHistoricalPageRequest(e.WebMessageAsJson, out var request))
+                    {
+                        var responseJson=await _readHistoricalPage(request.RequestId,request.Kind,request.Cursor);
+                        if (ReferenceBrowser.CoreWebView2 is not null)
+                            await ReferenceBrowser.CoreWebView2.ExecuteScriptAsync($"window.dispatchEvent(new CustomEvent('wpe-history-page', {{detail: {responseJson}}}));");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -103,6 +117,44 @@ namespace WpeAgent
                 return command is "open-settings" or "open-notification-settings" or "agent-start" or "agent-stop";
             }
             catch (System.Text.Json.JsonException) { return false; }
+        }
+
+        internal sealed record HistoricalPageRequest(string RequestId,HistoricalCollectionKindV1 Kind,string Cursor);
+
+        internal static bool TryGetHistoricalPageRequest(string json,out HistoricalPageRequest request)
+        {
+            request=new(string.Empty,HistoricalCollectionKindV1.Orders,string.Empty);
+            try
+            {
+                using var document=System.Text.Json.JsonDocument.Parse(json);
+                var root=document.RootElement;
+                if(root.ValueKind!=System.Text.Json.JsonValueKind.Object)return false;
+                var names=new HashSet<string>(StringComparer.Ordinal);
+                foreach(var property in root.EnumerateObject())if(!names.Add(property.Name))return false;
+                if(names.Count!=4||!names.SetEquals(["type","requestId","collection","cursor"]))return false;
+                if(!root.TryGetProperty("type",out var type)||type.ValueKind!=System.Text.Json.JsonValueKind.String||type.GetString()!="history-page")return false;
+                if(!root.TryGetProperty("requestId",out var requestIdValue)||requestIdValue.ValueKind!=System.Text.Json.JsonValueKind.String)return false;
+                var requestId=requestIdValue.GetString()??string.Empty;
+                if(requestId.Length is <1 or >64||requestId.Any(ch=>!((ch>='A'&&ch<='Z')||(ch>='a'&&ch<='z')||(ch>='0'&&ch<='9')||ch is '-' or '_')))return false;
+                if(!root.TryGetProperty("cursor",out var cursorValue)||cursorValue.ValueKind!=System.Text.Json.JsonValueKind.String)return false;
+                var cursor=cursorValue.GetString()??string.Empty;if(cursor.Length is <1 or >2048)return false;
+                if(!root.TryGetProperty("collection",out var collectionValue)||collectionValue.ValueKind!=System.Text.Json.JsonValueKind.String)return false;
+                var kind=collectionValue.GetString() switch
+                {
+                    "orders"=>HistoricalCollectionKindV1.Orders,
+                    "equity"=>HistoricalCollectionKindV1.Equity,
+                    "backtests"=>HistoricalCollectionKindV1.Backtests,
+                    "skillCalls"=>HistoricalCollectionKindV1.SkillCalls,
+                    "auditEvents"=>HistoricalCollectionKindV1.AuditEvents,
+                    "postTradeReviews"=>HistoricalCollectionKindV1.PostTradeReviews,
+                    "reconciliations"=>HistoricalCollectionKindV1.Reconciliations,
+                    _=>(HistoricalCollectionKindV1?)null
+                };
+                if(kind is null)return false;
+                request=new(requestId,kind.Value,cursor);
+                return true;
+            }
+            catch(System.Text.Json.JsonException){return false;}
         }
 
         internal static bool IsTrustedRuntimeJson(string json, bool requireAuthority, DateTime? nowUtc = null)

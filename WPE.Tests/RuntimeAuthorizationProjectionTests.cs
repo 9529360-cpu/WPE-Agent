@@ -68,6 +68,38 @@ public sealed class RuntimeAuthorizationProjectionTests:IDisposable
     }
 
     [Fact]
+    public async Task AutomaticExecutionProjectionMasksExecutionIdentityBeforeSnapshot()
+    {
+        var database=Database();var settings=Settings();settings.Save(settings.Load());
+        const string rawExecutionId="execution-private-runtime-id";
+        var artifact=new DurableExecutionArtifactV2(
+            2,
+            "cycle-runtime-mask",
+            [new(0,"BTCUSDT","Long",.01m,false,49_000m,53_000m,"WPE-AUTO-MASK","strategy.entry","OpenLong","Limit",50_000m,50_100m)],
+            5,
+            true,
+            "binance",
+            "Testnet",
+            "strategy-alpha",
+            "v2",
+            Now.AddSeconds(-20),
+            "book-v5",
+            Now.AddSeconds(-10),
+            Now.AddMinutes(5));
+        Assert.True((await database.SaveAutomaticExecutionAsync(rawExecutionId,artifact,CancellationToken.None)).Succeeded);
+
+        var state=new RuntimeAuthorizationStateStore(settings,database,()=>Now).Read();
+        var item=Assert.Single(state.Automatic);
+        Assert.Matches("^execution#[A-F0-9]{12}$",item.ExecutionId);
+        Assert.DoesNotContain(rawExecutionId,item.ExecutionId,StringComparison.Ordinal);
+
+        var snapshot=RuntimeSnapshotFactory.Create(new SystemState{LastUpdated=Now.UtcDateTime},Now.UtcDateTime,authorizationState:state);
+        var json=JsonSerializer.Serialize(snapshot);
+        Assert.DoesNotContain(rawExecutionId,json,StringComparison.Ordinal);
+        Assert.Contains(item.ExecutionId,json,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EmptyQueue_IsAvailableAndDoesNotInventApprovals()
     {
         var settings=Settings();settings.Save(settings.Load());var state=new RuntimeAuthorizationStateStore(settings,Database(),()=>Now).Read();

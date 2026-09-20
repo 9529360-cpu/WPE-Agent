@@ -11,7 +11,7 @@ WPE Agent is a local-first, auditable trading Agent platform for Windows. The cu
 - Remote or local LLM: optional advisory layer only
 - User state: `%LOCALAPPDATA%\WPE Agent\`
 
-Accepted capabilities are deliberately bounded. Current accepted components include the seven-role orchestrator, Market Data, Technical, Backtest, Risk Gate, execution contract boundary, Position safety gates, post-trade review, and the opt-in Teacher market brief. The seven aggregate Agents remain partially accepted until their full production and live Testnet evidence gates are complete. The machine-readable authority is [`Docs/product/model-off-capability-maturity.json`](Docs/product/model-off-capability-maturity.json).
+Accepted capabilities are deliberately bounded. Current accepted components include the seven-role orchestrator, Market Data, Technical, Backtest, Risk Gate, execution contract boundary, Position safety gates, post-trade review, and the opt-in Teacher market brief. All seven aggregate Agents are accepted only within their recorded candidate- and evidence-bound scopes; those acceptances do not authorize Mainnet, imply profitability, or extend to unlisted symbols/providers or unsupported evidence. The machine-readable authority is [`Docs/product/model-off-capability-maturity.json`](Docs/product/model-off-capability-maturity.json).
 
 ## Safety Boundary
 
@@ -76,4 +76,4 @@ Never commit API keys, credentials, certificates, databases, WAL/SHM files, logs
 
 ## Release Direction
 
-The planned Windows portable package will keep immutable application files separate from local user state, include a hash manifest, and support side-by-side candidate and last-known-good rollback. Portable packaging is not yet the completed release result.
+The bounded private Windows x64 portable package is implemented and locally validated: immutable application files stay separate from local user state, payload hashes/manifests are independently verified, and side-by-side candidate/last-known-good rollback preserves user data. This is not a commercial release claim: trusted signing, commercial license clearance, installer certification, target release go/no-go, upload/deployment, and Mainnet authorization remain separate gates.

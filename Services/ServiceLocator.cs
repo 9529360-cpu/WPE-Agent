@@ -50,6 +50,7 @@ public static class ServiceLocator
     private static readonly Lazy<RuntimeDistributionStateStore> RuntimeDistributionFactory = new(() => new RuntimeDistributionStateStore());
     private static readonly Lazy<RuntimeEquityStateStore> RuntimeEquityFactory = new(() => new RuntimeEquityStateStore(new AgentSqliteStore()));
     private static readonly Lazy<EquityMarketDataStateStore> RuntimeEquityMarketFactory = new(() => new EquityMarketDataStateStore());
+    private static readonly Lazy<RuntimeBrokerStateStore> RuntimeEquityBrokerFactory = new(() => new RuntimeBrokerStateStore());
     private static readonly Lazy<RuntimeHistoricalCollectionsSnapshotStore> RuntimeHistoricalCollectionsFactory = new(() => new RuntimeHistoricalCollectionsSnapshotStore(AppDataPaths.File("agent.db")));
     private static readonly Lazy<RuntimeConnectionStateStore> RuntimeConnectionFactory = new(() => new RuntimeConnectionStateStore());
     private static readonly Lazy<RuntimeStrategyRegistryStateStore> RuntimeStrategyRegistryFactory = new(() => new RuntimeStrategyRegistryStateStore(new AgentSqliteStore()));
@@ -81,6 +82,7 @@ public static class ServiceLocator
     public static RuntimeDistributionStateStore RuntimeDistribution => RuntimeDistributionFactory.Value;
     public static RuntimeEquityStateStore RuntimeEquity => RuntimeEquityFactory.Value;
     public static EquityMarketDataStateStore RuntimeEquityMarkets => RuntimeEquityMarketFactory.Value;
+    public static RuntimeBrokerStateStore RuntimeEquityBroker => RuntimeEquityBrokerFactory.Value;
     public static RuntimeHistoricalCollectionsSnapshotStore RuntimeHistoricalCollections => RuntimeHistoricalCollectionsFactory.Value;
     public static RuntimeConnectionStateStore RuntimeConnection => RuntimeConnectionFactory.Value;
     public static RuntimeStrategyRegistryStateStore RuntimeStrategyRegistry => RuntimeStrategyRegistryFactory.Value;

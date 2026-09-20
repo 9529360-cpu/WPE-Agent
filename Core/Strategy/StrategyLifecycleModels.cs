@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-public enum StrategyFamily { TrendBreakout, MeanReversion, NewsMomentum }
+public enum StrategyFamily { TrendBreakout, MeanReversion, NewsMomentum, NumericalStructure }
 public enum StrategyLifecycle { Draft, Backtested, Shadow, Active, Degraded, Retired }
 
 public sealed record LocalStrategyParameters(
@@ -25,7 +25,9 @@ public sealed record LocalStrategyParameters(
         StrategyFamily.TrendBreakout => new(16 + variant * 4, 64 + variant * 16, .0005 + variant * .0003, 0, 0),
         StrategyFamily.MeanReversion => new(10 + variant * 4, 48 + variant * 16, 0, 1.2 + variant * .3, 0,
             .35 + variant * .05, 2.6 + variant * .2, 18 + variant * 2, 1.75 + variant * .25, .8 + variant * .08, 12 + variant * 4),
-        _ => new(12, 48, .0005, 0, .15 + variant * .05)
+        StrategyFamily.NewsMomentum => new(12, 48, .0005, 0, .15 + variant * .05),
+        StrategyFamily.NumericalStructure => new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        _ => throw new ArgumentOutOfRangeException(nameof(family))
     };
 
     public static LocalStrategyParameters Derive(StrategyFamily family,LocalStrategyParameters parent,int generation)
@@ -37,7 +39,9 @@ public sealed record LocalStrategyParameters(
             StrategyFamily.TrendBreakout=>new(Math.Clamp(parent.FastPeriod+direction*step*2,8,48),Math.Clamp(parent.SlowPeriod+direction*step*8,32,160),Math.Clamp(parent.BreakoutBuffer+direction*step*.0001,.0002,.003),0,0),
             StrategyFamily.MeanReversion=>new(Math.Clamp(parent.FastPeriod+direction*step*2,8,40),Math.Clamp(parent.SlowPeriod+direction*step*8,40,200),0,Math.Clamp(parent.MeanReversionZ+direction*step*.1,.8,3.5),0,
                 Math.Clamp(parent.MeanReversionExitZ+direction*step*.05,.2,1.2),Math.Clamp(parent.MeanReversionStopZ+direction*step*.1,2,5),Math.Clamp(parent.AdxCeiling+direction*step,15,32),Math.Clamp(parent.AtrStopMultiple+direction*step*.25,1.5,5),Math.Clamp(parent.VolumeMultiplier+direction*step*.05,.5,2),Math.Clamp(parent.MaximumHoldingBars+direction*step*2,6,96)),
-            _=>new(12,48,.0005,0,Math.Clamp(parent.NewsSentimentThreshold+direction*step*.025,.05,.5))
+            StrategyFamily.NewsMomentum=>new(12,48,.0005,0,Math.Clamp(parent.NewsSentimentThreshold+direction*step*.025,.05,.5)),
+            StrategyFamily.NumericalStructure=>throw new InvalidOperationException("NumericalStructure is versioned as code and is not parameter-derived."),
+            _=>throw new ArgumentOutOfRangeException(nameof(family))
         };
     }
 
@@ -54,7 +58,9 @@ public sealed record LocalStrategyParameters(
     {
         StrategyFamily.TrendBreakout=>value.FastPeriod is>=8 and<=48&&value.SlowPeriod is>=32 and<=160&&value.FastPeriod<value.SlowPeriod&&value.BreakoutBuffer is>=.0002 and<=.003&&value.MeanReversionZ==0&&value.NewsSentimentThreshold==0,
         StrategyFamily.MeanReversion=>value.FastPeriod is>=8 and<=40&&value.SlowPeriod is>=40 and<=200&&value.FastPeriod<value.SlowPeriod&&value.BreakoutBuffer==0&&value.MeanReversionZ is>=.8 and<=3.5&&value.NewsSentimentThreshold==0&&value.MeanReversionExitZ is>=.2 and<=1.2&&value.MeanReversionExitZ<value.MeanReversionZ&&value.MeanReversionStopZ is>=2 and<=5&&value.MeanReversionStopZ>value.MeanReversionZ&&value.AdxCeiling is>=15 and<=32&&value.AtrStopMultiple is>=1.5 and<=5&&value.VolumeMultiplier is>=.5 and<=2&&value.MaximumHoldingBars is>=6 and<=96,
-        _=>value.FastPeriod==12&&value.SlowPeriod==48&&value.BreakoutBuffer==.0005&&value.MeanReversionZ==0&&value.NewsSentimentThreshold is>=.05 and<=.5
+        StrategyFamily.NewsMomentum=>value.FastPeriod==12&&value.SlowPeriod==48&&value.BreakoutBuffer==.0005&&value.MeanReversionZ==0&&value.NewsSentimentThreshold is>=.05 and<=.5,
+        StrategyFamily.NumericalStructure=>value==For(StrategyFamily.NumericalStructure,0),
+        _=>false
     };
 }
 

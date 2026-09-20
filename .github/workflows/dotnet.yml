@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: product-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     runs-on: windows-latest
@@ -43,6 +47,20 @@ jobs:
     - name: Web typecheck
       working-directory: WebUi
       run: pnpm typecheck
+
+    - name: Web component tests
+      working-directory: WebUi
+      shell: pwsh
+      run: |
+        Remove-Item -Recurse -Force ".bridge-test-dist" -ErrorAction SilentlyContinue
+        pnpm exec tsc -p tsconfig.bridge-test.json
+        $sourceTests = @(Get-ChildItem "components" -Recurse -Filter "*.test.tsx")
+        $compiledTests = @(Get-ChildItem ".bridge-test-dist/components" -Recurse -Filter "*.test.js")
+        if ($sourceTests.Count -eq 0 -or $compiledTests.Count -ne $sourceTests.Count) {
+          throw "Component test compilation coverage mismatch: source=$($sourceTests.Count), compiled=$($compiledTests.Count)."
+        }
+        & node --require ./tests/component-test-alias.cjs --test $compiledTests.FullName
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     - name: Web contract tests
       working-directory: WebUi
@@ -83,6 +101,19 @@ jobs:
 
     - name: Build .NET
       run: dotnet build "币安量化机器人.sln" --configuration Release --no-restore
+
+    - name: Release tooling contract tests
+      shell: pwsh
+      run: |
+        & ./eng/test-release-readiness-preview-gate.ps1
+        & ./eng/test-license-gate.ps1
+        $dogfoodTests = @(Get-ChildItem "./eng/dogfood/tests" -File -Filter "*.Tests.ps1" | Sort-Object Name)
+        if ($dogfoodTests.Count -eq 0) { throw "No dogfood contract tests were discovered." }
+        foreach ($test in $dogfoodTests) {
+          Write-Host "Running dogfood contract: $($test.Name)"
+          & $test.FullName
+        }
+        & ./eng/test-publish-runtime-restore.ps1
 
     - name: Test .NET
       shell: pwsh

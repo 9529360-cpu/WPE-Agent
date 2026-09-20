@@ -6,7 +6,7 @@ import type { RuntimeCollectionState } from '@/components/runtime-bridge'
 import { Panel, PanelBody, PanelHeader } from '@/components/ui/panel'
 import { StatusBadge } from '@/components/ui/status-badge'
 
-type PageState<T> = {
+export type PageState<T> = {
   state: RuntimeCollectionState
   items: T[]
   message?: string
@@ -15,6 +15,7 @@ type PageState<T> = {
   pageNumber?: number
   hasPreviousPage?: boolean
   hasNextPage?: boolean
+  nextCursor?: string | null
 }
 
 export type HistoricalOrder = { sequence: number; occurredAtUtc: string; symbol: string; side: string; action: string; quantity: number; averagePrice: number | null; status: string }
@@ -22,6 +23,9 @@ export type HistoricalEquity = { sequence: number; observedAtUtc: string; equity
 export type HistoricalBacktest = { backtestId: string; completedAtUtc: string; strategyId: string; strategyVersion: string; symbol: string; status: string; coverageDays: number; trades: number; outOfSampleReturn: number; maxDrawdown: number; sharpe: number }
 export type HistoricalSkillCall = { id: string; occurredAtUtc: string; skill: string; status: string; durationMs: number; mode: string | null; remoteLlmUsed: boolean | null; tokens: number | null; costUsd: number | null }
 export type HistoricalAuditEvent = { id: string; occurredAtUtc: string; category: string; source: string; status: string }
+export type HistoricalEvidenceLink = { stage: 'market' | 'research' | 'strategy' | 'risk'; status: string; canonicalSha256: string; asOfUtc: string }
+export type HistoricalPostTradeReview = { traceId: string; closedAtUtc: string; symbol: string; side: string; entryPrice: number; exitPrice: number; quantity: number; fees: number; feeBasis: string; totalSlippageAmount: number; slippageBasis: string; fundingAmount: number; fundingBasis: string; netPnl: number; returnPct: number; outcome: 'win' | 'loss' | 'flat'; strategyId: string | null; strategyVersion: string; attributionBasis: string; traceState: 'available' | 'legacy' | 'ambiguous'; riskDecision: 'Approved' | 'Blocked' | 'Unavailable' | 'Conflicting' | 'Ambiguous'; executionStatus: string; executionCode: string; executionAttempts: number | null; marketCollectedAtUtc: string | null; marketDataVersion: string | null; evidenceState: 'available' | 'partial' | 'legacy' | 'unavailable' | 'invalid' | 'ambiguous'; evidenceChain: HistoricalEvidenceLink[] }
+export type HistoricalReconciliation = { kind: 'position' | 'protection' | 'externalIsolation'; traceId: string; schema: string; observedAtUtc: string; evaluatedAtUtc: string; state: string; allowsRiskIncrease: boolean; canonicalSha256: string }
 
 export type HistoryProjection = {
   orders: PageState<HistoricalOrder>
@@ -29,7 +33,10 @@ export type HistoryProjection = {
   backtests: PageState<HistoricalBacktest>
   skillCalls: PageState<HistoricalSkillCall>
   auditEvents: PageState<HistoricalAuditEvent>
+  postTradeReviews: PageState<HistoricalPostTradeReview>
+  reconciliations: PageState<HistoricalReconciliation>
 }
+export type HistoryCollectionKey = keyof HistoryProjection
 
 const unsupported = (message: string): PageState<never> => ({ state: 'unsupported', items: [], message })
 export const unsupportedHistoryProjection: HistoryProjection = {
@@ -38,9 +45,11 @@ export const unsupportedHistoryProjection: HistoryProjection = {
   backtests: unsupported('Historical backtests are not exposed by the current host runtime.'),
   skillCalls: unsupported('Historical skill calls are not exposed by the current host runtime.'),
   auditEvents: unsupported('Historical audit events are not exposed by the current host runtime.'),
+  postTradeReviews: unsupported('Post-trade accounting is not exposed by the current host runtime.'),
+  reconciliations: unsupported('Reconciliation audits are not exposed by the current host runtime.'),
 }
 
-const labels = { orders: 'Orders', equity: 'Equity', backtests: 'Backtests', skillCalls: 'Skill calls', auditEvents: 'Audit events' } as const
+const labels = { orders: 'Orders', postTradeReviews: 'Closed trade accounting', reconciliations: 'Reconciliation audits', equity: 'Equity', backtests: 'Backtests', skillCalls: 'Skill calls', auditEvents: 'Audit events' } as const
 const stateTone: Record<RuntimeCollectionState, string> = { available: 'success', unsupported: 'muted', stale: 'warning', error: 'danger' }
 const stateMessage: Record<Exclude<RuntimeCollectionState, 'available'>, string> = {
   unsupported: 'This historical collection is not supported by the host.',
@@ -52,20 +61,20 @@ function date(value: string) { const parsed = Date.parse(value); return Number.i
 function number(value: number, options?: Intl.NumberFormatOptions) { return new Intl.NumberFormat(undefined, options).format(value) }
 function Cell({ children, mono = false }: { children: ReactNode; mono?: boolean }) { return <td className={`max-w-56 [overflow-wrap:anywhere] px-3 py-2.5 align-top ${mono ? 'font-mono text-[11px]' : ''}`}>{children}</td> }
 
-function PageControls({ page }: { page: Pick<PageState<unknown>, 'pageNumber' | 'hasPreviousPage' | 'hasNextPage'> }) {
+function PageControls({ page, onPrevious, onNext, pending = false }: { page: Pick<PageState<unknown>, 'pageNumber' | 'hasPreviousPage' | 'hasNextPage'>; onPrevious?: () => void; onNext?: () => void; pending?: boolean }) {
   const current = page.pageNumber && page.pageNumber > 0 ? page.pageNumber : 1
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground" aria-label="Pagination status">
       <span>Page {current}</span>
       <div className="flex items-center gap-1" aria-label="Read-only pagination controls">
-        <button type="button" disabled title={page.hasPreviousPage ? 'Previous page is available through the host projection.' : 'No previous page is available.'} className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-60"><ChevronLeft className="size-3.5" aria-hidden="true"/>Previous</button>
-        <button type="button" disabled title={page.hasNextPage ? 'Next page is available through the host projection.' : 'No next page is available.'} className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-60">Next<ChevronRight className="size-3.5" aria-hidden="true"/></button>
+        <button type="button" disabled={pending || !page.hasPreviousPage || !onPrevious} onClick={onPrevious} title={pending ? 'Historical page request is in progress.' : page.hasPreviousPage ? 'Return to the previous page already held in this view.' : 'No previous page is available.'} className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-60"><ChevronLeft className="size-3.5" aria-hidden="true"/>Previous</button>
+        <button type="button" disabled={pending || !page.hasNextPage || !onNext} onClick={onNext} title={pending ? 'Historical page request is in progress.' : page.hasNextPage ? 'Read the next signed page from the desktop host.' : 'No next page is available.'} className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-60">Next<ChevronRight className="size-3.5" aria-hidden="true"/></button>
       </div>
     </div>
   )
 }
 
-function CollectionFrame<T>({ title, page, children }: { title: string; page: PageState<T>; children: (items: T[]) => ReactNode }) {
+function CollectionFrame<T>({ title, page, children, onPrevious, onNext, pending }: { title: string; page: PageState<T>; children: (items: T[]) => ReactNode; onPrevious?: () => void; onNext?: () => void; pending?: boolean }) {
   const items = page.state === 'available' ? page.items : []
   return (
     <Panel className="min-w-0 overflow-hidden">
@@ -86,7 +95,7 @@ function CollectionFrame<T>({ title, page, children }: { title: string; page: Pa
           </div>
         </PanelBody>
       ) : children(items)}
-      {page.state === 'available' ? <PageControls page={page} /> : null}
+      {page.state === 'available' || page.hasPreviousPage ? <PageControls page={page} onPrevious={onPrevious} onNext={onNext} pending={pending} /> : null}
     </Panel>
   )
 }
@@ -95,26 +104,30 @@ function Table({ headings, children }: { headings: string[]; children: ReactNode
   return <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-xs"><thead className="border-b border-border text-muted-foreground"><tr>{headings.map(x => <th key={x} scope="col" className="px-3 py-2.5 font-medium">{x}</th>)}</tr></thead><tbody>{children}</tbody></table></div>
 }
 
-export function HistoryCollectionsView({ projection }: { projection: HistoryProjection }) {
+export function HistoryCollectionsView({ projection, onPreviousPage, onNextPage, pendingCollections }: { projection: HistoryProjection; onPreviousPage?: (collection: HistoryCollectionKey) => void; onNextPage?: (collection: HistoryCollectionKey) => void; pendingCollections?: ReadonlySet<HistoryCollectionKey> }) {
   const safeProjection: HistoryProjection = {
     orders: projection?.orders ?? unsupportedHistoryProjection.orders,
     equity: projection?.equity ?? unsupportedHistoryProjection.equity,
     backtests: projection?.backtests ?? unsupportedHistoryProjection.backtests,
     skillCalls: projection?.skillCalls ?? unsupportedHistoryProjection.skillCalls,
     auditEvents: projection?.auditEvents ?? unsupportedHistoryProjection.auditEvents,
+    postTradeReviews: projection?.postTradeReviews ?? unsupportedHistoryProjection.postTradeReviews,
+    reconciliations: projection?.reconciliations ?? unsupportedHistoryProjection.reconciliations,
   }
   const entries = Object.entries(labels) as [keyof HistoryProjection, string][]
   return (
     <div className="min-w-0 space-y-5">
-      <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-5" role="status" aria-live="polite" aria-atomic="true" aria-label="Historical collection capabilities">
+      <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7" role="status" aria-live="polite" aria-atomic="true" aria-label="Historical collection capabilities">
         {entries.map(([key, label]) => <div key={key} className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-border bg-panel/40 p-3"><span className="min-w-0 break-words text-xs">{label}</span><StatusBadge token={stateTone[safeProjection[key].state]} label={safeProjection[key].state} /></div>)}
       </div>
 
-      <CollectionFrame title={labels.orders} page={safeProjection.orders}>{items => <Table headings={['Time', 'Symbol', 'Side / action', 'Quantity', 'Average price', 'Status']}>{items.map(x => <tr key={x.sequence} className="border-b border-border/70 last:border-0"><Cell>{date(x.occurredAtUtc)}</Cell><Cell mono>{x.symbol}</Cell><Cell>{x.side} / {x.action}</Cell><Cell>{number(x.quantity, { maximumFractionDigits: 8 })}</Cell><Cell>{x.averagePrice === null ? 'Not provided' : number(x.averagePrice, { maximumFractionDigits: 8 })}</Cell><Cell>{x.status}</Cell></tr>)}</Table>}</CollectionFrame>
-      <CollectionFrame title={labels.equity} page={safeProjection.equity}>{items => <Table headings={['Time', 'Equity', 'Available', 'Environment', 'Provider']}>{items.map(x => <tr key={x.sequence} className="border-b border-border/70 last:border-0"><Cell>{date(x.observedAtUtc)}</Cell><Cell>{number(x.equity, { maximumFractionDigits: 8 })}</Cell><Cell>{number(x.availableBalance, { maximumFractionDigits: 8 })}</Cell><Cell>{x.environment}</Cell><Cell mono>{x.providerId}</Cell></tr>)}</Table>}</CollectionFrame>
-      <CollectionFrame title={labels.backtests} page={safeProjection.backtests}>{items => <Table headings={['Completed', 'Strategy', 'Symbol', 'Status', 'Coverage / trades', 'OOS / drawdown / Sharpe']}>{items.map(x => <tr key={x.backtestId} className="border-b border-border/70 last:border-0"><Cell>{date(x.completedAtUtc)}</Cell><Cell>{x.strategyId}<div className="text-muted-foreground">{x.strategyVersion}</div></Cell><Cell mono>{x.symbol}</Cell><Cell>{x.status}</Cell><Cell>{x.coverageDays} days / {x.trades}</Cell><Cell>{number(x.outOfSampleReturn, { style: 'percent', maximumFractionDigits: 2 })} / {number(x.maxDrawdown, { style: 'percent', maximumFractionDigits: 2 })} / {number(x.sharpe, { maximumFractionDigits: 2 })}</Cell></tr>)}</Table>}</CollectionFrame>
-      <CollectionFrame title={labels.skillCalls} page={safeProjection.skillCalls}>{items => <Table headings={['Time', 'Skill', 'Status', 'Duration', 'Mode', 'Remote', 'Tokens / cost']}>{items.map(x => <tr key={x.id} className="border-b border-border/70 last:border-0"><Cell>{date(x.occurredAtUtc)}</Cell><Cell>{x.skill}</Cell><Cell>{x.status}</Cell><Cell>{x.durationMs} ms</Cell><Cell>{x.mode ?? 'Not provided'}</Cell><Cell>{x.remoteLlmUsed === null ? 'Not provided' : x.remoteLlmUsed ? 'Yes' : 'No'}</Cell><Cell>{x.tokens ?? 'Not provided'}{x.costUsd === null ? '' : ` / $${number(x.costUsd, { maximumFractionDigits: 6 })}`}</Cell></tr>)}</Table>}</CollectionFrame>
-      <CollectionFrame title={labels.auditEvents} page={safeProjection.auditEvents}>{items => <Table headings={['Time', 'Category', 'Source', 'Status']}>{items.map(x => <tr key={x.id} className="border-b border-border/70 last:border-0"><Cell>{date(x.occurredAtUtc)}</Cell><Cell>{x.category}</Cell><Cell>{x.source}</Cell><Cell>{x.status}</Cell></tr>)}</Table>}</CollectionFrame>
+      <CollectionFrame title={labels.orders} page={safeProjection.orders} onPrevious={onPreviousPage ? () => onPreviousPage('orders') : undefined} onNext={onNextPage ? () => onNextPage('orders') : undefined} pending={pendingCollections?.has('orders')}>{items => <Table headings={['Time', 'Symbol', 'Side / action', 'Quantity', 'Average price', 'Status']}>{items.map(x => <tr key={x.sequence} className="border-b border-border/70 last:border-0"><Cell>{date(x.occurredAtUtc)}</Cell><Cell mono>{x.symbol}</Cell><Cell>{x.side} / {x.action}</Cell><Cell>{number(x.quantity, { maximumFractionDigits: 8 })}</Cell><Cell>{x.averagePrice === null ? 'Not provided' : number(x.averagePrice, { maximumFractionDigits: 8 })}</Cell><Cell>{x.status}</Cell></tr>)}</Table>}</CollectionFrame>
+      <CollectionFrame title={labels.postTradeReviews} page={safeProjection.postTradeReviews} onPrevious={onPreviousPage ? () => onPreviousPage('postTradeReviews') : undefined} onNext={onNextPage ? () => onNextPage('postTradeReviews') : undefined} pending={pendingCollections?.has('postTradeReviews')}>{items => <Table headings={['Closed', 'Symbol / side', 'Strategy identity', 'Historical execution trace', 'Entry / exit / quantity', 'Fee / funding / slippage quality', 'Net / return']}>{items.map(x => <tr key={x.traceId} className="border-b border-border/70 last:border-0"><Cell>{date(x.closedAtUtc)}</Cell><Cell><span className="font-medium">{x.symbol}</span><div className="text-muted-foreground">{x.side}</div></Cell><Cell>{x.strategyId ?? 'Not attributed'}<div className="text-muted-foreground">{x.strategyVersion} · {x.attributionBasis}</div></Cell><Cell mono><div>{x.traceId} · {x.traceState}</div><div className="mt-1 text-muted-foreground">Risk: {x.riskDecision} · Execution: {x.executionStatus}</div><div className="mt-1 text-muted-foreground">{x.executionCode}{x.executionAttempts === null ? '' : ` · attempts ${x.executionAttempts}`}</div>{x.marketDataVersion ? <div className="mt-1 text-muted-foreground">{x.marketDataVersion}{x.marketCollectedAtUtc ? ` · ${date(x.marketCollectedAtUtc)}` : ''}</div> : null}<div className="mt-1 text-muted-foreground">Evidence: {x.evidenceState}{x.evidenceChain.length ? ` · ${x.evidenceChain.length}/4 canonical stages` : ''}</div>{x.evidenceChain.map(link => <div key={link.stage} className="mt-0.5 text-muted-foreground">{link.stage}: {link.status} · {link.canonicalSha256.slice(0, 12)}…</div>)}</Cell><Cell>{number(x.entryPrice, { maximumFractionDigits: 8 })} → {number(x.exitPrice, { maximumFractionDigits: 8 })}<div className="text-muted-foreground">Qty {number(x.quantity, { maximumFractionDigits: 8 })}</div></Cell><Cell>{number(x.fees, { maximumFractionDigits: 6 })} / {number(x.fundingAmount, { maximumFractionDigits: 6 })} / {number(x.totalSlippageAmount, { maximumFractionDigits: 6 })}<div className="max-w-72 text-muted-foreground">{x.feeBasis} · {x.fundingBasis} · {x.slippageBasis}</div></Cell><Cell><span className={x.netPnl >= 0 ? 'text-success' : 'text-danger'}>{number(x.netPnl, { maximumFractionDigits: 6 })}</span><div className="text-muted-foreground">{number(x.returnPct, { style: 'percent', maximumFractionDigits: 2 })} · {x.outcome}</div></Cell></tr>)}</Table>}</CollectionFrame>
+      <CollectionFrame title={labels.reconciliations} page={safeProjection.reconciliations} onPrevious={onPreviousPage ? () => onPreviousPage('reconciliations') : undefined} onNext={onNextPage ? () => onNextPage('reconciliations') : undefined} pending={pendingCollections?.has('reconciliations')}>{items => <Table headings={['Evaluated', 'Gate', 'State', 'Risk increase', 'Schema', 'Evidence hash']}>{items.map(x => <tr key={x.traceId} className="border-b border-border/70 last:border-0"><Cell>{date(x.evaluatedAtUtc)}</Cell><Cell>{x.kind === 'position' ? 'Position ledger ↔ provider' : x.kind === 'protection' ? 'Protection orders' : 'External position isolation'}</Cell><Cell>{x.state}<div className="mt-1 font-mono text-[10px] text-muted-foreground">{x.traceId}</div></Cell><Cell>{x.allowsRiskIncrease ? 'Allowed at audit time' : 'Blocked at audit time'}</Cell><Cell mono>{x.schema}</Cell><Cell mono><span title={x.canonicalSha256}>{x.canonicalSha256.slice(0, 12)}…</span></Cell></tr>)}</Table>}</CollectionFrame>
+      <CollectionFrame title={labels.equity} page={safeProjection.equity} onPrevious={onPreviousPage ? () => onPreviousPage('equity') : undefined} onNext={onNextPage ? () => onNextPage('equity') : undefined} pending={pendingCollections?.has('equity')}>{items => <Table headings={['Time', 'Equity', 'Available', 'Environment', 'Provider']}>{items.map(x => <tr key={x.sequence} className="border-b border-border/70 last:border-0"><Cell>{date(x.observedAtUtc)}</Cell><Cell>{number(x.equity, { maximumFractionDigits: 8 })}</Cell><Cell>{number(x.availableBalance, { maximumFractionDigits: 8 })}</Cell><Cell>{x.environment}</Cell><Cell mono>{x.providerId}</Cell></tr>)}</Table>}</CollectionFrame>
+      <CollectionFrame title={labels.backtests} page={safeProjection.backtests} onPrevious={onPreviousPage ? () => onPreviousPage('backtests') : undefined} onNext={onNextPage ? () => onNextPage('backtests') : undefined} pending={pendingCollections?.has('backtests')}>{items => <Table headings={['Completed', 'Strategy', 'Symbol', 'Status', 'Coverage / trades', 'OOS / drawdown / Sharpe']}>{items.map(x => <tr key={x.backtestId} className="border-b border-border/70 last:border-0"><Cell>{date(x.completedAtUtc)}</Cell><Cell>{x.strategyId}<div className="text-muted-foreground">{x.strategyVersion}</div></Cell><Cell mono>{x.symbol}</Cell><Cell>{x.status}</Cell><Cell>{x.coverageDays} days / {x.trades}</Cell><Cell>{number(x.outOfSampleReturn, { style: 'percent', maximumFractionDigits: 2 })} / {number(x.maxDrawdown, { style: 'percent', maximumFractionDigits: 2 })} / {number(x.sharpe, { maximumFractionDigits: 2 })}</Cell></tr>)}</Table>}</CollectionFrame>
+      <CollectionFrame title={labels.skillCalls} page={safeProjection.skillCalls} onPrevious={onPreviousPage ? () => onPreviousPage('skillCalls') : undefined} onNext={onNextPage ? () => onNextPage('skillCalls') : undefined} pending={pendingCollections?.has('skillCalls')}>{items => <Table headings={['Time', 'Skill', 'Status', 'Duration', 'Mode', 'Remote', 'Tokens / cost']}>{items.map(x => <tr key={x.id} className="border-b border-border/70 last:border-0"><Cell>{date(x.occurredAtUtc)}</Cell><Cell>{x.skill}</Cell><Cell>{x.status}</Cell><Cell>{x.durationMs} ms</Cell><Cell>{x.mode ?? 'Not provided'}</Cell><Cell>{x.remoteLlmUsed === null ? 'Not provided' : x.remoteLlmUsed ? 'Yes' : 'No'}</Cell><Cell>{x.tokens ?? 'Not provided'}{x.costUsd === null ? '' : ` / $${number(x.costUsd, { maximumFractionDigits: 6 })}`}</Cell></tr>)}</Table>}</CollectionFrame>
+      <CollectionFrame title={labels.auditEvents} page={safeProjection.auditEvents} onPrevious={onPreviousPage ? () => onPreviousPage('auditEvents') : undefined} onNext={onNextPage ? () => onNextPage('auditEvents') : undefined} pending={pendingCollections?.has('auditEvents')}>{items => <Table headings={['Time', 'Category', 'Source', 'Status']}>{items.map(x => <tr key={x.id} className="border-b border-border/70 last:border-0"><Cell>{date(x.occurredAtUtc)}</Cell><Cell>{x.category}</Cell><Cell>{x.source}</Cell><Cell>{x.status}</Cell></tr>)}</Table>}</CollectionFrame>
     </div>
   )
 }

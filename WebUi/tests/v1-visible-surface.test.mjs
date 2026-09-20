@@ -62,6 +62,32 @@ test('dashboard uses canonical Agent runtime and decision context instead of sim
   }
 })
 
+
+test('execution command center is read-only and backed by canonical host projections', () => {
+  const home = source('app/(dashboard)/page.tsx')
+  const cockpit = source('components/dashboard/execution-cockpit.tsx')
+  assert.match(home, /ExecutionCockpit/)
+  for (const field of ['positions', 'orders', 'historicalOrders', 'historicalPostTradeReviews', 'historicalReconciliations', 'traceId', 'riskDecision', 'executionStatus', 'marketDataVersion', 'evidenceState', 'evidenceChain', 'riskApprovalStatus', 'executionApprovalStatus', 'authorizationMode']) {
+    assert.match(cockpit, new RegExp(field), `missing canonical field ${field}`)
+  }
+  assert.match(cockpit, /READ ONLY/)
+  assert.match(cockpit, /dashboard\.closedTradeHelp/)
+  assert.match(cockpit, /dashboard\.reconciliationHelp/)
+  assert.doesNotMatch(cockpit, /item\.allowsRiskIncrease\s*\?\s*gateTone/, 'historical reconciliation must not masquerade as a current success gate')
+  assert.doesNotMatch(cockpit, /clientOrderId|cycleId|executionId|canonicalBytes|sourcesJson|outputId/, 'raw execution or canonical payload identities must not enter the cockpit')
+  const forbiddenCockpitSurfaces = [
+    /postHostCommand/,
+    /\.postMessage\s*\(/,
+    /place-order|cancel-order|direct-exchange-submit/,
+    /\bsubmitOrder\b|\bcancelOrder\b/,
+    /\bfetch\s*\(/,
+    /\bWebSocket\b|\bEventSource\b/,
+  ]
+  for (const forbidden of forbiddenCockpitSurfaces) {
+    assert.doesNotMatch(cockpit, forbidden, `read-only cockpit contains forbidden mutation/egress surface: ${forbidden}`)
+  }
+})
+
 test('static export contains deterministic nonblank DOM for every primary route', () => {
   for (const route of navRoutes) {
     const output = route === '/' ? join(root, 'out/index.html') : join(root, `out${route}/index.html`)
@@ -88,13 +114,22 @@ test('global shell remains read-only and lifecycle commands have one typed bridg
     assert.match(hostCommand, new RegExp(`'${command}'`), `missing allowed host command ${command}`)
   }
   assert.doesNotMatch(hostCommand, /place-order|approve|confirm|submitOrder|direct-exchange-submit/)
+  assert.match(hostCommand, /'history-page'/)
+  assert.match(hostCommand, /postHistoryPageRequest/)
+  assert.doesNotMatch(hostCommand, /\boffset\b|\blimit\b|sql/i)
 
   const agents = source('app/(dashboard)/agents/page.tsx')
   const settings = source('app/(dashboard)/settings/page.tsx')
-  for (const consumer of [agents, settings]) {
+  const history = source('app/(dashboard)/history/page.tsx')
+  const consoleSource = source('components/console/wpe-console.tsx')
+  for (const consumer of [agents, settings, consoleSource]) {
     assert.match(consumer, /postHostCommand/)
     assert.doesNotMatch(consumer, /\.postMessage\s*\(/)
   }
+  assert.doesNotMatch(history, /postHostCommand/)
+  assert.doesNotMatch(history, /\.postMessage\s*\(/)
+  assert.match(history, /postHistoryPageRequest/)
+  assert.match(history, /normalizeHistoricalPageResponse/)
   assert.match(agents, /window\.confirm/)
   assert.match(agents, /agentStartAllowed/)
   assert.match(agents, /agentStopAllowed/)

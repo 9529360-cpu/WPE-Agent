@@ -102,18 +102,23 @@ public sealed class DecisionGovernanceSkill
     {
         var blocks=new List<string>();
         var assessment=assessments.FirstOrDefault(x=>x.Symbol.Equals(proposed.Instrument,StringComparison.OrdinalIgnoreCase));
-        var riskIncreasing=proposed.Action is DecisionAction.OpenLong or DecisionAction.OpenShort or DecisionAction.AddLong or DecisionAction.AddShort or DecisionAction.Lock or DecisionAction.ReverseToLong or DecisionAction.ReverseToShort;
+        var riskIncreasing=DeterministicPlanSkill.IsRiskIncreasing(proposed.Action);
+        var numerical=NumericalStrategySkill.IsNumerical(proposed);
+        var remoteEvidence=RemoteEvidenceDecisionPolicy.IsRemote(proposed);
+        var heuristicSignalsAreAdvisory=numerical||remoteEvidence;
         if(assessment is null)blocks.Add(L("Review.NoAssessment"));
         if(evidence.Completeness<policy.MinimumEvidenceCompleteness&&riskIncreasing)blocks.Add(L("Review.Incomplete"));
         if(assessment is{Fresh:false}&&riskIncreasing)blocks.Add(L("Review.Stale"));
-        if(proposed.Confidence<policy.MinimumConfidence&&riskIncreasing)blocks.Add(L("Review.BrainConfidence",proposed.Confidence,policy.MinimumConfidence));
-        if(assessment is{EntryReady:false}&&riskIncreasing)blocks.AddRange(assessment.MissingConditions);
-        if(assessment is not null&&riskIncreasing)
+        if(!numerical&&proposed.Confidence<policy.MinimumConfidence&&riskIncreasing)blocks.Add(L("Review.BrainConfidence",proposed.Confidence,policy.MinimumConfidence));
+        if(!heuristicSignalsAreAdvisory&&assessment is{EntryReady:false}&&riskIncreasing)blocks.AddRange(assessment.MissingConditions);
+        if(!heuristicSignalsAreAdvisory&&assessment is not null&&riskIncreasing)
         {
             var wantsLong=proposed.Action is DecisionAction.OpenLong or DecisionAction.AddLong or DecisionAction.ReverseToLong;
             var wantsShort=proposed.Action is DecisionAction.OpenShort or DecisionAction.AddShort or DecisionAction.ReverseToShort;
             if((wantsLong&&assessment.NetScore<0)||(wantsShort&&assessment.NetScore>0))blocks.Add(L("Review.DirectionConflict"));
         }
+        if(numerical&&riskIncreasing)blocks.AddRange(NumericalStrategySkill.ValidateDecision(proposed,evidence,policy));
+        if(remoteEvidence&&riskIncreasing)blocks.AddRange(RemoteEvidenceDecisionPolicy.ValidateRiskIncrease(proposed,evidence,policy));
         var final=blocks.Count==0?proposed:CopyAsHold(proposed,blocks);
         var accepted=blocks.Count==0;
         var explanation=Explain(final,assessment,blocks);
@@ -123,7 +128,9 @@ public sealed class DecisionGovernanceSkill
     private static DecisionPlan CopyAsHold(DecisionPlan p,IReadOnlyList<string> blocks)=>new()
     {
         Action=DecisionAction.Hold,Instrument=p.Instrument,TargetTier=0,Confidence=p.Confidence,Invalidation=p.Invalidation,Regime=p.Regime,Reason=p.Reason,
-        EvidenceReferences=p.EvidenceReferences,MissingConditions=blocks.Distinct().ToList(),ConflictSummary=p.ConflictSummary
+        EvidenceReferences=p.EvidenceReferences,MissingConditions=blocks.Distinct().ToList(),ConflictSummary=p.ConflictSummary,
+        EntryPrice=p.EntryPrice,StopLossPrice=p.StopLossPrice,TakeProfitPrice=p.TakeProfitPrice,RiskRewardRatio=p.RiskRewardRatio,OrderType=p.OrderType,
+        StrategyVersion=p.StrategyVersion,DecisionBasis=p.DecisionBasis
     };
 
     private static string Explain(DecisionPlan decision,MarketDecisionAssessment? assessment,IReadOnlyList<string> blocks)
@@ -154,10 +161,13 @@ public sealed class AgentSkillRegistry
         new("NewsResearch","Observe","multi-source feeds and articles","NewsEvidence[]","network:web,write:news-index",30,1,false,"source quorum, full text and corroboration"),
         new("HistoricalData","Research","symbol and time range","hourly candles","network:testnet,write:history",60,2,true,"coverage and continuity"),
         new("DataQuality","Validate","MarketEvidence","MarketQualityEvidence","read:market",8,1,true,"quality score and clock skew"),
-        new("SignalAggregation","Reason","EvidencePack","MarketDecisionAssessment[]","local:compute",5,0,true,"finite weighted contributions"),
+        new("MarketStructure","Observe","confirmed OHLCV","MarketStructureSnapshot","local:compute",4,0,true,"canonical candles and structural state"),
+        new("MarketHypothesis","Research","market structure and derivatives","MarketHypothesis[]","local:compute",4,0,true,"competing directional hypotheses"),
+        new("SignalAggregation","Reason","EvidencePack","MarketDecisionAssessment[]","local:compute",5,0,true,"legacy advisory weighted contributions"),
         new("MarketRegime","Reason","multi-timeframe evidence","MarketRegime","local:compute",3,0,true,"known regime result"),
         new("StrategyResearch","Research","candles and costs","ResearchValidationResult","local:compute,write:research",12,0,true,"in/out-sample metrics"),
         new("PortfolioRisk","Risk","positions, intents and returns","PortfolioRiskAssessment","read:account,local:compute",6,0,true,"VaR, CVaR, concentration and correlation"),
+        new("NumericalStrategy","Plan","market structures and hypotheses","DecisionPlan","local:compute",4,0,true,"structure-confirmed stateful decision"),
         new("BrainPlanner","Plan","audited evidence","DecisionPlan","local:compute",3,0,true,"deterministic local plan and schema-valid response"),
         new("OptionalRemoteBrain","Assist","audited evidence","advisory DecisionPlan","network:brain",30,2,false,"optional remote provider; never required for execution"),
         new("DeterministicPlan","Plan","candidate and market","protected DecisionPlan","local:compute",3,0,true,"entry/stop/take/RR valid"),

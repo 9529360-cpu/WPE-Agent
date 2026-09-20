@@ -85,26 +85,36 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
 
     public Task<BrainDecisionResult> DecideAsync(EvidencePack evidence, AgentContext context, CancellationToken ct)
     {
-        var selected = context.MarketAssessments.Where(x => x.EntryReady && x.Fresh)
-            .OrderByDescending(x => x.Confidence * (1 - x.ConflictRatio))
-            .ThenByDescending(x => Math.Abs(x.NetScore))
-            .FirstOrDefault();
-        var blocked = context.CircuitBreakerActive || selected is null;
-        var decision = new DecisionPlan
+        var numerical = new NumericalStrategySkill();
+        DecisionPlan decision;
+        if (numerical.CanAnalyze(evidence))
         {
-            Action = blocked ? DecisionAction.Hold : selected!.RecommendedAction,
-            Instrument = selected?.Symbol ?? evidence.Markets.Keys.FirstOrDefault() ?? "BTCUSDT",
-            TargetTier = blocked ? 0 : 1,
-            Confidence = selected?.Confidence ?? 0,
-            Regime = selected?.Regime.ToString() ?? MarketRegime.Unknown.ToString(),
-            Reason = context.CircuitBreakerActive ? "local risk circuit breaker is active" : selected?.Summary ?? "no locally validated entry is ready",
-            Invalidation = "local signal, data freshness, strategy health, or risk gate becomes invalid",
-            EvidenceReferences = selected?.Signals.OrderByDescending(x => Math.Abs(x.WeightedScore)).Take(5).Select(x => x.Name).ToList() ?? [],
-            MissingConditions = selected?.MissingConditions.ToList() ?? context.MarketAssessments.SelectMany(x => x.MissingConditions).Distinct().ToList(),
-            ConflictSummary = selected is null ? "no executable local assessment" : $"conflict={selected.ConflictRatio:F3}; score={selected.NetScore:F3}",
-            StrategyVersion = "wpe-local-deterministic-v1"
-        };
-        var audit = JsonSerializer.Serialize(new { provider = Name, decision.Action, decision.Instrument, decision.Confidence, decision.Reason });
+            decision = numerical.Decide(evidence, context);
+        }
+        else
+        {
+            var selected = context.MarketAssessments.Where(x => x.EntryReady && x.Fresh)
+                .OrderByDescending(x => x.Confidence * (1 - x.ConflictRatio))
+                .ThenByDescending(x => Math.Abs(x.NetScore))
+                .FirstOrDefault();
+            var blocked = context.CircuitBreakerActive || selected is null;
+            decision = new DecisionPlan
+            {
+                Action = blocked ? DecisionAction.Hold : selected!.RecommendedAction,
+                Instrument = selected?.Symbol ?? evidence.Markets.Keys.FirstOrDefault() ?? "BTCUSDT",
+                TargetTier = blocked ? 0 : 1,
+                Confidence = selected?.Confidence ?? 0,
+                Regime = selected?.Regime.ToString() ?? MarketRegime.Unknown.ToString(),
+                Reason = context.CircuitBreakerActive ? "local risk circuit breaker is active" : selected?.Summary ?? "no locally validated entry is ready",
+                Invalidation = "local signal, data freshness, strategy health, or risk gate becomes invalid",
+                EvidenceReferences = selected?.Signals.OrderByDescending(x => Math.Abs(x.WeightedScore)).Take(5).Select(x => x.Name).ToList() ?? [],
+                MissingConditions = selected?.MissingConditions.ToList() ?? context.MarketAssessments.SelectMany(x => x.MissingConditions).Distinct().ToList(),
+                ConflictSummary = selected is null ? "no executable local assessment" : "conflict=" + selected.ConflictRatio.ToString("F3") + "; score=" + selected.NetScore.ToString("F3"),
+                StrategyVersion = "wpe-local-deterministic-v1",
+                DecisionBasis = "signal-aggregation-v1"
+            };
+        }
+        var audit = JsonSerializer.Serialize(new { provider = Name, decision.Action, decision.Instrument, decision.Confidence, decision.DecisionBasis, decision.Reason });
         return Task.FromResult(new BrainDecisionResult(decision, audit, audit));
     }
 }
@@ -143,32 +153,39 @@ internal static class BrainPromptComposer
         int PreviousOutcomeCount,
         int PreviousOutcomeChars,
         int SignalCount,
-        int RecentCloseCount,
+        int RecentBarCount,
         int MissingConditionCount);
 
     private static readonly PromptCompressionProfile[] Profiles =
     [
-        new(12, 220, 8, 180, 6, 4, 8),
-        new(6, 140, 5, 120, 4, 3, 6),
-        new(4, 90, 3, 80, 2, 2, 4)
+        new(12, 220, 8, 180, 6, 12, 8),
+        new(6, 140, 5, 120, 4, 8, 6),
+        new(4, 90, 3, 80, 2, 6, 4)
     ];
 
     internal static string BuildDecisionPrompt(EvidencePack evidence, AgentContext context, string outputLanguage, int contextLimit, string instruction)
     {
         var budget = DetermineTargetCharacters(contextLimit);
-        string? best = null;
+        var wantsDetailed = ShouldUpgradeToDetailedContext(evidence, context);
+        string? smallestSlim = null;
+        string? lastAttempt = null;
         foreach (var profile in Profiles)
         {
             var slimPrompt = BuildPrompt(evidence, context, outputLanguage, instruction, profile, PromptDetailLevel.SlimBrief);
-            best = slimPrompt;
-            if (slimPrompt.Length <= budget || !ShouldUpgradeToDetailedContext(evidence, context)) return slimPrompt;
+            lastAttempt = slimPrompt;
+            if (slimPrompt.Length <= budget) smallestSlim = slimPrompt;
+            if (!wantsDetailed)
+            {
+                if (slimPrompt.Length <= budget) return slimPrompt;
+                continue;
+            }
 
             var detailedPrompt = BuildPrompt(evidence, context, outputLanguage, instruction, profile, PromptDetailLevel.DetailedContext);
-            best = detailedPrompt;
+            lastAttempt = detailedPrompt;
             if (detailedPrompt.Length <= budget) return detailedPrompt;
         }
 
-        return best ?? JsonSerializer.Serialize(new { instruction, outputLanguage });
+        return smallestSlim ?? lastAttempt ?? JsonSerializer.Serialize(new { instruction, outputLanguage });
     }
 
     private static string BuildPrompt(
@@ -180,12 +197,11 @@ internal static class BrainPromptComposer
         PromptDetailLevel detailLevel)
     {
         var orderedAssessments = context.MarketAssessments
-            .OrderByDescending(x => x.EntryReady)
-            .ThenByDescending(x => x.Confidence)
-            .ThenByDescending(x => Math.Abs(x.NetScore))
+            .OrderByDescending(x => x.Fresh)
+            .ThenBy(x => x.Symbol, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var detailedSymbols = detailLevel == PromptDetailLevel.DetailedContext
-            ? SelectDetailedSymbols(evidence, context, orderedAssessments)
+            ? SelectDetailedSymbols(evidence, context)
             : Array.Empty<string>();
         return JsonSerializer.Serialize(new
         {
@@ -232,7 +248,7 @@ internal static class BrainPromptComposer
                 context.ConsecutiveHolds
             },
             detailedMarketContext = detailLevel == PromptDetailLevel.DetailedContext
-                ? BuildDetailedMarkets(evidence, detailedSymbols, profile.RecentCloseCount)
+                ? BuildDetailedMarkets(evidence, detailedSymbols, profile.RecentBarCount)
                 : null
         });
     }
@@ -294,12 +310,6 @@ internal static class BrainPromptComposer
         var excluded = detailLevel == PromptDetailLevel.DetailedContext
             ? detailedSymbols.ToHashSet(StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var orderedAssessments = context.MarketAssessments
-            .OrderByDescending(x => x.EntryReady)
-            .ThenByDescending(x => x.Confidence)
-            .ThenByDescending(x => Math.Abs(x.NetScore))
-            .ToArray();
-
         void Add(string? symbol, bool allowDetailedDuplicate = false)
         {
             if (string.IsNullOrWhiteSpace(symbol)) return;
@@ -311,19 +321,12 @@ internal static class BrainPromptComposer
         Add(context.ActiveSymbol);
         foreach (var symbol in evidence.Positions.Select(x => x.Symbol))
             Add(symbol);
-        foreach (var assessment in orderedAssessments.Where(x => x.EntryReady))
+        foreach (var market in evidence.Markets.Values
+                     .OrderByDescending(x => x.Quality.QualityScore)
+                     .ThenByDescending(x => x.Quality.RelativeVolume)
+                     .ThenBy(x => x.Symbol, StringComparer.OrdinalIgnoreCase))
         {
-            Add(assessment.Symbol);
-            if (selected.Count >= MaxMarketBriefContexts) break;
-        }
-        foreach (var assessment in orderedAssessments)
-        {
-            Add(assessment.Symbol);
-            if (selected.Count >= MaxMarketBriefContexts) break;
-        }
-        foreach (var symbol in evidence.Markets.Keys.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
-        {
-            Add(symbol);
+            Add(market.Symbol);
             if (selected.Count >= MaxMarketBriefContexts) break;
         }
         if (selected.Count == 0 && detailLevel == PromptDetailLevel.DetailedContext)
@@ -339,30 +342,23 @@ internal static class BrainPromptComposer
             .ToArray();
     }
 
-    private static IReadOnlyDictionary<string, object> BuildDetailedMarkets(EvidencePack evidence, IReadOnlyList<string> detailedSymbols, int recentCloseCount) =>
+    private static IReadOnlyDictionary<string, object> BuildDetailedMarkets(EvidencePack evidence, IReadOnlyList<string> detailedSymbols, int recentBarCount) =>
         evidence.Markets
             .Where(x => detailedSymbols.Contains(x.Key))
             .OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(x => x.Key, x => BuildDetailedMarket(x.Value, recentCloseCount), StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(x => x.Key, x => BuildDetailedMarket(x.Value, recentBarCount), StringComparer.OrdinalIgnoreCase);
 
     private static bool ShouldUpgradeToDetailedContext(EvidencePack evidence, AgentContext context)
     {
-        var ordered = context.MarketAssessments
-            .OrderByDescending(x => x.EntryReady)
-            .ThenByDescending(x => x.Confidence)
-            .ThenByDescending(x => Math.Abs(x.NetScore))
-            .ToArray();
-        if (ordered.Any(x => x.EntryReady)) return true;
         if (!string.IsNullOrWhiteSpace(context.ActiveSymbol)) return true;
         if (evidence.Positions.Count > 0) return true;
-        if (ordered.Length > 1 && Math.Abs(ordered[0].NetScore - ordered[1].NetScore) <= 0.15) return true;
-        return false;
+        return evidence.Markets.Values.Any(x =>
+            MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(x) &&
+            x.Candles.Count >= NumericalMarketStructureSkill.MinimumCandles &&
+            x.Quality.QualityScore >= 65);
     }
 
-    private static IReadOnlyList<string> SelectDetailedSymbols(
-        EvidencePack evidence,
-        AgentContext context,
-        IReadOnlyList<MarketDecisionAssessment> orderedAssessments)
+    private static IReadOnlyList<string> SelectDetailedSymbols(EvidencePack evidence, AgentContext context)
     {
         var selected = new List<string>();
 
@@ -374,18 +370,15 @@ internal static class BrainPromptComposer
         }
 
         Add(context.ActiveSymbol);
-        foreach (var symbol in evidence.Positions.Select(x => x.Symbol))
-            Add(symbol);
-        foreach (var assessment in orderedAssessments.Where(x => x.EntryReady))
+        foreach (var symbol in evidence.Positions.Select(x => x.Symbol)) Add(symbol);
+        foreach (var market in evidence.Markets.Values
+                     .Where(x => MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(x))
+                     .OrderByDescending(x => x.Quality.QualityScore)
+                     .ThenByDescending(x => x.Quality.RelativeVolume)
+                     .ThenBy(x => x.Symbol, StringComparer.OrdinalIgnoreCase))
         {
-            Add(assessment.Symbol);
+            Add(market.Symbol);
             if (selected.Count >= MaxDetailedMarketContexts) break;
-        }
-        if (selected.Count == 0 && orderedAssessments.Count > 0)
-        {
-            Add(orderedAssessments[0].Symbol);
-            if (orderedAssessments.Count > 1 && Math.Abs(orderedAssessments[0].NetScore - orderedAssessments[1].NetScore) <= 0.15)
-                Add(orderedAssessments[1].Symbol);
         }
 
         return selected.Take(MaxDetailedMarketContexts).ToArray();
@@ -404,15 +397,29 @@ internal static class BrainPromptComposer
             QualityScore = market.Quality.QualityScore
         };
 
-    private static object BuildDetailedMarket(MarketEvidence market, int recentCloseCount)
+    private static object BuildDetailedMarket(MarketEvidence market, int recentBarCount)
     {
         CandleEvidence? last = market.Candles.Count > 0 ? market.Candles[^1] : null;
         CandleEvidence? previous = market.Candles.Count > 1 ? market.Candles[^2] : null;
-        var recent = market.Candles.TakeLast(Math.Max(1, recentCloseCount)).Select(x => x.Close).ToArray();
-        var window = market.Candles.TakeLast(Math.Min(24, market.Candles.Count)).ToArray();
+        var window = market.Candles.TakeLast(Math.Min(96, market.Candles.Count)).ToArray();
         var dayHigh = window.Length == 0 ? market.Price : window.Max(x => x.High);
         var dayLow = window.Length == 0 ? market.Price : window.Min(x => x.Low);
         var lastChange = last is null || previous is null || previous.Close == 0 ? 0 : (double)(last.Close / previous.Close - 1);
+        var structure = new NumericalMarketStructureSkill().Analyze(market);
+        var hypotheses = new MarketHypothesisSkill().Build(market, structure);
+        var recentBars = market.Candles
+            .TakeLast(Math.Clamp(recentBarCount, 4, 16))
+            .Select(x => new
+            {
+                t = x.OpenTime,
+                o = x.Open,
+                h = x.High,
+                l = x.Low,
+                c = x.Close,
+                v = x.Volume,
+                q = x.QuoteVolume
+            })
+            .ToArray();
 
         return new
         {
@@ -438,6 +445,7 @@ internal static class BrainPromptComposer
                 market.Quality.AtrPercent,
                 market.Quality.LiquidityScore,
                 market.Quality.QualityScore,
+                market.Quality.RelativeVolume,
                 Anomalies = market.Quality.Anomalies.Take(2).Select(x => TrimText(x, 80)).ToArray()
             },
             CandleSummary = new
@@ -446,8 +454,32 @@ internal static class BrainPromptComposer
                 LastCloseChangePct = lastChange,
                 DayHigh = dayHigh,
                 DayLow = dayLow,
-                RecentCloses = recent
-            }
+                RecentBars = recentBars
+            },
+            Structure = new
+            {
+                structure.Ready,
+                structure.Bias,
+                structure.Event,
+                structure.ReferenceSupport,
+                structure.ReferenceResistance,
+                structure.VolumeRatio,
+                structure.RangePosition,
+                structure.HigherTimeframeBullish,
+                structure.HigherTimeframeBearish,
+                Evidence = structure.Evidence.Take(8).ToArray(),
+                MissingConditions = structure.MissingConditions.Take(6).ToArray()
+            },
+            Hypotheses = hypotheses.Take(3).Select(x => new
+            {
+                x.Id,
+                x.Direction,
+                x.Status,
+                x.Trigger,
+                x.Invalidation,
+                SupportingEvidence = x.SupportingEvidence.Take(4).ToArray(),
+                CounterEvidence = x.CounterEvidence.Take(4).ToArray()
+            }).ToArray()
         };
     }
 
@@ -517,7 +549,7 @@ public sealed class HttpBrainProvider : IAssistantProvider
         你是 WPE 合约决策 Planner，只负责提出候选计划，不计算最终下单数量。你的计划之后还会经过本地 Critic、Reviewer 和确定性风控。只能依据 evidence、marketAssessments 和 context 输出一个 JSON 对象，不得输出 Markdown。
         action 只能是 OpenLong/OpenShort/AddLong/AddShort/ReduceLong/ReduceShort/CloseLong/CloseShort/Lock/Unlock/ReverseToLong/ReverseToShort/Hold；instrument 只能从输入 evidence.Markets 的键中选择；targetTier 只能 0..3；止损止盈必须是数字。
         必须逐个独立评估输入中的交易品种，再选择质量更高的一个；跨品种方向相反不是同一品种的信号冲突，禁止因此笼统 HOLD。15分钟负责执行，1小时和4小时负责背景，价格结构优先于新闻叙事。
-        marketAssessments 是本地可复算的逐信号权重结果。若 EntryReady=false，通常 HOLD，并在 missingConditions 中准确列出尚缺条件；若提出增加风险的动作，方向必须与该品种 NetScore 一致且 confidence 不低于策略阈值。
+        marketAssessments 是本地可复算的启发式参考，不是交易裁决权。EntryReady、NetScore、聚合 confidence 可以帮助解释，但不得替代你对原始 OHLCV、结构、成交量、衍生品和可验证上下文的独立判断。若你与 NetScore 不同，必须在 reason、invalidation 和 evidenceReferences 中明确给出输入里真实存在的结构证据。任何增加风险的动作仍必须建立在新鲜、完整、质量合格且可追溯的市场证据上，并会被本地结构验证与独立 Risk Gate 再次校验。
         previousOutcomes 是压缩后的经验回放，不要机械复述上一轮；consecutiveHolds 较高时必须重新检查原结论，但不得为了开单而降低标准。
         只有结构破坏/重新站回、失效条件触发、核心驱动替换或验证等级下降时才改变观点；核心区间内不得直接称为反转。多空证据冲突时仍须给出唯一最终倾向。
         不得编造新闻、鲸鱼流向、截图、订单流或来源，不得承诺收益。reason 必须简述核心证据与风险，invalidation 必须写明观点失效条件，evidenceReferences 只能引用输入中实际存在的项目；conflictSummary 描述同一品种内部冲突。
@@ -525,7 +557,7 @@ public sealed class HttpBrainProvider : IAssistantProvider
         instruction += $"\n允许的 instrument：{string.Join(",",e.Markets.Keys)}。所有面向用户的描述字段（reason、invalidation、conflictSummary、missingConditions）必须使用{LocalizationService.Current.CurrentLanguage.AiLanguage}；action、instrument 和 JSON 字段名保持规定的英文枚举。missingConditions 和 evidenceReferences 必须输出字符串数组。";
         var prompt = BrainPromptComposer.BuildDecisionPrompt(e, c, LocalizationService.Current.CurrentLanguage.AiLanguage, _slot.ContextLimit, instruction);
         string raw="";
-        try{using var r=await BuildAndSend(prompt,ct);raw=await r.Content.ReadAsStringAsync(ct);if(!r.IsSuccessStatusCode)throw new BrainCallException($"{Name} HTTP {(int)r.StatusCode}",AuditRef("prompt",prompt),AuditRef("response",raw));var content=ExtractProviderText(raw);var json=ExtractJson(content);var opt=new JsonSerializerOptions{PropertyNameCaseInsensitive=true};opt.Converters.Add(new JsonStringEnumConverter());opt.Converters.Add(new FlexibleStringListConverter());var decision=JsonSerializer.Deserialize<DecisionPlan>(json,opt)??new DecisionPlan{Reason=LocalizationService.Current.T("Provider.EmptyResponse")};decision.MissingConditions??=[];decision.EvidenceReferences??=[];return new(decision,AuditRef("prompt",prompt),AuditRef("response",raw));}
+        try{using var r=await BuildAndSend(prompt,ct);raw=await r.Content.ReadAsStringAsync(ct);if(!r.IsSuccessStatusCode)throw new BrainCallException($"{Name} HTTP {(int)r.StatusCode}",AuditRef("prompt",prompt),AuditRef("response",raw));var content=ExtractProviderText(raw);var json=ExtractJson(content);var opt=new JsonSerializerOptions{PropertyNameCaseInsensitive=true};opt.Converters.Add(new JsonStringEnumConverter());opt.Converters.Add(new FlexibleStringListConverter());var decision=JsonSerializer.Deserialize<DecisionPlan>(json,opt)??new DecisionPlan{Reason=LocalizationService.Current.T("Provider.EmptyResponse")};decision.MissingConditions??=[];decision.EvidenceReferences??=[];decision.DecisionBasis=RemoteEvidenceDecisionPolicy.Basis;decision.StrategyVersion=NumericalStrategySkill.Version;return new(decision,AuditRef("prompt",prompt),AuditRef("response",raw));}
         catch(BrainCallException){throw;}catch(Exception ex){throw new BrainCallException(LocalizationService.Current.T("Provider.ParseFailed",Name,global::币安量化机器人.Services.SensitiveDataRedactor.ForLog(ex.Message,180,_key,_slot.EncryptedKey)),AuditRef("prompt",prompt),AuditRef("response",raw),ex);}
     }
     private async Task<HttpResponseMessage> BuildAndSend(string prompt,CancellationToken ct)

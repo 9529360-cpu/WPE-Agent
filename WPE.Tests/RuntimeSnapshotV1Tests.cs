@@ -301,6 +301,34 @@ public sealed class RuntimeSnapshotV1Tests
     }
 
     [Fact]
+    public void Create_ProjectsPostTradeAndReconciliationHistory()
+    {
+        var now=DateTimeOffset.UtcNow;
+        var history=RuntimeHistoricalCollectionsSnapshot.Unsupported() with
+        {
+            PostTradeReviews=new(
+                HistoricalCollectionPageV1<HistoricalPostTradeReviewV1>.CurrentContractVersion,
+                HistoricalCollectionKindV1.PostTradeReviews,
+                RuntimeCollectionState.Available,
+                [new("trade#ABCDEF123456","wpe.post-trade-review/1.4","BTCUSDT","Long",100m,110m,1m,.05m,"exchange-reported-usdt",0m,.1m,.2m,.3m,"intent-expected-vs-fill",1m,"exchange-reported-window",10.95m,.1095m,"win",now,"trend-alpha","2.1.0","automatic-artifact","available","Approved","Succeeded","automatic.succeeded",1,now.AddSeconds(-20),"provider-market-v1","available",[new("market","succeeded",new string('a',64),now),new("research","succeeded",new string('b',64),now),new("strategy","succeeded",new string('c',64),now),new("risk","succeeded",new string('d',64),now)])],
+                null,now,"local-agent-sqlite"),
+            Reconciliations=new(
+                HistoricalCollectionPageV1<HistoricalReconciliationV1>.CurrentContractVersion,
+                HistoricalCollectionKindV1.Reconciliations,
+                RuntimeCollectionState.Available,
+                [new("position","reconciliation#ABCDEF123456","wpe.position-reconciliation/1.0",now,now,"Confirmed",true,new string('a',64))],
+                null,now,"local-agent-sqlite")
+        };
+
+        var snapshot=RuntimeSnapshotFactory.Create(new SystemState { LastUpdated=now.UtcDateTime },now.UtcDateTime,historicalCollections:history);
+
+        var review=Assert.Single(snapshot.HistoricalPostTradeReviews.Items);
+        Assert.Equal("trend-alpha",review.StrategyId);Assert.Equal(10.95m,review.NetPnl);Assert.Equal("trade#ABCDEF123456",review.TraceId);Assert.Equal("Approved",review.RiskDecision);Assert.Equal("Succeeded",review.ExecutionStatus);Assert.Equal("available",review.EvidenceState);Assert.Equal(4,review.EvidenceChain.Count);
+        var reconciliation=Assert.Single(snapshot.HistoricalReconciliations.Items);
+        Assert.Equal("position",reconciliation.Kind);Assert.Equal("reconciliation#ABCDEF123456",reconciliation.TraceId);Assert.True(reconciliation.AllowsRiskIncrease);
+    }
+
+    [Fact]
     public void Create_ProjectsOnlyAuthorizedAvailableEquityQuotes()
     {
         var now = DateTimeOffset.UtcNow;

@@ -423,7 +423,7 @@ public partial class App : global::System.Windows.Application
             var setup = new SetupWindow(runtimeHost.UserName, true, 6);
             setup.ShowDialog();
             _ = runtimeHost.RefreshAccessAsync();
-        }, runtimeHost.StartAgentAsync);
+        }, runtimeHost.StartAgentAsync, runtimeHost.BuildHistoricalPageResponseJsonAsync);
         MainWindow = reference;
         reference.Show();
         if (accessReady) AutoTradingAgent.StartDefault();

@@ -4,8 +4,18 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using WpeAgent.RuntimeContracts;
+using 币安量化机器人.Services;
 
 namespace WpeAgent.RuntimeServices;
+
+internal sealed record HistoricalCollectionChangeVector(
+    string Orders,
+    string Equity,
+    string Backtests,
+    string SkillCalls,
+    string AuditEvents,
+    string PostTradeReviews,
+    string Reconciliations);
 
 /// <summary>Bounded, read-only projections of facts already persisted in the local agent SQLite database.</summary>
 public sealed class RuntimeHistoricalCollectionStateStore
@@ -23,10 +33,78 @@ public sealed class RuntimeHistoricalCollectionStateStore
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
     }
 
+    private static readonly (string Table,string Timestamp)[] ChangeSources=
+    [
+        ("execution_events","occurred_at"),
+        ("equity_snapshots","observed_at"),
+        ("backtest_runs","completed_at"),
+        ("runtime_skill_calls","occurred_at"),
+        ("runtime_events","occurred_at"),
+        ("trade_outcomes","closed_at"),
+        ("automatic_execution_queue","updated_at"),
+        ("automatic_execution_events","occurred_at"),
+        ("model_off_canonical_audits","recorded_at_utc"),
+        ("position_reconciliation_audits","evaluated_at"),
+        ("protection_reconciliation_audits","evaluated_at"),
+        ("external_position_isolation_audits","evaluated_at")
+    ];
+
+    private static readonly (string Table,string Timestamp)[] PostTradeVersionSources=
+    [
+        ("trade_outcomes","closed_at"),
+        ("automatic_execution_queue","updated_at"),
+        ("automatic_execution_events","occurred_at"),
+        ("model_off_canonical_audits","recorded_at_utc")
+    ];
+
+    private static readonly (string Table,string Timestamp)[] ReconciliationVersionSources=
+    [
+        ("position_reconciliation_audits","evaluated_at"),
+        ("protection_reconciliation_audits","evaluated_at"),
+        ("external_position_isolation_audits","evaluated_at")
+    ];
+
+    internal async Task<HistoricalCollectionChangeVector> ReadChangeVectorAsync(CancellationToken ct=default)
+    {
+        await using var connection=new SqliteConnection(_connectionString);await connection.OpenAsync(ct);
+        var existing=new HashSet<string>(StringComparer.Ordinal);
+        await using(var tables=connection.CreateCommand())
+        {
+            var names=AddListParameters(tables,"changeTable",ChangeSources.Select(source=>source.Table).Distinct(StringComparer.Ordinal).ToArray());
+            tables.CommandText=$"SELECT name FROM sqlite_master WHERE type='table' AND name IN ({names})";
+            await using var reader=await tables.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))existing.Add(reader.GetString(0));
+        }
+
+        var stamps=ChangeSources.ToDictionary(source=>source.Table,_=>"missing",StringComparer.Ordinal);
+        var present=ChangeSources.Where(source=>existing.Contains(source.Table)).ToArray();
+        if(present.Length>0)
+        {
+            await using var command=connection.CreateCommand();
+            command.CommandText=string.Join(" UNION ALL ",present.Select(source=>$"SELECT '{source.Table}',COALESCE(MAX(rowid),0),COALESCE(MAX({source.Timestamp}),'') FROM {source.Table}"));
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var table=reader.GetString(0);
+                stamps[table]=$"{reader.GetInt64(1).ToString(CultureInfo.InvariantCulture)}:{reader.GetString(2)}";
+            }
+        }
+
+        static string Join(Dictionary<string,string> values,params string[] names)=>string.Join("|",names.Select(name=>$"{name}={values[name]}"));
+        return new(
+            stamps["execution_events"],
+            stamps["equity_snapshots"],
+            stamps["backtest_runs"],
+            stamps["runtime_skill_calls"],
+            stamps["runtime_events"],
+            Join(stamps,"trade_outcomes","automatic_execution_queue","automatic_execution_events","model_off_canonical_audits"),
+            Join(stamps,"position_reconciliation_audits","protection_reconciliation_audits","external_position_isolation_audits"));
+    }
+
     public Task<HistoricalCollectionPageV1<HistoricalOrderV1>> ReadOrdersAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default) =>
         ReadAsync(HistoricalCollectionKindV1.Orders, request, "execution_events", "occurred_at", TimeSpan.FromDays(30),
             "SELECT id,occurred_at,cycle_id,client_order_id,symbol,side,action,reduce_only,quantity,avg_price,status FROM execution_events ORDER BY occurred_at DESC,id DESC LIMIT $limit OFFSET $offset",
-            r => new HistoricalOrderV1(r.GetInt64(0), Instant(r.GetString(1)), Text(r,2), Text(r,3), Safe(r.GetString(4),80), Safe(r.GetString(5),20), Safe(r.GetString(6),40), r.GetInt32(7)==1, Decimal(r,8), NullableDecimal(r,9), Safe(r.GetString(10),40)), ct);
+            r => new HistoricalOrderV1(r.GetInt64(0), Instant(r.GetString(1)), Masked(r,2,"cycle"), Masked(r,3,"order"), Safe(r.GetString(4),80), Safe(r.GetString(5),20), Safe(r.GetString(6),40), r.GetInt32(7)==1, Decimal(r,8), NullableDecimal(r,9), Safe(r.GetString(10),40)), ct);
 
     public Task<HistoricalCollectionPageV1<HistoricalEquityPointV1>> ReadEquityAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default) =>
         ReadAsync(HistoricalCollectionKindV1.Equity, request, "equity_snapshots", "observed_at", TimeSpan.FromHours(24),
@@ -46,23 +124,322 @@ public sealed class RuntimeHistoricalCollectionStateStore
     public Task<HistoricalCollectionPageV1<HistoricalAuditEventV1>> ReadAuditEventsAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default) =>
         ReadAsync(HistoricalCollectionKindV1.AuditEvents, request, "runtime_events", "occurred_at", TimeSpan.FromDays(30),
             "SELECT event_id,occurred_at,event_type,source,correlation_id FROM runtime_events ORDER BY occurred_at DESC,sequence DESC LIMIT $limit OFFSET $offset",
-            r => new HistoricalAuditEventV1(Safe(r.GetString(0),120), Instant(r.GetString(1)), Safe(r.GetString(2),80), Safe(r.GetString(3),80), Text(r,4,120), "RECORDED"), ct);
+            r => new HistoricalAuditEventV1(Safe(r.GetString(0),120), Instant(r.GetString(1)), Safe(r.GetString(2),80), Safe(r.GetString(3),80), Masked(r,4,"correlation"), "RECORDED"), ct);
 
-    private async Task<HistoricalCollectionPageV1<T>> ReadAsync<T>(HistoricalCollectionKindV1 kind, HistoricalCollectionRequestV1 request, string table, string timestampColumn, TimeSpan staleAfter, string sql, Func<SqliteDataReader,T> map, CancellationToken ct)
+
+    public async Task<HistoricalCollectionPageV1<HistoricalPostTradeReviewV1>> ReadPostTradeReviewsAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var limit=Math.Clamp(request.Limit,1,HistoricalCollectionPageV1<T>.MaximumPageSize);
-        if(!TryOffset(kind,request.Cursor,out var offset)) return Page<T>(kind,RuntimeCollectionState.Error,[],null,null,"The collection cursor is invalid or expired.");
+        var kind=HistoricalCollectionKindV1.PostTradeReviews;
+        var limit=Math.Clamp(request.Limit,1,HistoricalCollectionPageV1<HistoricalPostTradeReviewV1>.MaximumPageSize);
         try
         {
             await using var connection=new SqliteConnection(_connectionString);await connection.OpenAsync(ct);
+            var versionBefore=await CollectionVersionAsync(connection,PostTradeVersionSources,ct);
+            if(!TryOffset(kind,request.Cursor,versionBefore,out var offset))return Page<HistoricalPostTradeReviewV1>(kind,RuntimeCollectionState.Error,[],null,null,"The collection cursor is invalid, expired, or belongs to a different collection version.");
+            if(!await TableExists(connection,"trade_outcomes",ct))return Page<HistoricalPostTradeReviewV1>(kind,RuntimeCollectionState.Unsupported,[],null,null,"The SQLite post-trade collection is not available.");
+            var updatedAt=await Latest(connection,"trade_outcomes","closed_at",ct);
+            var raw=new List<RawPostTradeReview>(limit+1);
+            await using(var command=connection.CreateCommand())
+            {
+                command.CommandText="SELECT client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,fees,fee_basis,fee_rate,entry_slippage_amount,exit_slippage_amount,total_slippage_amount,slippage_basis,funding_amount,funding_basis,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis FROM trade_outcomes WHERE client_order_id IS NOT NULL AND cycle_id IS NOT NULL ORDER BY closed_at DESC,id DESC LIMIT $limit OFFSET $offset";
+                command.Parameters.AddWithValue("$limit",limit+1);command.Parameters.AddWithValue("$offset",offset);
+                await using var reader=await command.ExecuteReaderAsync(ct);
+                while(await reader.ReadAsync(ct))
+                {
+                    var clientOrderId=Safe(reader.GetString(0),120);if(string.IsNullOrWhiteSpace(clientOrderId))throw new InvalidOperationException("Post-trade close identity is invalid.");
+                    var cycleId=reader.GetString(1);if(string.IsNullOrWhiteSpace(cycleId))throw new InvalidOperationException("Post-trade cycle identity is invalid.");
+                    var net=Decimal(reader,16);
+                    raw.Add(new(
+                        cycleId,
+                        Safe(reader.GetString(2),80),
+                        Safe(reader.GetString(3),20),
+                        Decimal(reader,4),
+                        Decimal(reader,5),
+                        Decimal(reader,6),
+                        Decimal(reader,7),
+                        Safe(reader.GetString(8),80),
+                        Decimal(reader,9),
+                        Decimal(reader,10),
+                        Decimal(reader,11),
+                        Decimal(reader,12),
+                        Safe(reader.GetString(13),80),
+                        Decimal(reader,14),
+                        Safe(reader.GetString(15),80),
+                        net,
+                        Decimal(reader,17),
+                        net>0?"win":net<0?"loss":"flat",
+                        Instant(reader.GetString(18)),
+                        Text(reader,19,120),
+                        Safe(reader.GetString(20),80),
+                        Safe(reader.GetString(21),80)));
+                }
+            }
+            var hasMore=raw.Count>limit;if(hasMore)raw.RemoveAt(raw.Count-1);
+            var queueAvailable=await TableExists(connection,"automatic_execution_queue",ct);
+            var eventsAvailable=await TableExists(connection,"automatic_execution_events",ct);
+            var evidenceAvailable=await TableExists(connection,"model_off_canonical_audits",ct);
+            var cycleIds=raw.Select(row=>row.CycleId).Distinct(StringComparer.Ordinal).ToArray();
+            var traces=await ReadPostTradeTracesAsync(connection,cycleIds,queueAvailable,eventsAvailable,ct);
+            var evidenceByCycle=await ReadModelOffEvidenceBatchAsync(connection,cycleIds,evidenceAvailable,ct);
+            var items=new List<HistoricalPostTradeReviewV1>(raw.Count);
+            foreach(var row in raw)
+            {
+                var trace=traces[row.CycleId];
+                var evidence=evidenceByCycle[row.CycleId];
+                items.Add(new(
+                    trace.TraceId,
+                    "wpe.post-trade-review/1.4",
+                    row.Symbol,row.Side,row.EntryPrice,row.ExitPrice,row.Quantity,row.Fees,row.FeeBasis,row.FeeRate,
+                    row.EntrySlippageAmount,row.ExitSlippageAmount,row.TotalSlippageAmount,row.SlippageBasis,
+                    row.FundingAmount,row.FundingBasis,row.NetPnl,row.ReturnPct,row.Outcome,row.ClosedAtUtc,
+                    row.StrategyId,row.StrategyVersion,row.AttributionBasis,
+                    trace.TraceState,trace.RiskDecision,trace.ExecutionStatus,trace.ExecutionCode,trace.ExecutionAttempts,
+                    trace.MarketCollectedAtUtc,trace.MarketDataVersion,evidence.State,evidence.Chain));
+            }
+            var versionAfter=await CollectionVersionAsync(connection,PostTradeVersionSources,ct);
+            if(!string.Equals(versionBefore,versionAfter,StringComparison.Ordinal))return Page<HistoricalPostTradeReviewV1>(kind,RuntimeCollectionState.Error,[],null,null,"The historical collection changed during the read.");
+            return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count,versionBefore):null,updatedAt,null);
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch{return Page<HistoricalPostTradeReviewV1>(kind,RuntimeCollectionState.Error,[],null,null,"The SQLite post-trade reviews could not be read.");}
+    }
+
+    private async Task<IReadOnlyDictionary<string,PostTradeExecutionTrace>> ReadPostTradeTracesAsync(SqliteConnection connection,IReadOnlyList<string> cycleIds,bool queueAvailable,bool eventsAvailable,CancellationToken ct)
+    {
+        var result=new Dictionary<string,PostTradeExecutionTrace>(StringComparer.Ordinal);
+        if(cycleIds.Count==0)return result;
+        if(!queueAvailable)
+        {
+            foreach(var cycleId in cycleIds)result[cycleId]=new(SensitiveDataRedactor.MaskIdentifier(cycleId,"trade"),"legacy","Unavailable","Unavailable","trace.queue-unavailable",null,null,null);
+            return result;
+        }
+
+        var countsByCycle=new Dictionary<string,long>(StringComparer.Ordinal);
+        await using(var command=connection.CreateCommand())
+        {
+            var placeholders=AddListParameters(command,"cycleCount",cycleIds);
+            command.CommandText=$"SELECT correlation_id,COUNT(*) FROM automatic_execution_queue WHERE correlation_id IN ({placeholders}) GROUP BY correlation_id";
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var cycleId=reader.GetString(0);var count=reader.GetInt64(1);if(count<0)throw new InvalidOperationException("Execution correlation count is invalid.");
+                countsByCycle[cycleId]=count;
+            }
+        }
+
+        var uniqueCycles=cycleIds.Where(cycleId=>countsByCycle.GetValueOrDefault(cycleId)==1).ToArray();
+        var rowByCycle=new Dictionary<string,ExecutionTraceRow>(StringComparer.Ordinal);
+        if(uniqueCycles.Length>0)
+        {
+            await using var command=connection.CreateCommand();
+            var placeholders=AddListParameters(command,"cycleRow",uniqueCycles);
+            command.CommandText=$"SELECT correlation_id,execution_id,status,last_code,attempt_count,market_collected_at,market_data_version FROM automatic_execution_queue WHERE correlation_id IN ({placeholders})";
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var cycleId=reader.GetString(0);var attempts=reader.GetInt32(4);if(attempts<0)throw new InvalidOperationException("Execution attempt count is invalid.");
+                if(!rowByCycle.TryAdd(cycleId,new(reader.GetString(1),Safe(reader.GetString(2),40),Safe(reader.GetString(3),120),attempts,reader.IsDBNull(5)?null:Instant(reader.GetString(5)),Text(reader,6,80))))
+                    throw new InvalidOperationException("Execution correlation changed during the batch read.");
+            }
+        }
+
+        var uniqueExecutions=rowByCycle.Values.Select(row=>row.Id).Distinct(StringComparer.Ordinal).ToArray();
+        var riskByExecution=new Dictionary<string,(int Approved,int Blocked)>(StringComparer.Ordinal);
+        if(eventsAvailable&&uniqueExecutions.Length>0)
+        {
+            await using var command=connection.CreateCommand();
+            var placeholders=AddListParameters(command,"execution",uniqueExecutions);
+            command.CommandText=$"SELECT execution_id,to_status,COUNT(*) FROM automatic_execution_events WHERE execution_id IN ({placeholders}) AND to_status IN ('RiskApproved','RiskBlocked') GROUP BY execution_id,to_status";
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var executionId=reader.GetString(0);var count=reader.GetInt32(2);if(count<0)throw new InvalidOperationException("Risk event count is invalid.");
+                riskByExecution.TryGetValue(executionId,out var counts);
+                if(string.Equals(reader.GetString(1),"RiskApproved",StringComparison.Ordinal))counts.Approved+=count;
+                else if(string.Equals(reader.GetString(1),"RiskBlocked",StringComparison.Ordinal))counts.Blocked+=count;
+                riskByExecution[executionId]=counts;
+            }
+        }
+
+        foreach(var cycleId in cycleIds)
+        {
+            var traceId=SensitiveDataRedactor.MaskIdentifier(cycleId,"trade");
+            var count=countsByCycle.GetValueOrDefault(cycleId);
+            if(count==0)
+            {
+                result[cycleId]=new(traceId,"legacy","Unavailable","Unavailable","trace.execution-unavailable",null,null,null);
+                continue;
+            }
+            if(count!=1||!rowByCycle.TryGetValue(cycleId,out var row))
+            {
+                result[cycleId]=new(traceId,"ambiguous","Ambiguous","Ambiguous","trace.multiple-executions",null,null,null);
+                continue;
+            }
+            var risk="Unavailable";
+            if(eventsAvailable)
+            {
+                riskByExecution.TryGetValue(row.Id,out var counts);
+                risk=counts.Approved>0&&counts.Blocked==0?"Approved":counts.Blocked>0&&counts.Approved==0?"Blocked":counts.Approved==0&&counts.Blocked==0?"Unavailable":"Conflicting";
+            }
+            result[cycleId]=new(traceId,"available",risk,row.Status,row.Code,row.Attempts,row.MarketAt,row.MarketVersion);
+        }
+        return result;
+    }
+
+    private static readonly string[] EvidenceStages=["market","research","strategy","risk"];
+
+    private async Task<IReadOnlyDictionary<string,PostTradeEvidenceTrace>> ReadModelOffEvidenceBatchAsync(SqliteConnection connection,IReadOnlyList<string> cycleIds,bool tableAvailable,CancellationToken ct)
+    {
+        var result=new Dictionary<string,PostTradeEvidenceTrace>(StringComparer.Ordinal);
+        if(cycleIds.Count==0)return result;
+        if(!tableAvailable)
+        {
+            foreach(var cycleId in cycleIds)result[cycleId]=new("unavailable",[]);
+            return result;
+        }
+
+        var ambiguousCycles=new HashSet<string>(StringComparer.Ordinal);
+        await using(var command=connection.CreateCommand())
+        {
+            var placeholders=AddListParameters(command,"evidenceCount",cycleIds);
+            command.CommandText=$"SELECT cycle_id,output_kind,COUNT(*) FROM model_off_canonical_audits WHERE cycle_id IN ({placeholders}) AND output_kind IN ('market','research','strategy','risk') GROUP BY cycle_id,output_kind";
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var cycleId=reader.GetString(0);var stage=Safe(reader.GetString(1),20).ToLowerInvariant();var count=reader.GetInt64(2);
+                if(!EvidenceStages.Contains(stage,StringComparer.Ordinal)||count<0)throw new InvalidOperationException("Canonical evidence count is invalid.");
+                if(count!=1)ambiguousCycles.Add(cycleId);
+            }
+        }
+
+        var detailCycles=cycleIds.Where(cycleId=>!ambiguousCycles.Contains(cycleId)).ToArray();
+        var linksByCycle=new Dictionary<string,List<HistoricalEvidenceLinkV1>>(StringComparer.Ordinal);
+        var invalidCycles=new HashSet<string>(StringComparer.Ordinal);
+        if(detailCycles.Length>0)
+        {
+            await using var command=connection.CreateCommand();
+            var placeholders=AddListParameters(command,"evidenceRow",detailCycles);
+            command.CommandText=$"SELECT cycle_id,output_kind,status,canonical_sha256,as_of_utc,length(canonical_bytes),canonical_bytes FROM model_off_canonical_audits WHERE cycle_id IN ({placeholders}) AND output_kind IN ('market','research','strategy','risk') ORDER BY cycle_id,as_of_utc,output_kind";
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var cycleId=reader.GetString(0);if(invalidCycles.Contains(cycleId))continue;
+                var stage=Safe(reader.GetString(1),20).ToLowerInvariant();
+                if(!EvidenceStages.Contains(stage,StringComparer.Ordinal)){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                if(!linksByCycle.TryGetValue(cycleId,out var links)){links=[];linksByCycle[cycleId]=links;}
+                if(links.Any(link=>string.Equals(link.Stage,stage,StringComparison.Ordinal))){ambiguousCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                var status=Safe(reader.GetString(2),40);
+                var hash=Hash(reader.GetString(3)).ToLowerInvariant();
+                if(reader.IsDBNull(5)){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                var byteLength=reader.GetInt64(5);
+                if(byteLength is <=0 or >262144){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                if(reader.IsDBNull(6)){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                var bytes=(byte[])reader[6];
+                if(bytes.LongLength!=byteLength){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                var computed=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                if(!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(hash),Convert.FromHexString(computed))){invalidCycles.Add(cycleId);linksByCycle.Remove(cycleId);continue;}
+                links.Add(new(stage,status,hash,Instant(reader.GetString(4))));
+            }
+        }
+
+        foreach(var cycleId in cycleIds)
+        {
+            if(ambiguousCycles.Contains(cycleId)){result[cycleId]=new("ambiguous",[]);continue;}
+            if(invalidCycles.Contains(cycleId)){result[cycleId]=new("invalid",[]);continue;}
+            if(!linksByCycle.TryGetValue(cycleId,out var links)||links.Count==0){result[cycleId]=new("legacy",[]);continue;}
+            var ordered=EvidenceStages.Select(stage=>links.SingleOrDefault(link=>link.Stage==stage)).Where(link=>link is not null).Cast<HistoricalEvidenceLinkV1>().ToArray();
+            result[cycleId]=new(ordered.Length==EvidenceStages.Length?"available":"partial",ordered);
+        }
+        return result;
+    }
+
+    private static string AddListParameters(SqliteCommand command,string prefix,IReadOnlyList<string> values)
+    {
+        if(values.Count==0)throw new ArgumentException("At least one value is required.",nameof(values));
+        var names=new string[values.Count];
+        for(var i=0;i<values.Count;i++){names[i]="$"+prefix+i.ToString(CultureInfo.InvariantCulture);command.Parameters.AddWithValue(names[i],values[i]);}
+        return string.Join(",",names);
+    }
+
+    public async Task<HistoricalCollectionPageV1<HistoricalReconciliationV1>> ReadReconciliationsAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var kind=HistoricalCollectionKindV1.Reconciliations;
+        var limit=Math.Clamp(request.Limit,1,HistoricalCollectionPageV1<HistoricalReconciliationV1>.MaximumPageSize);
+        try
+        {
+            await using var connection=new SqliteConnection(_connectionString);await connection.OpenAsync(ct);
+            var versionBefore=await CollectionVersionAsync(connection,ReconciliationVersionSources,ct);
+            if(!TryOffset(kind,request.Cursor,versionBefore,out var offset))return Page<HistoricalReconciliationV1>(kind,RuntimeCollectionState.Error,[],null,null,"The collection cursor is invalid, expired, or belongs to a different collection version.");
+            var sources=new List<(string Kind,string Table)>();
+            foreach(var source in new[]{("position","position_reconciliation_audits"),("protection","protection_reconciliation_audits"),("externalIsolation","external_position_isolation_audits")})
+                if(await TableExists(connection,source.Item2,ct))sources.Add(source);
+            if(sources.Count==0)return Page<HistoricalReconciliationV1>(kind,RuntimeCollectionState.Unsupported,[],null,null,"The SQLite reconciliation audit collections are not available.");
+
+            DateTimeOffset? updatedAt=null;
+            foreach(var source in sources)
+            {
+                var latest=await Latest(connection,source.Table,"evaluated_at",ct);
+                if(latest is not null&&(updatedAt is null||latest.Value>updatedAt.Value))updatedAt=latest;
+            }
+
+            var union=string.Join(" UNION ALL ",sources.Select(source=>$"SELECT '{source.Kind}' AS kind,report_id,schema,observed_at,evaluated_at,state,allows_risk_increase,canonical_sha256,length(canonical_bytes) AS canonical_length,canonical_bytes FROM {source.Table}"));
+            var items=new List<HistoricalReconciliationV1>(limit+1);
+            await using var command=connection.CreateCommand();
+            command.CommandText=$"SELECT kind,report_id,schema,observed_at,evaluated_at,state,allows_risk_increase,canonical_sha256,canonical_length,canonical_bytes FROM ({union}) ORDER BY evaluated_at DESC,report_id DESC LIMIT $limit OFFSET $offset";
+            command.Parameters.AddWithValue("$limit",limit+1);command.Parameters.AddWithValue("$offset",offset);
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            while(await reader.ReadAsync(ct))
+            {
+                var allows=reader.GetInt32(6);
+                if(allows is not 0 and not 1)throw new InvalidOperationException("Reconciliation risk flag is invalid.");
+                var hash=Hash(reader.GetString(7)).ToLowerInvariant();
+                if(reader.IsDBNull(8)||reader.IsDBNull(9))throw new InvalidOperationException("Reconciliation canonical payload is unavailable.");
+                var byteLength=reader.GetInt64(8);
+                if(byteLength is <=0 or >262144)throw new InvalidOperationException("Reconciliation canonical payload size is invalid.");
+                var bytes=(byte[])reader[9];
+                if(bytes.LongLength!=byteLength)throw new InvalidOperationException("Reconciliation canonical payload length is inconsistent.");
+                var computed=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                if(!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(hash),Convert.FromHexString(computed)))throw new InvalidOperationException("Reconciliation canonical payload hash mismatch.");
+                items.Add(new(
+                    Safe(reader.GetString(0),40),
+                    SensitiveDataRedactor.MaskIdentifier(reader.GetString(1),"reconciliation"),
+                    Safe(reader.GetString(2),120),
+                    Instant(reader.GetString(3)),
+                    Instant(reader.GetString(4)),
+                    Safe(reader.GetString(5),40),
+                    allows==1,
+                    hash));
+            }
+            var hasMore=items.Count>limit;if(hasMore)items.RemoveAt(items.Count-1);
+            var versionAfter=await CollectionVersionAsync(connection,ReconciliationVersionSources,ct);
+            if(!string.Equals(versionBefore,versionAfter,StringComparison.Ordinal))return Page<HistoricalReconciliationV1>(kind,RuntimeCollectionState.Error,[],null,null,"The historical collection changed during the read.");
+            return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count,versionBefore):null,updatedAt,null);
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch{return Page<HistoricalReconciliationV1>(kind,RuntimeCollectionState.Error,[],null,null,"The SQLite reconciliation audits could not be read.");}
+    }
+
+    private async Task<HistoricalCollectionPageV1<T>> ReadAsync<T>(HistoricalCollectionKindV1 kind, HistoricalCollectionRequestV1 request, string table, string timestampColumn, TimeSpan? staleAfter, string sql, Func<SqliteDataReader,T> map, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var limit=Math.Clamp(request.Limit,1,HistoricalCollectionPageV1<T>.MaximumPageSize);
+        try
+        {
+            await using var connection=new SqliteConnection(_connectionString);await connection.OpenAsync(ct);
+            var versionSources=new[]{(Table:table,Timestamp:timestampColumn)};
+            var versionBefore=await CollectionVersionAsync(connection,versionSources,ct);
+            if(!TryOffset(kind,request.Cursor,versionBefore,out var offset)) return Page<T>(kind,RuntimeCollectionState.Error,[],null,null,"The collection cursor is invalid, expired, or belongs to a different collection version.");
             if(!await TableExists(connection,table,ct)) return Page<T>(kind,RuntimeCollectionState.Unsupported,[],null,null,"The SQLite collection is not available.");
             var updatedAt=await Latest(connection,table,timestampColumn,ct);
-            if(updatedAt is not null&&_utcNow()-updatedAt>staleAfter) return Page<T>(kind,RuntimeCollectionState.Stale,[],null,updatedAt,"The persisted collection is stale.");
+            if(staleAfter is not null&&updatedAt is not null&&_utcNow()-updatedAt>staleAfter.Value) return Page<T>(kind,RuntimeCollectionState.Stale,[],null,updatedAt,"The persisted collection is stale.");
             var items=new List<T>(limit+1);await using var command=connection.CreateCommand();command.CommandText=sql;command.Parameters.AddWithValue("$limit",limit+1);command.Parameters.AddWithValue("$offset",offset);
             await using var reader=await command.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct))items.Add(map(reader));
             var hasMore=items.Count>limit;if(hasMore)items.RemoveAt(items.Count-1);
-            return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count):null,updatedAt,null);
+            var versionAfter=await CollectionVersionAsync(connection,versionSources,ct);
+            if(!string.Equals(versionBefore,versionAfter,StringComparison.Ordinal))return Page<T>(kind,RuntimeCollectionState.Error,[],null,null,"The historical collection changed during the read.");
+            return Page(kind,RuntimeCollectionState.Available,items,hasMore?Cursor(kind,offset+items.Count,versionBefore):null,updatedAt,null);
         }
         catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
         catch{return Page<T>(kind,RuntimeCollectionState.Error,[],null,null,"The SQLite collection could not be read.");}
@@ -71,14 +448,31 @@ public sealed class RuntimeHistoricalCollectionStateStore
     private static HistoricalCollectionPageV1<T> Page<T>(HistoricalCollectionKindV1 kind,RuntimeCollectionState state,IReadOnlyList<T> items,string? cursor,DateTimeOffset? updated,string? message)=>new(HistoricalCollectionPageV1<T>.CurrentContractVersion,kind,state,items,cursor,updated,SourceName,message);
     private static async Task<bool> TableExists(SqliteConnection c,string table,CancellationToken ct){await using var q=c.CreateCommand();q.CommandText="SELECT 1 FROM sqlite_master WHERE type='table' AND name=$name";q.Parameters.AddWithValue("$name",table);return await q.ExecuteScalarAsync(ct) is not null;}
     private static async Task<DateTimeOffset?> Latest(SqliteConnection c,string table,string column,CancellationToken ct){await using var q=c.CreateCommand();q.CommandText=$"SELECT MAX({column}) FROM {table}";var value=await q.ExecuteScalarAsync(ct);return value is null||value is DBNull?null:Instant(Convert.ToString(value,CultureInfo.InvariantCulture)!);}
-    private string Cursor(HistoricalCollectionKindV1 kind,int offset)
+    private static async Task<string> CollectionVersionAsync(SqliteConnection connection,IReadOnlyList<(string Table,string Timestamp)> sources,CancellationToken ct)
+    {
+        var parts=new string[sources.Count];
+        for(var i=0;i<sources.Count;i++)
+        {
+            var source=sources[i];
+            if(!await TableExists(connection,source.Table,ct)){parts[i]=source.Table+"=missing";continue;}
+            await using var command=connection.CreateCommand();
+            command.CommandText=$"SELECT COALESCE(MAX(rowid),0),COALESCE(MAX({source.Timestamp}),'') FROM {source.Table}";
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            if(!await reader.ReadAsync(ct))throw new InvalidOperationException("Historical collection version could not be read.");
+            parts[i]=$"{source.Table}={reader.GetInt64(0).ToString(CultureInfo.InvariantCulture)}:{reader.GetString(1)}";
+        }
+        return string.Join("|",parts);
+    }
+
+    private string Cursor(HistoricalCollectionKindV1 kind,int offset,string collectionVersion)
     {
         var expiresAt=_utcNow().Add(HistoricalCollectionRequestV1.CursorLifetime).ToUnixTimeSeconds();
-        var payload=Encoding.UTF8.GetBytes($"v1:{kind}:{offset}:{expiresAt}");
+        var versionHash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(collectionVersion)));
+        var payload=Encoding.UTF8.GetBytes($"v2:{kind}:{offset}:{expiresAt}:{versionHash}");
         var signature=HMACSHA256.HashData(_cursorKey,payload);
         return Convert.ToBase64String(payload)+"."+Convert.ToBase64String(signature);
     }
-    private bool TryOffset(HistoricalCollectionKindV1 kind,string? cursor,out int offset)
+    private bool TryOffset(HistoricalCollectionKindV1 kind,string? cursor,string collectionVersion,out int offset)
     {
         offset=0;if(string.IsNullOrWhiteSpace(cursor))return true;
         try
@@ -88,16 +482,31 @@ public sealed class RuntimeHistoricalCollectionStateStore
             if(!string.Equals(Convert.ToBase64String(payload),segments[0],StringComparison.Ordinal)||!string.Equals(Convert.ToBase64String(supplied),segments[1],StringComparison.Ordinal))return false;
             var expected=HMACSHA256.HashData(_cursorKey,payload);if(!CryptographicOperations.FixedTimeEquals(expected,supplied))return false;
             var parts=Encoding.UTF8.GetString(payload).Split(':');
-            return parts.Length==4&&parts[0]=="v1"&&parts[1]==kind.ToString()
+            if(parts.Length!=5||parts[0]!="v2"||parts[1]!=kind.ToString())return false;
+            var suppliedVersion=Convert.FromHexString(Hash(parts[4]));
+            var expectedVersion=SHA256.HashData(Encoding.UTF8.GetBytes(collectionVersion));
+            return CryptographicOperations.FixedTimeEquals(suppliedVersion,expectedVersion)
                 &&int.TryParse(parts[2],NumberStyles.None,CultureInfo.InvariantCulture,out offset)&&offset>=0&&offset<=1_000_000
                 &&long.TryParse(parts[3],NumberStyles.None,CultureInfo.InvariantCulture,out var expiresAt)&&expiresAt>_utcNow().ToUnixTimeSeconds();
         }
         catch{return false;}
     }
+    private sealed record RawPostTradeReview(
+        string CycleId,string Symbol,string Side,decimal EntryPrice,decimal ExitPrice,decimal Quantity,decimal Fees,string FeeBasis,decimal FeeRate,
+        decimal EntrySlippageAmount,decimal ExitSlippageAmount,decimal TotalSlippageAmount,string SlippageBasis,decimal FundingAmount,string FundingBasis,
+        decimal NetPnl,decimal ReturnPct,string Outcome,DateTimeOffset ClosedAtUtc,string? StrategyId,string StrategyVersion,string AttributionBasis);
+    private sealed record ExecutionTraceRow(string Id,string Status,string Code,int Attempts,DateTimeOffset? MarketAt,string? MarketVersion);
+    private sealed record PostTradeExecutionTrace(
+        string TraceId,string TraceState,string RiskDecision,string ExecutionStatus,string ExecutionCode,int? ExecutionAttempts,DateTimeOffset? MarketCollectedAtUtc,string? MarketDataVersion);
+
+    private sealed record PostTradeEvidenceTrace(string State,IReadOnlyList<HistoricalEvidenceLinkV1> Chain);
+
     private static DateTimeOffset Instant(string value)=>DateTimeOffset.Parse(value,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind).ToUniversalTime();
     private static decimal Decimal(SqliteDataReader r,int i)=>decimal.Parse(r.GetString(i),NumberStyles.Number,CultureInfo.InvariantCulture);
     private static decimal? NullableDecimal(SqliteDataReader r,int i)=>r.IsDBNull(i)?null:Decimal(r,i);
+    private static string Hash(string value)=>Regex.IsMatch(value,"^[A-Fa-f0-9]{64}$",RegexOptions.CultureInvariant)?value:throw new InvalidOperationException("Historical hash is invalid.");
     private static string? Text(SqliteDataReader r,int i,int max=120)=>r.IsDBNull(i)?null:Safe(r.GetString(i),max);
+    private static string? Masked(SqliteDataReader r,int i,string prefix)=>r.IsDBNull(i)?null:SensitiveDataRedactor.MaskIdentifier(r.GetString(i),prefix);
     private static string Safe(string value,int max)
     {
         var singleLine=value.Replace('\r',' ').Replace('\n',' ').Trim();

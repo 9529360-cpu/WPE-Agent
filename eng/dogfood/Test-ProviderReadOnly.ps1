@@ -79,6 +79,19 @@ function Convert-StrictUtc([object]$Value) {
     $parsed
 }
 
+function Convert-ProviderFixtureJson([string]$Raw) {
+    $convert = Get-Command ConvertFrom-Json
+    if ($convert.Parameters.ContainsKey('DateKind')) { return ($Raw | ConvertFrom-Json -DateKind String) }
+    $fixture = $Raw | ConvertFrom-Json
+    foreach ($name in @('sourceTimestampUtc','observedTimestampUtc')) {
+        $property = $fixture.PSObject.Properties[$name]
+        if ($null -eq $property -or ($property.Value -isnot [DateTime] -and $property.Value -isnot [DateTimeOffset])) { continue }
+        $match = [regex]::Match($Raw, '"' + [regex]::Escape($name) + '"\s*:\s*"(?<value>[^"\\]*)"')
+        if ($match.Success) { $fixture.$name = $match.Groups['value'].Value }
+    }
+    $fixture
+}
+
 function Invoke-ProviderReadOnlyPreflight {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
@@ -93,7 +106,7 @@ function Invoke-ProviderReadOnlyPreflight {
         if ($raw -match '(?i)"(api.?key|secret|signature|account.?id|user.?id|email|phone|private.?key|token)"\s*:') {
             return New-ProviderReadOnlyResult $false -DiagnosticCode 'provider.fixture.sensitive-fields'
         }
-        $fixture = $raw | ConvertFrom-Json
+        $fixture = Convert-ProviderFixtureJson $raw
         if ($fixture.schemaVersion -isnot [string] -or $fixture.schemaVersion -cne $script:FixtureSchema) { return New-ProviderReadOnlyResult $false -DiagnosticCode 'provider.fixture.schema-unsupported' }
         if (-not (Test-CanonicalFixture $fixture)) { return New-ProviderReadOnlyResult $false -DiagnosticCode 'provider.fixture.noncanonical' }
         $canonicalEnvironments = @('Testnet','Sandbox','PublicReadOnly','Mainnet')

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using WpeAgent.RuntimeContracts;
 using WpeAgent.RuntimeServices;
 using 币安量化机器人.Core.Models;
 using 币安量化机器人.Services.Access;
@@ -51,6 +52,31 @@ public sealed class DesktopRuntimeHost : IAsyncDisposable
     }
 
     public string BuildRuntimeJson() => Volatile.Read(ref _runtimeJson);
+
+    public async Task<string> BuildHistoricalPageResponseJsonAsync(string requestId,HistoricalCollectionKindV1 kind,string cursor)
+    {
+        object page;
+        try
+        {
+            page=await ServiceLocator.RuntimeHistoricalCollections.ReadPageAsync(kind,cursor,CancellationToken.None);
+        }
+        catch(Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"WPE historical page read failed: {ex.GetType().Name}");
+            page=new
+            {
+                contractVersion=HistoricalCollectionPageV1<HistoricalOrderV1>.CurrentContractVersion,
+                kind,
+                state=RuntimeCollectionState.Error,
+                items=Array.Empty<object>(),
+                nextCursor=(string?)null,
+                sourceUpdatedAtUtc=(DateTimeOffset?)null,
+                source="local-agent-sqlite",
+                message="Historical page read failed."
+            };
+        }
+        return JsonSerializer.Serialize(new{contractVersion="1.0",requestId,kind,page},SnapshotJsonOptions);
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -135,7 +161,8 @@ public sealed class DesktopRuntimeHost : IAsyncDisposable
             ServiceLocator.RuntimeCrossAssetResearch.Read(),
             ServiceLocator.RuntimeDistribution.Read(),
             ServiceLocator.PublicMarket.Read(),
-            ServiceLocator.SecurityStorage.Read());
+            ServiceLocator.SecurityStorage.Read(),
+            brokerState: ServiceLocator.RuntimeEquityBroker.Read());
 
         Volatile.Write(ref _runtimeJson, SerializeSnapshot(snapshot));
     }

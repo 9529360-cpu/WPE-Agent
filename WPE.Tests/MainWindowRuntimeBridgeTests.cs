@@ -14,6 +14,18 @@ public sealed class DesktopRuntimeHostTests
     }
 
     [Fact]
+    public void HistoricalPageQueryUsesExistingReadOnlyHistoryStore()
+    {
+        var method=Method("public async Task<string> BuildHistoricalPageResponseJsonAsync(","public async ValueTask DisposeAsync()");
+        Assert.Contains("ServiceLocator.RuntimeHistoricalCollections.ReadPageAsync",method,StringComparison.Ordinal);
+        Assert.Contains("RuntimeCollectionState.Error",method,StringComparison.Ordinal);
+        Assert.DoesNotContain("AutoTradingAgent",method,StringComparison.Ordinal);
+        Assert.DoesNotContain("SubmitOrder",method,StringComparison.Ordinal);
+        Assert.DoesNotContain("CancelOrder",method,StringComparison.Ordinal);
+        Assert.DoesNotContain("CancelAsync",method,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SnapshotPump_RunsOffTheCallerThreadAndRefreshesSerially()
     {
         var source = Source();
@@ -89,7 +101,17 @@ public sealed class DesktopRuntimeHostTests
         var method = RefreshRuntimeSnapshotMethod();
         Assert.Equal(1, Count(method, "ServiceLocator.RuntimeDistribution.Read()"));
         var normalized = string.Join(" ", method.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-        Assert.Contains("ServiceLocator.RuntimeCrossAssetResearch.Read(), ServiceLocator.RuntimeDistribution.Read(), ServiceLocator.PublicMarket.Read(), ServiceLocator.SecurityStorage.Read());", normalized, StringComparison.Ordinal);
+        Assert.Contains("ServiceLocator.RuntimeCrossAssetResearch.Read(), ServiceLocator.RuntimeDistribution.Read(), ServiceLocator.PublicMarket.Read(), ServiceLocator.SecurityStorage.Read(), brokerState: ServiceLocator.RuntimeEquityBroker.Read());", normalized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SnapshotPump_PassesReadOnlyEquityBrokerCapabilityWithoutProbing()
+    {
+        var method = RefreshRuntimeSnapshotMethod();
+        Assert.Equal(1, Count(method, "ServiceLocator.RuntimeEquityBroker.Read()"));
+        Assert.DoesNotContain("ProbeCapabilitiesAsync", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("SubmitOrderAsync", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("CancelOrderAsync", method, StringComparison.Ordinal);
     }
 
     [Fact]
