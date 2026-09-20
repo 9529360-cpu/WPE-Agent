@@ -90,8 +90,12 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
             .OrderByDescending(x=>x.Stage==TradeHypothesisStage.Confirmed)
             .ThenByDescending(x=>x.Stage==TradeHypothesisStage.ScoutReady)
             .ThenByDescending(x=>string.Equals(x.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal))
-            .ThenByDescending(x=>x.Revision)
-            .ThenByDescending(x=>x.UpdatedAtUtc)
+            .ThenByDescending(x=>string.Equals(x.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal)
+                ?x.LastStructureEvidenceAtUtc
+                :x.UpdatedAtUtc)
+            .ThenByDescending(x=>string.Equals(x.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal)
+                ?0
+                :x.Revision)
             .ThenBy(x=>x.Symbol,StringComparer.Ordinal)
             .ToArray();
 
