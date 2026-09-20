@@ -79,7 +79,7 @@ public sealed class PositionReconciliationTests : IDisposable
 
         Assert.Equal(1,second);
         Assert.NotNull(await store.GetStateAsync(revocationKey,default));
-        Assert.True(await 币安量化机器人.Services.AutoTradingAgent.HasRevokedManagedPositionOwnershipAsync(
+        Assert.True(await 币安量化机器人.Services.AutoTradingAgent.HasUntrustedManagedPositionOwnershipAsync(
             store,[Position("BTCUSDT",PositionSide.Long,1m)],default));
         Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
             store,local,[],secondAt.AddSeconds(6),secondAt.AddSeconds(6),default));
@@ -106,7 +106,7 @@ public sealed class PositionReconciliationTests : IDisposable
             store,local,[Position("BTCUSDT",PositionSide.Long,1m)],recoveredAt,recoveredAt,default));
         Assert.Equal(candidate,await store.GetStateAsync(candidateKey,default));
         Assert.Null(await store.GetStateAsync(revocationKey,default));
-        Assert.True(await 币安量化机器人.Services.AutoTradingAgent.HasRevokedManagedPositionOwnershipAsync(
+        Assert.True(await 币安量化机器人.Services.AutoTradingAgent.HasUntrustedManagedPositionOwnershipAsync(
             store,[Position("BTCUSDT",PositionSide.Long,1m)],default));
 
         var missingAgainAt=Now.AddSeconds(10);
