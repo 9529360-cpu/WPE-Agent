@@ -801,6 +801,15 @@ public sealed partial class AgentSqliteStore
     {
         if(string.IsNullOrWhiteSpace(clientOrderId))return false;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT 1 FROM execution_events WHERE client_order_id=$id LIMIT 1";q.Parameters.AddWithValue("$id",clientOrderId);return await q.ExecuteScalarAsync(ct) is not null;
     }
+    public async Task<DateTimeOffset?> GetExecutionEventOccurredAtAsync(string clientOrderId,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(clientOrderId))return null;
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="SELECT occurred_at FROM execution_events WHERE client_order_id=$id LIMIT 1";q.Parameters.AddWithValue("$id",clientOrderId);
+        var value=await q.ExecuteScalarAsync(ct);
+        if(value is null||value is DBNull||!DateTimeOffset.TryParse(Convert.ToString(value,CultureInfo.InvariantCulture),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var occurredAtUtc))return null;
+        return occurredAtUtc.ToUniversalTime();
+    }
     public async Task<IReadOnlyList<PersistedIntent>> GetLegacyIntentIsolationCandidatesAsync(CancellationToken ct)
     {
         var list=new List<PersistedIntent>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT cycle_id,status,exchange_order_id,details FROM order_intents WHERE status='INTENT' ORDER BY updated_at,client_order_id";await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){try{var intent=JsonSerializer.Deserialize<ExecutionIntent>(r.GetString(3));if(intent is not null)list.Add(new(r.IsDBNull(0)?"LEGACY":r.GetString(0),intent,"INTENT",r.IsDBNull(2)?null:r.GetValue(2).ToString()));}catch(JsonException){}}return list;
