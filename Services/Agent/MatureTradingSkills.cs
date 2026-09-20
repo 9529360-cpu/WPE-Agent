@@ -186,18 +186,20 @@ public sealed class PositionManagementSkill
                hypotheses.TryGetValue(position.Symbol,out var hypothesis) &&
                StructureHypothesisInvalidated(position,hypothesis))
             {
-                intents.Add(new(
-                    position.Symbol,
-                    position.Side,
-                    position.Quantity,
-                    true,
-                    0,
-                    0,
-                    Id("STRUCT"),
-                    L("Position.StructureInvalidated"),
-                    position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
-                    ExpectedPrice:market.Price,
-                    ReasonCode:PositionExitReasonCodes.StructureInvalidated));
+                var actionId=ActionId("STRUCT",opening);
+                if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
+                    intents.Add(new(
+                        position.Symbol,
+                        position.Side,
+                        position.Quantity,
+                        true,
+                        0,
+                        0,
+                        actionId,
+                        L("Position.StructureInvalidated"),
+                        position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
+                        ExpectedPrice:market.Price,
+                        ReasonCode:PositionExitReasonCodes.StructureInvalidated));
                 notes.Add($"structure-invalidated:{position.Symbol}:{position.Side}:{hypothesis.Id}:{hypothesis.Revision}");
                 continue;
             }
@@ -210,25 +212,27 @@ public sealed class PositionManagementSkill
                 :1;
             if(liquidationBuffer<.30)
             {
-                intents.Add(new(
-                    position.Symbol,position.Side,position.Quantity,true,0,0,Id("LIQ"),
-                    L("Position.LiquidationBuffer"),
-                    position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
-                    ExpectedPrice:market.Price,
-                    ReasonCode:PositionExitReasonCodes.LiquidationBuffer));
+                var actionId=ActionId("LIQ",opening);
+                if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
+                    intents.Add(new(
+                        position.Symbol,position.Side,position.Quantity,true,0,0,actionId,
+                        L("Position.LiquidationBuffer"),
+                        position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
+                        ExpectedPrice:market.Price,
+                        ReasonCode:PositionExitReasonCodes.LiquidationBuffer));
                 continue;
             }
 
-            var partialKey=$"partial-2r:{position.Symbol}:{position.Side}";
-            if(favorable>=2&&!await db.HasStateAsync(partialKey,ct))
+            var partialId=ActionId("TP2",opening);
+            if(favorable>=2&&await db.GetOrderIntentStatusAsync(partialId,ct) is null)
             {
                 intents.Add(new(
-                    position.Symbol,position.Side,position.Quantity*.5m,true,0,0,Id("TP2"),
+                    position.Symbol,position.Side,position.Quantity*.5m,true,0,0,partialId,
                     L("Position.PartialTake"),
                     position.Side==PositionSide.Long?DecisionAction.ReduceLong:DecisionAction.ReduceShort,
                     ExpectedPrice:market.Price,
                     ReasonCode:PositionExitReasonCodes.PartialTakeProfit2R));
-                notes.Add(partialKey);
+                notes.Add($"partial-2r:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
             }
 
             var trailKey=$"breakeven:{position.Symbol}:{position.Side}";
@@ -249,6 +253,11 @@ public sealed class PositionManagementSkill
         return position.Side==PositionSide.Long?hypothesis.Direction>0:hypothesis.Direction<0;
     }
 
+    private static string ActionId(string tag,ExecutionIntent opening)
+    {
+        var hash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{opening.ClientOrderId}\u001f{tag}"))).ToLowerInvariant();
+        return $"WPE-PM-{tag}-{hash[..20]}";
+    }
     private static string Id(string tag){var raw=$"WPE-PM-{tag}-{DateTime.UtcNow:HHmmss}-{Guid.NewGuid():N}";return raw[..Math.Min(36,raw.Length)];}
     private static string L(string key)=>LocalizationService.Current.T(key);
 }
