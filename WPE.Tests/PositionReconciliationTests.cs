@@ -57,6 +57,45 @@ public sealed class PositionReconciliationTests : IDisposable
     }
 
     [Fact]
+    public async Task PersistentQuantityMismatchQuarantinesOpeningAndCannotRecaptureOnExactQuantity()
+    {
+        var clock=Now.AddMinutes(-1);
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var opening=Intent("open-ownership-mismatch",false,1m);
+        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m,clock),"v1",default);
+        clock=Now;
+        await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
+        var local=new[]{new ExecutionPositionLegV1("BTCUSDT",PositionSide.Long,1m)};
+        var candidateKey=PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId);
+
+        var quarantined=await 币安量化机器人.Services.AutoTradingAgent.QuarantineConflictingManagedPositionOwnershipAsync(
+            store,local,[Position("BTCUSDT",PositionSide.Long,.6m)],Now,Now,default);
+
+        Assert.Equal(1,quarantined);
+        Assert.NotNull(await store.GetStateAsync(candidateKey,default));
+        Assert.True(await 币安量化机器人.Services.AutoTradingAgent.HasUntrustedManagedPositionOwnershipAsync(
+            store,[Position("BTCUSDT",PositionSide.Long,1m)],default));
+    }
+
+    [Fact]
+    public async Task RecentWpeMutationGetsSettlementGraceBeforeQuantityConflictQuarantine()
+    {
+        var clock=Now;
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var opening=Intent("open-ownership-mismatch-grace",false,1m);
+        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m,clock),"v1",default);
+        await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
+        var candidateKey=PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId);
+        var observedAt=Now.AddSeconds(5);
+
+        var quarantined=await 币安量化机器人.Services.AutoTradingAgent.QuarantineConflictingManagedPositionOwnershipAsync(
+            store,[new("BTCUSDT",PositionSide.Long,1m)],[Position("BTCUSDT",PositionSide.Long,.6m)],observedAt,observedAt,default);
+
+        Assert.Equal(0,quarantined);
+        Assert.Null(await store.GetStateAsync(candidateKey,default));
+    }
+
+    [Fact]
     public async Task MissingManagedLegRequiresRepeatedFreshEvidenceBeforeRevocation()
     {
         var clock=Now.AddMinutes(-1);
@@ -273,7 +312,7 @@ public sealed class PositionReconciliationTests : IDisposable
     [Fact]
     public void ProductionRiskIncreaseGateConsumesPositionReconciliation()
     {
-        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("PositionReconciliationServiceV1.Reconcile",source,StringComparison.Ordinal);Assert.Contains("&&positionReconciliation.AllowsRiskIncrease",source,StringComparison.Ordinal);Assert.Contains("ExecutePositionManagementRecoveryAsync",source,StringComparison.Ordinal);Assert.Contains("ApplyPositionMutationInvalidation",source,StringComparison.Ordinal);Assert.Contains("position.reconciliation-invalidated-by-recovery",source,StringComparison.Ordinal);
+        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("PositionReconciliationServiceV1.Reconcile",source,StringComparison.Ordinal);Assert.Contains("&&positionReconciliation.AllowsRiskIncrease",source,StringComparison.Ordinal);Assert.Contains("QuarantineConflictingManagedPositionOwnershipAsync",source,StringComparison.Ordinal);Assert.Contains("ExecutePositionManagementRecoveryAsync",source,StringComparison.Ordinal);Assert.Contains("ApplyPositionMutationInvalidation",source,StringComparison.Ordinal);Assert.Contains("position.reconciliation-invalidated-by-recovery",source,StringComparison.Ordinal);
     }
 
     [Fact]
