@@ -165,6 +165,7 @@ public static class PositionManagementDurableState
 {
     public static string ProtectionAdjustmentKey(string adjustmentId)=>"position-protection:"+adjustmentId;
     public static string OwnershipRevocationKey(string openingClientOrderId)=>"position-ownership-revoked:"+openingClientOrderId;
+    public static string OwnershipMissingCandidateKey(string openingClientOrderId)=>"position-ownership-missing-candidate:"+openingClientOrderId;
 }
 
 public sealed record ProtectionAdjustment(string Symbol,PositionSide Side,decimal StopLoss,decimal TakeProfit,string Reason,string? AdjustmentId=null);
