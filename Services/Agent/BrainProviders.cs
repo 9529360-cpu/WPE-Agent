@@ -132,7 +132,7 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
             MissingConditions=selected is {Actionable:false}?[selected.Trigger]:[],
             ConflictSummary=selected is null
                 ?"no active market hypothesis"
-                :$"hypothesis={selected.Kind}; stage={selected.Stage}; revision={selected.Revision}; legacy_score={assessment?.NetScore:F3}; legacy_conflict={assessment?.ConflictRatio:F3}",
+                :$"hypothesis={selected.Kind}; stage={selected.Stage}; revision={selected.Revision}; basis={selected.DecisionBasis}",
             StrategyVersion=selected?.Version??TradeHypothesis.CurrentVersion,
             DecisionContextKind=selected is null?"market-observation":TradeHypothesisEngine.DecisionContextKind,
             DecisionContextId=selected?.Id??string.Empty,
@@ -151,7 +151,8 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
             decision.HypothesisStage,
             decision.RiskBudgetMultiplier,
             hypothesis=selected,
-            legacyAssessment=assessment is null?null:new
+            marketStructureBasis=selected?.DecisionBasis,
+            legacyObservation=assessment is null?null:new
             {
                 assessment.NetScore,
                 assessment.Confidence,
