@@ -778,6 +778,21 @@ public sealed partial class AgentSqliteStore
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT details FROM order_intents WHERE symbol=$s AND side=$side AND status IN ('PROTECTED','PROTECTED_PARTIAL','PARTIALLY_FILLED_PROTECTED') ORDER BY updated_at DESC LIMIT 20";q.Parameters.AddWithValue("$s",symbol);q.Parameters.AddWithValue("$side",side.ToString());
         await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var intent=JsonSerializer.Deserialize<ExecutionIntent>(r.GetString(0));if(intent is{ReduceOnly:false,StopLoss:>0,TakeProfit:>0})return intent;}return null;
     }
+    public async Task<ExecutionIntent?> GetLatestOpeningIntentAsync(string symbol,PositionSide side,DateTimeOffset asOfUtc,CancellationToken ct)
+    {
+        asOfUtc=asOfUtc.ToUniversalTime();
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="SELECT oi.details,ee.occurred_at FROM order_intents oi JOIN execution_events ee ON ee.client_order_id=oi.client_order_id WHERE oi.symbol=$s AND oi.side=$side AND oi.status IN ('PROTECTED','PROTECTED_PARTIAL','PARTIALLY_FILLED_PROTECTED') AND ee.reduce_only=0 AND ee.status IN ('FILLED','PARTIALLY_FILLED') ORDER BY ee.id DESC LIMIT 50";
+        q.Parameters.AddWithValue("$s",symbol);q.Parameters.AddWithValue("$side",side.ToString());
+        await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))
+        {
+            if(!DateTimeOffset.TryParse(r.GetString(1),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var occurredAtUtc))throw new InvalidOperationException("Execution opening timestamp is invalid.");
+            if(occurredAtUtc.ToUniversalTime()>asOfUtc)continue;
+            var intent=JsonSerializer.Deserialize<ExecutionIntent>(r.GetString(0));
+            if(intent is{ReduceOnly:false,StopLoss:>0,TakeProfit:>0})return intent;
+        }
+        return null;
+    }
     public async Task<string?> GetOrderIntentStatusAsync(string clientOrderId,CancellationToken ct)
     {
         if(string.IsNullOrWhiteSpace(clientOrderId))return null;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT status FROM order_intents WHERE client_order_id=$id";q.Parameters.AddWithValue("$id",clientOrderId);return (await q.ExecuteScalarAsync(ct))?.ToString();
@@ -1024,9 +1039,90 @@ public sealed partial class AgentSqliteStore
         if(!inserted){await EnsureIdenticalTradeOutcomeAsync(c,intent.ClientOrderId,cycle,intent.Symbol,intent.Side.ToString(),entry.Value,price,quantity,fees,slippage,intent.ExpectedPrice,funding,net,ret,excursion,exitReason,attribution.StrategyVersion,ct);return;}
         var outcome=net>0?"win":net<0?"loss":"flat";await SaveMemoryAsync(new("long-term",closedAt.UtcDateTime,intent.Symbol,null,attribution.StrategyId??attribution.StrategyVersion,outcome,"post-trade",$"schema=wpe.post-trade-review/1.5; symbol={intent.Symbol}; side={intent.Side}; outcome={outcome}; strategyId={attribution.StrategyId??"unknown"}; strategyVersion={attribution.StrategyVersion}; attributionBasis={attribution.Basis}; netPnl={net.ToString(CultureInfo.InvariantCulture)}; returnPct={ret.ToString(CultureInfo.InvariantCulture)}; mae={excursion.MaeReturnPct.ToString(CultureInfo.InvariantCulture)}; mfe={excursion.MfeReturnPct.ToString(CultureInfo.InvariantCulture)}; excursionBasis={excursion.Basis}; excursionSamples={excursion.SampleCount}; exitReason={exitReason}; fees={fees.ToString(CultureInfo.InvariantCulture)}; feeBasis={feeBasis}; funding={funding.Amount.ToString(CultureInfo.InvariantCulture)}; fundingBasis={funding.Basis}; slippageBasis={slippage.Basis}; totalSlippage={slippage.Total.ToString(CultureInfo.InvariantCulture)}"),ct);await PruneClosedPositionMarkObservationsAsync(c,intent.Symbol,intent.Side,closedAt,ct);
     }
-    public async Task<IReadOnlyList<ExecutionPositionLegV1>> GetExecutionPositionLedgerAsync(CancellationToken ct)
+    private const string ExecutionPositionRetiredThroughPrefix="execution-position-retired-through:";
+    private static string ExecutionPositionRetiredThroughKey(string symbol,PositionSide side)=>
+        ExecutionPositionRetiredThroughPrefix+symbol.Trim().ToUpperInvariant()+":"+side.ToString().ToLowerInvariant();
+
+    public Task<IReadOnlyList<ExecutionPositionLegV1>> GetExecutionPositionLedgerAsync(CancellationToken ct)=>
+        GetExecutionPositionLedgerCoreAsync(null,ct);
+
+    public Task<IReadOnlyList<ExecutionPositionLegV1>> GetExecutionPositionLedgerAsync(DateTimeOffset asOfUtc,CancellationToken ct)=>
+        GetExecutionPositionLedgerCoreAsync(asOfUtc.ToUniversalTime(),ct);
+
+    private async Task<IReadOnlyList<ExecutionPositionLegV1>> GetExecutionPositionLedgerCoreAsync(DateTimeOffset? asOfUtc,CancellationToken ct)
     {
-        var totals=new Dictionary<(string Symbol,PositionSide Side),decimal>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT symbol,side,reduce_only,quantity FROM execution_events WHERE status IN ('FILLED','PARTIALLY_FILLED') ORDER BY symbol,side,id";await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){if(!decimal.TryParse(r.GetString(3),NumberStyles.Number,CultureInfo.InvariantCulture,out var quantity)||quantity<0)throw new InvalidOperationException("Execution position ledger quantity is invalid.");var key=(r.GetString(0),Enum.Parse<PositionSide>(r.GetString(1),true));totals[key]=totals.GetValueOrDefault(key)+(r.GetInt32(2)==1?-quantity:quantity);}return totals.OrderBy(x=>x.Key.Symbol,StringComparer.Ordinal).ThenBy(x=>x.Key.Side).Select(x=>new ExecutionPositionLegV1(x.Key.Symbol,x.Key.Side,x.Value)).ToArray();
+        var retiredThrough=new Dictionary<string,DateTimeOffset>(StringComparer.Ordinal);
+        var totals=new Dictionary<(string Symbol,PositionSide Side),decimal>();
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);
+        await using(var retirement=c.CreateCommand())
+        {
+            retirement.CommandText="SELECT key,value FROM agent_state WHERE key LIKE $prefix ORDER BY key";
+            retirement.Parameters.AddWithValue("$prefix",ExecutionPositionRetiredThroughPrefix+"%");
+            await using var rr=await retirement.ExecuteReaderAsync(ct);
+            while(await rr.ReadAsync(ct))
+            {
+                if(!DateTimeOffset.TryParse(rr.GetString(1),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var cutoff))
+                    throw new InvalidOperationException("Execution position retirement cutoff is invalid.");
+                retiredThrough[rr.GetString(0)]=cutoff.ToUniversalTime();
+            }
+        }
+        await using var q=c.CreateCommand();
+        q.CommandText="SELECT symbol,side,reduce_only,quantity,occurred_at FROM execution_events WHERE status IN ('FILLED','PARTIALLY_FILLED') ORDER BY symbol,side,id";
+        await using var r=await q.ExecuteReaderAsync(ct);
+        while(await r.ReadAsync(ct))
+        {
+            if(!DateTimeOffset.TryParse(r.GetString(4),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var occurredAt))
+                throw new InvalidOperationException("Execution position ledger timestamp is invalid.");
+            occurredAt=occurredAt.ToUniversalTime();
+            if(asOfUtc is not null&&occurredAt>asOfUtc.Value)continue;
+            var symbol=r.GetString(0);var side=Enum.Parse<PositionSide>(r.GetString(1),true);
+            if(retiredThrough.TryGetValue(ExecutionPositionRetiredThroughKey(symbol,side),out var cutoff)&&occurredAt<=cutoff)continue;
+            if(!decimal.TryParse(r.GetString(3),NumberStyles.Number,CultureInfo.InvariantCulture,out var quantity)||quantity<0)
+                throw new InvalidOperationException("Execution position ledger quantity is invalid.");
+            var key=(symbol,side);totals[key]=totals.GetValueOrDefault(key)+(r.GetInt32(2)==1?-quantity:quantity);
+        }
+        return totals.OrderBy(x=>x.Key.Symbol,StringComparer.Ordinal).ThenBy(x=>x.Key.Side).Select(x=>new ExecutionPositionLegV1(x.Key.Symbol,x.Key.Side,x.Value)).ToArray();
+    }
+
+    public async Task<bool> RetireExecutionPositionLedgerAsync(string symbol,PositionSide side,DateTimeOffset observedAtUtc,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(symbol)||observedAtUtc==default)throw new ArgumentException("Execution position retirement identity is invalid.");
+        observedAtUtc=observedAtUtc.ToUniversalTime();var key=ExecutionPositionRetiredThroughKey(symbol,side);
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await EnableQueuePragmasAsync(c,ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+        DateTimeOffset? current=null;
+        await using(var read=c.CreateCommand())
+        {
+            read.Transaction=tx;read.CommandText="SELECT value FROM agent_state WHERE key=$key";read.Parameters.AddWithValue("$key",key);
+            var value=await read.ExecuteScalarAsync(ct);
+            if(value is not null&&value is not DBNull)
+            {
+                if(!DateTimeOffset.TryParse(Convert.ToString(value,CultureInfo.InvariantCulture),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var parsed))
+                    throw new InvalidOperationException("Execution position retirement cutoff is invalid.");
+                current=parsed.ToUniversalTime();
+            }
+        }
+        if(current is not null&&current.Value>=observedAtUtc){await tx.RollbackAsync(ct);return false;}
+        var eligible=false;
+        await using(var evidence=c.CreateCommand())
+        {
+            evidence.Transaction=tx;evidence.CommandText="SELECT occurred_at FROM execution_events WHERE symbol=$symbol COLLATE NOCASE AND side=$side AND status IN ('FILLED','PARTIALLY_FILLED') ORDER BY id";
+            evidence.Parameters.AddWithValue("$symbol",symbol);evidence.Parameters.AddWithValue("$side",side.ToString());
+            await using var er=await evidence.ExecuteReaderAsync(ct);
+            while(await er.ReadAsync(ct))
+            {
+                if(!DateTimeOffset.TryParse(er.GetString(0),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal,out var occurredAt))
+                    throw new InvalidOperationException("Execution position retirement evidence timestamp is invalid.");
+                if(occurredAt.ToUniversalTime()<=observedAtUtc){eligible=true;break;}
+            }
+        }
+        if(!eligible){await tx.RollbackAsync(ct);return false;}
+        await using(var write=c.CreateCommand())
+        {
+            write.Transaction=tx;write.CommandText="INSERT OR REPLACE INTO agent_state(key,value,updated_at) VALUES($key,$value,$updated)";
+            write.Parameters.AddWithValue("$key",key);write.Parameters.AddWithValue("$value",observedAtUtc.ToString("O",CultureInfo.InvariantCulture));write.Parameters.AddWithValue("$updated",_utcNow().ToUniversalTime().ToString("O",CultureInfo.InvariantCulture));
+            await write.ExecuteNonQueryAsync(ct);
+        }
+        await tx.CommitAsync(ct);return true;
     }
     public async Task<bool> SavePositionReconciliationAsync(PositionReconciliationReportV1 report,CancellationToken ct)
     {
