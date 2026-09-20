@@ -186,6 +186,46 @@ public sealed class TradeHypothesisEngineTests
     }
 
     [Fact]
+    public async Task EvaluateAsyncSurfacesStructureAndPartialTakeProfitExitAttribution()
+    {
+        var path=Path.Combine(Path.GetTempPath(),$"wpe-hypothesis-exit-attribution-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store=new AgentSqliteStore(path);
+            var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
+            var watching=(await new TradeHypothesisEngine(store).EvaluateAsync(Evidence(first),CancellationToken.None))["BTCUSDT"];
+            Assert.Equal(TradeHypothesisStage.Watching,watching.Stage);
+
+            for(var index=1;index<=4;index++)
+                await InsertHypothesisOutcomeAsync(
+                    path,
+                    $"HYP-BTCUSDT-TrendPullbackLong-20260919020{index}00",
+                    index<=2?-.001m:.004m,
+                    index,
+                    mae:-.01m,
+                    mfe:.015m,
+                    excursionBasis:"runtime-mark-observations",
+                    exitReason:index<=2
+                        ?PositionExitReasonCodes.StructureInvalidated
+                        :PositionExitReasonCodes.PartialTakeProfit2R);
+
+            var improved=Market(81105m,80906m,81805.3m,34,-.18,-.12,5.05,-.08);
+            var scout=(await new TradeHypothesisEngine(new AgentSqliteStore(path)).EvaluateAsync(Evidence(improved),CancellationToken.None))["BTCUSDT"];
+
+            Assert.Equal(TradeHypothesisStage.ScoutReady,scout.Stage);
+            Assert.Contains("family_excursion_trades=4",scout.Evidence);
+            Assert.Contains("family_take_profit_rate=50.0%",scout.Evidence);
+            Assert.Contains("family_structure_invalidation_rate=50.0%",scout.Evidence);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            foreach(var file in Directory.GetFiles(Path.GetDirectoryName(path)!,Path.GetFileName(path)+"*"))
+                try{File.Delete(file);}catch{}
+        }
+    }
+
+    [Fact]
     public void RealtimeBuyFlowCanUnblockScoutWhenDepthBookIsStillHostile()
     {
         var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
