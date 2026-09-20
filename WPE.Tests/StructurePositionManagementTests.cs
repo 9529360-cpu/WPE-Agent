@@ -261,6 +261,85 @@ public sealed class StructurePositionManagementTests
         }
     }
 
+    [Theory]
+    [InlineData("PENDING")]
+    [InlineData("FAILED")]
+    public async Task UnresolvedProtectionMutationStateClosesManagedPosition(string state)
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            var opening=OpeningIntent("open-protection-recovery");
+            await db.SaveIntentAsync("cycle-open",opening,"PROTECTED","1008-recovery",CancellationToken.None);
+            var protectionId=PositionManagementDurableState.ProtectionAdjustmentKey(
+                PositionManagementActionId("BE",opening.ClientOrderId));
+            await db.SetStateAsync(protectionId,state,CancellationToken.None);
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(110m)}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(),
+                tradingRules:Rules());
+
+            var intent=Assert.Single(result.Intents);
+            Assert.True(intent.ReduceOnly);
+            Assert.Equal(DecisionAction.CloseLong,intent.Action);
+            Assert.Equal(Position().Quantity,intent.Quantity);
+            Assert.Equal(PositionExitReasonCodes.ProtectionReplaceFailed,intent.ReasonCode);
+            Assert.StartsWith("WPE-PM-PROTFAIL-",intent.ClientOrderId,StringComparison.Ordinal);
+            Assert.Empty(result.ProtectionAdjustments);
+            Assert.Contains(result.Notes,x=>x.EndsWith(":"+state,StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public async Task ProtectionRecoveryCloseDoesNotReplayAfterDurableAttempt()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            var opening=OpeningIntent("open-protection-recovery-replay");
+            await db.SaveIntentAsync("cycle-open",opening,"PROTECTED","1008-replay",CancellationToken.None);
+            var protectionId=PositionManagementDurableState.ProtectionAdjustmentKey(
+                PositionManagementActionId("BE",opening.ClientOrderId));
+            await db.SetStateAsync(protectionId,"PENDING",CancellationToken.None);
+
+            var first=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(110m)}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(),
+                tradingRules:Rules());
+            var close=Assert.Single(first.Intents);
+            await db.SaveIntentAsync("cycle-close",close,"COMPLETED","3001",CancellationToken.None);
+
+            var second=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(110m)}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(),
+                tradingRules:Rules());
+
+            Assert.Empty(second.Intents);
+            Assert.Empty(second.ProtectionAdjustments);
+            Assert.Contains(second.Notes,x=>x.StartsWith("protection-recovery-close:",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
     [Fact]
     public async Task BreakevenProtectionUsesSaferOpeningAndFillAnchor()
     {
@@ -484,6 +563,13 @@ public sealed class StructurePositionManagementTests
         {
             ["BTCUSDT"]=new("BTCUSDT",step,tickSize,minQuantity,5m,20)
         };
+
+    private static string PositionManagementActionId(string action,string openingClientOrderId)
+    {
+        var raw=System.Text.Encoding.UTF8.GetBytes($"{action}|{openingClientOrderId}");
+        var hash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(raw)).ToLowerInvariant();
+        return $"WPE-PM-{action}-{hash[..24]}";
+    }
 
     private static ExecutionIntent OpeningIntent(string clientOrderId="open-structure-1")=>new(
         "BTCUSDT",PositionSide.Long,1m,false,90m,120m,clientOrderId,"test opening",
