@@ -86,7 +86,7 @@ public sealed class PositionReconciliationTests : IDisposable
     }
 
     [Fact]
-    public async Task TransientMissingPositionDoesNotPermanentlyRevokeOwnership()
+    public async Task TransientMissingPositionQuarantinesOwnershipWithoutImmediatePermanentRevocation()
     {
         var store=new AgentSqliteStore(Database);
         var opening=Intent("open-ownership-transient",false,1m);
@@ -97,24 +97,21 @@ public sealed class PositionReconciliationTests : IDisposable
 
         Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
             store,local,[],Now,Now,default));
-        Assert.NotNull(await store.GetStateAsync(candidateKey,default));
+        var candidate=await store.GetStateAsync(candidateKey,default);
+        Assert.NotNull(candidate);
         Assert.Null(await store.GetStateAsync(revocationKey,default));
 
         var recoveredAt=Now.AddSeconds(2);
         Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
             store,local,[Position("BTCUSDT",PositionSide.Long,1m)],recoveredAt,recoveredAt,default));
-        Assert.Equal("cleared",await store.GetStateAsync(candidateKey,default));
+        Assert.Equal(candidate,await store.GetStateAsync(candidateKey,default));
         Assert.Null(await store.GetStateAsync(revocationKey,default));
+        Assert.True(await 币安量化机器人.Services.AutoTradingAgent.HasRevokedManagedPositionOwnershipAsync(
+            store,[Position("BTCUSDT",PositionSide.Long,1m)],default));
 
         var missingAgainAt=Now.AddSeconds(10);
-        Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
-            store,local,[],missingAgainAt,missingAgainAt,default));
-        Assert.NotEqual("cleared",await store.GetStateAsync(candidateKey,default));
-        Assert.Null(await store.GetStateAsync(revocationKey,default));
-
-        var confirmedAt=Now.AddSeconds(16);
         Assert.Equal(1,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
-            store,local,[],confirmedAt,confirmedAt,default));
+            store,local,[],missingAgainAt,missingAgainAt,default));
         Assert.NotNull(await store.GetStateAsync(revocationKey,default));
     }
 
