@@ -41,6 +41,8 @@ public sealed class AutoTradingAuthorizationBoundaryTests
         Assert.Contains("exchangeProfile.IsTestnet",automaticRun,StringComparison.Ordinal);
         Assert.Contains("TradingAuthorizationMode.Auto",automaticRun,StringComparison.Ordinal);
         Assert.Contains("AssessUnverifiedAutomaticMutation",automaticRun,StringComparison.Ordinal);
+        Assert.Contains("ExecutePositionProtectionRecoveryAsync(recoveryServices.Recovery",automaticRun,StringComparison.Ordinal);
+        Assert.DoesNotContain("AssessUnverifiedAutomaticMutation(AutomaticMutationPath.PositionManagement",automaticRun,StringComparison.Ordinal);
     }
 
     [Fact]
