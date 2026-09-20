@@ -69,16 +69,26 @@ public static class HeadlessRuntimeProcess
                 }
 
                 var health = host.ReadHealth();
-                var fatal = health.LeaseLost
-                    || !health.AgentRunning
-                    || (DateTimeOffset.UtcNow - startedAt > StartupHeartbeatGrace && !health.HeartbeatFresh);
+                var now = DateTimeOffset.UtcNow;
+                var fatalReason = ResolveFatalReason(health, startedAt, now);
                 await WriteHealthAsync(
-                    fatal ? "failed" : health.Ready ? "ready" : "degraded",
-                    fatal ? "headless.runtime-unhealthy" : health.Ready ? "headless.ready" : "headless.readiness-degraded",
+                    fatalReason is not null ? "failed" : health.Ready ? "ready" : "degraded",
+                    fatalReason is not null ? $"headless.runtime-unhealthy.{fatalReason}" : health.Ready ? "headless.ready" : "headless.readiness-degraded",
                     health,
                     CancellationToken.None).ConfigureAwait(false);
 
-                if (fatal) return RuntimeUnhealthyExitCode;
+                if (fatalReason is not null)
+                {
+                    Log.Error(
+                        "Headless runtime supervision failed closed. Reason={Reason} RunId={RunId} AgentRunning={AgentRunning} LeaseLost={LeaseLost} HeartbeatFresh={HeartbeatFresh} RuntimeHeartbeatAtUtc={RuntimeHeartbeatAtUtc}",
+                        fatalReason,
+                        health.RunId,
+                        health.AgentRunning,
+                        health.LeaseLost,
+                        health.HeartbeatFresh,
+                        health.RuntimeHeartbeatAtUtc);
+                    return RuntimeUnhealthyExitCode;
+                }
             }
 
             await TryWriteHealthAsync("stopping", "headless.shutdown-requested", host.ReadHealth()).ConfigureAwait(false);
@@ -99,6 +109,25 @@ public static class HeadlessRuntimeProcess
             Log.CloseAndFlush();
         }
     }
+
+    internal static string? ResolveFatalReason(
+        bool leaseLost,
+        bool agentRunning,
+        bool heartbeatFresh,
+        DateTimeOffset startedAt,
+        DateTimeOffset now)
+    {
+        if (leaseLost) return "lease-lost";
+        if (!agentRunning) return "agent-not-running";
+        if (now - startedAt > StartupHeartbeatGrace && !heartbeatFresh) return "heartbeat-stale";
+        return null;
+    }
+
+    private static string? ResolveFatalReason(
+        TradingRuntimeHealthV1 health,
+        DateTimeOffset startedAt,
+        DateTimeOffset now) =>
+        ResolveFatalReason(health.LeaseLost, health.AgentRunning, health.HeartbeatFresh, startedAt, now);
 
     private static async Task TryWriteHealthAsync(string state, string code, TradingRuntimeHealthV1? runtime)
     {
