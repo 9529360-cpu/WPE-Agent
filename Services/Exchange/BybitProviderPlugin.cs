@@ -16,7 +16,7 @@ public sealed class BybitProviderPlugin:IExchangeProviderPlugin
     private static string Required(IReadOnlyDictionary<string,string> values,string key)=>values.TryGetValue(key,out var value)&&!string.IsNullOrWhiteSpace(value)?value:throw new InvalidOperationException($"Bybit credential '{key}' is incomplete.");
 }
 
-public sealed class BybitExchangeProvider:RestExchangeProviderBase,IProviderMarketCatalog
+public sealed class BybitExchangeProvider:RestExchangeProviderBase,IProviderMarketCatalog,IInPlaceProtectionUpdateAdapter
 {
     private readonly string _key;private readonly byte[] _secret;private readonly Dictionary<string,int> _leverage=new(StringComparer.OrdinalIgnoreCase);
     public override string ProviderId=>"bybit";public override ExchangeProviderDescriptor Descriptor=>BybitProviderPlugin.ProviderDescriptor;
