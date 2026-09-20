@@ -57,23 +57,65 @@ public sealed class PositionReconciliationTests : IDisposable
     }
 
     [Fact]
-    public async Task MissingManagedLegRevokesOpeningAndBlocksLaterSameQuantityOwnership()
+    public async Task MissingManagedLegRequiresRepeatedFreshEvidenceBeforeRevocation()
     {
         var store=new AgentSqliteStore(Database);
         var opening=Intent("open-ownership-a",false,1m);
         await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
         var local=new[]{new ExecutionPositionLegV1("BTCUSDT",PositionSide.Long,1m)};
+        var candidateKey=PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId);
+        var revocationKey=PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId);
 
-        var revoked=await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+        var first=await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
             store,local,[],Now,Now,default);
 
-        Assert.Equal(1,revoked);
-        Assert.NotNull(await store.GetStateAsync(
-            PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId),default));
+        Assert.Equal(0,first);
+        Assert.NotNull(await store.GetStateAsync(candidateKey,default));
+        Assert.Null(await store.GetStateAsync(revocationKey,default));
+
+        var secondAt=Now.AddSeconds(6);
+        var second=await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[],secondAt,secondAt,default);
+
+        Assert.Equal(1,second);
+        Assert.NotNull(await store.GetStateAsync(revocationKey,default));
         Assert.True(await 币安量化机器人.Services.AutoTradingAgent.HasRevokedManagedPositionOwnershipAsync(
             store,[Position("BTCUSDT",PositionSide.Long,1m)],default));
         Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[],secondAt.AddSeconds(6),secondAt.AddSeconds(6),default));
+    }
+
+    [Fact]
+    public async Task TransientMissingPositionDoesNotPermanentlyRevokeOwnership()
+    {
+        var store=new AgentSqliteStore(Database);
+        var opening=Intent("open-ownership-transient",false,1m);
+        await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
+        var local=new[]{new ExecutionPositionLegV1("BTCUSDT",PositionSide.Long,1m)};
+        var candidateKey=PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId);
+        var revocationKey=PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId);
+
+        Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
             store,local,[],Now,Now,default));
+        Assert.NotNull(await store.GetStateAsync(candidateKey,default));
+        Assert.Null(await store.GetStateAsync(revocationKey,default));
+
+        var recoveredAt=Now.AddSeconds(2);
+        Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[Position("BTCUSDT",PositionSide.Long,1m)],recoveredAt,recoveredAt,default));
+        Assert.Equal("cleared",await store.GetStateAsync(candidateKey,default));
+        Assert.Null(await store.GetStateAsync(revocationKey,default));
+
+        var missingAgainAt=Now.AddSeconds(10);
+        Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[],missingAgainAt,missingAgainAt,default));
+        Assert.NotEqual("cleared",await store.GetStateAsync(candidateKey,default));
+        Assert.Null(await store.GetStateAsync(revocationKey,default));
+
+        var confirmedAt=Now.AddSeconds(16);
+        Assert.Equal(1,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[],confirmedAt,confirmedAt,default));
+        Assert.NotNull(await store.GetStateAsync(revocationKey,default));
     }
 
     [Fact]
@@ -88,6 +130,8 @@ public sealed class PositionReconciliationTests : IDisposable
             Now-PositionReconciliationServiceV1.MaximumAge-TimeSpan.FromMilliseconds(1),Now,default);
 
         Assert.Equal(0,revoked);
+        Assert.Null(await store.GetStateAsync(
+            PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId),default));
         Assert.Null(await store.GetStateAsync(
             PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId),default));
     }
