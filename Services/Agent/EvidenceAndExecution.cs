@@ -269,7 +269,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
                 DateTime.UtcNow,UiDiagnostic.FromText(ex.ToString(),"Protection update failed").Code);
             await ObserveSafelyAsync(value);
             var position=(await _ex.GetPositionsAsync(ct)).FirstOrDefault(x=>x.Symbol==adjustment.Symbol&&x.Side==adjustment.Side);
-            if(position is not null&&position.Quantity>0){var intent=new ExecutionIntent(position.Symbol,position.Side,position.Quantity,true,0,0,EmergencyId(group),L("Execution.ProtectionReplaceFailed",SensitiveDataRedactor.ForLog(ex.Message,180)),position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,ExpectedPrice:position.MarkPrice);await ExecuteAsync(cycle,intent,Math.Max(1,(int)position.Leverage),true,ct);}
+            if(position is not null&&position.Quantity>0){var intent=new ExecutionIntent(position.Symbol,position.Side,position.Quantity,true,0,0,EmergencyId(group),L("Execution.ProtectionReplaceFailed",SensitiveDataRedactor.ForLog(ex.Message,180)),position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,ExpectedPrice:position.MarkPrice,ReasonCode:PositionExitReasonCodes.ProtectionReplaceFailed);await ExecuteAsync(cycle,intent,Math.Max(1,(int)position.Leverage),true,ct);}
             throw;
         }
     }
