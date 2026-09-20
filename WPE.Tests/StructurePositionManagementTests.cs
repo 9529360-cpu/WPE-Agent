@@ -566,9 +566,9 @@ public sealed class StructurePositionManagementTests
 
     private static string PositionManagementActionId(string action,string openingClientOrderId)
     {
-        var raw=System.Text.Encoding.UTF8.GetBytes($"{action}|{openingClientOrderId}");
+        var raw=System.Text.Encoding.UTF8.GetBytes($"{openingClientOrderId}\u001f{action}");
         var hash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(raw)).ToLowerInvariant();
-        return $"WPE-PM-{action}-{hash[..24]}";
+        return $"WPE-PM-{action}-{hash[..20]}";
     }
 
     private static ExecutionIntent OpeningIntent(string clientOrderId="open-structure-1")=>new(
