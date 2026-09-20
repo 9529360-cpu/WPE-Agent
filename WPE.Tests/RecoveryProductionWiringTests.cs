@@ -151,13 +151,21 @@ public sealed class RecoveryProductionWiringTests
         finally{TryDelete(root);}
     }
 
-    private static ReliableOrderExecutor Executor(RecordingProvider provider,AgentSqliteStore store)=>new(
-        provider,store,new RiskLimits(),SystemOrderPollScheduler.Instance,
-        new Dictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["SOLUSDT"]=new("test","test-provider","SOLUSDT","SOLUSDT",WpeAgent.RuntimeContracts.MarketType.Perpetual,
-                WpeAgent.RuntimeContracts.CapabilityStatus.Available,true,true,true,DateTimeOffset.UtcNow,"ok")
-        },true);
+    private static ReliableOrderExecutor Executor(RecordingProvider provider,AgentSqliteStore store)
+    {
+        var capability=new WpeAgent.RuntimeContracts.ExchangeCapability(
+            "test","test-provider","SOLUSDT","SOLUSDT",WpeAgent.RuntimeContracts.MarketType.Perpetual,
+            WpeAgent.RuntimeContracts.CapabilityStatus.Available,true,true,true,DateTimeOffset.UtcNow,"ok");
+        return new ReliableOrderExecutor(
+            provider,store,new RiskLimits(),SystemOrderPollScheduler.Instance,
+            new Dictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["SOLUSDT"]=capability
+            },
+            true,
+            capabilityRefresh:(symbol,ct)=>Task.FromResult<WpeAgent.RuntimeContracts.ExchangeCapability?>(
+                string.Equals(symbol,"SOLUSDT",StringComparison.OrdinalIgnoreCase)?capability:null));
+    }
 
     private static void TryDelete(string path)
     {
