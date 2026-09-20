@@ -203,6 +203,23 @@ public sealed class PositionManagementSkill
                 continue;
             }
 
+            var protectionId=ActionId("BE",opening);
+            var protectionStateKey=PositionManagementDurableState.ProtectionAdjustmentKey(protectionId);
+            var protectionState=await db.GetStateAsync(protectionStateKey,ct);
+            if(protectionState is "PENDING" or "FAILED")
+            {
+                var actionId=ActionId("PROTFAIL",opening);
+                if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
+                    intents.Add(new(
+                        position.Symbol,position.Side,position.Quantity,true,0,0,actionId,
+                        L("Execution.ProtectionReplaceFailed",protectionState),
+                        position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
+                        ExpectedPrice:market.Price,
+                        ReasonCode:PositionExitReasonCodes.ProtectionReplaceFailed));
+                notes.Add($"protection-recovery-close:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:{protectionState}");
+                continue;
+            }
+
             if(hypotheses is not null &&
                hypotheses.TryGetValue(position.Symbol,out var hypothesis) &&
                StructureHypothesisInvalidated(position,hypothesis))
@@ -267,9 +284,7 @@ public sealed class PositionManagementSkill
                 else notes.Add($"partial-2r-rule-unavailable:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
             }
 
-            var protectionId=ActionId("BE",opening);
-            var protectionStateKey=PositionManagementDurableState.ProtectionAdjustmentKey(protectionId);
-            if(favorable>=1&&await db.GetStateAsync(protectionStateKey,ct) is null)
+            if(favorable>=1&&protectionState is null)
             {
                 if(tradingRules is null||!tradingRules.TryGetValue(position.Symbol,out var rule)||rule.TickSize<=0)
                 {
