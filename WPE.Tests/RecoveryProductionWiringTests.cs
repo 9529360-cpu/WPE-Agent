@@ -62,11 +62,38 @@ public sealed class RecoveryProductionWiringTests
                 DecisionAction.CloseLong,ExecutionOrderType.Market,ExpectedPrice:150m);
 
             var completed=await 币安量化机器人.Services.AutoTradingAgent.ExecutePositionManagementRecoveryAsync(
-                services.Recovery,"auto-correlation-1",[intent],[position],CancellationToken.None);
+                services.Recovery,"auto-correlation-1",[intent],[position],Rules(),CancellationToken.None);
 
             Assert.Equal(1,completed);
             Assert.Equal(1,provider.MutationCount);
             Assert.True(provider.LastReduceOnly);
+        }
+        finally{TryDelete(root);}
+    }
+
+    [Fact]
+    public async Task AutoTradingAgent_PartialRecoveryRejectsNonStepAlignedQuantityBeforeMutation()
+    {
+        if(!OperatingSystem.IsWindows())return;
+        var root=Path.Combine(Path.GetTempPath(),"wpe-recovery-partial-step",Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var provider=new RecordingProvider();
+            var store=new AgentSqliteStore(Path.Combine(root,"agent.db"));
+            await SeedManagedOpeningAsync(store);
+            var executor=Executor(provider,store);
+            var services=await ProductionRecoveryComposition.CreateAsync(provider,executor,store,Path.Combine(root,"receipt-key.json"));
+            var position=provider.Positions.Single();
+            var intent=new ExecutionIntent("SOLUSDT",PositionSide.Long,.55m,true,0,0,"partial-invalid-step","position management",
+                DecisionAction.ReduceLong,ExecutionOrderType.Market,ExpectedPrice:151m);
+
+            var error=await Assert.ThrowsAsync<InvalidOperationException>(()=>
+                币安量化机器人.Services.AutoTradingAgent.ExecutePositionManagementRecoveryAsync(
+                    services.Recovery,"partial-step-correlation",[intent],[position],Rules(),CancellationToken.None));
+
+            Assert.Equal("recovery.reduce-quantity-invalid",error.Message);
+            Assert.Equal(0,provider.MutationCount);
         }
         finally{TryDelete(root);}
     }
@@ -95,7 +122,7 @@ public sealed class RecoveryProductionWiringTests
                 DecisionAction.CloseLong,ExecutionOrderType.Market,ExpectedPrice:151m);
 
             var completed=await 币安量化机器人.Services.AutoTradingAgent.ExecutePositionManagementRecoveryAsync(
-                services.Recovery,"hedge-correlation",[intent],provider.Positions,CancellationToken.None);
+                services.Recovery,"hedge-correlation",[intent],provider.Positions,Rules(),CancellationToken.None);
 
             Assert.Equal(1,completed);
             Assert.Equal(1,provider.MutationCount);
@@ -149,6 +176,12 @@ public sealed class RecoveryProductionWiringTests
         }
         finally{TryDelete(root);}
     }
+
+    private static IReadOnlyDictionary<string,TradingRule> Rules(decimal step=.1m,decimal minQuantity=.1m)=>
+        new Dictionary<string,TradingRule>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["SOLUSDT"]=new("SOLUSDT",step,.1m,minQuantity,5m,20)
+        };
 
     private static async Task SeedManagedOpeningAsync(
         AgentSqliteStore store,string clientOrderId="open-recovery",decimal takeProfit=170m)
