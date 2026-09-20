@@ -449,6 +449,8 @@ public static class AutoTradingAgent
         {
             var opening=await db.GetLatestOpeningIntentAsync(leg.Symbol,leg.Side,observedAtUtc,ct);
             if(opening is null)continue;
+            var openingObservedAtUtc=await db.GetExecutionEventOccurredAtAsync(opening.ClientOrderId,ct);
+            if(openingObservedAtUtc is null||observedAtUtc-openingObservedAtUtc.Value<PositionReconciliationServiceV1.MaximumAge)continue;
             var revocationKey=PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId);
             var revocation=await db.GetStateAsync(revocationKey,ct);
             if(revocation is not null)
