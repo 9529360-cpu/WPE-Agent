@@ -91,6 +91,11 @@ public sealed class TradeHypothesisEngine
             }
 
             var next = EvaluateMarket(market, previous, evidence.Positions, now);
+            if(next.Kind!=TradeHypothesisKind.None)
+            {
+                var feedback=await _store.GetHypothesisExecutionFeedbackAsync(next.Symbol,next.Kind,ct).ConfigureAwait(false);
+                next=ApplyExecutionFeedback(next,feedback);
+            }
             result[market.Symbol] = next;
             await _store.SetStateAsync(StateKey(market.Symbol), JsonSerializer.Serialize(next, Json), ct).ConfigureAwait(false);
         }
@@ -140,6 +145,47 @@ public sealed class TradeHypothesisEngine
         }
 
         return DetectNew(market, regime, now);
+    }
+
+    internal static TradeHypothesis ApplyExecutionFeedback(
+        TradeHypothesis hypothesis,
+        HypothesisExecutionFeedback feedback)
+    {
+        ArgumentNullException.ThrowIfNull(hypothesis);
+        ArgumentNullException.ThrowIfNull(feedback);
+        if(hypothesis.Kind==TradeHypothesisKind.None)return hypothesis;
+
+        var evidence=hypothesis.Evidence
+            .Where(value=>!value.StartsWith("family_",StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if(feedback.Trades<=0)
+        {
+            evidence.Add($"family_key={hypothesis.Symbol.ToUpperInvariant()}:{hypothesis.Kind}");
+            evidence.Add("family_execution=pending");
+            return hypothesis with{Evidence=evidence};
+        }
+
+        var posteriorFactor=1+(feedback.PosteriorWinRate-.5)*.60;
+        var expectancyFactor=feedback.Trades>=4
+            ?1+.10*Math.Tanh(feedback.AverageReturn/.005)
+            :1d;
+        var riskFactor=Math.Clamp(posteriorFactor*expectancyFactor,.75,1.15);
+        var adjustedRisk=hypothesis.Actionable
+            ?Math.Clamp(hypothesis.RiskBudgetMultiplier*riskFactor,0,.55)
+            :0;
+
+        evidence.Add($"family_key={hypothesis.Symbol.ToUpperInvariant()}:{hypothesis.Kind}");
+        evidence.Add($"family_trades={feedback.Trades}");
+        evidence.Add($"family_win_rate={feedback.WinRate:P1}");
+        evidence.Add($"family_posterior_win={feedback.PosteriorWinRate:F3}");
+        evidence.Add($"family_avg_return={feedback.AverageReturn:P3}");
+        evidence.Add($"family_risk_factor={riskFactor:F3}");
+
+        return hypothesis with
+        {
+            RiskBudgetMultiplier=adjustedRisk,
+            Evidence=evidence
+        };
     }
 
     private static TradeHypothesis EvolveExisting(

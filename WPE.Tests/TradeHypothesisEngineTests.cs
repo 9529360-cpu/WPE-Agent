@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using 币安量化机器人.Services;
 using 币安量化机器人.Services.Agent;
 
@@ -44,6 +45,79 @@ public sealed class TradeHypothesisEngineTests
         Assert.True(scout.Actionable);
         Assert.Equal(.18,scout.RiskBudgetMultiplier,10);
         Assert.True(scout.Revision>watching.Revision);
+    }
+
+    [Fact]
+    public void OneFamilyLossNudgesRiskWithoutChangingScoutMarketOpinion()
+    {
+        var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var scout=TradeHypothesisEngine.EvaluateMarket(
+            Market(81105m,80906m,81805.3m,34,-.18,-.12,5.05,-.08),
+            watching,[],Now.AddMinutes(1));
+
+        var adjusted=TradeHypothesisEngine.ApplyExecutionFeedback(
+            scout,
+            new HypothesisExecutionFeedback(1,-.003529,0,4d/9d));
+
+        Assert.Equal(TradeHypothesisStage.ScoutReady,adjusted.Stage);
+        Assert.True(adjusted.Actionable);
+        Assert.InRange(adjusted.RiskBudgetMultiplier,.17,.18);
+        Assert.Contains("family_trades=1",adjusted.Evidence);
+        Assert.Contains("family_key=BTCUSDT:TrendPullbackLong",adjusted.Evidence);
+    }
+
+    [Fact]
+    public void FamilyFeedbackScalesRiskMonotonicallyAndRemainsBounded()
+    {
+        var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var scout=TradeHypothesisEngine.EvaluateMarket(
+            Market(81105m,80906m,81805.3m,34,-.18,-.12,5.05,-.08),
+            watching,[],Now.AddMinutes(1));
+
+        var negative=TradeHypothesisEngine.ApplyExecutionFeedback(
+            scout,new HypothesisExecutionFeedback(20,-.01,.10,6d/28d));
+        var positive=TradeHypothesisEngine.ApplyExecutionFeedback(
+            scout,new HypothesisExecutionFeedback(20,.01,.90,22d/28d));
+
+        Assert.Equal(TradeHypothesisStage.ScoutReady,negative.Stage);
+        Assert.Equal(TradeHypothesisStage.ScoutReady,positive.Stage);
+        Assert.True(negative.Actionable&&positive.Actionable);
+        Assert.True(negative.RiskBudgetMultiplier<scout.RiskBudgetMultiplier);
+        Assert.True(positive.RiskBudgetMultiplier>scout.RiskBudgetMultiplier);
+        Assert.InRange(negative.RiskBudgetMultiplier,.18*.75,.18);
+        Assert.InRange(positive.RiskBudgetMultiplier,.18,.18*1.15);
+    }
+
+    [Fact]
+    public async Task EvaluateAsyncLearnsAcrossDynamicIdsWithinTheSameHypothesisFamily()
+    {
+        var path=Path.Combine(Path.GetTempPath(),$"wpe-hypothesis-family-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store=new AgentSqliteStore(path);
+            var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
+            var watching=(await new TradeHypothesisEngine(store).EvaluateAsync(Evidence(first),CancellationToken.None))["BTCUSDT"];
+            Assert.Equal(TradeHypothesisStage.Watching,watching.Stage);
+
+            await InsertHypothesisOutcomeAsync(path,"HYP-BTCUSDT-TrendPullbackLong-20260919010000",-0.0035m,1);
+            await InsertHypothesisOutcomeAsync(path,"HYP-BTCUSDT-RangeReversionLong-20260919010100",0.02m,2);
+
+            var improved=Market(81105m,80906m,81805.3m,34,-.18,-.12,5.05,-.08);
+            var scout=(await new TradeHypothesisEngine(new AgentSqliteStore(path)).EvaluateAsync(Evidence(improved),CancellationToken.None))["BTCUSDT"];
+
+            Assert.Equal(TradeHypothesisStage.ScoutReady,scout.Stage);
+            Assert.InRange(scout.RiskBudgetMultiplier,.17,.18);
+            Assert.Contains("family_trades=1",scout.Evidence);
+            Assert.Contains("family_avg_return=-0.350%",scout.Evidence);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            foreach(var file in Directory.GetFiles(Path.GetDirectoryName(path)!,Path.GetFileName(path)+"*"))
+                try{File.Delete(file);}catch{}
+        }
     }
 
     [Fact]
@@ -493,6 +567,28 @@ public sealed class TradeHypothesisEngineTests
             MissingConditions=entryReady?[]:["legacy aggregation threshold not met"],
             Summary="legacy aggregation is observation only"
         };
+
+    private static async Task InsertHypothesisOutcomeAsync(
+        string databasePath,
+        string strategyId,
+        decimal returnPct,
+        int index)
+    {
+        await using var connection=new SqliteConnection($"Data Source={databasePath}");
+        await connection.OpenAsync();
+        await using var command=connection.CreateCommand();
+        command.CommandText=@"INSERT INTO trade_outcomes(
+client_order_id,cycle_id,symbol,side,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis)
+VALUES($client,$cycle,'BTCUSDT','Long',$pnl,$return,$closed,$strategy,$version,'automatic-artifact')";
+        command.Parameters.AddWithValue("$client",$"family-feedback-{index}");
+        command.Parameters.AddWithValue("$cycle",$"cycle-{index}");
+        command.Parameters.AddWithValue("$pnl",(returnPct*100m).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$return",returnPct.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$closed",Now.AddMinutes(index).ToString("O"));
+        command.Parameters.AddWithValue("$strategy",strategyId);
+        command.Parameters.AddWithValue("$version",TradeHypothesis.CurrentVersion);
+        await command.ExecuteNonQueryAsync();
+    }
 
     private static MarketEvidence Market(
         decimal price,

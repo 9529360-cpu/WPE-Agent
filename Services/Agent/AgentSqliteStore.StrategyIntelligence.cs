@@ -150,6 +150,40 @@ public sealed partial class AgentSqliteStore
             posteriorWinRate);
     }
 
+    internal async Task<HypothesisExecutionFeedback> GetHypothesisExecutionFeedbackAsync(
+        string symbol,
+        TradeHypothesisKind kind,
+        CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(symbol))throw new ArgumentException("Symbol is required.",nameof(symbol));
+        if(kind==TradeHypothesisKind.None||!Enum.IsDefined(kind))return new(0,0,0,.5);
+
+        var returns=new List<decimal>();
+        await using var connection=new SqliteConnection(_cs);
+        await connection.OpenAsync(ct);
+        await using var command=connection.CreateCommand();
+        command.CommandText="SELECT return_pct FROM trade_outcomes WHERE strategy_id LIKE $prefix AND strategy_version=$version AND attribution_basis='automatic-artifact' AND return_pct IS NOT NULL ORDER BY closed_at DESC,id DESC LIMIT 50";
+        command.Parameters.AddWithValue("$prefix",$"HYP-{symbol.Trim().ToUpperInvariant()}-{kind}-%");
+        command.Parameters.AddWithValue("$version",TradeHypothesis.CurrentVersion);
+        await using var reader=await command.ExecuteReaderAsync(ct);
+        while(await reader.ReadAsync(ct))
+        {
+            if(decimal.TryParse(reader.GetString(0),NumberStyles.Number,CultureInfo.InvariantCulture,out var value))
+                returns.Add(value);
+        }
+
+        if(returns.Count==0)return new(0,0,0,.5);
+        var wins=returns.Count(value=>value>0);
+        const double priorWins=4;
+        const double priorTrades=8;
+        var posteriorWinRate=(wins+priorWins)/(returns.Count+priorTrades);
+        return new(
+            returns.Count,
+            (double)returns.Average(),
+            wins/(double)returns.Count,
+            posteriorWinRate);
+    }
+
     private static StrategyObservationPerformance PendingPerformance(int rawObservations)
         => new(0, 0, 0, 0, 0, "shadow actionable observations pending", .5, Array.Empty<StrategyRegimePerformance>(), rawObservations);
 
@@ -192,3 +226,4 @@ public sealed partial class AgentSqliteStore
 }
 
 internal sealed record StrategyExecutionFeedback(int Trades,double AverageReturn,double WinRate,double PosteriorWinRate);
+internal sealed record HypothesisExecutionFeedback(int Trades,double AverageReturn,double WinRate,double PosteriorWinRate);
