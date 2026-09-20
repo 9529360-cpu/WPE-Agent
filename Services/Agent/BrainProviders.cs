@@ -100,15 +100,24 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
         var blocked=context.CircuitBreakerActive||actionable is null;
         var instrument=selected?.Symbol??evidence.Markets.Keys.FirstOrDefault()??"BTCUSDT";
         var assessment=context.MarketAssessments.FirstOrDefault(x=>x.Symbol.Equals(instrument,StringComparison.OrdinalIgnoreCase));
+        evidence.Markets.TryGetValue(instrument,out var selectedMarket);
         var action=DecisionAction.Hold;
         var targetTier=0;
         var riskBudget=0d;
+        var entryPrice=0m;
+        var stopLossPrice=0m;
+        var takeProfitPrice=0m;
 
         if(!blocked&&actionable is not null)
         {
             action=actionable.Direction>0?DecisionAction.OpenLong:DecisionAction.OpenShort;
             targetTier=actionable.Stage==TradeHypothesisStage.Confirmed?2:1;
             riskBudget=actionable.RiskBudgetMultiplier;
+            entryPrice=selectedMarket?.Price>0?selectedMarket.Price:actionable.ReferencePrice;
+            stopLossPrice=actionable.InvalidationPrice;
+            var structuralTarget=actionable.Direction>0?actionable.Resistance:actionable.Support;
+            if(actionable.Direction>0&&structuralTarget>entryPrice)takeProfitPrice=structuralTarget;
+            if(actionable.Direction<0&&structuralTarget>0&&structuralTarget<entryPrice)takeProfitPrice=structuralTarget;
         }
 
         var reason=context.CircuitBreakerActive
@@ -125,6 +134,9 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
             Instrument=instrument,
             TargetTier=targetTier,
             Confidence=0,
+            EntryPrice=entryPrice,
+            StopLossPrice=stopLossPrice,
+            TakeProfitPrice=takeProfitPrice,
             Regime=selected?.Regime.ToString()??assessment?.Regime.ToString()??MarketRegime.Unknown.ToString(),
             Reason=reason,
             Invalidation=selected?.Invalidation??"Market hypothesis is absent or invalidated.",
