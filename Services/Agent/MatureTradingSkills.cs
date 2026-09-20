@@ -176,13 +176,16 @@ public sealed class PositionManagementSkill
         IReadOnlyDictionary<string,MarketEvidence> markets,
         AgentSqliteStore db,
         CancellationToken ct,
+        IReadOnlyList<ExecutionPositionLegV1> managedLegs,
         IReadOnlyDictionary<string,TradeHypothesis>? hypotheses=null)
     {
+        ArgumentNullException.ThrowIfNull(managedLegs);
         var intents=new List<ExecutionIntent>();
         var protections=new List<ProtectionAdjustment>();
         var notes=new List<string>();
         foreach(var position in positions)
         {
+            if(!IsExactlyManaged(position,positions,managedLegs))continue;
             if(!markets.TryGetValue(position.Symbol,out var market))continue;
             var opening=await db.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);
             if(opening is null)continue;
@@ -251,6 +254,17 @@ public sealed class PositionManagementSkill
             }
         }
         return new(intents,protections,notes);
+    }
+
+    private static bool IsExactlyManaged(
+        ManagedPosition position,IReadOnlyList<ManagedPosition> positions,IReadOnlyList<ExecutionPositionLegV1> managedLegs)
+    {
+        var exchangeMatches=positions.Count(x=>string.Equals(x.Symbol,position.Symbol,StringComparison.OrdinalIgnoreCase)&&x.Side==position.Side);
+        if(exchangeMatches!=1)return false;
+        var localMatches=managedLegs.Where(x=>string.Equals(x.Symbol,position.Symbol,StringComparison.OrdinalIgnoreCase)&&x.Side==position.Side).ToArray();
+        if(localMatches.Length!=1||localMatches[0].Quantity<=0)return false;
+        var tolerance=Math.Max(.00000001m,Math.Max(localMatches[0].Quantity,position.Quantity)*.000001m);
+        return position.Quantity>0&&Math.Abs(localMatches[0].Quantity-position.Quantity)<=tolerance;
     }
 
     private static bool StructureHypothesisInvalidated(ManagedPosition position,TradeHypothesis hypothesis)
