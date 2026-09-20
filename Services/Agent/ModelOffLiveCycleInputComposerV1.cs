@@ -324,7 +324,7 @@ internal static class ModelOffLiveCycleInputComposerV1
 
     private static object HypothesisTechnicalFact(TradeHypothesis value,MarketEvidence market)=>new
     {
-        schema="wpe.live-market-hypothesis/1.0",
+        schema="wpe.live-market-hypothesis/1.1",
         symbol=value.Symbol,
         market_evidence_sha256=market.Provenance!.CanonicalSha256,
         hypothesis_id=value.Id,
@@ -334,6 +334,8 @@ internal static class ModelOffLiveCycleInputComposerV1
         value.Direction,
         regime=value.Regime.ToString(),
         decision_basis=value.DecisionBasis,
+        last_structure_bar_closed_at_utc=value.LastStructureBarClosedAtUtc,
+        last_structure_event=value.LastStructureEvent.ToString(),
         value.Support,
         value.Resistance,
         value.InvalidationPrice,
@@ -350,7 +352,16 @@ internal static class ModelOffLiveCycleInputComposerV1
         value.UpdatedAtUtc!=default&&value.UpdatedAtUtc.Offset==TimeSpan.Zero&&value.UpdatedAtUtc<=now&&now-value.UpdatedAtUtc<=MaximumMarketAge&&
         value.Support>0&&value.Resistance>value.Support&&value.InvalidationPrice>0&&value.TriggerPrice>0&&
         Finite(value.RiskBudgetMultiplier)&&value.RiskBudgetMultiplier is>=0 and<=1&&
+        ValidStructureIdentity(value,now)&&
         value.Evidence is {Count:>0};
+
+    private static bool ValidStructureIdentity(TradeHypothesis value,DateTimeOffset now)
+    {
+        if(!string.Equals(value.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal))return true;
+        return value.LastStructureBarClosedAtUtc is { } closedAt&&
+               closedAt!=default&&closedAt.Offset==TimeSpan.Zero&&closedAt<=now&&
+               Enum.IsDefined(value.LastStructureEvent);
+    }
 
     private static bool TryUtc(DateTime value, out DateTimeOffset result)
     {
