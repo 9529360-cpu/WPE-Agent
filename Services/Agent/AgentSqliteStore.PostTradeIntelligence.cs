@@ -119,10 +119,33 @@ public sealed partial class AgentSqliteStore
 
     private static string ResolveExitReason(ExecutionIntent intent, ExchangeOrder order)
     {
-        var reason = SensitiveDataRedactor.ForLog(intent.Reason ?? string.Empty,160).Trim();
-        if (!string.IsNullOrWhiteSpace(reason)) return reason;
-        if (order.IsProtection) return "protection.fill-reconciled";
+        if (TryStableReasonCode(intent.ReasonCode, out var explicitCode)) return explicitCode;
+
+        if (order.IsProtection)
+        {
+            if (TryStableReasonCode(intent.Reason, out var protectionCode) &&
+                protectionCode.StartsWith("protection.", StringComparison.Ordinal))
+                return protectionCode;
+            return PositionExitReasonCodes.ProtectionFillReconciled;
+        }
+
+        if (TryStableReasonCode(intent.Reason, out var legacyCode)) return legacyCode;
         return "action." + intent.Action.ToString().ToLowerInvariant();
+    }
+
+    private static bool TryStableReasonCode(string? value, out string code)
+    {
+        code=(value??string.Empty).Trim();
+        if(code.Length is 0 or >96)return false;
+        var segments=code.Split('.');
+        if(segments.Length==0)return false;
+        foreach(var segment in segments)
+        {
+            if(segment.Length==0||segment[0] is not (>= 'a' and <= 'z'))return false;
+            if(segment[^1] is not (>= 'a' and <= 'z' or >= '0' and <= '9'))return false;
+            if(segment.Any(character=>character is not (>= 'a' and <= 'z' or >= '0' and <= '9' or '-')))return false;
+        }
+        return true;
     }
 
     private static async Task<(DateTimeOffset Opened, DateTimeOffset Closed)?> ResolveUnambiguousPositionWindowAsync(
