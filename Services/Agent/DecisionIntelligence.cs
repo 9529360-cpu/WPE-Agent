@@ -104,18 +104,21 @@ public sealed class DecisionGovernanceSkill
         var assessment=assessments.FirstOrDefault(x=>x.Symbol.Equals(proposed.Instrument,StringComparison.OrdinalIgnoreCase));
         var riskIncreasing=DeterministicPlanSkill.IsRiskIncreasing(proposed.Action);
         var numerical=NumericalStrategySkill.IsNumerical(proposed);
+        var remoteEvidence=RemoteEvidenceDecisionPolicy.IsRemote(proposed);
+        var heuristicSignalsAreAdvisory=numerical||remoteEvidence;
         if(assessment is null)blocks.Add(L("Review.NoAssessment"));
         if(evidence.Completeness<policy.MinimumEvidenceCompleteness&&riskIncreasing)blocks.Add(L("Review.Incomplete"));
         if(assessment is{Fresh:false}&&riskIncreasing)blocks.Add(L("Review.Stale"));
         if(!numerical&&proposed.Confidence<policy.MinimumConfidence&&riskIncreasing)blocks.Add(L("Review.BrainConfidence",proposed.Confidence,policy.MinimumConfidence));
-        if(!numerical&&assessment is{EntryReady:false}&&riskIncreasing)blocks.AddRange(assessment.MissingConditions);
-        if(!numerical&&assessment is not null&&riskIncreasing)
+        if(!heuristicSignalsAreAdvisory&&assessment is{EntryReady:false}&&riskIncreasing)blocks.AddRange(assessment.MissingConditions);
+        if(!heuristicSignalsAreAdvisory&&assessment is not null&&riskIncreasing)
         {
             var wantsLong=proposed.Action is DecisionAction.OpenLong or DecisionAction.AddLong or DecisionAction.ReverseToLong;
             var wantsShort=proposed.Action is DecisionAction.OpenShort or DecisionAction.AddShort or DecisionAction.ReverseToShort;
             if((wantsLong&&assessment.NetScore<0)||(wantsShort&&assessment.NetScore>0))blocks.Add(L("Review.DirectionConflict"));
         }
         if(numerical&&riskIncreasing)blocks.AddRange(NumericalStrategySkill.ValidateDecision(proposed,evidence,policy));
+        if(remoteEvidence&&riskIncreasing)blocks.AddRange(RemoteEvidenceDecisionPolicy.ValidateRiskIncrease(proposed,evidence,policy));
         var final=blocks.Count==0?proposed:CopyAsHold(proposed,blocks);
         var accepted=blocks.Count==0;
         var explanation=Explain(final,assessment,blocks);

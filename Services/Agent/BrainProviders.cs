@@ -190,12 +190,11 @@ internal static class BrainPromptComposer
         PromptDetailLevel detailLevel)
     {
         var orderedAssessments = context.MarketAssessments
-            .OrderByDescending(x => x.EntryReady)
-            .ThenByDescending(x => x.Confidence)
-            .ThenByDescending(x => Math.Abs(x.NetScore))
+            .OrderByDescending(x => x.Fresh)
+            .ThenBy(x => x.Symbol, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var detailedSymbols = detailLevel == PromptDetailLevel.DetailedContext
-            ? SelectDetailedSymbols(evidence, context, orderedAssessments)
+            ? SelectDetailedSymbols(evidence, context)
             : Array.Empty<string>();
         return JsonSerializer.Serialize(new
         {
@@ -304,12 +303,6 @@ internal static class BrainPromptComposer
         var excluded = detailLevel == PromptDetailLevel.DetailedContext
             ? detailedSymbols.ToHashSet(StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var orderedAssessments = context.MarketAssessments
-            .OrderByDescending(x => x.EntryReady)
-            .ThenByDescending(x => x.Confidence)
-            .ThenByDescending(x => Math.Abs(x.NetScore))
-            .ToArray();
-
         void Add(string? symbol, bool allowDetailedDuplicate = false)
         {
             if (string.IsNullOrWhiteSpace(symbol)) return;
@@ -321,19 +314,12 @@ internal static class BrainPromptComposer
         Add(context.ActiveSymbol);
         foreach (var symbol in evidence.Positions.Select(x => x.Symbol))
             Add(symbol);
-        foreach (var assessment in orderedAssessments.Where(x => x.EntryReady))
+        foreach (var market in evidence.Markets.Values
+                     .OrderByDescending(x => x.Quality.QualityScore)
+                     .ThenByDescending(x => x.Quality.RelativeVolume)
+                     .ThenBy(x => x.Symbol, StringComparer.OrdinalIgnoreCase))
         {
-            Add(assessment.Symbol);
-            if (selected.Count >= MaxMarketBriefContexts) break;
-        }
-        foreach (var assessment in orderedAssessments)
-        {
-            Add(assessment.Symbol);
-            if (selected.Count >= MaxMarketBriefContexts) break;
-        }
-        foreach (var symbol in evidence.Markets.Keys.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
-        {
-            Add(symbol);
+            Add(market.Symbol);
             if (selected.Count >= MaxMarketBriefContexts) break;
         }
         if (selected.Count == 0 && detailLevel == PromptDetailLevel.DetailedContext)
@@ -357,22 +343,15 @@ internal static class BrainPromptComposer
 
     private static bool ShouldUpgradeToDetailedContext(EvidencePack evidence, AgentContext context)
     {
-        var ordered = context.MarketAssessments
-            .OrderByDescending(x => x.EntryReady)
-            .ThenByDescending(x => x.Confidence)
-            .ThenByDescending(x => Math.Abs(x.NetScore))
-            .ToArray();
-        if (ordered.Any(x => x.EntryReady)) return true;
         if (!string.IsNullOrWhiteSpace(context.ActiveSymbol)) return true;
         if (evidence.Positions.Count > 0) return true;
-        if (ordered.Length > 1 && Math.Abs(ordered[0].NetScore - ordered[1].NetScore) <= 0.15) return true;
-        return false;
+        return evidence.Markets.Values.Any(x =>
+            MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(x) &&
+            x.Candles.Count >= NumericalMarketStructureSkill.MinimumCandles &&
+            x.Quality.QualityScore >= 65);
     }
 
-    private static IReadOnlyList<string> SelectDetailedSymbols(
-        EvidencePack evidence,
-        AgentContext context,
-        IReadOnlyList<MarketDecisionAssessment> orderedAssessments)
+    private static IReadOnlyList<string> SelectDetailedSymbols(EvidencePack evidence, AgentContext context)
     {
         var selected = new List<string>();
 
@@ -384,18 +363,15 @@ internal static class BrainPromptComposer
         }
 
         Add(context.ActiveSymbol);
-        foreach (var symbol in evidence.Positions.Select(x => x.Symbol))
-            Add(symbol);
-        foreach (var assessment in orderedAssessments.Where(x => x.EntryReady))
+        foreach (var symbol in evidence.Positions.Select(x => x.Symbol)) Add(symbol);
+        foreach (var market in evidence.Markets.Values
+                     .Where(x => MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(x))
+                     .OrderByDescending(x => x.Quality.QualityScore)
+                     .ThenByDescending(x => x.Quality.RelativeVolume)
+                     .ThenBy(x => x.Symbol, StringComparer.OrdinalIgnoreCase))
         {
-            Add(assessment.Symbol);
+            Add(market.Symbol);
             if (selected.Count >= MaxDetailedMarketContexts) break;
-        }
-        if (selected.Count == 0 && orderedAssessments.Count > 0)
-        {
-            Add(orderedAssessments[0].Symbol);
-            if (orderedAssessments.Count > 1 && Math.Abs(orderedAssessments[0].NetScore - orderedAssessments[1].NetScore) <= 0.15)
-                Add(orderedAssessments[1].Symbol);
         }
 
         return selected.Take(MaxDetailedMarketContexts).ToArray();
@@ -527,7 +503,7 @@ public sealed class HttpBrainProvider : IAssistantProvider
         你是 WPE 合约决策 Planner，只负责提出候选计划，不计算最终下单数量。你的计划之后还会经过本地 Critic、Reviewer 和确定性风控。只能依据 evidence、marketAssessments 和 context 输出一个 JSON 对象，不得输出 Markdown。
         action 只能是 OpenLong/OpenShort/AddLong/AddShort/ReduceLong/ReduceShort/CloseLong/CloseShort/Lock/Unlock/ReverseToLong/ReverseToShort/Hold；instrument 只能从输入 evidence.Markets 的键中选择；targetTier 只能 0..3；止损止盈必须是数字。
         必须逐个独立评估输入中的交易品种，再选择质量更高的一个；跨品种方向相反不是同一品种的信号冲突，禁止因此笼统 HOLD。15分钟负责执行，1小时和4小时负责背景，价格结构优先于新闻叙事。
-        marketAssessments 是本地可复算的逐信号权重结果。若 EntryReady=false，通常 HOLD，并在 missingConditions 中准确列出尚缺条件；若提出增加风险的动作，方向必须与该品种 NetScore 一致且 confidence 不低于策略阈值。
+        marketAssessments 是本地可复算的启发式参考，不是交易裁决权。EntryReady、NetScore、聚合 confidence 可以帮助解释，但不得替代你对原始 OHLCV、结构、成交量、衍生品和可验证上下文的独立判断。若你与 NetScore 不同，必须在 reason、invalidation 和 evidenceReferences 中明确给出输入里真实存在的结构证据。任何增加风险的动作仍必须建立在新鲜、完整、质量合格且可追溯的市场证据上，并会被本地结构验证与独立 Risk Gate 再次校验。
         previousOutcomes 是压缩后的经验回放，不要机械复述上一轮；consecutiveHolds 较高时必须重新检查原结论，但不得为了开单而降低标准。
         只有结构破坏/重新站回、失效条件触发、核心驱动替换或验证等级下降时才改变观点；核心区间内不得直接称为反转。多空证据冲突时仍须给出唯一最终倾向。
         不得编造新闻、鲸鱼流向、截图、订单流或来源，不得承诺收益。reason 必须简述核心证据与风险，invalidation 必须写明观点失效条件，evidenceReferences 只能引用输入中实际存在的项目；conflictSummary 描述同一品种内部冲突。
@@ -535,7 +511,7 @@ public sealed class HttpBrainProvider : IAssistantProvider
         instruction += $"\n允许的 instrument：{string.Join(",",e.Markets.Keys)}。所有面向用户的描述字段（reason、invalidation、conflictSummary、missingConditions）必须使用{LocalizationService.Current.CurrentLanguage.AiLanguage}；action、instrument 和 JSON 字段名保持规定的英文枚举。missingConditions 和 evidenceReferences 必须输出字符串数组。";
         var prompt = BrainPromptComposer.BuildDecisionPrompt(e, c, LocalizationService.Current.CurrentLanguage.AiLanguage, _slot.ContextLimit, instruction);
         string raw="";
-        try{using var r=await BuildAndSend(prompt,ct);raw=await r.Content.ReadAsStringAsync(ct);if(!r.IsSuccessStatusCode)throw new BrainCallException($"{Name} HTTP {(int)r.StatusCode}",AuditRef("prompt",prompt),AuditRef("response",raw));var content=ExtractProviderText(raw);var json=ExtractJson(content);var opt=new JsonSerializerOptions{PropertyNameCaseInsensitive=true};opt.Converters.Add(new JsonStringEnumConverter());opt.Converters.Add(new FlexibleStringListConverter());var decision=JsonSerializer.Deserialize<DecisionPlan>(json,opt)??new DecisionPlan{Reason=LocalizationService.Current.T("Provider.EmptyResponse")};decision.MissingConditions??=[];decision.EvidenceReferences??=[];return new(decision,AuditRef("prompt",prompt),AuditRef("response",raw));}
+        try{using var r=await BuildAndSend(prompt,ct);raw=await r.Content.ReadAsStringAsync(ct);if(!r.IsSuccessStatusCode)throw new BrainCallException($"{Name} HTTP {(int)r.StatusCode}",AuditRef("prompt",prompt),AuditRef("response",raw));var content=ExtractProviderText(raw);var json=ExtractJson(content);var opt=new JsonSerializerOptions{PropertyNameCaseInsensitive=true};opt.Converters.Add(new JsonStringEnumConverter());opt.Converters.Add(new FlexibleStringListConverter());var decision=JsonSerializer.Deserialize<DecisionPlan>(json,opt)??new DecisionPlan{Reason=LocalizationService.Current.T("Provider.EmptyResponse")};decision.MissingConditions??=[];decision.EvidenceReferences??=[];decision.DecisionBasis=RemoteEvidenceDecisionPolicy.Basis;decision.StrategyVersion=NumericalStrategySkill.Version;return new(decision,AuditRef("prompt",prompt),AuditRef("response",raw));}
         catch(BrainCallException){throw;}catch(Exception ex){throw new BrainCallException(LocalizationService.Current.T("Provider.ParseFailed",Name,global::币安量化机器人.Services.SensitiveDataRedactor.ForLog(ex.Message,180,_key,_slot.EncryptedKey)),AuditRef("prompt",prompt),AuditRef("response",raw),ex);}
     }
     private async Task<HttpResponseMessage> BuildAndSend(string prompt,CancellationToken ct)

@@ -94,6 +94,32 @@ public sealed class NumericalTradingIntelligenceTests
     }
 
     [Fact]
+    public void RemoteEvidenceReviewer_CanOverrideLegacyScoreOnlyWithConfirmedStructure()
+    {
+        var source=BullishMarket();var last=source.Candles[^1].OpenTime;var shift=DateTime.UtcNow.AddMinutes(-15)-last;var candles=source.Candles.Select(x=>x with{OpenTime=x.OpenTime.Add(shift)}).ToArray();
+        var market=source with{CollectedAt=DateTime.UtcNow,Candles=candles};market=market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,"test-provider","Testnet")};
+        var evidence=Pack(market);var assessment=LegacyAssessment(entryReady:false,netScore:-.9);
+        var proposed=new DecisionPlan{Action=DecisionAction.OpenLong,Instrument=market.Symbol,Confidence=.80,Reason="confirmed bullish structure despite legacy score",Invalidation="close below reclaimed structure",EvidenceReferences=["market-structure:v1"],StrategyVersion=NumericalStrategySkill.Version,DecisionBasis=RemoteEvidenceDecisionPolicy.Basis};
+        proposed=new DeterministicPlanSkill().Complete(proposed,market,assessment,new RiskLimits());
+
+        var review=new DecisionGovernanceSkill().Review(proposed,[assessment],evidence,new DecisionPolicy{MinimumEvidenceCompleteness=70,MinimumConfidence=.62,MinimumMarketQuality=65,MaximumEvidenceAgeMinutes=5});
+
+        Assert.True(review.Accepted);
+        Assert.Equal(DecisionAction.OpenLong,review.Decision.Action);
+        Assert.DoesNotContain("legacy.score-blocked",review.BlockingReasons);
+    }
+
+    [Fact]
+    public void RemoteEvidenceEligibility_IgnoresEntryReadyButFailsClosedOnIncompleteEvidence()
+    {
+        var source=BullishMarket();var last=source.Candles[^1].OpenTime;var shift=DateTime.UtcNow.AddMinutes(-15)-last;var candles=source.Candles.Select(x=>x with{OpenTime=x.OpenTime.Add(shift)}).ToArray();
+        var market=source with{CollectedAt=DateTime.UtcNow,Candles=candles};market=market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,"test-provider","Testnet")};
+        var policy=new DecisionPolicy{MinimumEvidenceCompleteness=70,MinimumMarketQuality=65,MaximumEvidenceAgeMinutes=5};
+        Assert.True(RemoteEvidenceDecisionPolicy.HasHardEvidence(Pack(market),policy));
+        Assert.False(RemoteEvidenceDecisionPolicy.HasHardEvidence(new EvidencePack{CollectedAt=DateTime.UtcNow,Completeness=60,Markets=new Dictionary<string,MarketEvidence>{{market.Symbol,market}}},policy));
+    }
+
+    [Fact]
     public async Task DeterministicBrain_FallsBackToLegacyAssessmentWhenRawCandlesAreUnavailable()
     {
         var market = BullishMarket() with { Candles = Array.Empty<CandleEvidence>() };

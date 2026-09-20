@@ -3,14 +3,16 @@ namespace WPE.Tests;
 public sealed class RemoteBrainUsagePolicyTests
 {
     [Fact]
-    public void AutoTradingAgent_SkipsRemoteBrain_WhenNoEntryReadySignalsNoPositionsAndLowHoldCount()
+    public void AutoTradingAgent_UsesHardMarketEvidenceInsteadOfEntryReadyToSelectRemoteBrain()
     {
         var source = File.ReadAllText(SourcePath());
 
-        Assert.Contains("ShouldUseRemotePlanner", source, StringComparison.Ordinal);
+        Assert.Contains("ShouldUseRemotePlanner(evidence,positions,holdCount,settings.Decision)", source, StringComparison.Ordinal);
+        Assert.Contains("RemoteEvidenceDecisionPolicy.HasHardEvidence(evidence,policy)", source, StringComparison.Ordinal);
         Assert.Contains("if(positions.Count>0)return true;", source, StringComparison.Ordinal);
         Assert.Contains("if(consecutiveHolds>=3)return true;", source, StringComparison.Ordinal);
-        Assert.Contains("return assessments.Any(x=>x.EntryReady);", source, StringComparison.Ordinal);
+        Assert.Contains("return evidence.Markets.Count>0;", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("return assessments.Any(x=>x.EntryReady);", source, StringComparison.Ordinal);
         Assert.Contains("var plannerBrain=useRemotePlanner?brain:localBrain;", source, StringComparison.Ordinal);
         Assert.Contains("remote={useRemotePlanner}", source, StringComparison.Ordinal);
     }

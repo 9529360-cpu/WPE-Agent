@@ -24,7 +24,10 @@ public sealed class BrainPromptCompressionTests
         Assert.Contains("SelectDetailedSymbols", source, StringComparison.Ordinal);
         Assert.Contains("if (!string.IsNullOrWhiteSpace(context.ActiveSymbol)) return true;", source, StringComparison.Ordinal);
         Assert.Contains("if (evidence.Positions.Count > 0) return true;", source, StringComparison.Ordinal);
-        Assert.Contains("if (ordered.Length > 1 && Math.Abs(ordered[0].NetScore - ordered[1].NetScore) <= 0.15) return true;", source, StringComparison.Ordinal);
+        Assert.Contains("x.Candles.Count >= NumericalMarketStructureSkill.MinimumCandles", source, StringComparison.Ordinal);
+        Assert.Contains("x.Quality.QualityScore >= 65", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ordered.Any(x => x.EntryReady)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Math.Abs(ordered[0].NetScore - ordered[1].NetScore)", source, StringComparison.Ordinal);
         Assert.Contains("outcomeMemory = context.OutcomeMemories", source, StringComparison.Ordinal);
         Assert.Contains("outcomeMemorySchema = \"wpe.planner-outcome-memory/1.0\"", source, StringComparison.Ordinal);
         Assert.Contains("ea = x.ExecutionAttempted", source, StringComparison.Ordinal);

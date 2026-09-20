@@ -252,6 +252,55 @@ public sealed class MarketHypothesisSkill
 }
 
 
+
+public static class RemoteEvidenceDecisionPolicy
+{
+    public const string Basis="remote-evidence-reasoning-v1";
+
+    public static bool IsRemote(DecisionPlan? plan)=>
+        plan is not null&&string.Equals(plan.DecisionBasis,Basis,StringComparison.Ordinal);
+
+    public static bool HasHardEvidence(EvidencePack evidence,DecisionPolicy policy)
+    {
+        if(evidence.Completeness<policy.MinimumEvidenceCompleteness)return false;
+        var now=DateTime.UtcNow;
+        return evidence.Markets.Values.Any(market=>HardMarketReady(market,policy,now));
+    }
+
+    public static IReadOnlyList<string> ValidateRiskIncrease(DecisionPlan plan,EvidencePack evidence,DecisionPolicy policy)
+    {
+        var blocks=new List<string>();
+        if(!IsRemote(plan))return new[]{"remote.basis-invalid"};
+        if(!DeterministicPlanSkill.IsRiskIncreasing(plan.Action))return blocks;
+        if(evidence.Completeness<policy.MinimumEvidenceCompleteness)blocks.Add("remote.evidence-incomplete");
+        if(!string.Equals(plan.StrategyVersion,NumericalStrategySkill.Version,StringComparison.Ordinal))blocks.Add("remote.strategy-version-invalid");
+        if(string.IsNullOrWhiteSpace(plan.Reason))blocks.Add("remote.reason-missing");
+        if(string.IsNullOrWhiteSpace(plan.Invalidation))blocks.Add("remote.invalidation-missing");
+        if(plan.EvidenceReferences is not{Count:>0})blocks.Add("remote.evidence-reference-missing");
+        if(!evidence.Markets.TryGetValue(plan.Instrument,out var market)||market is null)blocks.Add("remote.market-missing");
+        else
+        {
+            var now=DateTime.UtcNow;
+            if(!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market))blocks.Add("remote.provenance-invalid");
+            var age=now-market.CollectedAt.ToUniversalTime();
+            if(age<TimeSpan.FromMinutes(-1)||age>TimeSpan.FromMinutes(Math.Max(1,policy.MaximumEvidenceAgeMinutes)))blocks.Add("remote.market-stale");
+            if(market.Quality.QualityScore<policy.MinimumMarketQuality)blocks.Add("remote.market-quality");
+            if(market.Candles.Count<NumericalMarketStructureSkill.MinimumCandles)blocks.Add("remote.candles-insufficient");
+        }
+        blocks.AddRange(NumericalStrategySkill.ValidateStructureDecision(plan,evidence,policy,false));
+        return blocks.Distinct(StringComparer.Ordinal).ToArray();
+    }
+
+    private static bool HardMarketReady(MarketEvidence market,DecisionPolicy policy,DateTime now)
+    {
+        if(!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market))return false;
+        var age=now-market.CollectedAt.ToUniversalTime();
+        return age>=TimeSpan.FromMinutes(-1)&&age<=TimeSpan.FromMinutes(Math.Max(1,policy.MaximumEvidenceAgeMinutes))&&
+               market.Quality.QualityScore>=policy.MinimumMarketQuality&&
+               market.Candles.Count>=NumericalMarketStructureSkill.MinimumCandles;
+    }
+}
+
 public sealed class NumericalStrategyResearchSkill
 {
     private const double RoundTripCost=.0014;
@@ -426,31 +475,30 @@ public sealed class NumericalStrategySkill
     public static bool IsNumerical(DecisionPlan? plan) =>
         plan is not null && string.Equals(plan.DecisionBasis, Basis, StringComparison.Ordinal);
 
-    public static IReadOnlyList<string> ValidateDecision(DecisionPlan plan, EvidencePack evidence, DecisionPolicy? policy)
-    {
-        var blocks = new List<string>();
-        if (!IsNumerical(plan)) return new[] { "structure.basis-invalid" };
-        if (!DeterministicPlanSkill.IsRiskIncreasing(plan.Action)) return blocks;
-        if (plan.Action is not DecisionAction.OpenLong and not DecisionAction.OpenShort)
-            blocks.Add("structure.action-not-supported");
-        if (!evidence.Markets.TryGetValue(plan.Instrument, out var market) || market is null)
-            return blocks.Append("structure.market-missing").ToArray();
-        if (!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market))
-            blocks.Add("structure.provenance-invalid");
-        if (policy is not null && market.Quality.QualityScore < policy.MinimumMarketQuality)
-            blocks.Add("structure.market-quality");
+    public static IReadOnlyList<string> ValidateDecision(DecisionPlan plan,EvidencePack evidence,DecisionPolicy? policy)=>
+        ValidateStructureDecision(plan,evidence,policy,true);
 
-        var structure = new NumericalMarketStructureSkill().Analyze(market);
-        if (!structure.Ready)
+    internal static IReadOnlyList<string> ValidateStructureDecision(DecisionPlan plan,EvidencePack evidence,DecisionPolicy? policy,bool requireNumericalBasis)
+    {
+        var blocks=new List<string>();
+        if(requireNumericalBasis&&!IsNumerical(plan))return new[]{"structure.basis-invalid"};
+        if(!DeterministicPlanSkill.IsRiskIncreasing(plan.Action))return blocks;
+        if(plan.Action is not DecisionAction.OpenLong and not DecisionAction.OpenShort)blocks.Add("structure.action-not-supported");
+        if(!evidence.Markets.TryGetValue(plan.Instrument,out var market)||market is null)return blocks.Append("structure.market-missing").ToArray();
+        if(!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market))blocks.Add("structure.provenance-invalid");
+        if(policy is not null&&market.Quality.QualityScore<policy.MinimumMarketQuality)blocks.Add("structure.market-quality");
+
+        var structure=new NumericalMarketStructureSkill().Analyze(market);
+        if(!structure.Ready)
         {
             blocks.AddRange(structure.MissingConditions);
             return blocks.Distinct(StringComparer.Ordinal).ToArray();
         }
-        var hypotheses = new MarketHypothesisSkill().Build(market, structure);
-        var confirmed = hypotheses.Where(x => x.Status == MarketHypothesisStatus.Confirmed && x.Direction.HasValue).ToArray();
-        if (confirmed.Select(x => x.Direction).Distinct().Count() > 1) blocks.Add("structure.direction-conflict");
-        var expected = plan.Action == DecisionAction.OpenLong ? PositionSide.Long : PositionSide.Short;
-        if (!confirmed.Any(x => x.Direction == expected)) blocks.Add("structure.hypothesis-not-confirmed");
+        var hypotheses=new MarketHypothesisSkill().Build(market,structure);
+        var confirmed=hypotheses.Where(x=>x.Status==MarketHypothesisStatus.Confirmed&&x.Direction.HasValue).ToArray();
+        if(confirmed.Select(x=>x.Direction).Distinct().Count()>1)blocks.Add("structure.direction-conflict");
+        var expected=plan.Action==DecisionAction.OpenLong?PositionSide.Long:PositionSide.Short;
+        if(!confirmed.Any(x=>x.Direction==expected))blocks.Add("structure.hypothesis-not-confirmed");
         return blocks.Distinct(StringComparer.Ordinal).ToArray();
     }
 
