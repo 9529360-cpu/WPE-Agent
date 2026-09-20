@@ -262,6 +262,29 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task BreakevenProtectionSkipsWhenSaferTickWouldCrossMarket()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent("open-breakeven-coarse"),"PROTECTED","1009",CancellationToken.None);
+            var market=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(110m)}};
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],market,db,CancellationToken.None,ManagedLedger(),tradingRules:Rules(tickSize:20m));
+
+            Assert.Empty(result.Intents);
+            Assert.Empty(result.ProtectionAdjustments);
+            Assert.Contains(result.Notes,x=>x.StartsWith("breakeven-price-unavailable:",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task InvalidatedStructureNeverClosesExternalPositionWithoutWpeOpeningIntent()
     {
         var path=TempDb();
@@ -342,10 +365,10 @@ public sealed class StructurePositionManagementTests
     private static IReadOnlyList<ExecutionPositionLegV1> ManagedLedger(decimal quantity=1m)=>
         [new("BTCUSDT",PositionSide.Long,quantity)];
 
-    private static IReadOnlyDictionary<string,TradingRule> Rules(decimal step=.1m,decimal minQuantity=.1m)=>
+    private static IReadOnlyDictionary<string,TradingRule> Rules(decimal step=.1m,decimal minQuantity=.1m,decimal tickSize=.1m)=>
         new Dictionary<string,TradingRule>(StringComparer.OrdinalIgnoreCase)
         {
-            ["BTCUSDT"]=new("BTCUSDT",step,.1m,minQuantity,5m,20)
+            ["BTCUSDT"]=new("BTCUSDT",step,tickSize,minQuantity,5m,20)
         };
 
     private static ExecutionIntent OpeningIntent(string clientOrderId="open-structure-1")=>new(
