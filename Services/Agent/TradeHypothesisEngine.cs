@@ -694,8 +694,16 @@ public sealed class TradeHypothesisEngine
         string trigger,
         string invalidation,
         DateTimeOffset now,
-        MarketStructureRead? structure = null) =>
-        previous with
+        MarketStructureRead? structure = null)
+    {
+        var structureEvidenceAt=StructureEvidenceTimeUtc(market,structure);
+        var advanceStructureMemory =
+            structure is { Available: true } &&
+            structureEvidenceAt != default &&
+            (previous.LastStructureEvidenceAtUtc == default ||
+             structureEvidenceAt > previous.LastStructureEvidenceAtUtc);
+
+        return previous with
         {
             Stage = stage,
             Regime = regime,
@@ -717,13 +725,14 @@ public sealed class TradeHypothesisEngine
             Evidence = Evidence(market, structure),
             DecisionBasis = structure is { Available: true } ? MarketStructureRead.DecisionBasis : previous.DecisionBasis,
             LastOrderBookAvailable = BookAvailable(market),
-            LastStructureEvidenceAtUtc = structure is { Available: true }
-                ? StructureEvidenceTimeUtc(market, structure)
+            LastStructureEvidenceAtUtc = advanceStructureMemory
+                ? structureEvidenceAt
                 : previous.LastStructureEvidenceAtUtc,
-            LastStructurePhase = structure is { Available: true }
-                ? structure.Phase
+            LastStructurePhase = advanceStructureMemory
+                ? structure!.Phase
                 : previous.LastStructurePhase
         };
+    }
 
     private static TradeHypothesis Observing(MarketEvidence market, DateTimeOffset now, string thesis, MarketStructureRead? structure = null) =>
         new(
