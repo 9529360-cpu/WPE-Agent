@@ -328,6 +328,7 @@
     "RiskReview.TradeRisk":  "单笔风险 {0:N2} 超过 {1:N2}",
     "RiskReview.Approved":  "独立 Risk Manager 通过 · {0} · 风险 {1:N2} · 敞口 {2:P1}",
     "RiskReview.Blocked":  "独立 Risk Manager 否决：{0}",
+    "Position.StructureInvalidated":  "本地K线结构已否定当前持仓逻辑，执行风险退出",
     "Position.LiquidationBuffer":  "强平安全缓冲不足",
     "Position.PartialTake":  "达到 2R，自动分批止盈",
     "Position.Breakeven":  "自动移动到保本保护",
