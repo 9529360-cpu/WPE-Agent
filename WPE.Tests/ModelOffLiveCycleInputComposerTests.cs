@@ -350,7 +350,12 @@ public sealed class ModelOffLiveCycleInputComposerTests
                 "Higher-timeframe uptrend with a pullback holding near support.",
                 "Support held and short-horizon behavior improved.",
                 "Invalidate below the volatility-adjusted support break.",
-                ["price=100000","support=98000","trend4h=1.25%"]);
+                ["price=100000","support=98000","trend4h=1.25%"])
+            {
+                DecisionBasis=MarketStructureRead.DecisionBasis,
+                LastStructureBarClosedAtUtc=Now.AddMinutes(-15),
+                LastStructureEvent=MarketStructureEvent.LiquiditySweepLowReclaim
+            };
             var decision=new DecisionPlan
             {
                 Action=DecisionAction.OpenLong,
@@ -392,6 +397,20 @@ public sealed class ModelOffLiveCycleInputComposerTests
             Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(strategyInput.Output));
             Assert.Contains("market-hypothesis-btcusdt",researchInput.Document.Json,StringComparison.Ordinal);
             Assert.DoesNotContain("technical-assessment-btcusdt",researchInput.Document.Json,StringComparison.Ordinal);
+            Assert.Contains("last_structure_bar_closed_at_utc",researchInput.Document.Json,StringComparison.Ordinal);
+            Assert.Contains("LiquiditySweepLowReclaim",researchInput.Document.Json,StringComparison.Ordinal);
+
+            var missingBar=hypothesis with{LastStructureBarClosedAtUtc=null};
+            var missingBarRequest=hypothesisRequest with
+            {
+                TradeHypotheses=new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["BTCUSDT"]=missingBar
+                }
+            };
+            var missingBarInputs=ModelOffLiveCycleInputComposerV1.Compose(missingBarRequest);
+            Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(
+                missingBarInputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output));
 
             var result=await new ModelOffProductionCycleOrchestratorV1(
                 new AgentSqliteStore(Path.Combine(directory,"agent.db"),()=>Now))
