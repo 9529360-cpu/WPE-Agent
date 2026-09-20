@@ -280,10 +280,12 @@ public static class AutoTradingAgent
                 if(management.Intents.Count>0||management.ProtectionAdjustments.Count>0)
                 {
                     await runtime.TransitionAsync(cycle,WorkflowNode.SafetyExecution,new{RiskReducingIntents=management.Intents.Count,ProtectionAdjustments=management.ProtectionAdjustments.Count},ct);
-                    managementActivity=await ExecutePositionManagementRecoveryAsync(recoveryServices.Recovery,cycle,management.Intents,positions,ct)>0;
-                    (safeToIncreaseRisk,safetyMessage)=ApplyPositionMutationInvalidation(safeToIncreaseRisk,safetyMessage,managementActivity);
-                    if(managementActivity)await Db.SetStateAsync("authorization.position-reconciliation","position.reconciliation-invalidated-by-recovery",ct);
-                    if(management.ProtectionAdjustments.Count>0){var blocked=executionGateway.AssessUnverifiedAutomaticMutation(AutomaticMutationPath.PositionManagement,management.ProtectionAdjustments.Count);safeToIncreaseRisk=false;safetyMessage=blocked.Code;await Db.SetStateAsync("authorization.position-management",blocked.Code,ct);}
+                    var reductionCount=await ExecutePositionManagementRecoveryAsync(recoveryServices.Recovery,cycle,management.Intents,positions,ct);
+                    var protectionCount=await ExecutePositionProtectionRecoveryAsync(recoveryServices.Recovery,cycle,management.ProtectionAdjustments,positions,ct);
+                    managementActivity=reductionCount>0||protectionCount>0;
+                    (safeToIncreaseRisk,safetyMessage)=ApplyPositionMutationInvalidation(safeToIncreaseRisk,safetyMessage,reductionCount>0);
+                    if(reductionCount>0)await Db.SetStateAsync("authorization.position-reconciliation","position.reconciliation-invalidated-by-recovery",ct);
+                    if(protectionCount>0){safeToIncreaseRisk=false;safetyMessage="position.protection-adjusted-awaiting-reconciliation";await Db.SetStateAsync("authorization.position-management",safetyMessage,ct);}
                 }
 
                 Stage("Stage.Aggregation","OBSERVATION",43);await runtime.TransitionAsync(cycle,WorkflowNode.Aggregation,new{ManagementIntents=management.Intents.Count,managementActivity},ct);var assessments=await SkillAsync("SignalAggregation",$"markets={evidence.Markets.Count}",_=>Task.FromResult(aggregator.Analyze(evidence,settings.Decision,localSignals)),x=>$"assessments={x.Count} legacy_ready={x.Count(a=>a.EntryReady)}",ct);UpdateEvidence(evidence,assessments,research);
@@ -442,10 +444,31 @@ public static class AutoTradingAgent
             var completed=0;
             foreach(var intent in intents)
             {
-                var matches=positions.Where(x=>string.Equals(x.Symbol,intent.Symbol,StringComparison.Ordinal)).ToArray();
+                var matches=positions.Where(x=>string.Equals(x.Symbol,intent.Symbol,StringComparison.Ordinal)&&x.Side==intent.Side).ToArray();
                 if(matches.Length!=1)throw new InvalidOperationException("recovery.position-context-invalid");
                 var position=matches[0];
                 var result=await recovery.ExecuteAsync(correlationId,intent,Math.Max(1,(int)position.Leverage),position.Isolated,ct);
+                if(!result.Executed)throw new InvalidOperationException(result.Code);
+                completed++;
+            }
+            return completed;
+        }
+        finally{ExecutionGate.Release();}
+    }
+
+    internal static async Task<int> ExecutePositionProtectionRecoveryAsync(
+        ProductionRecoveryService recovery,string correlationId,IReadOnlyList<ProtectionAdjustment> adjustments,
+        IReadOnlyList<ManagedPosition> positions,CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(recovery);ArgumentNullException.ThrowIfNull(adjustments);ArgumentNullException.ThrowIfNull(positions);
+        await ExecutionGate.WaitAsync(ct);try
+        {
+            var completed=0;
+            foreach(var adjustment in adjustments)
+            {
+                var matches=positions.Where(x=>string.Equals(x.Symbol,adjustment.Symbol,StringComparison.Ordinal)&&x.Side==adjustment.Side).ToArray();
+                if(matches.Length!=1)throw new InvalidOperationException("recovery.position-context-invalid");
+                var result=await recovery.ReplaceProtectionAsync(correlationId,adjustment,matches[0],ct);
                 if(!result.Executed)throw new InvalidOperationException(result.Code);
                 completed++;
             }
