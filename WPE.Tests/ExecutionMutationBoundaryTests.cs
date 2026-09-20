@@ -175,6 +175,25 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         Assert.Equal(0,exchange.MutationCount);
     }
 
+    [Fact]
+    public async Task ProtectionAudit_RevokedOpeningRejectsWithoutMutation()
+    {
+        var exchange=new RecordingExchange();
+        var executor=CreateExecutor(exchange,out var store,CapabilityStatus.Available);
+        await SeedManagedOpeningAsync(store);
+        await store.SetStateAsync(
+            PositionManagementDurableState.OwnershipRevocationKey(OpeningIntent().ClientOrderId),
+            "position.missing-on-exchange",
+            CancellationToken.None);
+        var position=new ManagedPosition("SOLUSDT",PositionSide.Long,1m,150m,151m,1m,5m,true,120m);
+
+        var result=await executor.AuditAndRepairProtectionAsync([position],[],CancellationToken.None);
+
+        Assert.False(result.SafeToIncreaseRisk);
+        Assert.Contains(result.Messages,x=>x.StartsWith("recovery.position-ownership-revoked:",StringComparison.Ordinal));
+        Assert.Equal(0,exchange.MutationCount);
+    }
+
     [Theory]
     [InlineData(ReduceOnlyRecoveryResult.Unknown,"recovery.reconciliation-unknown")]
     [InlineData(ReduceOnlyRecoveryResult.Stale,"recovery.reconciliation-stale")]
@@ -271,6 +290,24 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         Assert.Equal(1,exchange.MarketOrderSubmissions);
         Assert.True(exchange.LastReduceOnly);
         Assert.Equal(1,exchange.MutationCount);
+    }
+
+    [Fact]
+    public async Task ReduceOnlyRecovery_RevokedOpeningRejectsWithoutMutation()
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out var store,out var authority);
+        await SeedManagedOpeningAsync(store);
+        await store.SetStateAsync(
+            PositionManagementDurableState.OwnershipRevocationKey(OpeningIntent().ClientOrderId),
+            "position.missing-on-exchange",
+            CancellationToken.None);
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(RecoveryCommand(authority),CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.position-ownership-conflict",result.Code);
+        Assert.Equal(0,executor.CallCount);
     }
 
     [Fact]
