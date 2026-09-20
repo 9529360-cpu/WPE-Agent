@@ -33,7 +33,7 @@ public sealed class MarketStructureIntelligenceTests
     {
         var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
-        var first=Market(Pullback15mBeforeTrigger(),h1,h4);
+        var first=Market(Pullback15mBeforeTrigger(),h1,h4,Now.AddMinutes(-15));
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
         var current=Market(SweepLowReclaim15m(),h1,h4);
 
@@ -52,7 +52,7 @@ public sealed class MarketStructureIntelligenceTests
     {
         var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
-        var first=Market(Pullback15mBeforeTrigger(),h1,h4);
+        var first=Market(Pullback15mBeforeTrigger(),h1,h4,Now.AddMinutes(-15));
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now.AddMinutes(-15));
         var breakout=Market(BullishBreakout15m(),h1,h4);
         var scout=TradeHypothesisEngine.EvaluateMarket(breakout,watching,[],Now);
@@ -73,7 +73,7 @@ public sealed class MarketStructureIntelligenceTests
     {
         var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
-        var first=Market(Pullback15mBeforeTrigger(),h1,h4);
+        var first=Market(Pullback15mBeforeTrigger(),h1,h4,Now.AddMinutes(-15));
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now.AddMinutes(-15));
         var breakout=Market(BullishBreakout15m(),h1,h4);
         var scout=TradeHypothesisEngine.EvaluateMarket(breakout,watching,[],Now);
@@ -121,7 +121,7 @@ public sealed class MarketStructureIntelligenceTests
     {
         var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
-        var first=Market(Pullback15mBeforeTrigger(),h1,h4);
+        var first=Market(Pullback15mBeforeTrigger(),h1,h4,Now.AddMinutes(-15));
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
         var current=Market(SweepLowReclaim15m(),h1,h4);
         var scout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
@@ -160,7 +160,7 @@ public sealed class MarketStructureIntelligenceTests
     {
         var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
-        var first=Market(Pullback15mBeforeTrigger(),h1,h4);
+        var first=Market(Pullback15mBeforeTrigger(),h1,h4,Now.AddMinutes(-15));
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
         var current=Market(SweepLowReclaim15m(),h1,h4);
         var scout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
@@ -199,7 +199,7 @@ public sealed class MarketStructureIntelligenceTests
     {
         var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
-        var first=Market(Pullback15mBeforeTrigger(),h1,h4);
+        var first=Market(Pullback15mBeforeTrigger(),h1,h4,Now.AddMinutes(-15));
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
         var current=Market(SweepLowReclaim15m(),h1,h4);
         var structureScout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
