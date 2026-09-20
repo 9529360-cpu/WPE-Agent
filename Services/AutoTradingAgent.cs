@@ -453,13 +453,7 @@ public static class AutoTradingAgent
             if(await db.HasStateAsync(revocationKey,ct))continue;
             var candidateKey=PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId);
             var positionPresent=positions.Any(x=>string.Equals(x.Symbol,leg.Symbol,StringComparison.OrdinalIgnoreCase)&&x.Side==leg.Side&&x.Quantity>0);
-            if(positionPresent)
-            {
-                var candidate=await db.GetStateAsync(candidateKey,ct);
-                if(candidate is not null&&DateTimeOffset.TryParseExact(candidate,"O",CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out _))
-                    await db.SetStateAsync(candidateKey,"cleared",ct);
-                continue;
-            }
+            if(positionPresent)continue;
 
             var firstMissing=await db.GetStateAsync(candidateKey,ct);
             if(firstMissing is null||
@@ -483,8 +477,10 @@ public static class AutoTradingAgent
         foreach(var position in positions.Where(x=>x.Quantity>0))
         {
             var opening=await db.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);
-            if(opening is not null&&await db.HasStateAsync(
-                PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId),ct))return true;
+            if(opening is null)continue;
+            if(await db.HasStateAsync(PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId),ct)||
+               await db.HasStateAsync(PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId),ct))
+                return true;
         }
         return false;
     }
