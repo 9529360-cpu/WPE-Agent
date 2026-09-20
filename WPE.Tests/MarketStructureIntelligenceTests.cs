@@ -47,6 +47,35 @@ public sealed class MarketStructureIntelligenceTests
     }
 
     [Fact]
+    public void UnconfirmedCandleCannotFabricateAStructureBreak()
+    {
+        var confirmed=Pullback15m();
+        var openFuture=confirmed
+            .Concat([
+                new CandleEvidence(
+                    Now.UtcDateTime,
+                    confirmed[^1].Close,
+                    confirmed[^1].Close+20m,
+                    confirmed[^1].Close-.2m,
+                    confirmed[^1].Close+19m,
+                    1000m,
+                    100_000m,
+                    1000,
+                    900m)
+            ])
+            .ToArray();
+        var market=Market(
+            openFuture,
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)));
+
+        var structure=MarketStructureIntelligence.Analyze(market);
+
+        Assert.Equal(confirmed[^1].Close,structure.FifteenMinute.LastClose);
+        Assert.NotEqual(MarketStructureEvent.BullishBreak,structure.FifteenMinute.Event);
+    }
+
+    [Fact]
     public void HypothesisReviewNoLongerRequiresLegacyAggregationAssessment()
     {
         var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
