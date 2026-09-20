@@ -393,6 +393,7 @@
     "RiskReview.TradeRisk":  "거래 리스크 {0:N2}가 {1:N2} 초과",
     "RiskReview.Approved":  "독립 Risk Manager 승인 · {0} · 리스크 {1:N2} · 노출 {2:P1}",
     "RiskReview.Blocked":  "독립 Risk Manager 거부: {0}",
+    "Position.StructureInvalidated":  "로컬 차트 구조가 현재 포지션 가설을 무효화하여 리스크를 축소합니다",
     "Position.LiquidationBuffer":  "청산 안전 여유 부족",
     "Position.PartialTake":  "2R 자동 분할 익절",
     "Position.Breakeven":  "자동 본전 보호",
