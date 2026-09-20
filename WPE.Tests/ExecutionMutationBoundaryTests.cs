@@ -88,6 +88,56 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
     }
 
     [Fact]
+    public async Task ReplaceProtection_CancellationDuringCancelPersistsCanceledWithoutEmergencyClose()
+    {
+        using var cts=new CancellationTokenSource();
+        var position=new ManagedPosition("SOLUSDT",PositionSide.Long,1m,150m,151m,1m,5m,true,120m);
+        var protection=new ExchangeOrder(
+            "SOLUSDT","protection-stop","protection-client","NEW",0,0,"STOP_MARKET",
+            PositionSide.Long,true,DateTime.UtcNow);
+        var exchange=new RecordingExchange
+        {
+            OpenOrders=[protection],
+            Positions=[position],
+            CancelCancellationSource=cts
+        };
+        var executor=CreateExecutor(exchange,out var store,CapabilityStatus.Available);
+        var adjustment=new ProtectionAdjustment(
+            "SOLUSDT",PositionSide.Long,150.075m,160m,"breakeven","WPE-PM-BE-cancelled-cancel");
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>
+            executor.ReplaceProtectionAsync("cycle",adjustment,cts.Token));
+
+        Assert.Equal(0,exchange.MarketOrderSubmissions);
+        Assert.Equal("CANCELED",await store.GetStateAsync(
+            PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId!),
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ReplaceProtection_CancellationDuringInPlaceUpdatePersistsCanceledWithoutEmergencyClose()
+    {
+        using var cts=new CancellationTokenSource();
+        var position=new ManagedPosition("SOLUSDT",PositionSide.Long,1m,150m,151m,1m,5m,true,120m);
+        var exchange=new RecordingInPlaceProtectionExchange
+        {
+            Positions=[position],
+            ProtectionCancellationSource=cts
+        };
+        var executor=CreateExecutor(exchange,out var store,CapabilityStatus.Available);
+        var adjustment=new ProtectionAdjustment(
+            "SOLUSDT",PositionSide.Long,150.075m,160m,"breakeven","WPE-PM-BE-cancelled-place");
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>
+            executor.ReplaceProtectionAsync("cycle",adjustment,cts.Token));
+
+        Assert.Equal(0,exchange.MarketOrderSubmissions);
+        Assert.Equal("CANCELED",await store.GetStateAsync(
+            PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId!),
+            CancellationToken.None));
+    }
+
+    [Fact]
     public async Task ReplaceProtection_CancelFailureEmergencyClosesManagedPosition()
     {
         var position=new ManagedPosition("SOLUSDT",PositionSide.Long,1m,150m,151m,1m,5m,true,120m);
@@ -655,6 +705,8 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         public int CancelAttempts { get; private set; }
         public bool LastReduceOnly { get; private set; }
         public bool FailCancel { get; init; }
+        public CancellationTokenSource? CancelCancellationSource { get; init; }
+        public CancellationTokenSource? ProtectionCancellationSource { get; init; }
         public ExchangeOrder? FoundOrder { get; init; }
         public IReadOnlyList<ExchangeOrder> OpenOrders { get; init; }=[];
         public IReadOnlyList<ManagedPosition> Positions { get; init; }=[];
@@ -666,10 +718,24 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         public Task SetLeverageAsync(string symbol,int leverage,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
         public Task<ExchangeOrder> PlaceMarketAsync(string symbol,PositionSide side,decimal quantity,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;MarketOrderSubmissions++;LastReduceOnly=reduceOnly;return Task.FromResult(FilledOrder() with{ClientOrderId=clientOrderId,ExecutedQuantity=quantity,PositionSide=side});}
         public Task<ExchangeOrder> PlaceLimitAsync(string symbol,PositionSide side,decimal quantity,decimal price,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;return Task.FromResult(FilledOrder());}
-        public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide sideToClose,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct){MutationCount++;ProtectionSubmissions++;return Task.FromResult(FilledOrder());}
+        public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide sideToClose,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct)
+        {
+            MutationCount++;ProtectionSubmissions++;
+            if(ProtectionCancellationSource is not null)
+            {
+                ProtectionCancellationSource.Cancel();
+                return Task.FromCanceled<ExchangeOrder>(ProtectionCancellationSource.Token);
+            }
+            return Task.FromResult(FilledOrder());
+        }
         public Task CancelOrderAsync(string symbol,string orderId,CancellationToken ct)
         {
             MutationCount++;CancelAttempts++;
+            if(CancelCancellationSource is not null)
+            {
+                CancelCancellationSource.Cancel();
+                return Task.FromCanceled(CancelCancellationSource.Token);
+            }
             return FailCancel?Task.FromException(new InvalidOperationException("cancel failed")):Task.CompletedTask;
         }
         public Task<AccountSnapshot> GetAccountAsync(CancellationToken ct) => throw new NotSupportedException();
