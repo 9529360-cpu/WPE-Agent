@@ -89,7 +89,9 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
             .Where(x=>x.IsLive)
             .OrderByDescending(x=>x.Stage==TradeHypothesisStage.Confirmed)
             .ThenByDescending(x=>x.Stage==TradeHypothesisStage.ScoutReady)
-            .ThenBy(x=>x.CreatedAtUtc)
+            .ThenByDescending(x=>string.Equals(x.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal))
+            .ThenByDescending(x=>x.Revision)
+            .ThenByDescending(x=>x.UpdatedAtUtc)
             .ThenBy(x=>x.Symbol,StringComparer.Ordinal)
             .ToArray();
 
@@ -100,15 +102,24 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
         var blocked=context.CircuitBreakerActive||actionable is null;
         var instrument=selected?.Symbol??evidence.Markets.Keys.FirstOrDefault()??"BTCUSDT";
         var assessment=context.MarketAssessments.FirstOrDefault(x=>x.Symbol.Equals(instrument,StringComparison.OrdinalIgnoreCase));
+        evidence.Markets.TryGetValue(instrument,out var selectedMarket);
         var action=DecisionAction.Hold;
         var targetTier=0;
         var riskBudget=0d;
+        var entryPrice=0m;
+        var stopLossPrice=0m;
+        var takeProfitPrice=0m;
 
         if(!blocked&&actionable is not null)
         {
             action=actionable.Direction>0?DecisionAction.OpenLong:DecisionAction.OpenShort;
             targetTier=actionable.Stage==TradeHypothesisStage.Confirmed?2:1;
             riskBudget=actionable.RiskBudgetMultiplier;
+            entryPrice=selectedMarket?.Price>0?selectedMarket.Price:actionable.ReferencePrice;
+            stopLossPrice=actionable.InvalidationPrice;
+            var structuralTarget=actionable.Direction>0?actionable.Resistance:actionable.Support;
+            if(actionable.Direction>0&&structuralTarget>entryPrice)takeProfitPrice=structuralTarget;
+            if(actionable.Direction<0&&structuralTarget>0&&structuralTarget<entryPrice)takeProfitPrice=structuralTarget;
         }
 
         var reason=context.CircuitBreakerActive
@@ -125,6 +136,9 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
             Instrument=instrument,
             TargetTier=targetTier,
             Confidence=0,
+            EntryPrice=entryPrice,
+            StopLossPrice=stopLossPrice,
+            TakeProfitPrice=takeProfitPrice,
             Regime=selected?.Regime.ToString()??assessment?.Regime.ToString()??MarketRegime.Unknown.ToString(),
             Reason=reason,
             Invalidation=selected?.Invalidation??"Market hypothesis is absent or invalidated.",
@@ -132,7 +146,7 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
             MissingConditions=selected is {Actionable:false}?[selected.Trigger]:[],
             ConflictSummary=selected is null
                 ?"no active market hypothesis"
-                :$"hypothesis={selected.Kind}; stage={selected.Stage}; revision={selected.Revision}; legacy_score={assessment?.NetScore:F3}; legacy_conflict={assessment?.ConflictRatio:F3}",
+                :$"hypothesis={selected.Kind}; stage={selected.Stage}; revision={selected.Revision}; basis={selected.DecisionBasis}",
             StrategyVersion=selected?.Version??TradeHypothesis.CurrentVersion,
             DecisionContextKind=selected is null?"market-observation":TradeHypothesisEngine.DecisionContextKind,
             DecisionContextId=selected?.Id??string.Empty,
@@ -151,7 +165,8 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
             decision.HypothesisStage,
             decision.RiskBudgetMultiplier,
             hypothesis=selected,
-            legacyAssessment=assessment is null?null:new
+            marketStructureBasis=selected?.DecisionBasis,
+            legacyObservation=assessment is null?null:new
             {
                 assessment.NetScore,
                 assessment.Confidence,

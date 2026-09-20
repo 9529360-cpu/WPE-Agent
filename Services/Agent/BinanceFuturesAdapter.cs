@@ -119,11 +119,21 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
     public async Task<MarketEvidence> GetMarketAsync(string symbol,CancellationToken ct)
     {
         var canonical=C(symbol);var native=N(canonical);var observed=DateTime.UtcNow;
-        var candles=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"15m",240,ct),"15m",observed);var c1=await GetCandlesAsync(canonical,"1h",120,ct);var c4=await GetCandlesAsync(canonical,"4h",90,ct);
-        var s15=ConfirmedMarketCandlesV1.Analyze(canonical,"15m",candles,observed);var s1=ConfirmedMarketCandlesV1.Analyze(canonical,"1h",c1,observed);var s4=ConfirmedMarketCandlesV1.Analyze(canonical,"4h",c4,observed);
+        var candles15m=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"15m",240,ct),"15m",observed);
+        var candles1h=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"1h",160,ct),"1h",observed);
+        var candles4h=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"4h",120,ct),"4h",observed);
+        var s15=ConfirmedMarketCandlesV1.Analyze(canonical,"15m",candles15m,observed);
+        var s1=ConfirmedMarketCandlesV1.Analyze(canonical,"1h",candles1h,observed);
+        var s4=ConfirmedMarketCandlesV1.Analyze(canonical,"4h",candles4h,observed);
         var deriv=await GetDerivativesNative(native,ct);
-        var quality=await GetMarketQualityAsync(native,candles,ct);
-        return new(canonical,s15.Price,s15.Support,s15.Resistance,s15.Rsi,s15.ShortTrend,s1.ShortTrend,s4.ShortTrend,deriv,s15.Timestamp){Candles=candles,Quality=quality};
+        var quality=await GetMarketQualityAsync(native,candles15m,ct);
+        return new(canonical,s15.Price,s15.Support,s15.Resistance,s15.Rsi,s15.ShortTrend,s1.ShortTrend,s4.ShortTrend,deriv,s15.Timestamp)
+        {
+            Candles=candles15m,
+            Candles1h=candles1h,
+            Candles4h=candles4h,
+            Quality=quality
+        };
     }
     public async Task<IReadOnlyList<DerivativesSnapshot>> GetDerivativeHistoryAsync(string symbol,CancellationToken ct)=>[await GetDerivativesNative(N(symbol),ct)];
     public async Task<IReadOnlyList<CandleEvidence>> GetCandlesAsync(string symbol,string interval,int limit,CancellationToken ct)

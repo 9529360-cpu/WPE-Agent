@@ -48,9 +48,19 @@ public abstract class RestExchangeProviderBase:IExchangeProvider,IMarketDataProv
     public async Task<IReadOnlyList<DerivativesSnapshot>> GetDerivativeHistoryAsync(string canonicalSymbol,CancellationToken ct)=>[await GetDerivativesAsync(canonicalSymbol,ct)];
     public async Task<MarketEvidence> GetMarketAsync(string canonicalSymbol,CancellationToken ct)
     {
-        var canonical=Symbols.ToCanonical(canonicalSymbol);var observed=DateTime.UtcNow;var c15=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"15m",240,ct),"15m",observed);var c1=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"1h",120,ct),"1h",observed);var c4=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"4h",90,ct),"4h",observed);if(c15.Count<31||c1.Count<31||c4.Count<31)throw new InvalidOperationException($"{canonical} confirmed market history is incomplete");
+        var canonical=Symbols.ToCanonical(canonicalSymbol);var observed=DateTime.UtcNow;
+        var c15=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"15m",240,ct),"15m",observed);
+        var c1=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"1h",160,ct),"1h",observed);
+        var c4=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"4h",120,ct),"4h",observed);
+        if(c15.Count<31||c1.Count<31||c4.Count<31)throw new InvalidOperationException($"{canonical} confirmed market history is incomplete");
         var sourceAt=c15[^1].OpenTime+ConfirmedMarketCandlesV1.Duration("15m");var price=c15[^1].Close;var deriv=await GetDerivativesAsync(canonical,ct);var rsi=Rsi(c15);var age=observed-sourceAt;var returns=c15.Skip(1).Select((x,i)=>c15[i].Close>0?Math.Log((double)(x.Close/c15[i].Close)):0).TakeLast(96).ToArray();var realized=returns.Length>1?Math.Sqrt(returns.Select(x=>(x-returns.Average())*(x-returns.Average())).Average())*Math.Sqrt(96):0;var recent=c15.TakeLast(8).Select(x=>x.QuoteVolume).DefaultIfEmpty().Average();var baseline=c15.TakeLast(96).Select(x=>x.QuoteVolume).DefaultIfEmpty().Average();var relative=baseline>0?(double)(recent/baseline):0;var anomalies=new List<string>();if(age>TimeSpan.FromMinutes(20))anomalies.Add("stale_candles");if(relative<=0)anomalies.Add("volume_unavailable");var quality=new MarketQualityEvidence{RealizedVolatility=realized,RelativeVolume=relative,LiquidityScore=Math.Clamp(relative/2,.25,1),SourceCount=3,QualityScore=anomalies.Count==0?88:62,Anomalies=anomalies};
-        return new(canonical,price,c15.TakeLast(40).Min(x=>x.Low),c15.TakeLast(40).Max(x=>x.High),rsi,Trend(c15,10),Trend(c1,10),Trend(c4,10),deriv,sourceAt){Candles=c15,Quality=quality};
+        return new(canonical,price,c15.TakeLast(40).Min(x=>x.Low),c15.TakeLast(40).Max(x=>x.High),rsi,Trend(c15,10),Trend(c1,10),Trend(c4,10),deriv,sourceAt)
+        {
+            Candles=c15,
+            Candles1h=c1,
+            Candles4h=c4,
+            Quality=quality
+        };
     }
     public abstract Task SetLeverageAsync(string canonicalSymbol,int leverage,CancellationToken ct);
     public abstract Task SetMarginModeAsync(string canonicalSymbol,bool isolated,CancellationToken ct);

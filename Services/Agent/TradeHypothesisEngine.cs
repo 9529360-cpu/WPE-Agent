@@ -8,7 +8,9 @@ public enum TradeHypothesisKind
     TrendPullbackLong,
     TrendPullbackShort,
     RangeReversionLong,
-    RangeReversionShort
+    RangeReversionShort,
+    BreakoutRetestLong,
+    BreakoutRetestShort
 }
 
 public enum TradeHypothesisStage
@@ -48,7 +50,8 @@ public sealed record TradeHypothesis(
     string Invalidation,
     IReadOnlyList<string> Evidence)
 {
-    public const string CurrentVersion = "hypothesis-v1";
+    public const string CurrentVersion = "hypothesis-v2";
+    public string DecisionBasis { get; init; } = "summary-v1";
     public bool LastOrderBookAvailable { get; init; }
     public bool Actionable => Stage is TradeHypothesisStage.ScoutReady or TradeHypothesisStage.Confirmed;
     public bool IsLive => Kind != TradeHypothesisKind.None && Stage != TradeHypothesisStage.Invalidated;
@@ -126,6 +129,10 @@ public sealed class TradeHypothesisEngine
         if (!Valid(market))
             return Observing(market, now, "market evidence is incomplete or invalid");
 
+        var structure = MarketStructureIntelligence.Analyze(market);
+        if (structure.Available)
+            return EvaluateStructuredMarket(market, previous, positions, structure, now);
+
         var regime = MarketRegimeClassifier.Detect(market);
         if (previous is not null &&
             previous.Symbol.Equals(market.Symbol, StringComparison.OrdinalIgnoreCase) &&
@@ -145,6 +152,190 @@ public sealed class TradeHypothesisEngine
         }
 
         return DetectNew(market, regime, now);
+    }
+
+    private static TradeHypothesis EvaluateStructuredMarket(
+        MarketEvidence market,
+        TradeHypothesis? previous,
+        IReadOnlyList<ManagedPosition> positions,
+        MarketStructureRead structure,
+        DateTimeOffset now)
+    {
+        var regime = StructureRegime(structure);
+
+        if (previous is not null &&
+            previous.Symbol.Equals(market.Symbol, StringComparison.OrdinalIgnoreCase) &&
+            previous.Kind != TradeHypothesisKind.None &&
+            string.Equals(previous.DecisionBasis, MarketStructureRead.DecisionBasis, StringComparison.Ordinal) &&
+            now - previous.CreatedAtUtc <= MaximumHypothesisAge)
+        {
+            if (previous.Stage == TradeHypothesisStage.Invalidated)
+            {
+                if (now - previous.UpdatedAtUtc < InvalidatedHypothesisCooldown) return previous;
+                return DetectStructuredNew(market, structure, regime, now);
+            }
+
+            return EvolveStructuredExisting(market, previous, positions, structure, regime, now);
+        }
+
+        return DetectStructuredNew(market, structure, regime, now);
+    }
+
+    private static MarketRegime StructureRegime(MarketStructureRead structure) =>
+        structure.HigherTimeframeBias switch
+        {
+            MarketStructureBias.Bullish or MarketStructureBias.Bearish => MarketRegime.Trending,
+            MarketStructureBias.Range => MarketRegime.Ranging,
+            MarketStructureBias.Mixed => MarketRegime.Transition,
+            _ => MarketRegime.Unknown
+        };
+
+    private static TradeHypothesis DetectStructuredNew(
+        MarketEvidence market,
+        MarketStructureRead structure,
+        MarketRegime regime,
+        DateTimeOffset now)
+    {
+        if (structure.Scenario == MarketStructureScenario.None)
+            return Observing(market, now, structure.Narrative, structure);
+
+        var (kind, direction) = structure.Scenario switch
+        {
+            MarketStructureScenario.TrendPullbackLong => (TradeHypothesisKind.TrendPullbackLong, 1),
+            MarketStructureScenario.TrendPullbackShort => (TradeHypothesisKind.TrendPullbackShort, -1),
+            MarketStructureScenario.RangeReversionLong => (TradeHypothesisKind.RangeReversionLong, 1),
+            MarketStructureScenario.RangeReversionShort => (TradeHypothesisKind.RangeReversionShort, -1),
+            MarketStructureScenario.BreakoutRetestLong => (TradeHypothesisKind.BreakoutRetestLong, 1),
+            MarketStructureScenario.BreakoutRetestShort => (TradeHypothesisKind.BreakoutRetestShort, -1),
+            _ => (TradeHypothesisKind.None, 0)
+        };
+        if (direction == 0) return Observing(market, now, structure.Narrative, structure);
+
+        var invalidation = StructuredInvalidationPrice(market, structure, direction > 0);
+        var thesis = $"Local candle-structure read: {structure.Narrative}";
+        var trigger = direction > 0
+            ? "Wait for a bullish 15m structure event (reclaim, rejection, retest, or displacement) while higher-timeframe structure remains supportive."
+            : "Wait for a bearish 15m structure event (rejection, retest, breakdown, or displacement) while higher-timeframe structure remains supportive.";
+        var invalidationText = direction > 0
+            ? $"The structure thesis fails below {invalidation:F2} or if the 1h/4h structure turns bearish."
+            : $"The structure thesis fails above {invalidation:F2} or if the 1h/4h structure turns bullish.";
+
+        return NewHypothesis(market, regime, kind, direction, now, thesis, trigger, invalidation, invalidationText, structure);
+    }
+
+    private static TradeHypothesis EvolveStructuredExisting(
+        MarketEvidence market,
+        TradeHypothesis previous,
+        IReadOnlyList<ManagedPosition> positions,
+        MarketStructureRead structure,
+        MarketRegime regime,
+        DateTimeOffset now)
+    {
+        var longSide = previous.Direction > 0;
+        var biasBroken = longSide
+            ? structure.HigherTimeframeBias == MarketStructureBias.Bearish
+            : structure.HigherTimeframeBias == MarketStructureBias.Bullish;
+        var priceBroken = longSide
+            ? market.Price < previous.InvalidationPrice
+            : market.Price > previous.InvalidationPrice;
+
+        if (biasBroken || priceBroken)
+        {
+            var invalidationThesis = longSide
+                ? $"Long candle-structure thesis invalidated: price={market.Price:F2}, invalidation={previous.InvalidationPrice:F2}, bias={structure.HigherTimeframeBias}."
+                : $"Short candle-structure thesis invalidated: price={market.Price:F2}, invalidation={previous.InvalidationPrice:F2}, bias={structure.HigherTimeframeBias}.";
+            return Snapshot(previous, market, regime, TradeHypothesisStage.Invalidated, 0, invalidationThesis,
+                previous.Trigger, previous.Invalidation, now, structure);
+        }
+
+        var sameSidePosition = positions.Any(x =>
+            x.Symbol.Equals(market.Symbol, StringComparison.OrdinalIgnoreCase) &&
+            ((longSide && x.Side == PositionSide.Long) || (!longSide && x.Side == PositionSide.Short)));
+
+        var eventKind = structure.FifteenMinute.Event;
+        var structuralTrigger = longSide ? BullishTrigger(eventKind) : BearishTrigger(eventKind);
+        var structuralConfirmation = longSide ? BullishConfirmation(eventKind, structure.FifteenMinute) : BearishConfirmation(eventKind, structure.FifteenMinute);
+        var adverseEvent = longSide
+            ? eventKind is MarketStructureEvent.BearishBreak or MarketStructureEvent.BearishDisplacement or MarketStructureEvent.LiquiditySweepHighReject
+            : eventKind is MarketStructureEvent.BullishBreak or MarketStructureEvent.BullishDisplacement or MarketStructureEvent.LiquiditySweepLowReclaim;
+        var microstructureReady = MicrostructureReady(market, longSide);
+
+        var nextStage = previous.Stage;
+        if (!sameSidePosition)
+        {
+            if (previous.Stage == TradeHypothesisStage.Watching && structuralTrigger && microstructureReady)
+                nextStage = TradeHypothesisStage.ScoutReady;
+            else if (previous.Stage == TradeHypothesisStage.ScoutReady)
+            {
+                if (!microstructureReady || adverseEvent) nextStage = TradeHypothesisStage.Watching;
+                else if (structuralConfirmation) nextStage = TradeHypothesisStage.Confirmed;
+            }
+            else if (previous.Stage == TradeHypothesisStage.Confirmed && (!microstructureReady || adverseEvent))
+                nextStage = TradeHypothesisStage.ScoutReady;
+        }
+
+        var risk = nextStage switch
+        {
+            TradeHypothesisStage.ScoutReady => .16,
+            TradeHypothesisStage.Confirmed => .40,
+            _ => 0
+        };
+        var thesis = $"Local candle-structure read: {structure.Narrative} Current stage={nextStage}.";
+        var trigger = longSide
+            ? "Keep risk off until 15m price action confirms demand/retest strength and aggressive flow is not extremely opposed."
+            : "Keep risk off until 15m price action confirms supply/retest weakness and aggressive flow is not extremely opposed.";
+        return Snapshot(previous, market, regime, nextStage, risk, thesis, trigger, previous.Invalidation, now, structure);
+    }
+
+    private static bool BullishTrigger(MarketStructureEvent value) =>
+        value is MarketStructureEvent.LiquiditySweepLowReclaim or
+            MarketStructureEvent.BullishRejection or
+            MarketStructureEvent.BullishRetest or
+            MarketStructureEvent.BullishDisplacement or
+            MarketStructureEvent.BullishBreak;
+
+    private static bool BearishTrigger(MarketStructureEvent value) =>
+        value is MarketStructureEvent.LiquiditySweepHighReject or
+            MarketStructureEvent.BearishRejection or
+            MarketStructureEvent.BearishRetest or
+            MarketStructureEvent.BearishDisplacement or
+            MarketStructureEvent.BearishBreak;
+
+    private static bool BullishConfirmation(MarketStructureEvent value, TimeframeStructureRead frame) =>
+        value is MarketStructureEvent.BullishBreak or MarketStructureEvent.BullishRetest or MarketStructureEvent.BullishDisplacement ||
+        (frame.State == PriceStructureState.Bullish && frame.LastClose > frame.PreviousSwingHigh);
+
+    private static bool BearishConfirmation(MarketStructureEvent value, TimeframeStructureRead frame) =>
+        value is MarketStructureEvent.BearishBreak or MarketStructureEvent.BearishRetest or MarketStructureEvent.BearishDisplacement ||
+        (frame.State == PriceStructureState.Bearish && frame.LastClose < frame.PreviousSwingLow);
+
+    private static bool MicrostructureReady(MarketEvidence market, bool longSide)
+    {
+        var extremeOpposingFlow = market.Quality.OrderFlowAvailable && (longSide
+            ? market.Quality.OrderFlowImbalance <= -.80
+            : market.Quality.OrderFlowImbalance >= .80);
+        if (extremeOpposingFlow) return false;
+
+        var bookAvailable = BookAvailable(market);
+        var bookOk = bookAvailable && (longSide
+            ? market.Quality.OrderBookImbalance > -.20
+            : market.Quality.OrderBookImbalance < .20);
+        var flowOk = market.Quality.OrderFlowAvailable && (longSide
+            ? market.Quality.OrderFlowImbalance >= 0
+            : market.Quality.OrderFlowImbalance <= 0);
+        var takerAvailable = market.Derivatives.TakerBuySellRatio > 0;
+        var takerOk = takerAvailable && (longSide
+            ? market.Derivatives.TakerBuySellRatio >= 1
+            : market.Derivatives.TakerBuySellRatio <= 1);
+        return bookOk || flowOk || takerOk;
+    }
+
+    private static decimal StructuredInvalidationPrice(MarketEvidence market, MarketStructureRead structure, bool longSide)
+    {
+        var reference = longSide ? structure.StructuralSupport : structure.StructuralResistance;
+        if (reference <= 0) reference = longSide ? market.Support : market.Resistance;
+        var buffer = Math.Max(structure.FifteenMinute.Atr * .65m, market.Price * .0015m);
+        return longSide ? reference - buffer : reference + buffer;
     }
 
     internal static TradeHypothesis ApplyExecutionFeedback(
@@ -397,10 +588,15 @@ public sealed class TradeHypothesisEngine
         string thesis,
         string trigger,
         decimal invalidation,
-        string invalidationText)
+        string invalidationText,
+        MarketStructureRead? structure = null)
     {
         var id = $"HYP-{market.Symbol}-{kind}-{now:yyyyMMddHHmmss}";
-        var triggerPrice = direction > 0 ? market.Support : market.Resistance;
+        var support = structure is { Available: true } && structure.StructuralSupport > 0 ? structure.StructuralSupport : market.Support;
+        var resistance = structure is { Available: true } && structure.StructuralResistance > 0 ? structure.StructuralResistance : market.Resistance;
+        var triggerPrice = direction > 0
+            ? (structure?.Scenario == MarketStructureScenario.BreakoutRetestLong ? resistance : support)
+            : (structure?.Scenario == MarketStructureScenario.BreakoutRetestShort ? support : resistance);
         return new(
             id,
             TradeHypothesis.CurrentVersion,
@@ -413,8 +609,8 @@ public sealed class TradeHypothesisEngine
             now,
             1,
             market.Price,
-            market.Support,
-            market.Resistance,
+            support,
+            resistance,
             invalidation,
             triggerPrice,
             market.Trend15m,
@@ -427,8 +623,9 @@ public sealed class TradeHypothesisEngine
             thesis,
             trigger,
             invalidationText,
-            Evidence(market))
+            Evidence(market, structure))
         {
+            DecisionBasis = structure is { Available: true } ? MarketStructureRead.DecisionBasis : "summary-v1",
             LastOrderBookAvailable = BookAvailable(market)
         };
     }
@@ -442,7 +639,8 @@ public sealed class TradeHypothesisEngine
         string thesis,
         string trigger,
         string invalidation,
-        DateTimeOffset now) =>
+        DateTimeOffset now,
+        MarketStructureRead? structure = null) =>
         previous with
         {
             Stage = stage,
@@ -450,8 +648,8 @@ public sealed class TradeHypothesisEngine
             UpdatedAtUtc = now,
             Revision = previous.Revision + 1,
             ReferencePrice = market.Price,
-            Support = market.Support,
-            Resistance = market.Resistance,
+            Support = structure is { Available: true } && structure.StructuralSupport > 0 ? structure.StructuralSupport : market.Support,
+            Resistance = structure is { Available: true } && structure.StructuralResistance > 0 ? structure.StructuralResistance : market.Resistance,
             LastTrend15m = market.Trend15m,
             LastTrend1h = market.Trend1h,
             LastTrend4h = market.Trend4h,
@@ -462,11 +660,12 @@ public sealed class TradeHypothesisEngine
             Thesis = thesis,
             Trigger = trigger,
             Invalidation = invalidation,
-            Evidence = Evidence(market),
+            Evidence = Evidence(market, structure),
+            DecisionBasis = structure is { Available: true } ? MarketStructureRead.DecisionBasis : previous.DecisionBasis,
             LastOrderBookAvailable = BookAvailable(market)
         };
 
-    private static TradeHypothesis Observing(MarketEvidence market, DateTimeOffset now, string thesis) =>
+    private static TradeHypothesis Observing(MarketEvidence market, DateTimeOffset now, string thesis, MarketStructureRead? structure = null) =>
         new(
             $"OBS-{market.Symbol}",
             TradeHypothesis.CurrentVersion,
@@ -474,7 +673,9 @@ public sealed class TradeHypothesisEngine
             TradeHypothesisKind.None,
             TradeHypothesisStage.Observing,
             0,
-            Valid(market) ? MarketRegimeClassifier.Detect(market) : MarketRegime.Unknown,
+            Valid(market)
+                ? structure is { Available: true } ? StructureRegime(structure) : MarketRegimeClassifier.Detect(market)
+                : MarketRegime.Unknown,
             now,
             now,
             1,
@@ -493,8 +694,9 @@ public sealed class TradeHypothesisEngine
             thesis,
             "Wait for a coherent market structure before considering risk.",
             "No active trade thesis exists.",
-            Evidence(market))
+            Evidence(market, structure))
         {
+            DecisionBasis = structure is { Available: true } ? MarketStructureRead.DecisionBasis : "summary-v1",
             LastOrderBookAvailable = BookAvailable(market)
         };
 
@@ -522,7 +724,7 @@ public sealed class TradeHypothesisEngine
         double.IsFinite(market.Quality.OrderBookImbalance) &&
         double.IsFinite(market.Quality.OrderFlowImbalance);
 
-    private static IReadOnlyList<string> Evidence(MarketEvidence market)
+    private static IReadOnlyList<string> Evidence(MarketEvidence market, MarketStructureRead? structure = null)
     {
         var taker = market.Derivatives.TakerBuySellRatio > 0
             ? $"taker_buy_sell={market.Derivatives.TakerBuySellRatio:F3}"
@@ -533,7 +735,9 @@ public sealed class TradeHypothesisEngine
         var book = market.Quality.Anomalies.Contains("order_book_missing",StringComparer.OrdinalIgnoreCase)
             ? "order_book=unavailable"
             : $"order_book={market.Quality.OrderBookImbalance:F3}";
-        return
+        var result = new List<string>();
+        if (structure is { Available: true }) result.AddRange(structure.Evidence);
+        result.AddRange(
         [
             $"price={market.Price:F2}",
             $"support={market.Support:F2}",
@@ -546,7 +750,8 @@ public sealed class TradeHypothesisEngine
             flow,
             taker,
             $"market_quality={market.Quality.QualityScore}"
-        ];
+        ]);
+        return result;
     }
 
     private static string StateKey(string symbol) => StatePrefix + symbol.ToUpperInvariant();

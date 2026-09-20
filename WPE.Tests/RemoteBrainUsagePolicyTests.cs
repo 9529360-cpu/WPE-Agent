@@ -11,8 +11,22 @@ public sealed class RemoteBrainUsagePolicyTests
         Assert.Contains("if(positions.Count>0)return true;", source, StringComparison.Ordinal);
         Assert.Contains("if(consecutiveHolds>=3)return true;", source, StringComparison.Ordinal);
         Assert.Contains("return assessments.Any(x=>x.EntryReady);", source, StringComparison.Ordinal);
+        Assert.Contains("!HasLocalStructureHypothesis(hypotheses)", source, StringComparison.Ordinal);
+        Assert.Contains("x.IsLive&&string.Equals(x.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal)", source, StringComparison.Ordinal);
         Assert.Contains("var plannerBrain=useRemotePlanner?brain:localBrain;", source, StringComparison.Ordinal);
         Assert.Contains("remote={useRemotePlanner}", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HypothesisDrivenUi_DoesNotProjectLegacyDirectionalScoresAsDecisionBasis()
+    {
+        var source = File.ReadAllText(SourcePath());
+
+        Assert.Contains("if(hypothesisDriven)", source, StringComparison.Ordinal);
+        Assert.Contains("state.DecisionScore=0;", source, StringComparison.Ordinal);
+        Assert.Contains("state.ConflictRate=0;", source, StringComparison.Ordinal);
+        Assert.Contains("state.SignalContributions=new Dictionary<string,double>();", source, StringComparison.Ordinal);
+        Assert.Contains("state.RiskLoad=Math.Clamp(decision.RiskBudgetMultiplier,0,1)*100;", source, StringComparison.Ordinal);
     }
 
     [Fact]
