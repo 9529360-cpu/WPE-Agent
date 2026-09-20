@@ -51,6 +51,7 @@ public sealed class AutoTradingAuthorizationBoundaryTests
 
         Assert.Contains("public static async Task<string> EmergencyCloseAllAsync",source,StringComparison.Ordinal);
         Assert.Contains("executionGateway.ExecuteEmergencyReductionAsync",source,StringComparison.Ordinal);
+        Assert.Contains("ReasonCode:PositionExitReasonCodes.ManualEmergencyClose",source,StringComparison.Ordinal);
         Assert.DoesNotContain("await executor.ExecuteAsync(",source,StringComparison.Ordinal);
     }
 
