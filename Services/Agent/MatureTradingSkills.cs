@@ -164,6 +164,7 @@ public sealed class StrategyResearchSkill
 public static class PositionManagementDurableState
 {
     public static string ProtectionAdjustmentKey(string adjustmentId)=>"position-protection:"+adjustmentId;
+    public static string OwnershipRevocationKey(string openingClientOrderId)=>"position-ownership-revoked:"+openingClientOrderId;
 }
 
 public sealed record ProtectionAdjustment(string Symbol,PositionSide Side,decimal StopLoss,decimal TakeProfit,string Reason,string? AdjustmentId=null);
@@ -190,6 +191,11 @@ public sealed class PositionManagementSkill
             if(!markets.TryGetValue(position.Symbol,out var market))continue;
             var opening=await db.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);
             if(opening is null)continue;
+            if(await db.HasStateAsync(PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId),ct))
+            {
+                notes.Add($"position-ownership-revoked:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
+                continue;
+            }
 
             if(hypotheses is not null &&
                hypotheses.TryGetValue(position.Symbol,out var hypothesis) &&
