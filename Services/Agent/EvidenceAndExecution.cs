@@ -378,12 +378,29 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     public async Task<RecoveryResult> AuditAndRepairProtectionAsync(IReadOnlyList<ManagedPosition> positions,IReadOnlyList<ExchangeOrder> orders,CancellationToken ct)
     {
         EnsureTestnet();
+        var managedLegs=await _db.GetExecutionPositionLedgerAsync(ct);
         var safe=true;var messages=new List<string>();foreach(var position in positions)
         {
+            if(!HasExactLocalPositionOwnership(position,positions,managedLegs))
+            {
+                safe=false;messages.Add($"recovery.position-ownership-conflict:{position.Symbol}:{position.Side}");
+                continue;
+            }
             var leg=orders.Where(o=>o.Symbol==position.Symbol&&o.PositionSide==position.Side&&o.IsProtection).ToArray();var combined=leg.Any(o=>o.Type.Contains("OCO",StringComparison.OrdinalIgnoreCase)||o.Type.Contains("POSITION_TPSL",StringComparison.OrdinalIgnoreCase));var hasSl=combined||leg.Any(o=>o.Type.Contains("STOP",StringComparison.OrdinalIgnoreCase)||o.Type.Contains("LOSS",StringComparison.OrdinalIgnoreCase));var hasTp=combined||leg.Any(o=>o.Type.Contains("TAKE",StringComparison.OrdinalIgnoreCase)||o.Type.Contains("PROFIT",StringComparison.OrdinalIgnoreCase));if(hasSl&&hasTp)continue;
             var intent=await _db.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);if(intent is null){safe=false;messages.Add(L("Execution.ProtectionMissing",position.Symbol,position.Side,!hasSl,!hasTp));continue;}
             try{EnsureCapability(intent);await _ex.PlaceProtectionAsync(position.Symbol,position.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);messages.Add(L("Execution.ProtectionRepaired",position.Symbol,position.Side));}catch(Exception ex){safe=false;messages.Add(L("Execution.ProtectionRepairFailed",position.Symbol,position.Side,SensitiveDataRedactor.ForLog(ex.Message,180)));}
         }return new(safe,messages);
+    }
+
+    private static bool HasExactLocalPositionOwnership(
+        ManagedPosition position,IReadOnlyList<ManagedPosition> positions,IReadOnlyList<ExecutionPositionLegV1> managedLegs)
+    {
+        var exchangeMatches=positions.Count(x=>string.Equals(x.Symbol,position.Symbol,StringComparison.OrdinalIgnoreCase)&&x.Side==position.Side);
+        if(exchangeMatches!=1)return false;
+        var localMatches=managedLegs.Where(x=>string.Equals(x.Symbol,position.Symbol,StringComparison.OrdinalIgnoreCase)&&x.Side==position.Side).ToArray();
+        if(localMatches.Length!=1||localMatches[0].Quantity<=0||position.Quantity<=0)return false;
+        var tolerance=Math.Max(.00000001m,Math.Max(localMatches[0].Quantity,position.Quantity)*.000001m);
+        return Math.Abs(localMatches[0].Quantity-position.Quantity)<=tolerance;
     }
 
     private async Task PreflightAsync(ExecutionIntent intent,CancellationToken ct)
