@@ -382,6 +382,15 @@ public static class ExecutionReasonCode
 
     public static string NormalizeOrFallback(string? value,string fallback)=>
         TryNormalize(value,out var code)?code:fallback;
+
+    public static string ResolveForDurableIntent(ExecutionIntent intent,string nonReductionFallback)
+    {
+        ArgumentNullException.ThrowIfNull(intent);
+        if(TryNormalize(intent.ReasonCode,out var explicitCode))return explicitCode;
+        if(!intent.ReduceOnly)return nonReductionFallback;
+        if(TryNormalize(intent.Reason,out var legacyCode))return legacyCode;
+        return "action."+intent.Action.ToString().ToLowerInvariant();
+    }
 }
 
 public sealed record ExecutionIntent(string Symbol, PositionSide Side, decimal Quantity, bool ReduceOnly, decimal StopLoss, decimal TakeProfit, string ClientOrderId, string Reason, DecisionAction Action = DecisionAction.Hold, ExecutionOrderType OrderType = ExecutionOrderType.Market, decimal LimitPrice = 0, decimal ExpectedPrice = 0, [property:JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] string? ReasonCode = null);
