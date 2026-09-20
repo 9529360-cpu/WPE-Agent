@@ -262,6 +262,30 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task BreakevenProtectionUsesSaferOpeningAndFillAnchor()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent("open-breakeven-slippage"),"PROTECTED","1009-slip",CancellationToken.None);
+            var position=Position() with{EntryPrice=99m};
+            var market=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(108m)}};
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [position],market,db,CancellationToken.None,ManagedLedger(),tradingRules:Rules());
+
+            Assert.Empty(result.Intents);
+            var adjustment=Assert.Single(result.ProtectionAdjustments);
+            Assert.Equal(100.1m,adjustment.StopLoss);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task BreakevenProtectionSkipsWhenSaferTickWouldCrossMarket()
     {
         var path=TempDb();
