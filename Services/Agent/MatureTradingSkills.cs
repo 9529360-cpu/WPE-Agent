@@ -197,6 +197,11 @@ public sealed class PositionManagementSkill
                 notes.Add($"position-ownership-revoked:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
                 continue;
             }
+            if(await db.HasStateAsync(PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId),ct))
+            {
+                notes.Add($"position-ownership-uncertain:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
+                continue;
+            }
 
             if(hypotheses is not null &&
                hypotheses.TryGetValue(position.Symbol,out var hypothesis) &&
