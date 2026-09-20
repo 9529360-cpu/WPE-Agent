@@ -775,7 +775,7 @@ public sealed partial class AgentSqliteStore
     }
     public async Task<ExecutionIntent?> GetLatestOpeningIntentAsync(string symbol,PositionSide side,CancellationToken ct)
     {
-        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT details FROM order_intents WHERE symbol=$s AND side=$side ORDER BY updated_at DESC LIMIT 20";q.Parameters.AddWithValue("$s",symbol);q.Parameters.AddWithValue("$side",side.ToString());
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT details FROM order_intents WHERE symbol=$s AND side=$side AND status IN ('PROTECTED','PROTECTED_PARTIAL','PARTIALLY_FILLED_PROTECTED') ORDER BY updated_at DESC LIMIT 20";q.Parameters.AddWithValue("$s",symbol);q.Parameters.AddWithValue("$side",side.ToString());
         await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var intent=JsonSerializer.Deserialize<ExecutionIntent>(r.GetString(0));if(intent is{ReduceOnly:false,StopLoss:>0,TakeProfit:>0})return intent;}return null;
     }
     public async Task<string?> GetOrderIntentStatusAsync(string clientOrderId,CancellationToken ct)
