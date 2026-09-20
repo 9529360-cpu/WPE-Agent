@@ -40,7 +40,7 @@ public sealed record NumericalMarketAnalysis(
     MarketStructureSnapshot Structure,
     IReadOnlyList<MarketHypothesis> Hypotheses);
 
-public sealed class MarketStructureSkill
+public sealed class NumericalMarketStructureSkill
 {
     public const int MinimumCandles = 32;
 
@@ -255,7 +255,7 @@ public sealed class NumericalStrategySkill
 {
     public const string Basis = "market-structure-hypothesis-v1";
     public const string Version = "wpe-numerical-structure-v1";
-    private readonly MarketStructureSkill _structure = new();
+    private readonly NumericalMarketStructureSkill _structure = new();
     private readonly MarketHypothesisSkill _hypothesis = new();
 
     public bool CanAnalyze(EvidencePack evidence) =>
@@ -353,7 +353,7 @@ public sealed class NumericalStrategySkill
         if (policy is not null && market.Quality.QualityScore < policy.MinimumMarketQuality)
             blocks.Add("structure.market-quality");
 
-        var structure = new MarketStructureSkill().Analyze(market);
+        var structure = new NumericalMarketStructureSkill().Analyze(market);
         if (!structure.Ready)
         {
             blocks.AddRange(structure.MissingConditions);

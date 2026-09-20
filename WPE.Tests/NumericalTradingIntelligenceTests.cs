@@ -10,7 +10,7 @@ public sealed class NumericalTradingIntelligenceTests
     public void MarketStructure_DetectsConfirmedBullishBreakoutSequence()
     {
         var market = BullishMarket();
-        var structure = new MarketStructureSkill().Analyze(market);
+        var structure = new NumericalMarketStructureSkill().Analyze(market);
 
         Assert.True(structure.Ready);
         Assert.Equal(MarketStructureBias.Bullish, structure.Bias);

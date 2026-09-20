@@ -34,7 +34,7 @@ internal static class ModelOffLiveCycleInputComposerV1
     {
         ValidateRequest(request);
         var outputs = new List<ModelOffProductionInputV1>(4);
-        var structureSkill=new MarketStructureSkill();
+        var structureSkill=new NumericalMarketStructureSkill();
         var hypothesisSkill=new MarketHypothesisSkill();
         var marketStructures=request.Evidence.Markets.Values.OrderBy(x=>x?.Symbol,StringComparer.Ordinal).Select(x=>structureSkill.Analyze(x)).ToArray();
 
