@@ -748,6 +748,21 @@ public sealed partial class AgentSqliteStore
         }
         return list;
     }
+    public async Task<IReadOnlyList<PersistedIntent>> GetProtectedOpeningIntentsAsync(CancellationToken ct)
+    {
+        var list=new List<PersistedIntent>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="SELECT cycle_id,status,exchange_order_id,details FROM order_intents WHERE status IN ('PROTECTED','PROTECTED_PARTIAL','PARTIALLY_FILLED_PROTECTED') ORDER BY updated_at DESC,client_order_id DESC LIMIT 200";
+        await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))
+        {
+            try
+            {
+                var intent=JsonSerializer.Deserialize<ExecutionIntent>(r.GetString(3));
+                if(intent is{ReduceOnly:false})list.Add(new(r.IsDBNull(0)?"PROTECTION":r.GetString(0),intent,r.IsDBNull(1)?"UNKNOWN":r.GetString(1),r.IsDBNull(2)?null:r.GetValue(2).ToString()));
+            }
+            catch(JsonException){/* Malformed protected rows are withheld so reconciliation stays fail-closed. */}
+        }
+        return list;
+    }
     public async Task<IntentStateSummary> GetIntentStateSummaryAsync(CancellationToken ct)
     {
         var statuses=new List<IntentStatusCount>();var total=0;var recoverable=0;var unknown=0;DateTimeOffset? latest=null;
@@ -766,6 +781,10 @@ public sealed partial class AgentSqliteStore
     public async Task<string?> GetOrderIntentStatusAsync(string clientOrderId,CancellationToken ct)
     {
         if(string.IsNullOrWhiteSpace(clientOrderId))return null;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT status FROM order_intents WHERE client_order_id=$id";q.Parameters.AddWithValue("$id",clientOrderId);return (await q.ExecuteScalarAsync(ct))?.ToString();
+    }
+    public async Task<bool> HasExecutionEventAsync(string clientOrderId,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(clientOrderId))return false;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT 1 FROM execution_events WHERE client_order_id=$id LIMIT 1";q.Parameters.AddWithValue("$id",clientOrderId);return await q.ExecuteScalarAsync(ct) is not null;
     }
     public async Task<IReadOnlyList<PersistedIntent>> GetLegacyIntentIsolationCandidatesAsync(CancellationToken ct)
     {
