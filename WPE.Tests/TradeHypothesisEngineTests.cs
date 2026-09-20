@@ -61,6 +61,53 @@ public sealed class TradeHypothesisEngineTests
     }
 
     [Fact]
+    public void ExtremeOpposingRealtimeFlowBlocksScoutEvenWhenDepthBookLooksSupportive()
+    {
+        var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,.40,flowAvailable:true,flow:-.30);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var improved=Market(81185.2m,80906m,81805.3m,51.3,.322,-.060,4.49,.861,flowAvailable:true,flow:-.997);
+
+        var stillWatching=TradeHypothesisEngine.EvaluateMarket(improved,watching,[],Now.AddMinutes(1));
+
+        Assert.Equal(TradeHypothesisStage.Watching,stillWatching.Stage);
+        Assert.False(stillWatching.Actionable);
+        Assert.Equal(0,stillWatching.RiskBudgetMultiplier);
+        Assert.Contains("extreme opposing aggressive flow",stillWatching.Trigger,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ModerateOpposingRealtimeFlowStillAllowsBoundedScoutExploration()
+    {
+        var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,.40,flowAvailable:true,flow:-.30);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var improved=Market(81105m,80906m,81805.3m,34,-.18,-.12,5.05,.75,flowAvailable:true,flow:-.45);
+
+        var scout=TradeHypothesisEngine.EvaluateMarket(improved,watching,[],Now.AddMinutes(1));
+
+        Assert.Equal(TradeHypothesisStage.ScoutReady,scout.Stage);
+        Assert.True(scout.Actionable);
+        Assert.Equal(.18,scout.RiskBudgetMultiplier,10);
+    }
+
+    [Fact]
+    public void ScoutFallsBackToWatchingWhenAggressiveFlowTurnsExtremelyOpposed()
+    {
+        var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var scout=TradeHypothesisEngine.EvaluateMarket(
+            Market(81105m,80906m,81805.3m,34,-.18,-.12,5.05,.45),
+            watching,[],Now.AddMinutes(1));
+
+        var conflicted=TradeHypothesisEngine.EvaluateMarket(
+            Market(81185m,80906m,81805.3m,51,.32,-.06,4.49,.86,flowAvailable:true,flow:-.99),
+            scout,[],Now.AddMinutes(2));
+
+        Assert.Equal(TradeHypothesisStage.Watching,conflicted.Stage);
+        Assert.False(conflicted.Actionable);
+        Assert.Equal(0,conflicted.RiskBudgetMultiplier);
+    }
+
+    [Fact]
     public void MissingDepthDoesNotCountAsNeutralMicrostructure()
     {
         var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);

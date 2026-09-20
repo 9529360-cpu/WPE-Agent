@@ -191,11 +191,15 @@ public sealed class TradeHypothesisEngine
         var flowReclaimed = market.Quality.OrderFlowAvailable && (longSide
             ? market.Quality.OrderFlowImbalance >= 0
             : market.Quality.OrderFlowImbalance <= 0);
+        var extremeOpposingFlow = market.Quality.OrderFlowAvailable && (longSide
+            ? market.Quality.OrderFlowImbalance <= -.80
+            : market.Quality.OrderFlowImbalance >= .80);
 
         var bookNoLongerHostile = bookAvailable && (longSide
             ? market.Quality.OrderBookImbalance > -.20
             : market.Quality.OrderBookImbalance < .20);
-        var microstructureNoLongerHostile = bookNoLongerHostile || flowReclaimed || takerReclaimed;
+        var microstructureNoLongerHostile = !extremeOpposingFlow &&
+            (bookNoLongerHostile || flowReclaimed || takerReclaimed);
 
         var shortTermConfirmed = longSide
             ? market.Trend15m >= 0 && market.Rsi >= Math.Max(32, previous.LastRsi)
@@ -237,8 +241,8 @@ public sealed class TradeHypothesisEngine
             ? $"4h structure remains upward while the short horizon is working through a pullback near support. Current stage={nextStage}."
             : $"4h structure remains downward while the short horizon is working through a rebound near resistance. Current stage={nextStage}.";
         var trigger = longSide
-            ? "Support must hold and short-horizon momentum or microstructure must improve before risk is increased."
-            : "Resistance must hold and short-horizon momentum or microstructure must weaken before risk is increased.";
+            ? "Support must hold and short-horizon momentum or microstructure must improve; extreme opposing aggressive flow must abate before risk is increased."
+            : "Resistance must hold and short-horizon momentum or microstructure must weaken; extreme opposing aggressive flow must abate before risk is increased.";
 
         return Snapshot(previous, market, regime, nextStage, risk, thesis, trigger, previous.Invalidation, now);
     }
