@@ -296,6 +296,10 @@ public sealed class BrainCallException : Exception
 }
 public interface IBrainProvider { string Name { get; } Task<BrainHealth> HealthCheckAsync(CancellationToken cancellationToken); Task<BrainDecisionResult> DecideAsync(EvidencePack evidence, AgentContext context, CancellationToken cancellationToken); }
 public interface IAssistantProvider : IBrainProvider { bool IsLocal { get; } }
+public interface IInPlaceProtectionUpdateAdapter
+{
+}
+
 public interface IExchangeAdapter : IAsyncDisposable
 {
     ExchangeEnvironment Environment { get; }
