@@ -300,6 +300,40 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task UnresolvedProtectionMutationCloseDoesNotRequireStrategyMarketEvidence()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            var opening=OpeningIntent("open-protection-no-market");
+            await db.SaveIntentAsync("cycle-open",opening,"PROTECTED","1008-no-market",CancellationToken.None);
+            var protectionId=PositionManagementDurableState.ProtectionAdjustmentKey(
+                PositionManagementActionId("BE",opening.ClientOrderId));
+            await db.SetStateAsync(protectionId,"PENDING",CancellationToken.None);
+            var position=Position() with{MarkPrice=107m};
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [position],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase),
+                db,
+                CancellationToken.None,
+                ManagedLedger(),
+                tradingRules:Rules());
+
+            var intent=Assert.Single(result.Intents);
+            Assert.Equal(DecisionAction.CloseLong,intent.Action);
+            Assert.Equal(PositionExitReasonCodes.ProtectionReplaceFailed,intent.ReasonCode);
+            Assert.Equal(107m,intent.ExpectedPrice);
+            Assert.Empty(result.ProtectionAdjustments);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task CanceledProtectionMutationDoesNotAutoCloseOnNextCycle()
     {
         var path=TempDb();
