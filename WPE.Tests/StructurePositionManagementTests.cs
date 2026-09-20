@@ -23,6 +23,7 @@ public sealed class StructurePositionManagementTests
                 new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",market}},
                 db,
                 CancellationToken.None,
+                ManagedLedger(),
                 new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",hypothesis}});
 
             var intent=Assert.Single(result.Intents);
@@ -53,7 +54,8 @@ public sealed class StructurePositionManagementTests
                 [position],
                 new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(100m)}},
                 db,
-                CancellationToken.None);
+                CancellationToken.None,
+                ManagedLedger());
 
             var intent=Assert.Single(result.Intents);
             Assert.Equal(DecisionAction.CloseLong,intent.Action);
@@ -77,7 +79,8 @@ public sealed class StructurePositionManagementTests
                 [Position()],
                 new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(120m)}},
                 db,
-                CancellationToken.None);
+                CancellationToken.None,
+                ManagedLedger());
 
             var intent=Assert.Single(result.Intents);
             Assert.Equal(DecisionAction.ReduceLong,intent.Action);
@@ -101,12 +104,12 @@ public sealed class StructurePositionManagementTests
             await db.SaveIntentAsync("cycle-open",OpeningIntent("open-partial-a"),"PROTECTED","1005",CancellationToken.None);
             var market=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(120m)}};
 
-            var first=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None);
+            var first=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None,ManagedLedger());
             var partial=Assert.Single(first.Intents);
             Assert.StartsWith("WPE-PM-TP2-",partial.ClientOrderId,StringComparison.Ordinal);
             await db.SaveIntentAsync("cycle-partial",partial,"COMPLETED_PARTIAL","2005",CancellationToken.None);
 
-            var second=await new PositionManagementSkill().EvaluateAsync([Position() with{Quantity=.5m}],market,db,CancellationToken.None);
+            var second=await new PositionManagementSkill().EvaluateAsync([Position() with{Quantity=.5m}],market,db,CancellationToken.None,ManagedLedger(.5m));
             Assert.DoesNotContain(second.Intents,value=>value.ReasonCode==PositionExitReasonCodes.PartialTakeProfit2R);
         }
         finally
@@ -125,14 +128,14 @@ public sealed class StructurePositionManagementTests
             await db.SaveIntentAsync("cycle-open-a",OpeningIntent("open-partial-a"),"PROTECTED","1006",CancellationToken.None);
             var market=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(120m)}};
 
-            var first=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None);
+            var first=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None,ManagedLedger());
             var firstPartial=Assert.Single(first.Intents);
             await db.SaveIntentAsync("cycle-partial-a",firstPartial,"COMPLETED_PARTIAL","2006",CancellationToken.None);
 
             await Task.Delay(20);
             await db.SaveIntentAsync("cycle-open-rejected",OpeningIntent("open-partial-rejected"),"REJECTED",null,CancellationToken.None);
 
-            var second=await new PositionManagementSkill().EvaluateAsync([Position() with{Quantity=.5m}],market,db,CancellationToken.None);
+            var second=await new PositionManagementSkill().EvaluateAsync([Position() with{Quantity=.5m}],market,db,CancellationToken.None,ManagedLedger(.5m));
 
             Assert.DoesNotContain(second.Intents,value=>value.ReasonCode==PositionExitReasonCodes.PartialTakeProfit2R);
         }
@@ -152,13 +155,13 @@ public sealed class StructurePositionManagementTests
             await db.SaveIntentAsync("cycle-open-a",OpeningIntent("open-partial-a"),"PROTECTED","1006",CancellationToken.None);
             var market=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(120m)}};
 
-            var first=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None);
+            var first=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None,ManagedLedger());
             var firstPartial=Assert.Single(first.Intents);
             await db.SaveIntentAsync("cycle-partial-a",firstPartial,"COMPLETED_PARTIAL","2006",CancellationToken.None);
             await Task.Delay(20);
             await db.SaveIntentAsync("cycle-open-b",OpeningIntent("open-partial-b"),"PROTECTED","1007",CancellationToken.None);
 
-            var reopened=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None);
+            var reopened=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None,ManagedLedger());
             var secondPartial=Assert.Single(reopened.Intents);
             Assert.Equal(PositionExitReasonCodes.PartialTakeProfit2R,secondPartial.ReasonCode);
             Assert.NotEqual(firstPartial.ClientOrderId,secondPartial.ClientOrderId);
@@ -179,7 +182,7 @@ public sealed class StructurePositionManagementTests
             await db.SaveIntentAsync("cycle-open",OpeningIntent("open-breakeven-a"),"PROTECTED","1008",CancellationToken.None);
             var market=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(110m)}};
 
-            var first=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None);
+            var first=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None,ManagedLedger());
             Assert.Empty(first.Intents);
             var adjustment=Assert.Single(first.ProtectionAdjustments);
             Assert.NotNull(adjustment.AdjustmentId);
@@ -192,7 +195,7 @@ public sealed class StructurePositionManagementTests
                 "COMPLETED",
                 CancellationToken.None);
 
-            var second=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None);
+            var second=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None,ManagedLedger());
             Assert.Empty(second.ProtectionAdjustments);
         }
         finally
@@ -215,7 +218,33 @@ public sealed class StructurePositionManagementTests
                 new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(98m)}},
                 db,
                 CancellationToken.None,
+                [],
                 new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",hypothesis}});
+
+            Assert.Empty(result.Intents);
+            Assert.Empty(result.ProtectionAdjustments);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public async Task HistoricalOpeningCannotManageExternalSameSidePosition()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-old-open",OpeningIntent("old-closed-opening"),"PROTECTED","old-order",CancellationToken.None);
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(120m)}},
+                db,
+                CancellationToken.None,
+                []);
 
             Assert.Empty(result.Intents);
             Assert.Empty(result.ProtectionAdjustments);
@@ -251,6 +280,9 @@ public sealed class StructurePositionManagementTests
             Cleanup(path);
         }
     }
+
+    private static IReadOnlyList<ExecutionPositionLegV1> ManagedLedger(decimal quantity=1m)=>
+        [new("BTCUSDT",PositionSide.Long,quantity)];
 
     private static ExecutionIntent OpeningIntent(string clientOrderId="open-structure-1")=>new(
         "BTCUSDT",PositionSide.Long,1m,false,90m,120m,clientOrderId,"test opening",
