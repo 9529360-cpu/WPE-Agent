@@ -270,9 +270,9 @@ public sealed class PositionManagementSkill
                     :Math.Min(position.EntryPrice,openingEntry);
                 var rawStop=position.Side==PositionSide.Long?breakevenAnchor*1.0005m:breakevenAnchor*.9995m;
                 var stop=RoundProtectiveStop(rawStop,rule.TickSize,position.Side);
-                var validStop=stop>0&&(position.Side==PositionSide.Long
-                    ?stop>=breakevenAnchor&&stop<market.Price
-                    :stop<=breakevenAnchor&&stop>market.Price);
+                var validStop=stop>0&&opening.TakeProfit>0&&(position.Side==PositionSide.Long
+                    ?stop>=breakevenAnchor&&stop<market.Price&&stop<opening.TakeProfit
+                    :stop<=breakevenAnchor&&stop>market.Price&&stop>opening.TakeProfit);
                 if(!validStop)
                 {
                     notes.Add($"breakeven-price-unavailable:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
