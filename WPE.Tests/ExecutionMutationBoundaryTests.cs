@@ -290,6 +290,56 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
     }
 
     [Fact]
+    public async Task ProtectionRecovery_VerifiedBreakevenAdjustmentExecutes()
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out var store,out var authority);
+        await store.SaveIntentAsync("opening",OpeningIntent(),"PROTECTED","order-open",CancellationToken.None);
+        var command=ProtectionCommand(authority);
+
+        var result=await gateway.ExecuteProtectionRecoveryAsync(command,CancellationToken.None);
+
+        Assert.True(result.Executed);
+        Assert.Equal("recovery.protection-adjusted",result.Code);
+        Assert.Equal(1,executor.CallCount);
+    }
+
+    [Fact]
+    public async Task ProtectionRecovery_RiskIncreasingAdjustmentRejectsWithoutMutation()
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out var store,out var authority);
+        await store.SaveIntentAsync("opening",OpeningIntent(),"PROTECTED","order-open",CancellationToken.None);
+        var command=ProtectionCommand(authority,new ProtectionAdjustment(
+            "SOLUSDT",PositionSide.Long,145m,160m,"looser stop","WPE-PM-BE-riskincrease"));
+
+        var result=await gateway.ExecuteProtectionRecoveryAsync(command,CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.protection-risk-increase",result.Code);
+        Assert.Equal(0,executor.CallCount);
+    }
+
+    [Fact]
+    public async Task ProtectionRecovery_ExistingDurableStateNeverReplays()
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out var store,out var authority);
+        await store.SaveIntentAsync("opening",OpeningIntent(),"PROTECTED","order-open",CancellationToken.None);
+        var command=ProtectionCommand(authority);
+        await store.SetStateAsync(
+            PositionManagementDurableState.ProtectionAdjustmentKey(command.Adjustment.AdjustmentId!),
+            "PENDING",
+            CancellationToken.None);
+
+        var result=await gateway.ExecuteProtectionRecoveryAsync(command,CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.protection-existing",result.Code);
+        Assert.Equal(0,executor.CallCount);
+    }
+
+    [Fact]
     public void LegacyConstructor_RejectsRealProviderWithoutCapabilityContext()
     {
         Directory.CreateDirectory(_directory);
@@ -340,6 +390,20 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         var hash=TradingExecutionGateway.ComputeIntentHash([intent],leverage,isolated);
         var receipt=authority.Issue("receipt","local","Testnet","local",position,observed,hash,result,issued,expires);
         return new("recovery-cycle",receipt,position,intent,leverage,isolated);
+    }
+
+    private static ProtectionRecoveryCommand ProtectionCommand(
+        TestRecoveryAuthority authority,ProtectionAdjustment? adjustment=null,
+        ReduceOnlyRecoveryResult result=ReduceOnlyRecoveryResult.Verified)
+    {
+        var position=new ManagedPosition("SOLUSDT",PositionSide.Long,1m,150m,151m,1m,5m,true,120m);
+        adjustment??=new ProtectionAdjustment(
+            "SOLUSDT",PositionSide.Long,150.075m,160m,"breakeven","WPE-PM-BE-gatewaytest");
+        var issued=DateTimeOffset.UtcNow;
+        var hash=TradingExecutionGateway.ComputeProtectionAdjustmentHash(adjustment);
+        var receipt=authority.Issue(
+            "protection-receipt","local","Testnet","local",position,issued,hash,result,issued,issued.AddSeconds(20));
+        return new("recovery-cycle",receipt,position,adjustment);
     }
 
     private sealed class TestRecoveryAuthority
@@ -428,6 +492,11 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         {
             CallCount++;
             return Task.FromResult("submitted");
+        }
+        public Task<string> ReplaceProtectionAsync(string correlationId,ProtectionAdjustment adjustment,CancellationToken ct)
+        {
+            CallCount++;
+            return Task.FromResult("protection-adjusted");
         }
     }
 
