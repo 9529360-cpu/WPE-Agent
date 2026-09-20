@@ -119,16 +119,18 @@ public sealed partial class AgentSqliteStore
 
     private static string ResolveExitReason(ExecutionIntent intent, ExchangeOrder order)
     {
-        if (ExecutionReasonCode.TryNormalize(intent.ReasonCode, out var explicitCode)) return explicitCode;
-
         if (order.IsProtection)
         {
-            if (ExecutionReasonCode.TryNormalize(intent.Reason, out var protectionCode) &&
-                protectionCode.StartsWith("protection.", StringComparison.Ordinal))
-                return protectionCode;
+            if (ExecutionReasonCode.TryNormalize(intent.ReasonCode, out var explicitProtectionCode) &&
+                explicitProtectionCode.StartsWith("protection.", StringComparison.Ordinal))
+                return explicitProtectionCode;
+            if (ExecutionReasonCode.TryNormalize(intent.Reason, out var legacyProtectionCode) &&
+                legacyProtectionCode.StartsWith("protection.", StringComparison.Ordinal))
+                return legacyProtectionCode;
             return PositionExitReasonCodes.ProtectionFillReconciled;
         }
 
+        if (ExecutionReasonCode.TryNormalize(intent.ReasonCode, out var explicitCode)) return explicitCode;
         if (ExecutionReasonCode.TryNormalize(intent.Reason, out var legacyCode)) return legacyCode;
         return "action." + intent.Action.ToString().ToLowerInvariant();
     }
