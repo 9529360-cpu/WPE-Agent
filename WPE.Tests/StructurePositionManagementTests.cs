@@ -41,6 +41,56 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task LiquidationBufferExitCarriesStableReasonCode()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent(),"PROTECTED","1003",CancellationToken.None);
+            var position=Position() with{LiquidationPrice=95m};
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [position],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(100m)}},
+                db,
+                CancellationToken.None);
+
+            var intent=Assert.Single(result.Intents);
+            Assert.Equal(DecisionAction.CloseLong,intent.Action);
+            Assert.Equal(PositionExitReasonCodes.LiquidationBuffer,intent.ReasonCode);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public async Task TwoRPartialTakeCarriesStableReasonCode()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent(),"PROTECTED","1004",CancellationToken.None);
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(120m)}},
+                db,
+                CancellationToken.None);
+
+            var intent=Assert.Single(result.Intents);
+            Assert.Equal(DecisionAction.ReduceLong,intent.Action);
+            Assert.Equal(.5m,intent.Quantity);
+            Assert.Equal(PositionExitReasonCodes.PartialTake2R,intent.ReasonCode);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task InvalidatedStructureNeverClosesExternalPositionWithoutWpeOpeningIntent()
     {
         var path=TempDb();
