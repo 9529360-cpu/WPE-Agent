@@ -19,13 +19,32 @@ public sealed class MarketStructureIntelligenceTests
 
         Assert.True(structure.Available);
         Assert.Equal(MarketStructureBias.Bullish,structure.HigherTimeframeBias);
+        Assert.Equal(MarketStructurePhase.BullishPullback,structure.Phase);
         Assert.Equal(MarketStructureScenario.TrendPullbackLong,structure.Scenario);
         Assert.Equal(TradeHypothesisKind.TrendPullbackLong,hypothesis.Kind);
         Assert.Equal(TradeHypothesisStage.Watching,hypothesis.Stage);
         Assert.Equal("hypothesis-v2",hypothesis.Version);
         Assert.Equal(MarketStructureRead.DecisionBasis,hypothesis.DecisionBasis);
         Assert.Contains("structure_basis=candles-structure-v2",hypothesis.Evidence);
+        Assert.Contains("structure_phase=BullishPullback",hypothesis.Evidence);
         Assert.Contains("4h=Bullish",hypothesis.Thesis,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BullishImpulseAwayFromDemandIsReadAsImpulseInsteadOfFakePullback()
+    {
+        var market=Market(
+            Trend(40,90m,.35m,TimeSpan.FromMinutes(15)),
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)));
+
+        var structure=MarketStructureIntelligence.Analyze(market);
+
+        Assert.True(structure.Available);
+        Assert.Equal(MarketStructureBias.Bullish,structure.HigherTimeframeBias);
+        Assert.Equal(MarketStructurePhase.BullishImpulse,structure.Phase);
+        Assert.Equal(MarketStructureScenario.None,structure.Scenario);
+        Assert.False(structure.TriggerPresent);
     }
 
     [Fact]
@@ -41,6 +60,7 @@ public sealed class MarketStructureIntelligenceTests
         var scout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
 
         Assert.Equal(MarketStructureEvent.LiquiditySweepLowReclaim,structure.FifteenMinute.Event);
+        Assert.Equal(MarketStructurePhase.BullishReversalAttempt,structure.Phase);
         Assert.True(structure.TriggerPresent);
         Assert.Equal(TradeHypothesisStage.ScoutReady,scout.Stage);
         Assert.True(scout.Actionable);
@@ -99,7 +119,7 @@ public sealed class MarketStructureIntelligenceTests
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
         var first=Market(Pullback15m(),h1,h4);
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
-        var current=Market(SweepLowReclaim15m(),h1,h4);
+        var current=Market(SweepLowReclaimNext15m(),h1,h4,Now.AddMinutes(15));
         var scout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
         var plan=new DecisionPlan
         {
@@ -138,7 +158,7 @@ public sealed class MarketStructureIntelligenceTests
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
         var first=Market(Pullback15m(),h1,h4);
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
-        var current=Market(SweepLowReclaim15m(),h1,h4);
+        var current=Market(SweepLowReclaimNext15m(),h1,h4,Now.AddMinutes(15));
         var scout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
         var legacy=new MarketDecisionAssessment
         {
@@ -177,7 +197,7 @@ public sealed class MarketStructureIntelligenceTests
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
         var first=Market(Pullback15m(),h1,h4);
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
-        var current=Market(SweepLowReclaim15m(),h1,h4);
+        var current=Market(SweepLowReclaimNext15m(),h1,h4,Now.AddMinutes(15));
         var structureScout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
         var legacyPeer=structureScout with
         {
