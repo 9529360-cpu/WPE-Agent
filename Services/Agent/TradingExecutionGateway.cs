@@ -282,7 +282,7 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
     private static IReadOnlyList<ExecutionIntent> Restore(DurableExecutionArtifactV2 artifact)
     {
         if(!DurableExecutionArtifactCanonicalizerV2.Validate(artifact).Valid)throw new ArgumentException("automatic.artifact-invalid",nameof(artifact));
-        return artifact.Intents.OrderBy(x=>x.Sequence).Select(x=>new ExecutionIntent(x.Symbol,Enum.Parse<PositionSide>(x.Side),x.Quantity,x.ReduceOnly,x.StopLoss,x.TakeProfit,x.ClientOrderId,x.ReasonCode,Enum.Parse<DecisionAction>(x.Action),Enum.Parse<ExecutionOrderType>(x.OrderType),x.LimitPrice,x.ExpectedPrice)).ToArray();
+        return artifact.Intents.OrderBy(x=>x.Sequence).Select(x=>new ExecutionIntent(x.Symbol,Enum.Parse<PositionSide>(x.Side),x.Quantity,x.ReduceOnly,x.StopLoss,x.TakeProfit,x.ClientOrderId,x.ReasonCode,Enum.Parse<DecisionAction>(x.Action),Enum.Parse<ExecutionOrderType>(x.OrderType),x.LimitPrice,x.ExpectedPrice,x.ReasonCode)).ToArray();
     }
 
 }
@@ -524,7 +524,7 @@ public sealed class TradingExecutionGateway
         var intents=new List<ExecutionIntent>(artifact.Intents.Count);foreach(var value in artifact.Intents)
         {
             if(!Enum.TryParse<PositionSide>(value.Side,false,out var side)||!Enum.IsDefined(side)||!Enum.TryParse<DecisionAction>(value.Action,false,out var action)||!Enum.IsDefined(action)||!Enum.TryParse<ExecutionOrderType>(value.OrderType,false,out var orderType)||!Enum.IsDefined(orderType))throw new ArgumentException("review.artifact-intent-invalid",nameof(artifact));
-            intents.Add(new(value.Symbol,side,value.Quantity,value.ReduceOnly,value.StopLoss,value.TakeProfit,value.ClientOrderId,value.ReasonCode,action,orderType,value.LimitPrice,value.ExpectedPrice));
+            intents.Add(new(value.Symbol,side,value.Quantity,value.ReduceOnly,value.StopLoss,value.TakeProfit,value.ClientOrderId,value.ReasonCode,action,orderType,value.LimitPrice,value.ExpectedPrice,value.ReasonCode));
         }return intents;
     }
     private static bool FixedHash(string? left,string right)
