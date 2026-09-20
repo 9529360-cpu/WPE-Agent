@@ -208,6 +208,33 @@ public sealed class PositionReconciliationTests : IDisposable
     }
 
     [Fact]
+    public async Task LatestOpeningIdentityUsesStableExecutionTimeAfterOlderReplay()
+    {
+        var clock=Now.AddMinutes(-2);
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var oldOpening=Intent("open-order-old",false,1m);
+        var oldOrder=Order(oldOpening,"FILLED",1m,clock);
+        await store.RecordExecutionAsync("old",oldOpening,oldOrder,"v1",default);
+        await store.SaveIntentAsync("old",oldOpening,"PROTECTED",oldOrder.OrderId,default);
+
+        clock=Now.AddMinutes(-1);
+        var newOpening=Intent("open-order-new",false,1m);
+        var newOrder=Order(newOpening,"FILLED",1m,clock);
+        await store.RecordExecutionAsync("new",newOpening,newOrder,"v1",default);
+        await store.SaveIntentAsync("new",newOpening,"PROTECTED",newOrder.OrderId,default);
+
+        Assert.Equal(newOpening.ClientOrderId,(await store.GetLatestOpeningIntentAsync("BTCUSDT",PositionSide.Long,default))!.ClientOrderId);
+        Assert.Equal(newOpening.ClientOrderId,(await store.GetLatestOpeningIntentAsync("BTCUSDT",PositionSide.Long,Now,default))!.ClientOrderId);
+
+        clock=Now;
+        await store.RecordExecutionAsync("old-replay",oldOpening,oldOrder,"v1",default);
+        await store.SaveIntentAsync("old-replay",oldOpening,"PROTECTED",oldOrder.OrderId,default);
+
+        Assert.Equal(newOpening.ClientOrderId,(await store.GetLatestOpeningIntentAsync("BTCUSDT",PositionSide.Long,default))!.ClientOrderId);
+        Assert.Equal(newOpening.ClientOrderId,(await store.GetLatestOpeningIntentAsync("BTCUSDT",PositionSide.Long,Now,default))!.ClientOrderId);
+    }
+
+    [Fact]
     public async Task ReplayedOpeningKeepsExchangeGenerationTimeAndStaysRetired()
     {
         var clock=Now;
