@@ -153,32 +153,39 @@ internal static class BrainPromptComposer
         int PreviousOutcomeCount,
         int PreviousOutcomeChars,
         int SignalCount,
-        int RecentCloseCount,
+        int RecentBarCount,
         int MissingConditionCount);
 
     private static readonly PromptCompressionProfile[] Profiles =
     [
-        new(12, 220, 8, 180, 6, 4, 8),
-        new(6, 140, 5, 120, 4, 3, 6),
-        new(4, 90, 3, 80, 2, 2, 4)
+        new(12, 220, 8, 180, 6, 12, 8),
+        new(6, 140, 5, 120, 4, 8, 6),
+        new(4, 90, 3, 80, 2, 6, 4)
     ];
 
     internal static string BuildDecisionPrompt(EvidencePack evidence, AgentContext context, string outputLanguage, int contextLimit, string instruction)
     {
         var budget = DetermineTargetCharacters(contextLimit);
-        string? best = null;
+        var wantsDetailed = ShouldUpgradeToDetailedContext(evidence, context);
+        string? smallestSlim = null;
+        string? lastAttempt = null;
         foreach (var profile in Profiles)
         {
             var slimPrompt = BuildPrompt(evidence, context, outputLanguage, instruction, profile, PromptDetailLevel.SlimBrief);
-            best = slimPrompt;
-            if (slimPrompt.Length <= budget || !ShouldUpgradeToDetailedContext(evidence, context)) return slimPrompt;
+            lastAttempt = slimPrompt;
+            if (slimPrompt.Length <= budget) smallestSlim = slimPrompt;
+            if (!wantsDetailed)
+            {
+                if (slimPrompt.Length <= budget) return slimPrompt;
+                continue;
+            }
 
             var detailedPrompt = BuildPrompt(evidence, context, outputLanguage, instruction, profile, PromptDetailLevel.DetailedContext);
-            best = detailedPrompt;
+            lastAttempt = detailedPrompt;
             if (detailedPrompt.Length <= budget) return detailedPrompt;
         }
 
-        return best ?? JsonSerializer.Serialize(new { instruction, outputLanguage });
+        return smallestSlim ?? lastAttempt ?? JsonSerializer.Serialize(new { instruction, outputLanguage });
     }
 
     private static string BuildPrompt(
@@ -241,7 +248,7 @@ internal static class BrainPromptComposer
                 context.ConsecutiveHolds
             },
             detailedMarketContext = detailLevel == PromptDetailLevel.DetailedContext
-                ? BuildDetailedMarkets(evidence, detailedSymbols, profile.RecentCloseCount)
+                ? BuildDetailedMarkets(evidence, detailedSymbols, profile.RecentBarCount)
                 : null
         });
     }
@@ -335,11 +342,11 @@ internal static class BrainPromptComposer
             .ToArray();
     }
 
-    private static IReadOnlyDictionary<string, object> BuildDetailedMarkets(EvidencePack evidence, IReadOnlyList<string> detailedSymbols, int recentCloseCount) =>
+    private static IReadOnlyDictionary<string, object> BuildDetailedMarkets(EvidencePack evidence, IReadOnlyList<string> detailedSymbols, int recentBarCount) =>
         evidence.Markets
             .Where(x => detailedSymbols.Contains(x.Key))
             .OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(x => x.Key, x => BuildDetailedMarket(x.Value, recentCloseCount), StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(x => x.Key, x => BuildDetailedMarket(x.Value, recentBarCount), StringComparer.OrdinalIgnoreCase);
 
     private static bool ShouldUpgradeToDetailedContext(EvidencePack evidence, AgentContext context)
     {
@@ -390,15 +397,29 @@ internal static class BrainPromptComposer
             QualityScore = market.Quality.QualityScore
         };
 
-    private static object BuildDetailedMarket(MarketEvidence market, int recentCloseCount)
+    private static object BuildDetailedMarket(MarketEvidence market, int recentBarCount)
     {
         CandleEvidence? last = market.Candles.Count > 0 ? market.Candles[^1] : null;
         CandleEvidence? previous = market.Candles.Count > 1 ? market.Candles[^2] : null;
-        var recent = market.Candles.TakeLast(Math.Max(1, recentCloseCount)).Select(x => x.Close).ToArray();
-        var window = market.Candles.TakeLast(Math.Min(24, market.Candles.Count)).ToArray();
+        var window = market.Candles.TakeLast(Math.Min(96, market.Candles.Count)).ToArray();
         var dayHigh = window.Length == 0 ? market.Price : window.Max(x => x.High);
         var dayLow = window.Length == 0 ? market.Price : window.Min(x => x.Low);
         var lastChange = last is null || previous is null || previous.Close == 0 ? 0 : (double)(last.Close / previous.Close - 1);
+        var structure = new NumericalMarketStructureSkill().Analyze(market);
+        var hypotheses = new MarketHypothesisSkill().Build(market, structure);
+        var recentBars = market.Candles
+            .TakeLast(Math.Clamp(recentBarCount, 4, 16))
+            .Select(x => new
+            {
+                t = x.OpenTime,
+                o = x.Open,
+                h = x.High,
+                l = x.Low,
+                c = x.Close,
+                v = x.Volume,
+                q = x.QuoteVolume
+            })
+            .ToArray();
 
         return new
         {
@@ -424,6 +445,7 @@ internal static class BrainPromptComposer
                 market.Quality.AtrPercent,
                 market.Quality.LiquidityScore,
                 market.Quality.QualityScore,
+                market.Quality.RelativeVolume,
                 Anomalies = market.Quality.Anomalies.Take(2).Select(x => TrimText(x, 80)).ToArray()
             },
             CandleSummary = new
@@ -432,8 +454,32 @@ internal static class BrainPromptComposer
                 LastCloseChangePct = lastChange,
                 DayHigh = dayHigh,
                 DayLow = dayLow,
-                RecentCloses = recent
-            }
+                RecentBars = recentBars
+            },
+            Structure = new
+            {
+                structure.Ready,
+                structure.Bias,
+                structure.Event,
+                structure.ReferenceSupport,
+                structure.ReferenceResistance,
+                structure.VolumeRatio,
+                structure.RangePosition,
+                structure.HigherTimeframeBullish,
+                structure.HigherTimeframeBearish,
+                Evidence = structure.Evidence.Take(8).ToArray(),
+                MissingConditions = structure.MissingConditions.Take(6).ToArray()
+            },
+            Hypotheses = hypotheses.Take(3).Select(x => new
+            {
+                x.Id,
+                x.Direction,
+                x.Status,
+                x.Trigger,
+                x.Invalidation,
+                SupportingEvidence = x.SupportingEvidence.Take(4).ToArray(),
+                CounterEvidence = x.CounterEvidence.Take(4).ToArray()
+            }).ToArray()
         };
     }
 
