@@ -83,6 +83,7 @@ public sealed class StructurePositionManagementTests
             Assert.Equal(DecisionAction.ReduceLong,intent.Action);
             Assert.Equal(.5m,intent.Quantity);
             Assert.Equal(PositionExitReasonCodes.PartialTakeProfit2R,intent.ReasonCode);
+            Assert.Empty(result.ProtectionAdjustments);
         }
         finally
         {
@@ -134,6 +135,38 @@ public sealed class StructurePositionManagementTests
             var secondPartial=Assert.Single(reopened.Intents);
             Assert.Equal(PositionExitReasonCodes.PartialTakeProfit2R,secondPartial.ReasonCode);
             Assert.NotEqual(firstPartial.ClientOrderId,secondPartial.ClientOrderId);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public async Task BreakevenProtectionIsOpeningScopedAndStopsAfterDurableState()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent("open-breakeven-a"),"PROTECTED","1008",CancellationToken.None);
+            var market=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(110m)}};
+
+            var first=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None);
+            Assert.Empty(first.Intents);
+            var adjustment=Assert.Single(first.ProtectionAdjustments);
+            Assert.NotNull(adjustment.AdjustmentId);
+            Assert.StartsWith("WPE-PM-BE-",adjustment.AdjustmentId!,StringComparison.Ordinal);
+            Assert.Equal(100.05m,adjustment.StopLoss);
+            Assert.Equal(120m,adjustment.TakeProfit);
+
+            await db.SetStateAsync(
+                PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId!),
+                "COMPLETED",
+                CancellationToken.None);
+
+            var second=await new PositionManagementSkill().EvaluateAsync([Position()],market,db,CancellationToken.None);
+            Assert.Empty(second.ProtectionAdjustments);
         }
         finally
         {
