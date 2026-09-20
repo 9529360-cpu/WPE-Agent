@@ -22,7 +22,7 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Equal(MarketStructureScenario.TrendPullbackLong,structure.Scenario);
         Assert.Equal(TradeHypothesisKind.TrendPullbackLong,hypothesis.Kind);
         Assert.Equal(TradeHypothesisStage.Watching,hypothesis.Stage);
-        Assert.Equal("hypothesis-v2",hypothesis.Version);
+        Assert.Equal("hypothesis-v2.1",hypothesis.Version);
         Assert.Equal(MarketStructureRead.DecisionBasis,hypothesis.DecisionBasis);
         Assert.Contains("structure_basis=candles-structure-v2",hypothesis.Evidence);
         Assert.Contains("4h=Bullish",hypothesis.Thesis,StringComparison.Ordinal);
@@ -33,7 +33,7 @@ public sealed class MarketStructureIntelligenceTests
     {
         var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
-        var first=Market(Pullback15m(),h1,h4);
+        var first=Market(Pullback15mBeforeTrigger(),h1,h4,Now.AddMinutes(-15));
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
         var current=Market(SweepLowReclaim15m(),h1,h4);
 
@@ -45,6 +45,46 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Equal(TradeHypothesisStage.ScoutReady,scout.Stage);
         Assert.True(scout.Actionable);
         Assert.Equal(.16,scout.RiskBudgetMultiplier,10);
+    }
+
+    [Fact]
+    public void ReplayingTheSameConfirmedBreakoutCannotPromoteScoutTwice()
+    {
+        var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
+        var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
+        var first=Market(Pullback15mBeforeTrigger(),h1,h4,Now.AddMinutes(-15));
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now.AddMinutes(-15));
+        var breakout=Market(BullishBreakout15m(),h1,h4);
+        var scout=TradeHypothesisEngine.EvaluateMarket(breakout,watching,[],Now);
+
+        Assert.Equal(MarketStructureEvent.BullishBreak,scout.LastStructureEvent);
+        Assert.Equal(TradeHypothesisStage.ScoutReady,scout.Stage);
+        Assert.Equal(new DateTimeOffset(Now.UtcDateTime),scout.LastStructureBarClosedAtUtc);
+
+        var replay=TradeHypothesisEngine.EvaluateMarket(breakout,scout,[],Now.AddMinutes(1));
+
+        Assert.Equal(TradeHypothesisStage.ScoutReady,replay.Stage);
+        Assert.Equal(scout.LastStructureBarClosedAtUtc,replay.LastStructureBarClosedAtUtc);
+        Assert.Contains("same-confirmed-bar",replay.Thesis,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ANewConfirmedStructureBarCanPromoteScoutToConfirmed()
+    {
+        var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
+        var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
+        var first=Market(Pullback15mBeforeTrigger(),h1,h4,Now.AddMinutes(-15));
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now.AddMinutes(-15));
+        var breakout=Market(BullishBreakout15m(),h1,h4);
+        var scout=TradeHypothesisEngine.EvaluateMarket(breakout,watching,[],Now);
+        var continuation=Market(SecondBullishBreak15m(),h1,h4,Now.AddMinutes(15));
+
+        var confirmed=TradeHypothesisEngine.EvaluateMarket(continuation,scout,[],Now.AddMinutes(15));
+
+        Assert.Equal(TradeHypothesisStage.Confirmed,confirmed.Stage);
+        Assert.True(confirmed.LastStructureBarClosedAtUtc>scout.LastStructureBarClosedAtUtc);
+        Assert.Equal(MarketStructureEvent.BullishBreak,confirmed.LastStructureEvent);
+        Assert.Contains("new-confirmed-bar",confirmed.Thesis,StringComparison.Ordinal);
     }
 
     [Fact]
@@ -81,7 +121,7 @@ public sealed class MarketStructureIntelligenceTests
     {
         var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
-        var first=Market(Pullback15m(),h1,h4);
+        var first=Market(Pullback15mBeforeTrigger(),h1,h4,Now.AddMinutes(-15));
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
         var current=Market(SweepLowReclaim15m(),h1,h4);
         var scout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
@@ -120,7 +160,7 @@ public sealed class MarketStructureIntelligenceTests
     {
         var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
-        var first=Market(Pullback15m(),h1,h4);
+        var first=Market(Pullback15mBeforeTrigger(),h1,h4,Now.AddMinutes(-15));
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
         var current=Market(SweepLowReclaim15m(),h1,h4);
         var scout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
@@ -159,7 +199,7 @@ public sealed class MarketStructureIntelligenceTests
     {
         var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
         var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
-        var first=Market(Pullback15m(),h1,h4);
+        var first=Market(Pullback15mBeforeTrigger(),h1,h4,Now.AddMinutes(-15));
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
         var current=Market(SweepLowReclaim15m(),h1,h4);
         var structureScout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
@@ -200,9 +240,11 @@ public sealed class MarketStructureIntelligenceTests
     private static MarketEvidence Market(
         IReadOnlyList<CandleEvidence> m15,
         IReadOnlyList<CandleEvidence> h1,
-        IReadOnlyList<CandleEvidence> h4)
+        IReadOnlyList<CandleEvidence> h4,
+        DateTimeOffset? collectedAt=null)
     {
         var price=m15[^1].Close;
+        var observed=(collectedAt??Now).UtcDateTime;
         return new(
             "BTCUSDT",
             price,
@@ -213,7 +255,7 @@ public sealed class MarketStructureIntelligenceTests
             0,
             0,
             new DerivativesSnapshot(.00003m,400_000_000m,0,0,0,1.05m,-.0005m),
-            Now.UtcDateTime)
+            observed)
         {
             Candles=m15,
             Candles1h=h1,
@@ -236,6 +278,48 @@ public sealed class MarketStructureIntelligenceTests
 
     private static IReadOnlyList<CandleEvidence> Pullback15m() =>
         Trend(40,112m,-.28m,TimeSpan.FromMinutes(15));
+
+    private static IReadOnlyList<CandleEvidence> Pullback15mBeforeTrigger() =>
+        Pullback15m().Select(x=>x with{OpenTime=x.OpenTime.AddMinutes(-15)}).ToArray();
+
+    private static IReadOnlyList<CandleEvidence> BullishBreakout15m()
+    {
+        var values=Trend(40,112m,-.25m,TimeSpan.FromMinutes(15)).ToList();
+        var previous=values[^2];
+        var referenceHigh=values.TakeLast(21).SkipLast(1).Max(x=>x.High);
+        var open=previous.Close;
+        var close=referenceHigh+1.2m;
+        values[^1]=new(
+            values[^1].OpenTime,
+            open,
+            close+.30m,
+            open-.20m,
+            close,
+            500m,
+            50_000m,
+            600,
+            360m);
+        return values;
+    }
+
+    private static IReadOnlyList<CandleEvidence> SecondBullishBreak15m()
+    {
+        var values=BullishBreakout15m().ToList();
+        var previous=values[^1];
+        var open=previous.Close-.10m;
+        var close=previous.High+1.0m;
+        values.Add(new(
+            previous.OpenTime.AddMinutes(15),
+            open,
+            close+.30m,
+            open-.20m,
+            close,
+            600m,
+            60_000m,
+            700,
+            430m));
+        return values;
+    }
 
     private static IReadOnlyList<CandleEvidence> SweepLowReclaim15m()
     {

@@ -49,6 +49,8 @@ public sealed record TimeframeStructureRead(
     string Interval,
     PriceStructureState State,
     MarketStructureEvent Event,
+    DateTime LastBarOpenTimeUtc,
+    DateTime LastBarClosedAtUtc,
     decimal LastClose,
     decimal Demand,
     decimal Supply,
@@ -110,6 +112,7 @@ public static class MarketStructureIntelligence
             $"structure_scenario={scenario}",
             $"15m_structure={m15.State}",
             $"15m_event={m15.Event}",
+            $"15m_bar_closed_at_utc={m15.LastBarClosedAtUtc:O}",
             $"1h_structure={h1.State}",
             $"4h_structure={h4.State}",
             $"15m_demand={m15.Demand:F2}",
@@ -193,7 +196,8 @@ public static class MarketStructureIntelligence
             $"{interval}: {state}; last={last.Close:F2}; demand={demand:F2}; supply={supply:F2}; event={eventKind}; " +
             $"volume={(volumeExpansion ? "expansion" : "normal")}; range={(compression ? "compression" : rangeExpansion ? "expansion" : "normal")}.";
 
-        return new(interval, state, eventKind, last.Close, demand, supply,
+        var closedAtUtc=last.OpenTime+ConfirmedMarketCandlesV1.Duration(interval);
+        return new(interval, state, eventKind, last.OpenTime, closedAtUtc, last.Close, demand, supply,
             lastSwingHigh, previousSwingHigh, lastSwingLow, previousSwingLow,
             atr, volumeExpansion, rangeExpansion, compression, narrative);
     }
@@ -395,7 +399,7 @@ public static class MarketStructureIntelligence
         candle.Volume >= 0 && candle.QuoteVolume >= 0 && candle.Trades >= 0 && candle.TakerBuyVolume >= 0;
 
     private static TimeframeStructureRead Unknown(string interval) =>
-        new(interval, PriceStructureState.Unknown, MarketStructureEvent.None, 0, 0, 0, 0, 0, 0, 0, 0, false, false, false,
+        new(interval, PriceStructureState.Unknown, MarketStructureEvent.None, default, default, 0, 0, 0, 0, 0, 0, 0, 0, false, false, false,
             $"{interval}: insufficient confirmed candles for structure analysis.");
 
     private sealed record SwingPoint(int Index, decimal Price);

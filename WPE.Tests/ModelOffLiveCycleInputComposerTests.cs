@@ -350,7 +350,12 @@ public sealed class ModelOffLiveCycleInputComposerTests
                 "Higher-timeframe uptrend with a pullback holding near support.",
                 "Support held and short-horizon behavior improved.",
                 "Invalidate below the volatility-adjusted support break.",
-                ["price=100000","support=98000","trend4h=1.25%"]);
+                ["price=100000","support=98000","trend4h=1.25%"])
+            {
+                DecisionBasis=MarketStructureRead.DecisionBasis,
+                LastStructureBarClosedAtUtc=Now.AddMinutes(-15),
+                LastStructureEvent=MarketStructureEvent.LiquiditySweepLowReclaim
+            };
             var decision=new DecisionPlan
             {
                 Action=DecisionAction.OpenLong,
@@ -392,6 +397,34 @@ public sealed class ModelOffLiveCycleInputComposerTests
             Assert.True(ModelOffEligibilityV1.IsEligibleForDownstream(strategyInput.Output));
             Assert.Contains("market-hypothesis-btcusdt",researchInput.Document.Json,StringComparison.Ordinal);
             Assert.DoesNotContain("technical-assessment-btcusdt",researchInput.Document.Json,StringComparison.Ordinal);
+            var hypothesisSource=researchInput.Output.Sources.Single(x=>x.SourceId=="market-hypothesis-btcusdt");
+            Assert.StartsWith("sha256:",hypothesisSource.ArtifactHash,StringComparison.Ordinal);
+
+            var changedEvent=hypothesis with{LastStructureEvent=MarketStructureEvent.BullishRetest};
+            var changedEventRequest=hypothesisRequest with
+            {
+                TradeHypotheses=new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["BTCUSDT"]=changedEvent
+                }
+            };
+            var changedEventResearch=ModelOffLiveCycleInputComposerV1.Compose(changedEventRequest)
+                .Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;
+            var changedEventSource=changedEventResearch.Sources.Single(x=>x.SourceId=="market-hypothesis-btcusdt");
+            Assert.NotEqual(hypothesisSource.ArtifactHash,changedEventSource.ArtifactHash);
+
+            var missingBar=hypothesis with{LastStructureBarClosedAtUtc=null};
+            var missingBarRequest=hypothesisRequest with
+            {
+                TradeHypotheses=new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["BTCUSDT"]=missingBar
+                }
+            };
+            var missingBarInputs=ModelOffLiveCycleInputComposerV1.Compose(missingBarRequest);
+            var missingBarResearch=missingBarInputs.Single(x=>x.Output.Agent==ModelOffAgentV1.Research).Output;
+            Assert.False(ModelOffEligibilityV1.IsEligibleForDownstream(missingBarResearch));
+            Assert.Contains("live.research.hypothesis-invalid",missingBarResearch.Decision.ReasonCodes);
 
             var result=await new ModelOffProductionCycleOrchestratorV1(
                 new AgentSqliteStore(Path.Combine(directory,"agent.db"),()=>Now))
