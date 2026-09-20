@@ -82,7 +82,7 @@ public sealed class StructurePositionManagementTests
             var intent=Assert.Single(result.Intents);
             Assert.Equal(DecisionAction.ReduceLong,intent.Action);
             Assert.Equal(.5m,intent.Quantity);
-            Assert.Equal(PositionExitReasonCodes.PartialTake2R,intent.ReasonCode);
+            Assert.Equal(PositionExitReasonCodes.PartialTakeProfit2R,intent.ReasonCode);
         }
         finally
         {
