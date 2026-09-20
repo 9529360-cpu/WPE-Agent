@@ -81,6 +81,7 @@ public sealed class PositionReconciliationTests : IDisposable
 
         Assert.Equal(1,second);
         Assert.NotNull(await store.GetStateAsync(revocationKey,default));
+        Assert.Empty(await store.GetExecutionPositionLedgerAsync(default));
         Assert.True(await 币安量化机器人.Services.AutoTradingAgent.HasUntrustedManagedPositionOwnershipAsync(
             store,[Position("BTCUSDT",PositionSide.Long,1m)],default));
         Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
