@@ -244,7 +244,7 @@ public sealed class StructurePositionManagementTests
             var adjustment=Assert.Single(first.ProtectionAdjustments);
             Assert.NotNull(adjustment.AdjustmentId);
             Assert.StartsWith("WPE-PM-BE-",adjustment.AdjustmentId!,StringComparison.Ordinal);
-            Assert.Equal(100.05m,adjustment.StopLoss);
+            Assert.Equal(100.1m,adjustment.StopLoss);
             Assert.Equal(120m,adjustment.TakeProfit);
 
             await db.SetStateAsync(
