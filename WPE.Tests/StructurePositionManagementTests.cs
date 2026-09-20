@@ -309,6 +309,32 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task BreakevenProtectionSkipsWhenRoundedStopReachesTakeProfit()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent("open-breakeven-tp-boundary"),"PROTECTED","1010",CancellationToken.None);
+            var position=Position() with{Quantity=.1m};
+            var market=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(130m)}};
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [position],market,db,CancellationToken.None,ManagedLedger(.1m),
+                tradingRules:Rules(step:.1m,minQuantity:.1m,tickSize:20m));
+
+            Assert.Empty(result.Intents);
+            Assert.Empty(result.ProtectionAdjustments);
+            Assert.Contains(result.Notes,x=>x.StartsWith("partial-2r-quantity-unavailable:",StringComparison.Ordinal));
+            Assert.Contains(result.Notes,x=>x.StartsWith("breakeven-price-unavailable:",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task InvalidatedStructureNeverClosesExternalPositionWithoutWpeOpeningIntent()
     {
         var path=TempDb();
