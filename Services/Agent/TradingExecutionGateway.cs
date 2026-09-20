@@ -445,6 +445,8 @@ public sealed class TradingExecutionGateway
             var status=await _approvals.GetOrderIntentStatusAsync(command.Intent.ClientOrderId,ct);
             if(status is not null||await _approvals.HasExecutionSubmissionJournalAsync(command.Intent.ClientOrderId,ct))
                 return Deny("recovery.reconcile-existing");
+            if(!await HasExactLocalPositionOwnershipAsync(command.ObservedPosition,ct))
+                return Deny("recovery.position-ownership-conflict");
             var result=await _executor.ExecuteReduceOnlyRecoveryAsync(command.CorrelationId,command.Intent,ct);
             return new(true,"recovery.reduce-only-submitted",result);
         }
@@ -505,6 +507,8 @@ public sealed class TradingExecutionGateway
         {
             if(await _approvals.GetStateAsync(stateKey,ct) is not null)
                 return Deny("recovery.protection-existing");
+            if(!await HasExactLocalPositionOwnershipAsync(command.ObservedPosition,ct))
+                return Deny("recovery.position-ownership-conflict");
             var result=await _executor.ReplaceProtectionAsync(command.CorrelationId,adjustment,ct);
             return new(true,"recovery.protection-adjusted",result);
         }
@@ -607,6 +611,15 @@ public sealed class TradingExecutionGateway
     {
         if(left is null||left.Length!=64||right.Length!=64)return false;try{return CryptographicOperations.FixedTimeEquals(Convert.FromHexString(left),Convert.FromHexString(right));}catch(FormatException){return false;}
     }
+    private async Task<bool> HasExactLocalPositionOwnershipAsync(ManagedPosition position,CancellationToken ct)
+    {
+        var legs=await _approvals.GetExecutionPositionLedgerAsync(ct);
+        var matches=legs.Where(x=>string.Equals(x.Symbol,position.Symbol,StringComparison.OrdinalIgnoreCase)&&x.Side==position.Side).ToArray();
+        if(matches.Length!=1||matches[0].Quantity<=0||position.Quantity<=0)return false;
+        var tolerance=Math.Max(.00000001m,Math.Max(matches[0].Quantity,position.Quantity)*.000001m);
+        return Math.Abs(matches[0].Quantity-position.Quantity)<=tolerance;
+    }
+
     private static bool IsConfirmedReduction(ManagedPosition position,ExecutionIntent intent)
     {
         if(position is null||intent is null||position.Quantity<=0||intent.Quantity<=0||intent.Quantity>position.Quantity)
