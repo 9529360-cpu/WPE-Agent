@@ -392,6 +392,10 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             {
                 safe=false;messages.Add($"recovery.position-ownership-revoked:{position.Symbol}:{position.Side}");continue;
             }
+            if(await _db.HasStateAsync(PositionManagementDurableState.OwnershipMissingCandidateKey(intent.ClientOrderId),ct))
+            {
+                safe=false;messages.Add($"recovery.position-ownership-uncertain:{position.Symbol}:{position.Side}");continue;
+            }
             try{EnsureCapability(intent);await _ex.PlaceProtectionAsync(position.Symbol,position.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);messages.Add(L("Execution.ProtectionRepaired",position.Symbol,position.Side));}catch(Exception ex){safe=false;messages.Add(L("Execution.ProtectionRepairFailed",position.Symbol,position.Side,SensitiveDataRedactor.ForLog(ex.Message,180)));}
         }return new(safe,messages);
     }
