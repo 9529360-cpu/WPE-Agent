@@ -166,20 +166,86 @@ public sealed record PositionManagementResult(IReadOnlyList<ExecutionIntent> Int
 
 public sealed class PositionManagementSkill
 {
-    public async Task<PositionManagementResult> EvaluateAsync(IReadOnlyList<ManagedPosition> positions,IReadOnlyDictionary<string,MarketEvidence> markets,AgentSqliteStore db,CancellationToken ct)
+    public async Task<PositionManagementResult> EvaluateAsync(
+        IReadOnlyList<ManagedPosition> positions,
+        IReadOnlyDictionary<string,MarketEvidence> markets,
+        AgentSqliteStore db,
+        CancellationToken ct,
+        IReadOnlyDictionary<string,TradeHypothesis>? hypotheses=null)
     {
-        var intents=new List<ExecutionIntent>();var protections=new List<ProtectionAdjustment>();var notes=new List<string>();
+        var intents=new List<ExecutionIntent>();
+        var protections=new List<ProtectionAdjustment>();
+        var notes=new List<string>();
         foreach(var position in positions)
         {
-            if(!markets.TryGetValue(position.Symbol,out var market))continue;var opening=await db.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);if(opening is null)continue;
-            var risk=Math.Abs(position.EntryPrice-opening.StopLoss);if(risk<=0)continue;var favorable=(position.Side==PositionSide.Long?market.Price-position.EntryPrice:position.EntryPrice-market.Price)/risk;
-            var liquidationBuffer=position.EntryPrice>0&&position.LiquidationPrice>0?(double)(Math.Abs(market.Price-position.LiquidationPrice)/position.EntryPrice):1;
-            if(liquidationBuffer<.30){intents.Add(new(position.Symbol,position.Side,position.Quantity,true,0,0,Id("LIQ"),L("Position.LiquidationBuffer"),position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,ExpectedPrice:market.Price));continue;}
-            var partialKey=$"partial-2r:{position.Symbol}:{position.Side}";if(favorable>=2&&!await db.HasStateAsync(partialKey,ct)){intents.Add(new(position.Symbol,position.Side,position.Quantity*.5m,true,0,0,Id("TP2"),L("Position.PartialTake"),position.Side==PositionSide.Long?DecisionAction.ReduceLong:DecisionAction.ReduceShort,ExpectedPrice:market.Price));notes.Add(partialKey);}
-            var trailKey=$"breakeven:{position.Symbol}:{position.Side}";if(favorable>=1&&!await db.HasStateAsync(trailKey,ct)){var stop=position.Side==PositionSide.Long?position.EntryPrice*1.0005m:position.EntryPrice*.9995m;protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.Breakeven")));notes.Add(trailKey);}
+            if(!markets.TryGetValue(position.Symbol,out var market))continue;
+            var opening=await db.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);
+            if(opening is null)continue;
+
+            if(hypotheses is not null &&
+               hypotheses.TryGetValue(position.Symbol,out var hypothesis) &&
+               StructureHypothesisInvalidated(position,hypothesis))
+            {
+                intents.Add(new(
+                    position.Symbol,
+                    position.Side,
+                    position.Quantity,
+                    true,
+                    0,
+                    0,
+                    Id("STRUCT"),
+                    L("Position.StructureInvalidated"),
+                    position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
+                    ExpectedPrice:market.Price));
+                notes.Add($"structure-invalidated:{position.Symbol}:{position.Side}:{hypothesis.Id}:{hypothesis.Revision}");
+                continue;
+            }
+
+            var risk=Math.Abs(position.EntryPrice-opening.StopLoss);
+            if(risk<=0)continue;
+            var favorable=(position.Side==PositionSide.Long?market.Price-position.EntryPrice:position.EntryPrice-market.Price)/risk;
+            var liquidationBuffer=position.EntryPrice>0&&position.LiquidationPrice>0
+                ?(double)(Math.Abs(market.Price-position.LiquidationPrice)/position.EntryPrice)
+                :1;
+            if(liquidationBuffer<.30)
+            {
+                intents.Add(new(
+                    position.Symbol,position.Side,position.Quantity,true,0,0,Id("LIQ"),
+                    L("Position.LiquidationBuffer"),
+                    position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
+                    ExpectedPrice:market.Price));
+                continue;
+            }
+
+            var partialKey=$"partial-2r:{position.Symbol}:{position.Side}";
+            if(favorable>=2&&!await db.HasStateAsync(partialKey,ct))
+            {
+                intents.Add(new(
+                    position.Symbol,position.Side,position.Quantity*.5m,true,0,0,Id("TP2"),
+                    L("Position.PartialTake"),
+                    position.Side==PositionSide.Long?DecisionAction.ReduceLong:DecisionAction.ReduceShort,
+                    ExpectedPrice:market.Price));
+                notes.Add(partialKey);
+            }
+
+            var trailKey=$"breakeven:{position.Symbol}:{position.Side}";
+            if(favorable>=1&&!await db.HasStateAsync(trailKey,ct))
+            {
+                var stop=position.Side==PositionSide.Long?position.EntryPrice*1.0005m:position.EntryPrice*.9995m;
+                protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.Breakeven")));
+                notes.Add(trailKey);
+            }
         }
         return new(intents,protections,notes);
     }
+
+    private static bool StructureHypothesisInvalidated(ManagedPosition position,TradeHypothesis hypothesis)
+    {
+        if(hypothesis.Stage!=TradeHypothesisStage.Invalidated)return false;
+        if(!string.Equals(hypothesis.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal))return false;
+        return position.Side==PositionSide.Long?hypothesis.Direction>0:hypothesis.Direction<0;
+    }
+
     private static string Id(string tag){var raw=$"WPE-PM-{tag}-{DateTime.UtcNow:HHmmss}-{Guid.NewGuid():N}";return raw[..Math.Min(36,raw.Length)];}
     private static string L(string key)=>LocalizationService.Current.T(key);
 }
