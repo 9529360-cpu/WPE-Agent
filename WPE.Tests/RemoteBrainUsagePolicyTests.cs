@@ -18,6 +18,18 @@ public sealed class RemoteBrainUsagePolicyTests
     }
 
     [Fact]
+    public void HypothesisDrivenUi_DoesNotProjectLegacyDirectionalScoresAsDecisionBasis()
+    {
+        var source = File.ReadAllText(SourcePath());
+
+        Assert.Contains("if(hypothesisDriven)", source, StringComparison.Ordinal);
+        Assert.Contains("state.DecisionScore=0;", source, StringComparison.Ordinal);
+        Assert.Contains("state.ConflictRate=0;", source, StringComparison.Ordinal);
+        Assert.Contains("state.SignalContributions=new Dictionary<string,double>();", source, StringComparison.Ordinal);
+        Assert.Contains("state.RiskLoad=Math.Clamp(decision.RiskBudgetMultiplier,0,1)*100;", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AutoTradingAgent_RecordsActualBrainPlannerRemoteFlag()
     {
         var source = File.ReadAllText(SourcePath());
