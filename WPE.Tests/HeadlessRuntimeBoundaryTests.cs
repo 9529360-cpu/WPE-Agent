@@ -48,8 +48,8 @@ public sealed class HeadlessRuntimeBoundaryTests
         Assert.Contains("headless.access-not-ready",source,StringComparison.Ordinal);
         Assert.Contains("ResolveFatalReason(health, startedAt, now)",source,StringComparison.Ordinal);
         Assert.Contains("if (leaseLost) return \"lease-lost\";",source,StringComparison.Ordinal);
-        Assert.Contains("if (!agentRunning) return \"agent-not-running\";",source,StringComparison.Ordinal);
-        Assert.Contains("!heartbeatFresh) return \"heartbeat-stale\";",source,StringComparison.Ordinal);
+        Assert.Contains("startupGraceElapsed && !agentRunning",source,StringComparison.Ordinal);
+        Assert.Contains("startupGraceElapsed && !heartbeatFresh",source,StringComparison.Ordinal);
         Assert.Contains("AppDataPaths.RuntimeFile(\"headless-health-v1.json\")",source,StringComparison.Ordinal);
         Assert.Contains("File.Move(temp, path, true)",source,StringComparison.Ordinal);
         Assert.Contains("RunAsync(CancellationToken shutdownToken)",source,StringComparison.Ordinal);
@@ -61,7 +61,7 @@ public sealed class HeadlessRuntimeBoundaryTests
     }
 
     [Fact]
-    public void RuntimeUnhealthyReasonIsSpecificAndHeartbeatGetsStartupGrace()
+    public void RuntimeUnhealthyReasonIsSpecificAndInitialAgentStartupGetsGrace()
     {
         var method=typeof(HeadlessRuntimeProcess).GetMethod(
             "ResolveFatalReason",
@@ -76,7 +76,9 @@ public sealed class HeadlessRuntimeBoundaryTests
             (string?)method!.Invoke(null,[leaseLost,agentRunning,heartbeatFresh,started,started+elapsed]);
 
         Assert.Equal("lease-lost",Reason(true,true,true,TimeSpan.FromSeconds(1)));
-        Assert.Equal("agent-not-running",Reason(false,false,true,TimeSpan.FromSeconds(1)));
+        Assert.Null(Reason(false,false,false,TimeSpan.FromSeconds(10)));
+        Assert.Null(Reason(false,false,false,TimeSpan.FromSeconds(30)));
+        Assert.Equal("agent-not-running",Reason(false,false,false,TimeSpan.FromSeconds(31)));
         Assert.Null(Reason(false,true,false,TimeSpan.FromSeconds(20)));
         Assert.Equal("heartbeat-stale",Reason(false,true,false,TimeSpan.FromSeconds(31)));
         Assert.Null(Reason(false,true,true,TimeSpan.FromMinutes(5)));

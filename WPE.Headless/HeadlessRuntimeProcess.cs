@@ -118,8 +118,9 @@ public static class HeadlessRuntimeProcess
         DateTimeOffset now)
     {
         if (leaseLost) return "lease-lost";
-        if (!agentRunning) return "agent-not-running";
-        if (now - startedAt > StartupHeartbeatGrace && !heartbeatFresh) return "heartbeat-stale";
+        var startupGraceElapsed = now - startedAt > StartupHeartbeatGrace;
+        if (startupGraceElapsed && !agentRunning) return "agent-not-running";
+        if (startupGraceElapsed && !heartbeatFresh) return "heartbeat-stale";
         return null;
     }
 
