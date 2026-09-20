@@ -270,6 +270,7 @@ public sealed class StructurePositionManagementTests
                 new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(100m)}},
                 db,
                 CancellationToken.None,
+                ManagedLedger(),
                 new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",hypothesis}});
 
             Assert.Empty(result.Intents);
