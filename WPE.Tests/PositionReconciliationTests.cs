@@ -183,6 +183,24 @@ public sealed class PositionReconciliationTests : IDisposable
     }
 
     [Fact]
+    public async Task UntimedLegacyExecutionRemainsLiveAndCannotBeSilentlyRetired()
+    {
+        var store=new AgentSqliteStore(Database);
+        await using(var connection=new SqliteConnection($"Data Source={Database}"))
+        {
+            await connection.OpenAsync();
+            await using var insert=connection.CreateCommand();
+            insert.CommandText="INSERT INTO execution_events(cycle_id,client_order_id,symbol,side,action,reduce_only,quantity,avg_price,expected_price,status,occurred_at,exchange_updated_at) VALUES('legacy','legacy-untimed','BTCUSDT','Long','OpenLong',0,'1','100','100','FILLED',NULL,NULL)";
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        Assert.Equal(1m,Assert.Single(await store.GetExecutionPositionLedgerAsync(default)).Quantity);
+        Assert.Equal(1m,Assert.Single(await store.GetExecutionPositionLedgerAsync(Now,default)).Quantity);
+        Assert.False(await store.RetireExecutionPositionLedgerAsync("BTCUSDT",PositionSide.Long,Now,default));
+        Assert.Equal(1m,Assert.Single(await store.GetExecutionPositionLedgerAsync(default)).Quantity);
+    }
+
+    [Fact]
     public void ProductionRiskIncreaseGateConsumesPositionReconciliation()
     {
         var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("PositionReconciliationServiceV1.Reconcile",source,StringComparison.Ordinal);Assert.Contains("&&positionReconciliation.AllowsRiskIncrease",source,StringComparison.Ordinal);Assert.Contains("ExecutePositionManagementRecoveryAsync",source,StringComparison.Ordinal);Assert.Contains("ApplyPositionMutationInvalidation",source,StringComparison.Ordinal);Assert.Contains("position.reconciliation-invalidated-by-recovery",source,StringComparison.Ordinal);
