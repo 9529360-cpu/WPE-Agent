@@ -264,11 +264,15 @@ public sealed class PositionManagementSkill
                     notes.Add($"breakeven-rule-unavailable:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
                     continue;
                 }
-                var rawStop=position.Side==PositionSide.Long?position.EntryPrice*1.0005m:position.EntryPrice*.9995m;
+                var openingEntry=opening.ExpectedPrice>0?opening.ExpectedPrice:position.EntryPrice;
+                var breakevenAnchor=position.Side==PositionSide.Long
+                    ?Math.Max(position.EntryPrice,openingEntry)
+                    :Math.Min(position.EntryPrice,openingEntry);
+                var rawStop=position.Side==PositionSide.Long?breakevenAnchor*1.0005m:breakevenAnchor*.9995m;
                 var stop=RoundProtectiveStop(rawStop,rule.TickSize,position.Side);
                 var validStop=stop>0&&(position.Side==PositionSide.Long
-                    ?stop>=position.EntryPrice&&stop<market.Price
-                    :stop<=position.EntryPrice&&stop>market.Price);
+                    ?stop>=breakevenAnchor&&stop<market.Price
+                    :stop<=breakevenAnchor&&stop>market.Price);
                 if(!validStop)
                 {
                     notes.Add($"breakeven-price-unavailable:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
