@@ -177,7 +177,8 @@ public sealed class PositionManagementSkill
         AgentSqliteStore db,
         CancellationToken ct,
         IReadOnlyList<ExecutionPositionLegV1> managedLegs,
-        IReadOnlyDictionary<string,TradeHypothesis>? hypotheses=null)
+        IReadOnlyDictionary<string,TradeHypothesis>? hypotheses=null,
+        IReadOnlyDictionary<string,TradingRule>? tradingRules=null)
     {
         ArgumentNullException.ThrowIfNull(managedLegs);
         var intents=new List<ExecutionIntent>();
@@ -234,14 +235,24 @@ public sealed class PositionManagementSkill
             var partialId=ActionId("TP2",opening);
             if(favorable>=2&&await db.GetOrderIntentStatusAsync(partialId,ct) is null)
             {
-                intents.Add(new(
-                    position.Symbol,position.Side,position.Quantity*.5m,true,0,0,partialId,
-                    L("Position.PartialTake"),
-                    position.Side==PositionSide.Long?DecisionAction.ReduceLong:DecisionAction.ReduceShort,
-                    ExpectedPrice:market.Price,
-                    ReasonCode:PositionExitReasonCodes.PartialTakeProfit2R));
-                notes.Add($"partial-2r:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
-                continue;
+                if(tradingRules is not null&&tradingRules.TryGetValue(position.Symbol,out var rule)&&
+                   rule.StepSize>0&&rule.MinQuantity>0)
+                {
+                    var partialQuantity=rule.RoundQuantity(position.Quantity*.5m);
+                    if(partialQuantity>=rule.MinQuantity&&partialQuantity>0&&partialQuantity<position.Quantity)
+                    {
+                        intents.Add(new(
+                            position.Symbol,position.Side,partialQuantity,true,0,0,partialId,
+                            L("Position.PartialTake"),
+                            position.Side==PositionSide.Long?DecisionAction.ReduceLong:DecisionAction.ReduceShort,
+                            ExpectedPrice:market.Price,
+                            ReasonCode:PositionExitReasonCodes.PartialTakeProfit2R));
+                        notes.Add($"partial-2r:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
+                        continue;
+                    }
+                    notes.Add($"partial-2r-quantity-unavailable:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
+                }
+                else notes.Add($"partial-2r-rule-unavailable:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
             }
 
             var protectionId=ActionId("BE",opening);
