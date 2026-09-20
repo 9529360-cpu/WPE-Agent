@@ -249,6 +249,40 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Equal(MarketStructureRead.DecisionBasis,structureScout.DecisionBasis);
     }
 
+    [Fact]
+    public async Task LocalBrainPrefersFresherStructureEvidenceOverRepeatedCycleRevisionCount()
+    {
+        var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
+        var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
+        var first=Market(Pullback15m(),h1,h4);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var current=Market(SweepLowReclaimNext15m(),h1,h4,Now.AddMinutes(15));
+        var fresher=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
+        var staleButRepeated=fresher with
+        {
+            Id="HYP-ETHUSDT-REPEATED",
+            Symbol="ETHUSDT",
+            Revision=fresher.Revision+100,
+            UpdatedAtUtc=fresher.UpdatedAtUtc.AddHours(1),
+            LastStructureEvidenceAtUtc=fresher.LastStructureEvidenceAtUtc.AddMinutes(-15)
+        };
+        var context=new AgentContext(
+            "WPE Local Brain",false,null,[],[],0,null,null,
+            new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ETHUSDT"]=staleButRepeated,
+                ["BTCUSDT"]=fresher
+            });
+
+        var result=await new DeterministicBrainProvider().DecideAsync(Evidence(current),context,CancellationToken.None);
+
+        Assert.Equal("BTCUSDT",result.Decision.Instrument);
+        Assert.Equal(fresher.Id,result.Decision.DecisionContextId);
+        Assert.True(staleButRepeated.Revision>fresher.Revision);
+        Assert.True(staleButRepeated.UpdatedAtUtc>fresher.UpdatedAtUtc);
+        Assert.True(staleButRepeated.LastStructureEvidenceAtUtc<fresher.LastStructureEvidenceAtUtc);
+    }
+
     private static EvidencePack Evidence(MarketEvidence market)=>new()
     {
         CollectedAt=market.CollectedAt,
