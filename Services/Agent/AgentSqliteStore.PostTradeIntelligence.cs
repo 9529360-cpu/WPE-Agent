@@ -130,10 +130,13 @@ public sealed partial class AgentSqliteStore
             return PositionExitReasonCodes.ProtectionFillReconciled;
         }
 
-        if (ExecutionReasonCode.TryNormalize(intent.ReasonCode, out var explicitCode)) return explicitCode;
-        if (ExecutionReasonCode.TryNormalize(intent.Reason, out var legacyCode)) return legacyCode;
+        if (ExecutionReasonCode.TryNormalize(intent.ReasonCode, out var explicitCode) && !IsAuthorityOnlyExitCode(explicitCode)) return explicitCode;
+        if (ExecutionReasonCode.TryNormalize(intent.Reason, out var legacyCode) && !IsAuthorityOnlyExitCode(legacyCode)) return legacyCode;
         return "action." + intent.Action.ToString().ToLowerInvariant();
     }
+
+    private static bool IsAuthorityOnlyExitCode(string code)=>
+        string.Equals(code,"automatic.risk-approved",StringComparison.Ordinal);
 
     private static async Task<(DateTimeOffset Opened, DateTimeOffset Closed)?> ResolveUnambiguousPositionWindowAsync(
         SqliteConnection connection,
