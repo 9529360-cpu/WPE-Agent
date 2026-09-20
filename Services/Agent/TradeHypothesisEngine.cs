@@ -169,20 +169,48 @@ public sealed class TradeHypothesisEngine
         var expectancyFactor=feedback.Trades>=4
             ?1+.10*Math.Tanh(feedback.AverageReturn/.005)
             :1d;
-        var riskFactor=Math.Clamp(posteriorFactor*expectancyFactor,.75,1.15);
+        var pathFactor=1d;
+        var triggerShift=0d;
+        if(feedback.ExcursionTrades>=4)
+        {
+            var pathBalance=feedback.AverageMfe-Math.Abs(feedback.AverageMae);
+            pathFactor*=1+.05*Math.Tanh(pathBalance/.005);
+            var exitBalance=feedback.TakeProfitRate-feedback.StopLossRate;
+            pathFactor*=1+.03*Math.Tanh(exitBalance*2);
+            if(Math.Abs(feedback.AverageMae)>feedback.AverageMfe)
+                triggerShift=Math.Min(.003,(Math.Abs(feedback.AverageMae)-feedback.AverageMfe)*.20);
+        }
+        var riskFactor=Math.Clamp(posteriorFactor*expectancyFactor*pathFactor,.75,1.15);
         var adjustedRisk=hypothesis.Actionable
             ?Math.Clamp(hypothesis.RiskBudgetMultiplier*riskFactor,0,.55)
             :0;
+        var adjustedTrigger=hypothesis.TriggerPrice;
+        if(hypothesis.Actionable&&adjustedTrigger>0&&triggerShift>0)
+        {
+            var shift=(decimal)triggerShift;
+            if(hypothesis.Direction>0)adjustedTrigger*=1-shift;
+            else if(hypothesis.Direction<0)adjustedTrigger*=1+shift;
+        }
 
         evidence.Add($"family_key={hypothesis.Symbol.ToUpperInvariant()}:{hypothesis.Kind}");
         evidence.Add($"family_trades={feedback.Trades}");
         evidence.Add($"family_win_rate={feedback.WinRate:P1}");
         evidence.Add($"family_posterior_win={feedback.PosteriorWinRate:F3}");
         evidence.Add($"family_avg_return={feedback.AverageReturn:P3}");
+        evidence.Add($"family_excursion_trades={feedback.ExcursionTrades}");
+        if(feedback.ExcursionTrades>0)
+        {
+            evidence.Add($"family_avg_mae={feedback.AverageMae:P3}");
+            evidence.Add($"family_avg_mfe={feedback.AverageMfe:P3}");
+            evidence.Add($"family_stop_loss_rate={feedback.StopLossRate:P1}");
+            evidence.Add($"family_take_profit_rate={feedback.TakeProfitRate:P1}");
+        }
+        evidence.Add($"family_trigger_shift={triggerShift:P3}");
         evidence.Add($"family_risk_factor={riskFactor:F3}");
 
         return hypothesis with
         {
+            TriggerPrice=adjustedTrigger,
             RiskBudgetMultiplier=adjustedRisk,
             Evidence=evidence
         };

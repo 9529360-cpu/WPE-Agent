@@ -28,6 +28,8 @@ public sealed class ProtectionFillReconciliationTests : IDisposable
         Assert.Equal("cycle-1",review.CycleId);
         Assert.Equal(90m,review.ExitPrice);
         Assert.Equal("loss",review.Outcome);
+        Assert.Equal("protection.fill-reconciled.stop-loss",review.ExitReason);
+        Assert.Equal("unavailable",review.ExcursionBasis);
         Assert.Equal(0,second.Recorded);
         Assert.Equal("protection-fill.no-conflict",second.Code);
     }

@@ -91,6 +91,33 @@ public sealed class TradeHypothesisEngineTests
     }
 
     [Fact]
+    public void FamilyExcursionFeedbackConservativelyDelaysTriggerAndReducesRisk()
+    {
+        var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
+        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
+        var scout=TradeHypothesisEngine.EvaluateMarket(
+            Market(81105m,80906m,81805.3m,34,-.18,-.12,5.05,-.08),
+            watching,[],Now.AddMinutes(1));
+
+        var adjusted=TradeHypothesisEngine.ApplyExecutionFeedback(
+            scout,
+            new HypothesisExecutionFeedback(
+                8,-.002,.375,.4375,
+                ExcursionTrades:8,
+                AverageMae:-.02,
+                AverageMfe:.005,
+                StopLossRate:.75,
+                TakeProfitRate:.125));
+
+        Assert.Equal(TradeHypothesisStage.ScoutReady,adjusted.Stage);
+        Assert.True(adjusted.RiskBudgetMultiplier<scout.RiskBudgetMultiplier);
+        Assert.True(adjusted.TriggerPrice<scout.TriggerPrice);
+        Assert.InRange((double)((scout.TriggerPrice-adjusted.TriggerPrice)/scout.TriggerPrice),0,.00301);
+        Assert.Contains("family_excursion_trades=8",adjusted.Evidence);
+        Assert.Contains(adjusted.Evidence,value=>value.StartsWith("family_trigger_shift=",StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task EvaluateAsyncLearnsAcrossDynamicIdsWithinTheSameHypothesisFamily()
     {
         var path=Path.Combine(Path.GetTempPath(),$"wpe-hypothesis-family-{Guid.NewGuid():N}.db");
@@ -111,6 +138,44 @@ public sealed class TradeHypothesisEngineTests
             Assert.InRange(scout.RiskBudgetMultiplier,.17,.18);
             Assert.Contains("family_trades=1",scout.Evidence);
             Assert.Contains("family_avg_return=-0.350%",scout.Evidence);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            foreach(var file in Directory.GetFiles(Path.GetDirectoryName(path)!,Path.GetFileName(path)+"*"))
+                try{File.Delete(file);}catch{}
+        }
+    }
+
+    [Fact]
+    public async Task EvaluateAsyncUsesPersistedExcursionAndExitFeedbackForFamily()
+    {
+        var path=Path.Combine(Path.GetTempPath(),$"wpe-hypothesis-family-path-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store=new AgentSqliteStore(path);
+            var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
+            var watching=(await new TradeHypothesisEngine(store).EvaluateAsync(Evidence(first),CancellationToken.None))["BTCUSDT"];
+            Assert.Equal(TradeHypothesisStage.Watching,watching.Stage);
+
+            for(var index=1;index<=4;index++)
+                await InsertHypothesisOutcomeAsync(
+                    path,
+                    $"HYP-BTCUSDT-TrendPullbackLong-20260919010{index}00",
+                    -.002m,
+                    index,
+                    mae:-.02m,
+                    mfe:.005m,
+                    excursionBasis:"runtime-mark-observations",
+                    exitReason:"protection.fill-reconciled.stop-loss");
+
+            var improved=Market(81105m,80906m,81805.3m,34,-.18,-.12,5.05,-.08);
+            var scout=(await new TradeHypothesisEngine(new AgentSqliteStore(path)).EvaluateAsync(Evidence(improved),CancellationToken.None))["BTCUSDT"];
+
+            Assert.Equal(TradeHypothesisStage.ScoutReady,scout.Stage);
+            Assert.Contains("family_excursion_trades=4",scout.Evidence);
+            Assert.Contains("family_stop_loss_rate=100.0%",scout.Evidence);
+            Assert.True(scout.TriggerPrice<watching.TriggerPrice || scout.TriggerPrice<improved.Price);
         }
         finally
         {
@@ -572,18 +637,27 @@ public sealed class TradeHypothesisEngineTests
         string databasePath,
         string strategyId,
         decimal returnPct,
-        int index)
+        int index,
+        decimal mae=0,
+        decimal mfe=0,
+        string excursionBasis="unavailable",
+        string exitReason="unclassified")
     {
         await using var connection=new SqliteConnection($"Data Source={databasePath}");
         await connection.OpenAsync();
         await using var command=connection.CreateCommand();
         command.CommandText=@"INSERT INTO trade_outcomes(
-client_order_id,cycle_id,symbol,side,net_pnl,return_pct,closed_at,strategy_id,strategy_version,attribution_basis)
-VALUES($client,$cycle,'BTCUSDT','Long',$pnl,$return,$closed,$strategy,$version,'automatic-artifact')";
+client_order_id,cycle_id,symbol,side,net_pnl,return_pct,mae_return_pct,mfe_return_pct,excursion_basis,excursion_samples,exit_reason,closed_at,strategy_id,strategy_version,attribution_basis)
+VALUES($client,$cycle,'BTCUSDT','Long',$pnl,$return,$mae,$mfe,$basis,$samples,$exit,$closed,$strategy,$version,'automatic-artifact')";
         command.Parameters.AddWithValue("$client",$"family-feedback-{index}");
         command.Parameters.AddWithValue("$cycle",$"cycle-{index}");
         command.Parameters.AddWithValue("$pnl",(returnPct*100m).ToString(System.Globalization.CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$return",returnPct.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$mae",mae.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$mfe",mfe.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$basis",excursionBasis);
+        command.Parameters.AddWithValue("$samples",excursionBasis=="runtime-mark-observations"?2:0);
+        command.Parameters.AddWithValue("$exit",exitReason);
         command.Parameters.AddWithValue("$closed",Now.AddMinutes(index).ToString("O"));
         command.Parameters.AddWithValue("$strategy",strategyId);
         command.Parameters.AddWithValue("$version",TradeHypothesis.CurrentVersion);

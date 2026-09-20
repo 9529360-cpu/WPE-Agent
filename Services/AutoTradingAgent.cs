@@ -401,6 +401,9 @@ public static class AutoTradingAgent
         {
             var account=await exchange.GetAccountAsync(ct);
             var positions=await exchange.GetPositionsAsync(ct);
+            try{await Db.SavePositionMarkObservationsAsync(positions,DateTimeOffset.UtcNow,ct);}
+            catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+            catch(Exception ex){try{await Db.RecordErrorAsync("POSITION_MARK_OBSERVATION",ex,CancellationToken.None);}catch{}}
             var orders=await exchange.GetOpenOrdersAsync(null,ct);
             ServiceLocator.RuntimeTrading.Publish(positions,orders);
             return(account,positions,orders);

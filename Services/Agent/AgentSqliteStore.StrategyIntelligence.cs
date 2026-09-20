@@ -159,17 +159,28 @@ public sealed partial class AgentSqliteStore
         if(kind==TradeHypothesisKind.None||!Enum.IsDefined(kind))return new(0,0,0,.5);
 
         var returns=new List<decimal>();
+        var excursions=new List<(decimal Mae,decimal Mfe)>();
+        var stopLosses=0;
+        var takeProfits=0;
         await using var connection=new SqliteConnection(_cs);
         await connection.OpenAsync(ct);
         await using var command=connection.CreateCommand();
-        command.CommandText="SELECT return_pct FROM trade_outcomes WHERE strategy_id LIKE $prefix AND strategy_version=$version AND attribution_basis='automatic-artifact' AND return_pct IS NOT NULL ORDER BY closed_at DESC,id DESC LIMIT 50";
+        command.CommandText="SELECT return_pct,mae_return_pct,mfe_return_pct,excursion_basis,exit_reason FROM trade_outcomes WHERE strategy_id LIKE $prefix AND strategy_version=$version AND attribution_basis='automatic-artifact' AND return_pct IS NOT NULL ORDER BY closed_at DESC,id DESC LIMIT 50";
         command.Parameters.AddWithValue("$prefix",$"HYP-{symbol.Trim().ToUpperInvariant()}-{kind}-%");
         command.Parameters.AddWithValue("$version",TradeHypothesis.CurrentVersion);
         await using var reader=await command.ExecuteReaderAsync(ct);
         while(await reader.ReadAsync(ct))
         {
-            if(decimal.TryParse(reader.GetString(0),NumberStyles.Number,CultureInfo.InvariantCulture,out var value))
-                returns.Add(value);
+            if(!decimal.TryParse(reader.GetString(0),NumberStyles.Number,CultureInfo.InvariantCulture,out var value))
+                continue;
+            returns.Add(value);
+            if(string.Equals(reader.GetString(3),"runtime-mark-observations",StringComparison.Ordinal) &&
+               decimal.TryParse(reader.GetString(1),NumberStyles.Number,CultureInfo.InvariantCulture,out var mae) &&
+               decimal.TryParse(reader.GetString(2),NumberStyles.Number,CultureInfo.InvariantCulture,out var mfe))
+                excursions.Add((mae,mfe));
+            var exitReason=reader.GetString(4);
+            if(exitReason.Contains("stop-loss",StringComparison.OrdinalIgnoreCase))stopLosses++;
+            if(exitReason.Contains("take-profit",StringComparison.OrdinalIgnoreCase))takeProfits++;
         }
 
         if(returns.Count==0)return new(0,0,0,.5);
@@ -181,7 +192,12 @@ public sealed partial class AgentSqliteStore
             returns.Count,
             (double)returns.Average(),
             wins/(double)returns.Count,
-            posteriorWinRate);
+            posteriorWinRate,
+            excursions.Count,
+            excursions.Count==0?0:(double)excursions.Average(value=>value.Mae),
+            excursions.Count==0?0:(double)excursions.Average(value=>value.Mfe),
+            stopLosses/(double)returns.Count,
+            takeProfits/(double)returns.Count);
     }
 
     private static StrategyObservationPerformance PendingPerformance(int rawObservations)
@@ -226,4 +242,4 @@ public sealed partial class AgentSqliteStore
 }
 
 internal sealed record StrategyExecutionFeedback(int Trades,double AverageReturn,double WinRate,double PosteriorWinRate);
-internal sealed record HypothesisExecutionFeedback(int Trades,double AverageReturn,double WinRate,double PosteriorWinRate);
+internal sealed record HypothesisExecutionFeedback(int Trades,double AverageReturn,double WinRate,double PosteriorWinRate,int ExcursionTrades=0,double AverageMae=0,double AverageMfe=0,double StopLossRate=0,double TakeProfitRate=0);
