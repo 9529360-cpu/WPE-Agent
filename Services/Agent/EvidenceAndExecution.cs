@@ -272,9 +272,15 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         {
             await CancelProtectionOrdersAsync(adjustment.Symbol,adjustment.Side,ct);
         }
-        catch
+        catch(OperationCanceledException) when(ct.IsCancellationRequested)
         {
             if(stateKey is not null)await _db.SetStateAsync(stateKey,"FAILED",CancellationToken.None);
+            throw;
+        }
+        catch(Exception ex)
+        {
+            if(stateKey is not null)await _db.SetStateAsync(stateKey,"FAILED",CancellationToken.None);
+            await EmergencyCloseAfterProtectionFailureAsync(cycle,adjustment,group,ex,ct);
             throw;
         }
 
@@ -299,10 +305,23 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
                 adjustment.Symbol,adjustment.Side,adjustment.StopLoss,adjustment.TakeProfit,
                 DateTime.UtcNow,UiDiagnostic.FromText(ex.ToString(),"Protection update failed").Code);
             await ObserveSafelyAsync(value);
-            var position=(await _ex.GetPositionsAsync(ct)).FirstOrDefault(x=>x.Symbol==adjustment.Symbol&&x.Side==adjustment.Side);
-            if(position is not null&&position.Quantity>0){var intent=new ExecutionIntent(position.Symbol,position.Side,position.Quantity,true,0,0,EmergencyId(group),L("Execution.ProtectionReplaceFailed",SensitiveDataRedactor.ForLog(ex.Message,180)),position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,ExpectedPrice:position.MarkPrice,ReasonCode:PositionExitReasonCodes.ProtectionReplaceFailed);await ExecuteAsync(cycle,intent,Math.Max(1,(int)position.Leverage),true,ct);}
+            await EmergencyCloseAfterProtectionFailureAsync(cycle,adjustment,group,ex,ct);
             throw;
         }
+    }
+
+    private async Task EmergencyCloseAfterProtectionFailureAsync(
+        string cycle,ProtectionAdjustment adjustment,string group,Exception failure,CancellationToken ct)
+    {
+        var position=(await _ex.GetPositionsAsync(ct)).FirstOrDefault(x=>x.Symbol==adjustment.Symbol&&x.Side==adjustment.Side);
+        if(position is null||position.Quantity<=0)return;
+        var intent=new ExecutionIntent(
+            position.Symbol,position.Side,position.Quantity,true,0,0,EmergencyId(group),
+            L("Execution.ProtectionReplaceFailed",SensitiveDataRedactor.ForLog(failure.Message,180)),
+            position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
+            ExpectedPrice:position.MarkPrice,
+            ReasonCode:PositionExitReasonCodes.ProtectionReplaceFailed);
+        await ExecuteAsync(cycle,intent,Math.Max(1,(int)position.Leverage),true,ct);
     }
 
     private async Task NotifyExecutionAsync(
