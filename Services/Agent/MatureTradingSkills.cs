@@ -238,6 +238,7 @@ public sealed class PositionManagementSkill
                     ExpectedPrice:market.Price,
                     ReasonCode:PositionExitReasonCodes.PartialTakeProfit2R));
                 notes.Add($"partial-2r:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
+                continue;
             }
 
             var protectionId=ActionId("BE",opening);
