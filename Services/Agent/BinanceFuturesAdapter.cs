@@ -11,7 +11,7 @@ using WpeAgent.RuntimeContracts;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvider,IBrokerProvider,IProviderMarketCatalog,IProviderEnvironmentGuard,IRecentOrderProvider,IExchangeOrderFeeEvidenceReader,IExchangeFundingIncomeReader,ICryptoInstrumentFundamentalReader
+public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvider,IBrokerProvider,IProviderMarketCatalog,IProviderEnvironmentGuard,IProtectionFillEvidenceProvider,IExchangeOrderFeeEvidenceReader,IExchangeFundingIncomeReader,ICryptoInstrumentFundamentalReader
 {
     internal const long MaximumTradingClockSkewMilliseconds=1000;
     private readonly BinanceApiClient _api;
@@ -76,6 +76,17 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
         using var document=JsonDocument.Parse(await _api.GetSignedRawAsync("/fapi/v1/allOrders",query,ct));
         return DeduplicateOrderEvents(document.RootElement.EnumerateArray().Select(MapRaw));
     }
+    public bool TryMatchProtectionFill(string parentClientOrderId,ExchangeOrder order,out ProtectionFillKind kind)=>
+        TryMatchProtectionFillIdentity(parentClientOrderId,order,out kind);
+    internal static bool TryMatchProtectionFillIdentity(string parentClientOrderId,ExchangeOrder order,out ProtectionFillKind kind)
+    {
+        kind=default;
+        if(string.IsNullOrWhiteSpace(parentClientOrderId)||order is null||order.Status!="FILLED"||order.ExecutedQuantity<=0)return false;
+        var child=order.ClientOrderId??string.Empty;
+        if(!TryProtectionSuffix(child,out kind))return false;
+        var stem=child[..^3];
+        return stem.Length>=12&&parentClientOrderId.StartsWith(stem,StringComparison.OrdinalIgnoreCase);
+    }
     public async Task<IReadOnlyList<CryptoInstrumentFundamentalV1>> GetInstrumentFundamentalsAsync(IReadOnlyList<string> canonicalSymbols,CancellationToken ct)
     {
         if(Environment!=ExchangeEnvironment.Testnet||canonicalSymbols.Count is 0 or >100)return [];
@@ -129,7 +140,14 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
     }
     public async Task SetLeverageAsync(string symbol,int leverage,CancellationToken ct)=>_ = await _api.PostSignedRawAsync("/fapi/v1/leverage",new Dictionary<string,string?>{{"symbol",N(symbol)},{"leverage",leverage.ToString()}},ct);
     public async Task SetMarginModeAsync(string symbol,bool isolated,CancellationToken ct) { try { _=await _api.PostSignedRawAsync("/fapi/v1/marginType",new Dictionary<string,string?>{{"symbol",N(symbol)},{"marginType",isolated?"ISOLATED":"CROSSED"}},ct); } catch(global::币安量化机器人.Services.BinanceHttpException ex) when(ex.ExchangeCode==-4046){} }
-    public async Task SetHedgeModeAsync(bool enabled,CancellationToken ct) { try { _=await _api.PostSignedRawAsync("/fapi/v1/positionSide/dual",new Dictionary<string,string?>{{"dualSidePosition",enabled?"true":"false"}},ct); } catch(global::币安量化机器人.Services.BinanceHttpException ex) when(ex.ExchangeCode==-4059){} }
+    public Task SetHedgeModeAsync(bool enabled,CancellationToken ct)=>SetHedgeModeIfNeededAsync(_api,enabled,ct);
+    internal static async Task SetHedgeModeIfNeededAsync(BinanceApiClient api,bool enabled,CancellationToken ct)
+    {
+        using var current=JsonDocument.Parse(await api.GetSignedRawAsync("/fapi/v1/positionSide/dual",null,ct));
+        if(current.RootElement.TryGetProperty("dualSidePosition",out var value)&&(value.ValueKind is JsonValueKind.True or JsonValueKind.False)&&value.GetBoolean()==enabled)return;
+        try { _=await api.PostSignedRawAsync("/fapi/v1/positionSide/dual",new Dictionary<string,string?>{{"dualSidePosition",enabled?"true":"false"}},ct); }
+        catch(global::币安量化机器人.Services.BinanceHttpException ex) when(ex.ExchangeCode==-4059){}
+    }
     public async Task<ExchangeOrder> PlaceMarketAsync(string symbol,PositionSide side,decimal quantity,string clientOrderId,bool reduceOnly,CancellationToken ct)
     {
         // Hedge mode closes a leg by sending the opposite order side while keeping
@@ -251,8 +269,8 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
     private static decimal D(JsonElement e,string n)=>e.TryGetProperty(n,out var p)&&decimal.TryParse(p.GetString(),NumberStyles.Any,CultureInfo.InvariantCulture,out var v)?v:0;
     private static decimal Decimal(JsonElement e)=>decimal.TryParse(e.GetString(),NumberStyles.Any,CultureInfo.InvariantCulture,out var v)?v:0;
     private static PositionSide ParseSide(PositionSnapshot p)=>p.PositionSide.Equals("SHORT",StringComparison.OrdinalIgnoreCase)||p.PositionAmt<0?PositionSide.Short:PositionSide.Long;
-    private ExchangeOrder Map(OrderResponse o){var type=o.Type.ToUpperInvariant();return new(C(o.Symbol),o.OrderId.ToString(CultureInfo.InvariantCulture),o.ClientOrderId,NormalizeStandardOrderStatus(o.Status),o.ExecutedQuantity,o.AvgPrice,type,ParseSide(o.PositionSide),type is "STOP_MARKET" or "TAKE_PROFIT_MARKET",o.Time);}
-    private ExchangeOrder MapRaw(JsonElement e){var type=S(e,"type").ToUpperInvariant();return new(C(S(e,"symbol")),e.GetProperty("orderId").GetRawText().Trim('"'),S(e,"clientOrderId"),NormalizeStandardOrderStatus(S(e,"status")),D(e,"executedQty"),D(e,"avgPrice"),type,ParseSide(S(e,"positionSide")),type is "STOP_MARKET" or "TAKE_PROFIT_MARKET",DateTime.UtcNow);}
+    private ExchangeOrder Map(OrderResponse o){var type=o.Type.ToUpperInvariant();return new(C(o.Symbol),o.OrderId.ToString(CultureInfo.InvariantCulture),o.ClientOrderId,NormalizeStandardOrderStatus(o.Status),o.ExecutedQuantity,o.AvgPrice,type,ParseSide(o.PositionSide),(type is "STOP_MARKET" or "TAKE_PROFIT_MARKET")||LooksLikeProtectionClientOrderId(o.ClientOrderId),o.Time);}
+    private ExchangeOrder MapRaw(JsonElement e){var type=S(e,"type").ToUpperInvariant();var clientId=S(e,"clientOrderId");return new(C(S(e,"symbol")),e.GetProperty("orderId").GetRawText().Trim('"'),clientId,NormalizeStandardOrderStatus(S(e,"status")),D(e,"executedQty"),D(e,"avgPrice"),type,ParseSide(S(e,"positionSide")),(type is "STOP_MARKET" or "TAKE_PROFIT_MARKET")||LooksLikeProtectionClientOrderId(clientId),DateTime.UtcNow);}
     private ExchangeOrder MapAlgo(JsonElement e){var type=S(e,"orderType").ToUpperInvariant();var updated=e.TryGetProperty("updateTime",out var u)&&u.TryGetInt64(out var ms)?DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime:DateTime.UtcNow;return new(C(S(e,"symbol")),e.GetProperty("algoId").GetRawText().Trim('"'),S(e,"clientAlgoId"),S(e,"algoStatus"),D(e,"actualQty"),D(e,"actualPrice"),type,ParseSide(S(e,"positionSide")),true,updated);}
     private string N(string symbol)=>Symbols.ToNative(symbol);
     private string C(string symbol)=>Symbols.ToCanonical(symbol);
@@ -280,6 +298,13 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
         return new(state,global::币安量化机器人.Services.SensitiveDataRedactor.ForLog(error.Message,180,knownSecrets));
     }
     private static string S(JsonElement e,string n)=>e.TryGetProperty(n,out var p)?p.GetString()??"":"";
+    internal static bool LooksLikeProtectionClientOrderId(string? clientOrderId)=>TryProtectionSuffix(clientOrderId??string.Empty,out _);
+    private static bool TryProtectionSuffix(string clientOrderId,out ProtectionFillKind kind)
+    {
+        if(clientOrderId.EndsWith("-SL",StringComparison.OrdinalIgnoreCase)){kind=ProtectionFillKind.StopLoss;return true;}
+        if(clientOrderId.EndsWith("-TP",StringComparison.OrdinalIgnoreCase)){kind=ProtectionFillKind.TakeProfit;return true;}
+        kind=default;return false;
+    }
     private static string ProtectionId(string groupId,string suffix){var max=36-suffix.Length-1;var stem=groupId.Length>max?groupId[..max]:groupId;return $"{stem}-{suffix}";}
 }
 

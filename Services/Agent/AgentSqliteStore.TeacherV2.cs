@@ -51,9 +51,30 @@ public sealed partial class AgentSqliteStore
     public async Task<IReadOnlyList<TeacherEvidenceReferenceV2>> GetTeacherEvidenceForCycleAsync(string cycleId,DateTimeOffset asOfUtc,CancellationToken ct)
     {
         if(string.IsNullOrWhiteSpace(cycleId))throw new ArgumentException("Cycle id is required.",nameof(cycleId));
-        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT output_kind,output_id,cycle_id,canonical_sha256,as_of_utc,canonical_bytes,status FROM model_off_canonical_audits WHERE cycle_id=$cycle ORDER BY output_kind";q.Parameters.AddWithValue("$cycle",cycleId);await using var r=await q.ExecuteReaderAsync(ct);var result=new List<TeacherEvidenceReferenceV2>();var evaluation=asOfUtc.ToUniversalTime();
+        var evaluation=asOfUtc.ToUniversalTime();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
+        WITH ranked AS (
+            SELECT output_kind,output_id,cycle_id,canonical_sha256,as_of_utc,canonical_bytes,status,
+                   ROW_NUMBER() OVER(PARTITION BY output_kind ORDER BY as_of_utc DESC,recorded_at_utc DESC,output_id DESC) AS rn
+            FROM model_off_canonical_audits
+            WHERE cycle_id=$cycle AND as_of_utc<=$asof AND recorded_at_utc<=$asof
+        )
+        SELECT output_kind,output_id,cycle_id,canonical_sha256,as_of_utc,canonical_bytes,status
+        FROM ranked WHERE rn=1 ORDER BY output_kind
+        """;q.Parameters.AddWithValue("$cycle",cycleId);q.Parameters.AddWithValue("$asof",DbInstant(evaluation));await using var r=await q.ExecuteReaderAsync(ct);var result=new List<TeacherEvidenceReferenceV2>();
         while(await r.ReadAsync(ct)){var hash=r.GetString(3);var bytes=(byte[])r[5];var observed=DateTimeOffset.Parse(r.GetString(4),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind).ToUniversalTime();var computed=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();var available=string.Equals(hash,computed,StringComparison.Ordinal)&&string.Equals(r.GetString(6),"succeeded",StringComparison.Ordinal)&&observed<=evaluation&&evaluation-observed<=TimeSpan.FromMinutes(30);var availability=available?TeacherEvidenceAvailabilityV2.Available:TeacherEvidenceAvailabilityV2.Invalid;result.Add(new(r.GetString(0),r.GetString(1),r.GetString(2),hash,observed,availability));}
         return result;
+    }
+    public async Task<IReadOnlyList<string>> GetRecentTeacherCandidateCycleIdsAsync(DateTimeOffset asOfUtc,int limit,CancellationToken ct)
+    {
+        var evaluation=asOfUtc.ToUniversalTime();var floor=evaluation-TimeSpan.FromMinutes(30);var result=new List<string>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="""
+        SELECT cycle_id
+        FROM model_off_canonical_audits
+        WHERE as_of_utc<=$asof AND recorded_at_utc<=$asof
+        GROUP BY cycle_id
+        HAVING MAX(as_of_utc)>=$floor
+        ORDER BY MAX(as_of_utc) DESC,MAX(recorded_at_utc) DESC,cycle_id DESC
+        LIMIT $limit
+        """;q.Parameters.AddWithValue("$asof",DbInstant(evaluation));q.Parameters.AddWithValue("$floor",DbInstant(floor));q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,100));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))result.Add(r.GetString(0));return result;
     }
 
     public async Task<TeacherPersistenceResult> SaveTeacherLessonAsync(TeacherLessonV2 lesson,CancellationToken ct)
@@ -114,7 +135,12 @@ public sealed partial class AgentSqliteStore
     }
     public async Task<string?> GetLatestTeacherEligibleCycleIdAsync(CancellationToken ct)
     {
-        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT cycle_id FROM model_off_canonical_audits WHERE status='succeeded' GROUP BY cycle_id HAVING COUNT(DISTINCT output_kind)=7 ORDER BY MAX(recorded_at_utc) DESC LIMIT 1";return (string?)await q.ExecuteScalarAsync(ct);
+        var now=_utcNow().ToUniversalTime();foreach(var cycleId in await GetRecentTeacherCandidateCycleIdsAsync(now,32,ct))
+        {
+            var evidence=await GetTeacherEvidenceForCycleAsync(cycleId,now,ct);
+            if(MarketTeacherRuntimeV2.IsEvidenceEligible(evidence,now))return cycleId;
+        }
+        return null;
     }
     public async Task<bool> TryQueueTeacherDeliveryAsync(string deliveryId,string lessonId,string destinationKind,DateTimeOffset recordedAtUtc,CancellationToken ct)
     {

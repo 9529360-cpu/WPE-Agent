@@ -13,7 +13,8 @@ namespace 币安量化机器人;
 public partial class App : global::System.Windows.Application
 {
     private static IServiceProvider? _serviceProvider;
-    private DesktopRuntimeHost? _runtimeHost;
+    private TradingRuntimeHost? _runtimeHost;
+    private WpfLocalizationBridge? _localizationBridge;
 
     public static IServiceProvider ServiceProvider
     {
@@ -23,19 +24,14 @@ public partial class App : global::System.Windows.Application
 
     public App()
     {
-        var migration = AppDataPaths.MigrateLegacyPortableData();
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .WriteTo.Sink(new SensitiveFileLogSink(AppDataPaths.LogFile("app.log")))
-            .CreateLogger();
-        Log.Information("Portable data migration completed. Copied={Copied}; Skipped={Skipped}; Failed={Failed}", migration.Copied, migration.Skipped, migration.Failed);
+        RuntimeProcessBootstrap.Initialize("app.log");
     }
 
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
-        LocalizationService.Current.Initialize();
+        _localizationBridge = new WpfLocalizationBridge(LocalizationService.Current);
 
         if (e.Args.Any(x => string.Equals(x, "--i18n-test", StringComparison.OrdinalIgnoreCase)))
         {
@@ -304,6 +300,98 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
+        if (e.Args.Any(x => string.Equals(x, "--configure-testnet-env", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var apiKey = Environment.GetEnvironmentVariable("WPE_TESTNET_API_KEY");
+            var apiSecret = Environment.GetEnvironmentVariable("WPE_TESTNET_API_SECRET");
+            if (string.IsNullOrWhiteSpace(apiKey)) apiKey = Console.ReadLine();
+            if (string.IsNullOrWhiteSpace(apiSecret)) apiSecret = Console.ReadLine();
+            if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(apiSecret)) { Shutdown(38); return; }
+            var store = new AgentSettingsStore();
+            var bootstrapSettings = store.Load();
+            bootstrapSettings.Environment = ExchangeEnvironment.Testnet;
+            bootstrapSettings.EnvironmentMode = "FuturesTestnet";
+            bootstrapSettings.AiMode = global::币安量化机器人.Core.Models.AiRuntimeMode.LocalOnly;
+            bootstrapSettings.ActiveUser = "LOCAL-" + DeviceLicenseService.GetCurrentDeviceCode();
+            bootstrapSettings.Symbols = ["BTCUSDT"];
+            bootstrapSettings.MainnetTradingConfirmed = false;
+            bootstrapSettings.MainnetConfirmedAtUtc = null;
+            var profile = store.GetActiveExchange(bootstrapSettings, false);
+            profile.ProviderId = "binance-futures";
+            profile.DisplayName = "Binance Futures Testnet";
+            profile.Enabled = true;
+            profile.ExecutionEnabled = true;
+            profile.IsTestnet = true;
+            profile.Endpoint = "https://testnet.binancefuture.com";
+            store.SaveEnvironmentExchange(bootstrapSettings, profile, apiKey, apiSecret);
+            Shutdown(0);
+            return;
+        }
+
+        if (e.Args.Any(x => string.Equals(x, "--finalize-testnet-auto", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var finalizeStore = new AgentSettingsStore();
+            var finalizeSettings = finalizeStore.Load();
+            var readiness = await new AccessReadinessService().CheckAsync(finalizeSettings);
+            if (!readiness.Ready) { Shutdown(39); return; }
+            finalizeSettings.LastAccessCheckAtUtc = readiness.CheckedAtUtc;
+            var finalizeProfile = finalizeStore.GetActiveExchange(finalizeSettings, false);
+            finalizeProfile.LastVerifiedAtUtc = readiness.CheckedAtUtc;
+            finalizeStore.SyncActiveExchangeToEnvironmentSlot(finalizeSettings, finalizeProfile);
+            finalizeStore.Save(finalizeSettings);
+            Console.Error.WriteLine($"AUTO_PRECHECK env={finalizeSettings.Environment}; isTestnet={finalizeProfile.IsTestnet}; enabled={finalizeProfile.Enabled}; execution={finalizeProfile.ExecutionEnabled}; read={finalizeProfile.ReadPermission}; trade={finalizeProfile.TradePermission}; access={finalizeSettings.LastAccessCheckAtUtc:O}; verified={finalizeProfile.LastVerifiedAtUtc:O}");
+            var audit = new AgentSqliteStore();
+            var changed = await finalizeStore.ChangeAuthorizationModeAfterReadinessAsync(
+                finalizeSettings,
+                finalizeSettings.ActiveUser,
+                DeviceLicenseService.GetCurrentDeviceCode(),
+                "Target-machine Testnet readiness verified for automatic execution.",
+                audit,
+                CancellationToken.None);
+            if (!changed.Changed && changed.Code != "authorization.mode-unchanged") { Console.Error.WriteLine(changed.Code); Shutdown(40); return; }
+            finalizeSettings.SetupCompleted = true;
+            finalizeSettings.SetupCompletedAtUtc = DateTime.UtcNow;
+            finalizeStore.Save(finalizeSettings);
+            Shutdown(0);
+            return;
+        }
+
+        if (e.Args.Any(x => string.Equals(x, "--testnet-state-diagnostic", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var diagnosticStore = new AgentSettingsStore();
+            var diagnosticSettings = diagnosticStore.Load();
+            var diagnosticProfile = diagnosticStore.GetActiveExchange(diagnosticSettings);
+            if (diagnosticSettings.Environment != ExchangeEnvironment.Testnet || !diagnosticProfile.IsTestnet) { Shutdown(45); return; }
+            var diagnosticCredentials = diagnosticStore.GetExchangeCredentials(diagnosticProfile);
+            var diagnosticCatalog = new ExchangeProviderCatalog();
+            await using var diagnosticProvider = diagnosticCatalog.Create(diagnosticProfile, diagnosticCredentials);
+            var diagnosticPositions = await diagnosticProvider.GetPositionsAsync(CancellationToken.None);
+            var diagnosticOrders = await diagnosticProvider.GetOpenOrdersAsync(null, CancellationToken.None);
+            var diagnosticRecent = new List<ExchangeOrder>();
+            if (diagnosticProvider is IRecentOrderProvider recentOrderProvider)
+            {
+                foreach (var diagnosticSymbol in diagnosticSettings.Symbols.Distinct(StringComparer.OrdinalIgnoreCase))
+                    diagnosticRecent.AddRange(await recentOrderProvider.GetRecentOrdersAsync(diagnosticSymbol, 50, CancellationToken.None));
+            }
+            var diagnosticRoot = Path.Combine(AppDataPaths.TestArtifactsDirectory, "testnet-state-diagnostic");
+            Directory.CreateDirectory(diagnosticRoot);
+            var diagnosticPath = Path.Combine(diagnosticRoot, $"state-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");
+            var diagnosticPayload = new
+            {
+                observedAtUtc = DateTimeOffset.UtcNow,
+                positions = diagnosticPositions.Select(x => new { x.Symbol, side = x.Side.ToString(), x.Quantity, x.EntryPrice, x.MarkPrice, x.Leverage, x.Isolated }),
+                openOrders = diagnosticOrders.Select(x => new { x.Symbol, x.ClientOrderId, x.Status, x.ExecutedQuantity, x.AvgPrice, x.Type, side = x.PositionSide?.ToString(), x.IsProtection, x.UpdatedAt }),
+                recentOrders = diagnosticRecent.OrderByDescending(x => x.UpdatedAt).Take(50).Select(x => new { x.Symbol, x.ClientOrderId, x.Status, x.ExecutedQuantity, x.AvgPrice, x.Type, side = x.PositionSide?.ToString(), x.IsProtection, x.UpdatedAt })
+            };
+            await File.WriteAllTextAsync(diagnosticPath, System.Text.Json.JsonSerializer.Serialize(diagnosticPayload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            Log.Information("Testnet state diagnostic completed. Report={Report}", diagnosticPath);
+            Shutdown(0);
+            return;
+        }
+
         if (e.Args.Any(x => string.Equals(x, "--access-test", StringComparison.OrdinalIgnoreCase)))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -376,42 +464,20 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
-        _ = StartPublicMarketAsync();
 
-        // 激活窗关闭后还要继续打开初始化向导或主控制台，不能让 WPF
-        // 在两个窗口切换的间隙按“最后窗口关闭”自动终止应用。
+        // Keep the shell alive across setup/main-window transitions. Runtime identity is local
+        // machine identity; the legacy commercial license gate is no longer a startup prerequisite.
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
-        var licenseService = new DeviceLicenseService();
-        var license = licenseService.TryLoad();
-        if (!license.Success)
-        {
-            var activation = new ActivationWindow(licenseService);
-            if (activation.ShowDialog() != true || activation.ActivatedLicense is null) { Shutdown(); return; }
-            license = new DeviceLicenseResult(true,"Activation.Valid",activation.ActivatedLicense);
-        }
-        var localIdentity = "DEVICE-" + license.License!.LicenseId;
-        var settingsStore = new AgentSettingsStore();
-        var settings = settingsStore.Load();
-        settings.ActiveUser = localIdentity;
-        settingsStore.Save(settings);
-        var runtimeMode = RuntimeModePolicy.Resolve(settings);
-        var state = ServiceLocator.SystemState;
-        state.BrainMode = runtimeMode.RequestedMode;
-        state.BrainEffectiveMode = runtimeMode.EffectiveMode;
-        state.BrainRemoteAllowed = runtimeMode.AllowRemoteBrain;
-        state.BrainFallbackReason = runtimeMode.FallbackReason;
-        state.ActiveBrainProvider = runtimeMode.ProviderName;
-        state.ActiveBrainModel = runtimeMode.ModelName;
-        state.BrainName = runtimeMode.EffectiveMode == Core.Models.AiRuntimeMode.LocalOnly ? "WPE Local Brain" : runtimeMode.ProviderName;
-        state.LastUpdated = DateTime.UtcNow;
+        var localIdentity = "LOCAL-" + DeviceLicenseService.GetCurrentDeviceCode();
+        var runtimeHost = new TradingRuntimeHost(localIdentity);
+        _runtimeHost = runtimeHost;
+        var settings = new AgentSettingsStore().Load();
         if (!settings.SetupCompleted)
         {
             var setup = new SetupWindow(localIdentity);
             if (setup.ShowDialog() != true || !setup.SetupCompleted) { Shutdown(); return; }
         }
-        var runtimeHost = new DesktopRuntimeHost(localIdentity);
-        _runtimeHost = runtimeHost;
-        var accessReady = await runtimeHost.RefreshAccessAsync();
+        var accessReady = await runtimeHost.InitializeAsync();
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         var reference = new WpeAgent.ReferenceUiWindow(runtimeHost.BuildRuntimeJson, () =>
         {
@@ -426,20 +492,22 @@ public partial class App : global::System.Windows.Application
         }, runtimeHost.StartAgentAsync);
         MainWindow = reference;
         reference.Show();
-        if (accessReady) AutoTradingAgent.StartDefault();
+        if (accessReady) await runtimeHost.StartAgentAsync();
     }
 
     protected override async void OnExit(ExitEventArgs e)
     {
         try
         {
-            await AutoTradingAgent.StopAsync();
             if (_runtimeHost is not null)
             {
                 await _runtimeHost.DisposeAsync();
                 _runtimeHost = null;
             }
-            await ServiceLocator.DisposeAsync();
+            else
+            {
+                await ServiceLocator.DisposeAsync();
+            }
             if (ServiceProvider is IAsyncDisposable asyncDisposable)
             {
                 await asyncDisposable.DisposeAsync();
@@ -451,20 +519,11 @@ public partial class App : global::System.Windows.Application
         }
         finally
         {
+            _localizationBridge?.Dispose();
+            _localizationBridge = null;
             Log.CloseAndFlush();
             base.OnExit(e);
         }
     }
 
-    private static async Task StartPublicMarketAsync()
-    {
-        try
-        {
-            await ServiceLocator.PublicMarket.StartAsync().ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Public market runtime failed to start and remains unavailable.");
-        }
-    }
 }

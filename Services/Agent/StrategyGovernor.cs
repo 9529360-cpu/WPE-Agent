@@ -5,14 +5,20 @@ namespace 币安量化机器人.Services.Agent;
 public sealed class StrategyGovernor
 {
     public const int MinimumShadowObservations = 24;
+    public const int MinimumRegimeCalibrationObservations = 12;
+    public const int MinimumExecutionFeedbackTrades = 8;
     public const int MaximumUnqualifiedShadowObservations = 192;
     public static readonly TimeSpan MinimumShadowEvaluationTime = TimeSpan.FromHours(6);
     public const int MinimumValidationTrades = 30;
     public const double MinimumQualityScore = .62;
     public const double MaximumPromotedDrawdown = .20;
     public const double MaximumDemotionDrawdown = .30;
-    public const int RequiredEvaluatedRegimes = 4;
-    public const int MinimumPassingRegimes = 3;
+    public const int TemporalRobustnessFolds = 4;
+    public const int MinimumPassingTemporalFolds = 3;
+    public const int RequiredEvaluatedRegimes = 2;
+    public const int MinimumPassingRegimes = 2;
+    public const int MinimumRegimeValidationBars = 30;
+    public const int MinimumRegimeValidationTrades = 3;
     public const double MinimumWorstRegimeReturn = -.12;
     public const double MaximumTrainTestExpectancyGap = .003;
 
@@ -21,7 +27,7 @@ public sealed class StrategyGovernor
            && validation.Trades >= MinimumValidationTrades
            && validation.QualityScore >= MinimumQualityScore
            && validation.MaxDrawdown <= MaximumPromotedDrawdown
-           && validation.EvaluatedRegimes == RequiredEvaluatedRegimes
+           && validation.EvaluatedRegimes >= RequiredEvaluatedRegimes
            && validation.PassingRegimes >= MinimumPassingRegimes
            && validation.WorstRegimeReturn >= MinimumWorstRegimeReturn
            && validation.TrainTestExpectancyGap <= MaximumTrainTestExpectancyGap;
@@ -39,9 +45,9 @@ public sealed class StrategyGovernor
            && profile.ShadowObservations >= MinimumShadowObservations
            && (profile.FailureStreak >= 3 || profile.MaxDrawdown > MaximumDemotionDrawdown || profile.Expectancy < 0);
 
-    public bool ShouldRetireShadow(StrategyProfile profile,DateTime nowUtc)
+    public bool ShouldRetireShadow(StrategyProfile profile,DateTime nowUtc,int? rawObservations=null)
         =>profile.Lifecycle==StrategyLifecycle.Shadow
-          &&profile.ShadowObservations>=MaximumUnqualifiedShadowObservations
+          &&(profile.ShadowObservations>=MaximumUnqualifiedShadowObservations||rawObservations>=MaximumUnqualifiedShadowObservations)
           &&profile.StateChangedAtUtc is not null
           &&nowUtc.ToUniversalTime()-profile.StateChangedAtUtc.Value.ToUniversalTime()>=MinimumShadowEvaluationTime
           &&!CanActivateFromShadow(profile);

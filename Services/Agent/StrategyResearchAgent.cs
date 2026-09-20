@@ -89,12 +89,13 @@ public sealed class StrategyResearchAgent
             var market = evidence.Markets.GetValueOrDefault(profile.Symbol);
             if (market is null) continue;
             var signal = _engine.Signal(profile, market, evidence.News);
-            await _database.RecordStrategyObservationAsync(profile.Id, profile.Symbol, signal.Direction, market.Price, signal.Confidence, ct);
+            var regime = MarketRegimeClassifier.Detect(market);
+            await _database.RecordStrategyObservationAsync(profile.Id, profile.Symbol, signal.Direction, market.Price, signal.Confidence, regime, ct);
             var performance = await _database.GetStrategyObservationPerformanceAsync(profile.Id, ct);
             profile.ShadowObservations = performance.Observations; profile.Expectancy = performance.Expectancy;
             profile.MaxDrawdown = performance.MaxDrawdown; profile.FailureStreak = performance.FailureStreak; profile.QualityScore = performance.QualityScore;
             var previous=profile.Lifecycle;var next = _governor.NextLifecycle(profile);
-            if(next==profile.Lifecycle&&_governor.ShouldRetireShadow(profile,_utcNow()))next=StrategyLifecycle.Retired;
+            if(next==profile.Lifecycle&&_governor.ShouldRetireShadow(profile,_utcNow(),performance.RawObservations))next=StrategyLifecycle.Retired;
             if (next != profile.Lifecycle) { profile.Lifecycle = next; profile.StateChangedAtUtc = _utcNow(); profile.LastReason = next==StrategyLifecycle.Retired?$"shadow evaluation exhausted without qualification: {performance.Summary}":$"local performance: {performance.Summary}"; }
             await _database.UpsertStrategyAsync(profile, ct);
             if(next!=previous)await _database.RecordStrategyLifecycleAsync(profile,previous,profile.LastReason,ct);
@@ -122,6 +123,79 @@ public sealed class StrategyResearchAgent
 
     public StrategySignal GetSignal(StrategyProfile profile, MarketEvidence market, IReadOnlyList<NewsEvidence> news)
         => _schedulerHealthy ? _engine.Signal(profile, market, news) : new StrategySignal(profile.Id, profile.Symbol, 0, 0, "strategy research heartbeat is stale; hold");
+
+    public async Task<StrategySignal> GetAdaptiveSignalAsync(
+        StrategyProfile profile,
+        MarketEvidence market,
+        IReadOnlyList<NewsEvidence> news,
+        CancellationToken ct)
+        => (await GetAdaptiveSignalEvidenceAsync(profile, market, news, ct)).Signal;
+
+    public async Task<AdaptiveStrategySignalEvidence> GetAdaptiveSignalEvidenceAsync(
+        StrategyProfile profile,
+        MarketEvidence market,
+        IReadOnlyList<NewsEvidence> news,
+        CancellationToken ct)
+    {
+        var raw = GetSignal(profile, market, news);
+        var regime = MarketRegimeClassifier.Detect(market);
+        if (raw.Direction == 0 || raw.Confidence <= 0)
+            return new(raw, regime, 0, 0, .5, 0, .5);
+
+        var performance = await _database.GetStrategyObservationPerformanceAsync(profile.Id, ct);
+        var regimePerformance = performance.Regimes?.FirstOrDefault(value =>
+            string.Equals(value.Regime, regime.ToString(), StringComparison.Ordinal));
+
+        var calibratedConfidence = raw.Confidence;
+        var reasons = new List<string>
+        {
+            raw.Reason,
+            $"regime={regime}",
+            $"raw_confidence={raw.Confidence:F2}"
+        };
+
+        if (regimePerformance is not null &&
+            regimePerformance.Observations >= StrategyGovernor.MinimumRegimeCalibrationObservations)
+        {
+            var reliabilityMultiplier = Math.Clamp(.55 + .45 * regimePerformance.CalibrationScore, .55, 1);
+            var expectancyMultiplier = regimePerformance.Expectancy < 0 ? .75 : 1d;
+            calibratedConfidence *= reliabilityMultiplier * expectancyMultiplier;
+            reasons.Add($"shadow_calibration={regimePerformance.CalibrationScore:F2}");
+            reasons.Add($"regime_expectancy={regimePerformance.Expectancy:P2}");
+        }
+        else
+        {
+            reasons.Add("shadow_calibration=pending");
+        }
+
+        var execution = await _database.GetStrategyExecutionFeedbackAsync(profile.Id, ct);
+        if (execution.Trades >= StrategyGovernor.MinimumExecutionFeedbackTrades)
+        {
+            var executionMultiplier = Math.Clamp(.5 + execution.PosteriorWinRate, .65, 1);
+            calibratedConfidence *= executionMultiplier;
+            reasons.Add($"execution_trades={execution.Trades}");
+            reasons.Add($"execution_win_rate={execution.WinRate:P0}");
+            reasons.Add($"execution_feedback={execution.PosteriorWinRate:F2}");
+        }
+        else
+        {
+            reasons.Add($"execution_feedback=pending({execution.Trades}/{StrategyGovernor.MinimumExecutionFeedbackTrades})");
+        }
+
+        var signal = raw with
+        {
+            Confidence = Math.Clamp(calibratedConfidence, 0, raw.Confidence),
+            Reason = string.Join("; ", reasons)
+        };
+        return new(
+            signal,
+            regime,
+            regimePerformance?.Observations ?? 0,
+            regimePerformance?.Expectancy ?? 0,
+            regimePerformance?.CalibrationScore ?? .5,
+            execution.Trades,
+            execution.PosteriorWinRate);
+    }
 
     private async Task<IReadOnlyList<StrategyProfile>> EnsureCandidatesAsync(IReadOnlyList<string> symbols, CancellationToken ct)
     {
@@ -193,7 +267,7 @@ internal sealed class HistoricalResearchEngine
 
     internal static StrategyRobustness EvaluateRobustness(IReadOnlyList<(double Return,bool Trade)> values,double? trainExpectancy=null,double? testExpectancy=null)
     {
-        const int folds=StrategyGovernor.RequiredEvaluatedRegimes;if(values.Count<folds)return new(-1,1,0,0,false,0);
+        const int folds=StrategyGovernor.TemporalRobustnessFolds;if(values.Count<folds)return new(-1,1,0,0,false,0);
         var metrics=new List<(double Return,double Drawdown,double Expectancy,int Trades)>();
         for(var fold=0;fold<folds;fold++)
         {
@@ -202,7 +276,7 @@ internal sealed class HistoricalResearchEngine
         }
         var split=Math.Clamp((int)(values.Count*.65),1,values.Count);var train=trainExpectancy??Metrics(values.Take(split).ToArray()).Expectancy;var test=testExpectancy??Metrics(values.Skip(split).ToArray()).Expectancy;
         var gap=Math.Abs(train-test);var passing=metrics.Count(x=>x.Trades>0&&x.Return>=-.08&&x.Drawdown<=.25&&x.Expectancy>=-.0005);var worst=metrics.Min(x=>x.Return);
-        var passed=passing>=StrategyGovernor.MinimumPassingRegimes&&worst>=StrategyGovernor.MinimumWorstRegimeReturn&&gap<=StrategyGovernor.MaximumTrainTestExpectancyGap;var downside=Math.Max(0,-worst);var score=Math.Clamp((passing/(double)folds)*.5+Math.Max(0,1-downside/Math.Abs(StrategyGovernor.MinimumWorstRegimeReturn))*.25+Math.Max(0,1-gap/StrategyGovernor.MaximumTrainTestExpectancyGap)*.25,0,1);
+        var passed=passing>=StrategyGovernor.MinimumPassingTemporalFolds&&worst>=StrategyGovernor.MinimumWorstRegimeReturn&&gap<=StrategyGovernor.MaximumTrainTestExpectancyGap;var downside=Math.Max(0,-worst);var score=Math.Clamp((passing/(double)folds)*.5+Math.Max(0,1-downside/Math.Abs(StrategyGovernor.MinimumWorstRegimeReturn))*.25+Math.Max(0,1-gap/StrategyGovernor.MaximumTrainTestExpectancyGap)*.25,0,1);
         return new(worst,gap,passing,folds,passed,score);
     }
 
@@ -210,7 +284,13 @@ internal sealed class HistoricalResearchEngine
     {
         var candles = market.Candles; if (candles.Count < profile.Parameters.SlowPeriod + 2) return new(profile.Id, market.Symbol, 0, 0, "insufficient candles");
         var p = profile.Parameters; var fast = candles.TakeLast(p.FastPeriod).Average(x => x.Close); var slow = candles.TakeLast(p.SlowPeriod).Average(x => x.Close); var direction = 0; var confidence = Math.Min(1, Math.Abs((double)(fast / slow - 1)) * 40);
-        if (profile.Family == StrategyFamily.TrendBreakout) direction = fast > slow && market.Price > candles.TakeLast(48).Max(x => x.High) * (decimal)(1 - p.BreakoutBuffer) ? 1 : fast < slow && market.Price < candles.TakeLast(48).Min(x => x.Low) * (decimal)(1 + p.BreakoutBuffer) ? -1 : 0;
+        if (profile.Family == StrategyFamily.TrendBreakout)
+        {
+            if(candles.Count<49)return new(profile.Id,market.Symbol,0,0,"insufficient confirmed breakout history");
+            var confirmedClose=candles[^1].Close;var prior=candles.Take(candles.Count-1).TakeLast(48).ToArray();var priorHigh=prior.Max(x=>x.High);var priorLow=prior.Min(x=>x.Low);
+            direction=fast>slow&&confirmedClose>priorHigh*(decimal)(1-p.BreakoutBuffer)?1:fast<slow&&confirmedClose<priorLow*(decimal)(1+p.BreakoutBuffer)?-1:0;
+            return new(profile.Id,market.Symbol,direction,direction==0?0:confidence,$"family=TrendBreakout; confirmed_close={confirmedClose}; prior48_high={priorHigh}; prior48_low={priorLow}; fast={fast:F4}; slow={slow:F4}");
+        }
         if (profile.Family == StrategyFamily.MeanReversion)
         {
             var state=MeanReversionRegimeAnalyzer.Analyze(candles,p);
@@ -221,7 +301,7 @@ internal sealed class HistoricalResearchEngine
             confidence=direction==0?0:Math.Clamp((Math.Abs(state.ZScore)-p.MeanReversionZ)/Math.Max(.1,p.MeanReversionStopZ-p.MeanReversionZ)*.65+(1-state.Adx/p.AdxCeiling)*.35,0,1);
             return new(profile.Id,market.Symbol,direction,confidence,$"family=MeanReversion; regime={state.Regime}; z={state.ZScore:F2}; rsi={state.Rsi:F1}; adx={state.Adx:F1}; atr={state.AtrRatio:P2}; distanceAtr={state.DistanceAtr:F2}; volume={state.VolumeRatio:F2}");
         }
-        if (profile.Family == StrategyFamily.NewsMomentum) { var sentiment = news.Where(x => x.AffectedAssets.Any(a => a.Equals(market.Symbol, StringComparison.OrdinalIgnoreCase) || market.Symbol.StartsWith(a, StringComparison.OrdinalIgnoreCase))).OrderByDescending(x => x.PublishedAt).Take(5).Select(x => x.Sentiment * x.Confidence).DefaultIfEmpty().Average(); direction = sentiment >= p.NewsSentimentThreshold ? 1 : sentiment <= -p.NewsSentimentThreshold ? -1 : 0; confidence = Math.Min(1, Math.Abs(sentiment)); }
+        if (profile.Family == StrategyFamily.NewsMomentum) { var sentiment = NewsMomentumScoring.Live(market.Symbol,news,market.CollectedAt); direction = sentiment >= p.NewsSentimentThreshold ? 1 : sentiment <= -p.NewsSentimentThreshold ? -1 : 0; confidence = Math.Min(1, Math.Abs(sentiment)); }
         return new(profile.Id, market.Symbol, direction, confidence, $"family={profile.Family}; local deterministic signal");
     }
 
@@ -236,10 +316,7 @@ internal sealed class HistoricalResearchEngine
             int direction;
             if(profile.Family==StrategyFamily.NewsMomentum)
             {
-                var weighted=news.Where(x=>x.PublishedAtUtc.Kind==DateTimeKind.Utc&&x.PublishedAtUtc<=asOf&&x.PublishedAtUtc>asOf.AddHours(-48)&&
-                    (x.Asset.Equals(profile.Symbol,StringComparison.OrdinalIgnoreCase)||profile.Symbol.StartsWith(x.Asset,StringComparison.OrdinalIgnoreCase)))
-                    .OrderByDescending(x=>x.PublishedAtUtc).Take(5).Select(x=>x.Sentiment*x.Confidence).ToArray();
-                var sentiment=weighted.Length==0?0:weighted.Average();direction=sentiment>=profile.Parameters.NewsSentimentThreshold?1:sentiment<=-profile.Parameters.NewsSentimentThreshold?-1:0;
+                var sentiment=NewsMomentumScoring.Historical(profile.Symbol,news,asOf);direction=sentiment>=profile.Parameters.NewsSentimentThreshold?1:sentiment<=-profile.Parameters.NewsSentimentThreshold?-1:0;
             }
             else direction=engine.Signal(profile,market,Array.Empty<NewsEvidence>()).Direction;
             var value=direction*(double)(candles[i].Close/candles[i-1].Close-1)-(direction!=0?.0014:0);result.Add((value,direction!=0));

@@ -246,6 +246,44 @@ public sealed class BinanceTestnetCertificationContractTests
     }
 
     [Fact]
+    public async Task HedgeModeAlreadyEnabled_IsReadOnly()
+    {
+        var handler = new FaultHandler(request =>
+        {
+            if(request.RequestUri?.AbsolutePath=="/fapi/v1/time")
+                return Json(HttpStatusCode.OK,System.Text.Json.JsonSerializer.Serialize(new{serverTime=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}));
+            if(request.RequestUri?.AbsolutePath=="/fapi/v1/positionSide/dual")
+                return Json(HttpStatusCode.OK,"{\"dualSidePosition\":true}");
+            return Json(HttpStatusCode.NotFound,"{}");
+        });
+        using var client=Client(handler);client.SetApiCredentials("test-key","test-secret");
+
+        await BinanceFuturesAdapter.SetHedgeModeIfNeededAsync(client,true,CancellationToken.None);
+
+        Assert.Equal(0,handler.MutationCount);
+    }
+
+    [Fact]
+    public async Task HedgeModeMismatch_PerformsSingleMutation()
+    {
+        var handler = new FaultHandler(request =>
+        {
+            if(request.RequestUri?.AbsolutePath=="/fapi/v1/time")
+                return Json(HttpStatusCode.OK,System.Text.Json.JsonSerializer.Serialize(new{serverTime=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}));
+            if(request.Method==HttpMethod.Get&&request.RequestUri?.AbsolutePath=="/fapi/v1/positionSide/dual")
+                return Json(HttpStatusCode.OK,"{\"dualSidePosition\":false}");
+            if(request.Method==HttpMethod.Post&&request.RequestUri?.AbsolutePath=="/fapi/v1/positionSide/dual")
+                return Json(HttpStatusCode.OK,"{}");
+            return Json(HttpStatusCode.NotFound,"{}");
+        });
+        using var client=Client(handler);client.SetApiCredentials("test-key","test-secret");
+
+        await BinanceFuturesAdapter.SetHedgeModeIfNeededAsync(client,true,CancellationToken.None);
+
+        Assert.Equal(1,handler.MutationCount);
+    }
+
+    [Fact]
     public void DuplicateOrderEvents_AreCollapsedWithoutInventingATransition()
     {
         var observed = new DateTime(2026, 7, 22, 1, 0, 0, DateTimeKind.Utc);
@@ -553,6 +591,9 @@ public sealed class BinanceTestnetCertificationContractTests
         Func<DateTimeOffset>? utcNow = null) => new(
         new HttpClient(handler) { BaseAddress = new Uri("https://testnet.binancefuture.com") },
         useTestnet: true, receiveWindow: receiveWindow, utcNow: utcNow);
+
+    private static HttpResponseMessage Json(HttpStatusCode status,string payload) =>
+        new(status){Content=new StringContent(payload,System.Text.Encoding.UTF8,"application/json")};
 
     private sealed class FaultHandler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
     {

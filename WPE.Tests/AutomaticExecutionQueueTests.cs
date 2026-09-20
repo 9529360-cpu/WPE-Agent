@@ -32,6 +32,31 @@ public sealed class AutomaticExecutionQueueTests:IDisposable
     }
 
     [Fact]
+    public async Task HypothesisRepeatGuard_BlocksInFlightAndSucceededButAllowsCleanRetryAfterRiskBlock()
+    {
+        var store=Store();
+        const string hypothesisId="HYP-BTCUSDT-TrendPullbackLong-20260919221700";
+        var first=Artifact("hypothesis-first") with{StrategyId=hypothesisId};
+
+        Assert.False(await store.HasAutomaticExecutionBlockingRepeatAsync(hypothesisId,CancellationToken.None));
+        Assert.True((await store.SaveAutomaticExecutionAsync("hypothesis-first",first,CancellationToken.None)).Succeeded);
+        Assert.True(await store.HasAutomaticExecutionBlockingRepeatAsync(hypothesisId,CancellationToken.None));
+        Assert.True((await store.RecordAutomaticRiskDecisionAsync("hypothesis-first",Receipt(first),CancellationToken.None)).Succeeded);
+        Assert.True((await store.TryClaimAutomaticExecutionAsync("hypothesis-first","worker",TimeSpan.FromSeconds(30),CancellationToken.None)).Claimed);
+        Assert.True((await store.TryTransitionAutomaticExecutionAsync("hypothesis-first",AutomaticExecutionQueueStatus.Claimed,AutomaticExecutionQueueStatus.Executing,"worker","automatic.executing",CancellationToken.None)).Succeeded);
+        Assert.True((await store.TryTransitionAutomaticExecutionAsync("hypothesis-first",AutomaticExecutionQueueStatus.Executing,AutomaticExecutionQueueStatus.Succeeded,"worker","automatic.succeeded",CancellationToken.None)).Succeeded);
+        Assert.True(await store.HasAutomaticExecutionBlockingRepeatAsync(hypothesisId,CancellationToken.None));
+
+        const string retryHypothesisId="HYP-BTCUSDT-TrendPullbackLong-20260919230000";
+        var retry=Artifact("hypothesis-retry") with{StrategyId=retryHypothesisId};
+        Assert.True((await store.SaveAutomaticExecutionAsync("hypothesis-retry",retry,CancellationToken.None)).Succeeded);
+        Assert.True(await store.HasAutomaticExecutionBlockingRepeatAsync(retryHypothesisId,CancellationToken.None));
+        Assert.True((await store.RecordAutomaticRiskDecisionAsync("hypothesis-retry",Receipt(retry) with{Approved=false},CancellationToken.None)).Succeeded);
+        Assert.False(await store.HasAutomaticExecutionBlockingRepeatAsync(retryHypothesisId,CancellationToken.None));
+        Assert.True(await store.HasAutomaticExecutionBlockingRepeatAsync("invalid strategy id",CancellationToken.None));
+    }
+
+    [Fact]
     public async Task TamperedArtifactOrReceipt_IsNeverClaimedAndEventsAreAppendOnly()
     {
         var store=Store();var artifact=Artifact();await Approve(store,"execution-tamper",artifact);

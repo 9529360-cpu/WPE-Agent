@@ -70,6 +70,24 @@ public sealed class PositionReconciliationTests : IDisposable
     }
 
     [Fact]
+    public void AutomaticMaintenanceObservationRefreshesAndClearsOnlyItsOwnUiMessage()
+    {
+        const string conflict="authorization.no-mutation-required；protection.reconciliation-confirmed；position.quantity-conflict:BTCUSDT:long；external-position.isolation-clear";
+        var blocked=币安量化机器人.Services.AutoTradingAgent.ResolveAutomaticMaintenanceMessage(false,"running",conflict,null,"running");
+        Assert.Equal(conflict,blocked.LastMessage);Assert.Equal(conflict,blocked.OwnedMessage);
+
+        var recovered=币安量化机器人.Services.AutoTradingAgent.ResolveAutomaticMaintenanceMessage(true,conflict,"all-confirmed",blocked.OwnedMessage,"running");
+        Assert.Equal("running",recovered.LastMessage);Assert.Null(recovered.OwnedMessage);
+
+        var unrelated=币安量化机器人.Services.AutoTradingAgent.ResolveAutomaticMaintenanceMessage(true,"historical-data-degraded","all-confirmed",blocked.OwnedMessage,"running");
+        Assert.Equal("historical-data-degraded",unrelated.LastMessage);Assert.Null(unrelated.OwnedMessage);
+
+        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));
+        Assert.Contains("await Db.SetStateAsync(\"authorization.automatic-maintenance\",safetyMessage,ct);",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("if(!safeToIncreaseRisk)await Db.SetStateAsync(\"authorization.automatic-maintenance\"",source,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExactLedgerHasNoExternalPositionAndIsCanonical()
     {
         var local=new[]{new ExecutionPositionLegV1("BTCUSDT",PositionSide.Long,1m)};var exchange=new[]{Position("BTCUSDT",PositionSide.Long,1m)};var first=ExternalPositionIsolationServiceV1.Evaluate(local,exchange,Now,Now);var second=ExternalPositionIsolationServiceV1.Evaluate(local,exchange,Now,Now);Assert.Equal(ExternalPositionIsolationStateV1.Clear,first.State);Assert.True(first.AllowsRiskIncrease);Assert.Empty(first.ExternalLegs);Assert.Equal(first.CanonicalSha256,second.CanonicalSha256);Assert.Equal(first.CanonicalBytes,second.CanonicalBytes);

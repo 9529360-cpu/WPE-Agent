@@ -306,6 +306,7 @@
     "Stage.Research":  "Research: backtest, out-of-sample and stress validation",
     "Stage.PositionManagement":  "Position Manager: exits, trailing protection and recovery",
     "Decision.MarketQuality":  "Market quality must reach {0}/100 (current {1}/100)",
+    "Decision.ExtremeRegime":  "Extreme volatility or liquidation conditions do not permit a new risk-increasing entry",
     "SignalName.order_book":  "order book",
     "SignalName.relative_volume":  "relative volume",
     "Risk.RiskReward":  "Risk/reward {0:F2} is below {1:F2}",

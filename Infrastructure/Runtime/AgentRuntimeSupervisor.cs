@@ -11,12 +11,18 @@ namespace 币安量化机器人.Infrastructure.Runtime;
 public sealed class AgentRuntimeSupervisor : IAsyncDisposable
 {
     private const string LeaseName = "autonomous-trading-kernel";
+    private static readonly TimeSpan DefaultRuntimeLeaseTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan DefaultRuntimeLeaseAcquireTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan DefaultRuntimeLeaseRetryInterval = TimeSpan.FromSeconds(1);
     private readonly AgentSqliteStore _database;
     private readonly IAgentEventBus _events;
     private readonly ConcurrentDictionary<string, WorkflowNode> _nodes = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _shutdown = new();
     private readonly string _instanceId = $"{Environment.ProcessId}-{Guid.NewGuid():N}";
     private readonly string _processLeasePath;
+    private readonly TimeSpan _runtimeLeaseTtl;
+    private readonly TimeSpan _runtimeLeaseAcquireTimeout;
+    private readonly TimeSpan _runtimeLeaseRetryInterval;
     private IDisposable? _eventPersistence;
     private FileStream? _processLease;
     private bool _databaseLeaseAcquired;
@@ -31,11 +37,28 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
     }
 
     internal AgentRuntimeSupervisor(AgentSqliteStore database, IAgentEventBus events, string processLeasePath)
+        : this(database, events, processLeasePath, DefaultRuntimeLeaseTtl, DefaultRuntimeLeaseAcquireTimeout, DefaultRuntimeLeaseRetryInterval)
+    {
+    }
+
+    internal AgentRuntimeSupervisor(
+        AgentSqliteStore database,
+        IAgentEventBus events,
+        string processLeasePath,
+        TimeSpan runtimeLeaseTtl,
+        TimeSpan runtimeLeaseAcquireTimeout,
+        TimeSpan runtimeLeaseRetryInterval)
     {
         _database = database ?? throw new ArgumentNullException(nameof(database));
         _events = events ?? throw new ArgumentNullException(nameof(events));
         if (string.IsNullOrWhiteSpace(processLeasePath)) throw new ArgumentException("Runtime process lease path is required.", nameof(processLeasePath));
+        if (runtimeLeaseTtl <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(runtimeLeaseTtl));
+        if (runtimeLeaseAcquireTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(runtimeLeaseAcquireTimeout));
+        if (runtimeLeaseRetryInterval <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(runtimeLeaseRetryInterval));
         _processLeasePath = Path.GetFullPath(processLeasePath);
+        _runtimeLeaseTtl = runtimeLeaseTtl;
+        _runtimeLeaseAcquireTimeout = runtimeLeaseAcquireTimeout;
+        _runtimeLeaseRetryInterval = runtimeLeaseRetryInterval;
         RunId = Guid.NewGuid().ToString("N");
     }
 
@@ -49,7 +72,7 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
         _processLease = AcquireProcessLease();
         try
         {
-            if (!await _database.TryAcquireRuntimeLeaseAsync(LeaseName, _instanceId, TimeSpan.FromSeconds(30), cancellationToken))
+            if (!await TryAcquireDatabaseLeaseAsync(cancellationToken).ConfigureAwait(false))
                 throw new InvalidOperationException("Another WPE trading kernel owns the active runtime lease.");
             _databaseLeaseAcquired = true;
             _leaseLost = false;
@@ -145,6 +168,21 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
         await PublishAsync("workflow.cycle.failed", new { RunId, CycleId = cycleId, Node = current, Message=safeMessage }, cancellationToken, cycleId);
     }
 
+    private async Task<bool> TryAcquireDatabaseLeaseAsync(CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow + _runtimeLeaseAcquireTimeout;
+        while (true)
+        {
+            if (await _database.TryAcquireRuntimeLeaseAsync(LeaseName, _instanceId, _runtimeLeaseTtl, cancellationToken).ConfigureAwait(false))
+                return true;
+
+            var remaining = deadline - DateTimeOffset.UtcNow;
+            if (remaining <= TimeSpan.Zero) return false;
+            var delay = remaining < _runtimeLeaseRetryInterval ? remaining : _runtimeLeaseRetryInterval;
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private async Task HeartbeatLoopAsync(CancellationToken cancellationToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
@@ -152,7 +190,7 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
         {
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                var renewed = await _database.RenewRuntimeLeaseAsync(LeaseName, _instanceId, TimeSpan.FromSeconds(30), cancellationToken);
+                var renewed = await _database.RenewRuntimeLeaseAsync(LeaseName, _instanceId, _runtimeLeaseTtl, cancellationToken);
                 if (!renewed)
                 {
                     await FailClosedLeaseAsync("runtime.lease-renewal-rejected");

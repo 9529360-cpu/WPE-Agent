@@ -122,7 +122,25 @@ public sealed record StrategyResearchSnapshot(
     string LastMessage);
 
 public sealed record NewsFeature(string Asset, double Sentiment, double Confidence, int CorroboratingSources, string EventType, DateTime PublishedAtUtc);
-public sealed record StrategyObservationPerformance(int Observations, double Expectancy, double MaxDrawdown, double QualityScore, int FailureStreak, string Summary);
+public sealed record StrategyRegimePerformance(
+    string Regime,
+    int Observations,
+    double Expectancy,
+    double HitRate,
+    double MeanConfidence,
+    double CalibrationScore,
+    double QualityScore);
+
+public sealed record StrategyObservationPerformance(
+    int Observations,
+    double Expectancy,
+    double MaxDrawdown,
+    double QualityScore,
+    int FailureStreak,
+    string Summary,
+    double CalibrationScore = .5,
+    IReadOnlyList<StrategyRegimePerformance>? Regimes = null,
+    int RawObservations = 0);
 
 public enum MeanReversionRegime { Unknown, Range, Trend, Volatile }
 public sealed record MeanReversionMarketState(MeanReversionRegime Regime,double ZScore,double Rsi,double Adx,double AtrRatio,double DistanceAtr,double VolumeRatio);

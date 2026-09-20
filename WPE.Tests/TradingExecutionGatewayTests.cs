@@ -62,6 +62,29 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     }
 
     [Fact]
+    public async Task AutomaticGatewayBridgesValidatedDurableAuthorityIntoMutationGateway()
+    {
+        var setup=Setup(TradingAuthorizationMode.Auto);
+        var artifact=AutomaticArtifact();
+        var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);
+        var receipt=new DeterministicRiskReceipt(
+            "risk-auto",artifact.CorrelationId,hashes.IntentHash,true,Now.AddSeconds(-5),Now.AddMinutes(1),null,hashes.ArtifactHash);
+
+        Assert.True((await setup.Store.SaveAutomaticExecutionAsync(artifact.CorrelationId,artifact,CancellationToken.None)).Succeeded);
+        Assert.True((await setup.Store.RecordAutomaticRiskDecisionAsync(artifact.CorrelationId,receipt,CancellationToken.None)).Succeeded);
+        Assert.True((await setup.Store.TryClaimAutomaticExecutionAsync(artifact.CorrelationId,"worker",TimeSpan.FromSeconds(30),CancellationToken.None)).Claimed);
+        Assert.True((await setup.Store.TryTransitionAutomaticExecutionAsync(
+            artifact.CorrelationId,AutomaticExecutionQueueStatus.Claimed,AutomaticExecutionQueueStatus.Executing,
+            "worker","automatic.executing",CancellationToken.None)).Succeeded);
+
+        var result=await new TradingAutomaticExecutionGateway(setup.Gateway,setup.Exchange,setup.Store,null,()=>Now)
+            .ExecuteAsync(artifact,receipt,CancellationToken.None);
+
+        Assert.Equal(AutomaticGatewayExecutionState.Succeeded,result.State);
+        Assert.True(setup.Exchange.MutationCount>0);
+    }
+
+    [Fact]
     public async Task AutomaticOrderObserverConfirmsMatchingExchangeOrderWithoutMutation()
     {
         var setup=Setup(TradingAuthorizationMode.Auto);var artifact=AutomaticArtifact();
@@ -307,6 +330,18 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     }
 
     [Fact]
+    public async Task TestnetSmoke_ReduceOnlyCleanupDoesNotReconfigureAccountMode()
+    {
+        var setup=Setup(TradingAuthorizationMode.Review);
+
+        var cleanup=await setup.Gateway.ExecuteTestnetSmokeAsync(SmokeCleanupCommand(SmokeAuthorization()),CancellationToken.None);
+
+        Assert.True(cleanup.Executed);
+        Assert.Equal(0,setup.Exchange.AccountModeMutationCount);
+        Assert.True(setup.Exchange.MutationCount>0);
+    }
+
+    [Fact]
     public async Task TestnetSmoke_MissingAuthorizationFailsBeforeApprovalOrMutation()
     {
         var setup=Setup(TradingAuthorizationMode.Review);
@@ -386,6 +421,7 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     {
         public ExchangeEnvironment Environment{get;}=environment;
         public int MutationCount{get;private set;}
+        public int AccountModeMutationCount{get;private set;}
         public ExchangeOrder? ObservedOrder{get;set;}
         public Task<AccountSnapshot> GetAccountAsync(CancellationToken ct)=>Task.FromResult(new AccountSnapshot(1_000,1_000,1_000,DateTime.UtcNow));
         public Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct)=>Task.FromResult<IReadOnlyList<ManagedPosition>>([]);
@@ -395,9 +431,9 @@ public sealed class TradingExecutionGatewayTests:IDisposable
         public Task<IReadOnlyList<DerivativesSnapshot>> GetDerivativeHistoryAsync(string symbol,CancellationToken ct)=>Task.FromResult<IReadOnlyList<DerivativesSnapshot>>([]);
         public Task<IReadOnlyList<CandleEvidence>> GetCandlesAsync(string symbol,string interval,int limit,CancellationToken ct)=>Task.FromResult<IReadOnlyList<CandleEvidence>>([]);
         public Task<IReadOnlyList<CandleEvidence>> GetCandlesRangeAsync(string symbol,string interval,DateTime start,DateTime end,int limit,CancellationToken ct)=>Task.FromResult<IReadOnlyList<CandleEvidence>>([]);
-        public Task SetLeverageAsync(string symbol,int leverage,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
-        public Task SetMarginModeAsync(string symbol,bool isolated,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
-        public Task SetHedgeModeAsync(bool enabled,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
+        public Task SetLeverageAsync(string symbol,int leverage,CancellationToken ct){MutationCount++;AccountModeMutationCount++;return Task.CompletedTask;}
+        public Task SetMarginModeAsync(string symbol,bool isolated,CancellationToken ct){MutationCount++;AccountModeMutationCount++;return Task.CompletedTask;}
+        public Task SetHedgeModeAsync(bool enabled,CancellationToken ct){MutationCount++;AccountModeMutationCount++;return Task.CompletedTask;}
         public Task<ExchangeOrder> PlaceMarketAsync(string symbol,PositionSide side,decimal quantity,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;return Task.FromResult(new ExchangeOrder(symbol,"order-1",clientOrderId,"FILLED",quantity,50_000m,"MARKET",side,false,DateTime.UtcNow));}
         public Task<ExchangeOrder> PlaceLimitAsync(string symbol,PositionSide side,decimal quantity,decimal price,string clientOrderId,bool reduceOnly,CancellationToken ct)=>PlaceMarketAsync(symbol,side,quantity,clientOrderId,reduceOnly,ct);
         public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide sideToClose,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct){MutationCount++;return Task.FromResult(new ExchangeOrder(symbol,"protection-1",groupId,"NEW",0,0,"OCO",sideToClose,true,DateTime.UtcNow));}

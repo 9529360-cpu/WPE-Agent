@@ -224,7 +224,13 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
         catch{return new(AutomaticGatewayExecutionState.Rejected,"automatic.authority-unknown");}
         var authorityCode=AutomaticPreMutationAuthorityContractV1.Evaluate(authority,artifact,hashes,receipt,_utcNow());
         if(authorityCode!="automatic.authority-allowed")return new(AutomaticGatewayExecutionState.Rejected,authorityCode);
-        var authorization=new TradingAuthorizationRequest(TradingAuthorizationMode.Auto,true,artifact.CorrelationId,hashes.IntentHash,"automatic","automatic","automatic",receipt,null);
+
+        // The durable receipt binds the canonical V2 artifact. The mutation gateway uses its
+        // established ExecutionIntent hash contract, so bridge only after durable authority
+        // has revalidated the exact artifact and receipt above.
+        var mutationHash=TradingExecutionGateway.ComputeIntentHash(intents,artifact.Leverage,artifact.Isolated);
+        var mutationReceipt=receipt with{IntentHash=mutationHash};
+        var authorization=new TradingAuthorizationRequest(TradingAuthorizationMode.Auto,true,artifact.CorrelationId,mutationHash,"automatic","automatic","automatic",mutationReceipt,null);
         var result=await _gateway.ExecutePlanAsync(new(null,authorization,intents,artifact.Leverage,artifact.Isolated),ct);
         return result.Executed?new(AutomaticGatewayExecutionState.Succeeded,result.Code):new(AutomaticGatewayExecutionState.Rejected,result.Code);
     }

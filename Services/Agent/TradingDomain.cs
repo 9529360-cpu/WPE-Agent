@@ -40,7 +40,8 @@ internal static class ConfirmedMarketCandlesV1
 public sealed record RealtimeMarketSnapshot(string Symbol,decimal LastPrice,decimal BestBid,decimal BestAsk,decimal BidQuantity,decimal AskQuantity,decimal BuyVolume5m,decimal SellVolume5m,decimal LastMinuteVolume,DateTime UpdatedAt,long Messages,bool Connected)
 {
     public double SpreadBps=>BestBid>0&&BestAsk>=BestBid?(double)((BestAsk-BestBid)/((BestAsk+BestBid)/2)*10000):999;
-    public double OrderFlowImbalance=>BuyVolume5m+SellVolume5m>0?(double)((BuyVolume5m-SellVolume5m)/(BuyVolume5m+SellVolume5m)):0;
+    public bool HasOrderFlow=>BuyVolume5m+SellVolume5m>0;
+    public double OrderFlowImbalance=>HasOrderFlow?(double)((BuyVolume5m-SellVolume5m)/(BuyVolume5m+SellVolume5m)):0;
     public bool Fresh=>Connected&&DateTime.UtcNow-UpdatedAt<TimeSpan.FromSeconds(15);
     public bool EligibleForEnrichment=>Fresh&&LastPrice>0&&BestBid>0&&BestAsk>=BestBid&&BidQuantity>=0&&AskQuantity>=0;
 }
@@ -51,6 +52,8 @@ public sealed class MarketQualityEvidence
     public decimal BestAsk { get; init; }
     public double SpreadBps { get; init; }
     public double OrderBookImbalance { get; init; }
+    public double OrderFlowImbalance { get; init; }
+    public bool OrderFlowAvailable { get; init; }
     public double AtrPercent { get; init; } = .01;
     public double RealizedVolatility { get; init; } = .01;
     public double RelativeVolume { get; init; } = 1;
@@ -115,6 +118,10 @@ public sealed class DecisionPlan
     public double RiskRewardRatio { get; set; }
     public ExecutionOrderType OrderType { get; set; } = ExecutionOrderType.Market;
     public string StrategyVersion { get; set; } = "wpe-core-v2";
+    public string DecisionContextKind { get; set; } = "legacy-signal";
+    public string DecisionContextId { get; set; } = string.Empty;
+    public string HypothesisStage { get; set; } = string.Empty;
+    public double RiskBudgetMultiplier { get; set; } = 1;
 }
 public enum MarketRegime { Trending, Ranging, Transition, Extreme, Unknown }
 public sealed record SignalContribution(string Name,string Horizon,double RawValue,double Weight,double WeightedScore,string Direction,string Explanation);
@@ -191,7 +198,7 @@ public sealed class PortfolioRiskAssessment
     public bool Approved { get; init; }
     public string Summary { get; init; } = string.Empty;
 }
-public sealed record AgentContext(string BrainName, bool CircuitBreakerActive, string? ActiveSymbol, IReadOnlyList<StructuredOutcomeMemory> OutcomeMemories, IReadOnlyList<MarketDecisionAssessment> MarketAssessments, int ConsecutiveHolds, IReadOnlyList<PlannerMemoryFact>? RelevantMemories=null);
+public sealed record AgentContext(string BrainName, bool CircuitBreakerActive, string? ActiveSymbol, IReadOnlyList<StructuredOutcomeMemory> OutcomeMemories, IReadOnlyList<MarketDecisionAssessment> MarketAssessments, int ConsecutiveHolds, IReadOnlyList<PlannerMemoryFact>? RelevantMemories=null,AdaptiveStrategyPortfolioPlan? StrategyPortfolio=null,IReadOnlyDictionary<string,TradeHypothesis>? TradeHypotheses=null);
 public sealed record PlannerMemoryFact(string Tier,DateTime OccurredAtUtc,string Result,string Source,string Summary);
 public sealed record StructuredOutcomeMemory(
     DateTime CycleStartedUtc,

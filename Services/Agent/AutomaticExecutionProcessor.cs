@@ -131,7 +131,12 @@ public sealed class AutomaticExecutionProcessor
         var executing=await _store.TryTransitionAutomaticExecutionAsync(claimed.ExecutionId,AutomaticExecutionQueueStatus.Claimed,AutomaticExecutionQueueStatus.Executing,workerId,"automatic.executing",ct);if(!executing.Succeeded)return Result(false,executing.Code);
         AutomaticGatewayExecutionResult execution;
         try{execution=await _gateway.ExecuteAsync(artifact,claimed.RiskReceipt!,ct);}catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}catch{execution=new(AutomaticGatewayExecutionState.Unknown,"automatic.gateway-unknown");}
-        var (next,code)=execution.State switch{AutomaticGatewayExecutionState.Succeeded=>(AutomaticExecutionQueueStatus.Succeeded,"automatic.succeeded"),AutomaticGatewayExecutionState.Rejected=>(AutomaticExecutionQueueStatus.FailedTerminal,"automatic.gateway-rejected"),_=>(AutomaticExecutionQueueStatus.UnknownOutcome,"automatic.unknown-outcome")};
+        var (next,code)=execution.State switch
+        {
+            AutomaticGatewayExecutionState.Succeeded=>(AutomaticExecutionQueueStatus.Succeeded,"automatic.succeeded"),
+            AutomaticGatewayExecutionState.Rejected=>(AutomaticExecutionQueueStatus.FailedTerminal,SafeGatewayCode(execution.Code)),
+            _=>(AutomaticExecutionQueueStatus.UnknownOutcome,"automatic.unknown-outcome")
+        };
         var transitioned=await _store.TryTransitionAutomaticExecutionAsync(claimed.ExecutionId,AutomaticExecutionQueueStatus.Executing,next,workerId,code,ct);
         return await Complete(claimed.ExecutionId,transitioned.Succeeded,code,null,ct);
     }
@@ -242,6 +247,13 @@ public sealed class AutomaticExecutionProcessor
         try{return await reader.ObserveOrdersAsync(item.Artifact,ct);}
         catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
         catch{return null;}
+    }
+    private static string SafeGatewayCode(string? value)
+    {
+        if(string.IsNullOrWhiteSpace(value)||value.Length>120)return "automatic.gateway-rejected";
+        return value.All(c=>char.IsAsciiLetterOrDigit(c)||c is '.' or '-' or '_' or ':')
+            ?value
+            :"automatic.gateway-rejected";
     }
     private static AutomaticExecutionProcessorResult Result(bool handled,string code)=>new(handled,code);
 }

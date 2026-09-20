@@ -19,7 +19,7 @@ public sealed class PostTradeReviewTests : IDisposable
 
         var filled=Order(close,"FILLED",1m,110m);await store.RecordExecutionAsync("close-cycle",close,filled,"strategy-v1",default);await store.RecordExecutionAsync("close-cycle",close,filled,"strategy-v1",default);
 
-        var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));Assert.Equal("wpe.post-trade-review/1.4",review.Schema);Assert.Null(review.StrategyId);Assert.Equal("legacy-version-only",review.AttributionBasis);Assert.Equal("estimated-static-rate",review.FeeBasis);Assert.Equal(.0004m,review.FeeRate);Assert.Equal(.084m,review.Fees);Assert.Equal("intent-expected-vs-fill",review.SlippageBasis);Assert.Equal(0m,review.TotalSlippageAmount);Assert.Equal("unavailable",review.FundingBasis);Assert.Equal(0m,review.FundingAmount);Assert.Equal("win",review.Outcome);Assert.Equal(9.916m,review.NetPnl);Assert.Equal(.09916m,review.ReturnPct);
+        var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));Assert.Equal("wpe.post-trade-review/1.5",review.Schema);Assert.Null(review.StrategyId);Assert.Equal("legacy-version-only",review.AttributionBasis);Assert.Equal("estimated-static-rate",review.FeeBasis);Assert.Equal(.0004m,review.FeeRate);Assert.Equal(.084m,review.Fees);Assert.Equal("intent-expected-vs-fill",review.SlippageBasis);Assert.Equal(0m,review.TotalSlippageAmount);Assert.Equal("unavailable",review.FundingBasis);Assert.Equal(0m,review.FundingAmount);Assert.Equal("win",review.Outcome);Assert.Equal(9.916m,review.NetPnl);Assert.Equal(.09916m,review.ReturnPct);
         var memories=await store.SearchMemoriesAsync(new(Tier:"long-term",Symbol:"BTCUSDT",StrategyId:"strategy-v1"),default);var memory=Assert.Single(memories);Assert.Equal("post-trade",memory.Source);Assert.Equal("win",memory.Result);
         Assert.Equal(9.916m,(await store.GetRiskHistoryAsync(default)).DailyRealizedPnl);
     }
@@ -48,7 +48,7 @@ public sealed class PostTradeReviewTests : IDisposable
     public async Task LegacyDatabaseMigratesFeeProvenanceWithoutInventingObservedFees()
     {
         Directory.CreateDirectory(_directory);await using(var connection=new SqliteConnection($"Data Source={Database}")){await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText="CREATE TABLE trade_outcomes(id INTEGER PRIMARY KEY AUTOINCREMENT,client_order_id TEXT,cycle_id TEXT,symbol TEXT,side TEXT,entry_price TEXT,exit_price TEXT,quantity TEXT,gross_pnl TEXT,fees TEXT,net_pnl TEXT,return_pct TEXT,closed_at TEXT,strategy_version TEXT); INSERT INTO trade_outcomes(client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,gross_pnl,fees,net_pnl,return_pct,closed_at,strategy_version) VALUES('legacy-close','legacy-cycle','BTCUSDT','Long','100','110','1','10','.084','9.916','.09916','2026-07-27T00:00:00.0000000+00:00','strategy-v1');";await command.ExecuteNonQueryAsync();}
-        var review=Assert.Single(await new AgentSqliteStore(Database).GetRecentPostTradeReviewsAsync(10,default));Assert.Equal("wpe.post-trade-review/1.4",review.Schema);Assert.Null(review.StrategyId);Assert.Equal("legacy-version-only",review.AttributionBasis);Assert.Equal("estimated-static-rate",review.FeeBasis);Assert.Equal(.0004m,review.FeeRate);Assert.Equal(.084m,review.Fees);Assert.Equal("unavailable",review.SlippageBasis);Assert.Equal(0m,review.TotalSlippageAmount);Assert.Equal("unavailable",review.FundingBasis);Assert.Equal(0m,review.FundingAmount);
+        var review=Assert.Single(await new AgentSqliteStore(Database).GetRecentPostTradeReviewsAsync(10,default));Assert.Equal("wpe.post-trade-review/1.5",review.Schema);Assert.Null(review.StrategyId);Assert.Equal("legacy-version-only",review.AttributionBasis);Assert.Equal("estimated-static-rate",review.FeeBasis);Assert.Equal(.0004m,review.FeeRate);Assert.Equal(.084m,review.Fees);Assert.Equal("unavailable",review.SlippageBasis);Assert.Equal(0m,review.TotalSlippageAmount);Assert.Equal("unavailable",review.FundingBasis);Assert.Equal(0m,review.FundingAmount);Assert.Equal("unavailable",review.ExcursionBasis);Assert.Equal(0,review.ExcursionSamples);Assert.Equal(0m,review.MaeReturnPct);Assert.Equal(0m,review.MfeReturnPct);Assert.Equal("unclassified",review.ExitReason);
     }
 
     [Fact]
@@ -76,6 +76,33 @@ public sealed class PostTradeReviewTests : IDisposable
     public async Task ShortFavorableSlippageIsNegativeAndPartialReductionDoesNotReuseEntryAttribution()
     {
         var store=new AgentSqliteStore(Database);ExecutionIntent Make(string id,bool reduce,decimal quantity,decimal expected)=>new("BTCUSDT",PositionSide.Short,quantity,reduce,110m,80m,id,"test",reduce?DecisionAction.ReduceShort:DecisionAction.OpenShort,ExecutionOrderType.Market,0,expected);var entry=Make("entry",false,2m,100m);var first=Make("first",true,1m,90m);var second=Make("second",true,1m,88m);await store.RecordExecutionAsync("open",entry,Order(entry,"FILLED",2m,101m),"v1",default);await store.RecordExecutionAsync("first",first,Order(first,"FILLED",1m,89m),"v1",default);await store.RecordExecutionAsync("second",second,Order(second,"FILLED",1m,87m),"v1",default);var reviews=await store.GetRecentPostTradeReviewsAsync(10,default);Assert.Equal(2,reviews.Count);Assert.All(reviews,x=>Assert.Equal(-2m,x.TotalSlippageAmount));Assert.Equal(-1m,reviews.Single(x=>x.ClientOrderId=="first").EntrySlippageAmount);Assert.Equal(-1m,reviews.Single(x=>x.ClientOrderId=="second").EntrySlippageAmount);
+    }
+
+    [Fact]
+    public async Task FullClosePersistsObservedExcursionsAndExitReason()
+    {
+        var now=new DateTimeOffset(2026,9,20,10,0,0,TimeSpan.Zero);
+        var store=new AgentSqliteStore(Database,()=>now);
+        var entry=Intent("entry-excursion",false,1m,100m);
+        var entryOrder=new ExchangeOrder("BTCUSDT","order-entry",entry.ClientOrderId,"FILLED",1m,100m,"MARKET",PositionSide.Long,false,now.AddMinutes(-5).UtcDateTime);
+        await store.RecordExecutionAsync("open-excursion",entry,entryOrder,"hypothesis-v1",default);
+        await store.SavePositionMarkObservationsAsync([new("BTCUSDT",PositionSide.Long,1m,100m,97m,-3m,2m,true,50m)],now.AddMinutes(-4),default);
+        await store.SavePositionMarkObservationsAsync([new("BTCUSDT",PositionSide.Long,1m,100m,106m,6m,2m,true,50m)],now.AddMinutes(-2),default);
+        var close=new ExecutionIntent("BTCUSDT",PositionSide.Long,1m,true,0,0,"close-excursion","strategy.exit",DecisionAction.CloseLong,ExpectedPrice:102m);
+        var closeOrder=new ExchangeOrder("BTCUSDT","order-close",close.ClientOrderId,"FILLED",1m,102m,"MARKET",PositionSide.Long,false,now.UtcDateTime);
+        await store.RecordExecutionAsync("close-excursion",close,closeOrder,"hypothesis-v1",default);
+
+        var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));
+        Assert.Equal(-.03m,review.MaeReturnPct);
+        Assert.Equal(.06m,review.MfeReturnPct);
+        Assert.Equal("runtime-mark-observations",review.ExcursionBasis);
+        Assert.Equal(2,review.ExcursionSamples);
+        Assert.Equal("strategy.exit",review.ExitReason);
+        await using var connection=new SqliteConnection($"Data Source={Database}");
+        await connection.OpenAsync();
+        await using var count=connection.CreateCommand();
+        count.CommandText="SELECT COUNT(*) FROM position_mark_observations";
+        Assert.Equal(0L,(long)(await count.ExecuteScalarAsync())!);
     }
 
     [Fact]

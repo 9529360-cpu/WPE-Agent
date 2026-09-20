@@ -69,6 +69,14 @@ public interface IRecentOrderProvider
         string canonicalSymbol,int limit,CancellationToken ct);
 }
 
+public enum ProtectionFillKind { StopLoss,TakeProfit }
+
+public interface IProtectionFillEvidenceProvider:IRecentOrderProvider
+{
+    bool TryMatchProtectionFill(
+        string parentClientOrderId,ExchangeOrder order,out ProtectionFillKind kind);
+}
+
 public interface IRealtimeMarketFeed:IAsyncDisposable
 {
     string Status { get; }

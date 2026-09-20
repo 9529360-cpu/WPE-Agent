@@ -37,5 +37,20 @@ public sealed class RealtimeMarketIntegrityTests : IDisposable
         Assert.Equal(2,snapshot.Messages);Assert.Equal(100,snapshot.LastPrice);Assert.Equal(99,snapshot.BestBid);Assert.Equal(101,snapshot.BestAsk);Assert.NotEqual(default,snapshot.UpdatedAt);
     }
 
+    [Fact]
+    public void RealtimeMergeKeepsDepthBookSeparateFromAggTradeFlow()
+    {
+        var baseline=new MarketQualityEvidence{BestBid=98,BestAsk=102,SpreadBps=4,OrderBookImbalance=.42,QualityScore=90,SourceCount=4,Anomalies=["book_ticker_missing","order_book_missing"]};
+        var live=new RealtimeMarketSnapshot("BTCUSDT",100,99,101,2,3,1,9,10,DateTime.UtcNow,5,true);
+
+        var merged=RealTimeMarketHub.MergeQuality(baseline,live);
+
+        Assert.Equal(.42,merged.OrderBookImbalance,10);
+        Assert.True(merged.OrderFlowAvailable);
+        Assert.Equal(-.8,merged.OrderFlowImbalance,10);
+        Assert.DoesNotContain("book_ticker_missing",merged.Anomalies);
+        Assert.Contains("order_book_missing",merged.Anomalies);
+    }
+
     private RealTimeMarketHub Hub()=>new(ExchangeEnvironment.Testnet,["BTCUSDT"],"test-key",new AgentSqliteStore(_database));
 }

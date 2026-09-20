@@ -53,7 +53,9 @@ public sealed class EncryptedRecordMigrationTests
     public void Planner_CreatesBoundedBatchAndCheckpointWithoutPlaintext()
     {
         using var fixture = new Fixture();
-        var records = new[] { fixture.Legacy("r1", [1, 2]), fixture.Legacy("r2", [3, 4]) };
+        var firstPlaintext=Enumerable.Range(1,32).Select(value=>(byte)value).ToArray();
+        var secondPlaintext=Enumerable.Range(33,32).Select(value=>(byte)value).ToArray();
+        var records = new[] { fixture.Legacy("r1", firstPlaintext), fixture.Legacy("r2", secondPlaintext) };
 
         var plan = fixture.Planner.PlanBatch(records, 1, fixture.Checkpoint());
 

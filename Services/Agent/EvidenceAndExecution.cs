@@ -155,9 +155,12 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         EnsureCapability(intent);
         if(!intent.ReduceOnly)try{await PreflightAsync(intent,ct);}catch(Exception ex){await _db.SaveIntentAsync(cycle,intent,"PREFLIGHT_BLOCKED",null,ct);var blocked=ConfirmedNotificationTruth.System(ConfirmedNotificationTruth.EventKey(cycle,intent.ClientOrderId,NotificationEventKind.RiskBlocked),NotificationEventKind.RiskBlocked,ProviderName(),_ex.Environment.ToString(),DateTime.UtcNow,UiDiagnostic.FromText(ex.ToString(),"Risk blocked").Code,intent.Symbol,intent.Side.ToString());await ObserveSafelyAsync(blocked);throw;}
         await _db.SaveIntentAsync(cycle,intent,"INTENT",null,ct);
-        try{await _ex.SetHedgeModeAsync(true,ct);await _ex.SetMarginModeAsync(intent.Symbol,isolated,ct);await _ex.SetLeverageAsync(intent.Symbol,leverage,ct);}
-        catch(BinanceHttpException ex){await _db.SaveIntentAsync(cycle,intent,ex.Outcome==BinanceHttpOutcome.Rejected?"REJECTED":"UNKNOWN",null,ct);throw;}
-        catch{await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",null,ct);throw;}
+        if(!intent.ReduceOnly)
+        {
+            try{await _ex.SetHedgeModeAsync(true,ct);await _ex.SetMarginModeAsync(intent.Symbol,isolated,ct);await _ex.SetLeverageAsync(intent.Symbol,leverage,ct);}
+            catch(BinanceHttpException ex){await _db.SaveIntentAsync(cycle,intent,ex.Outcome==BinanceHttpOutcome.Rejected?"REJECTED":"UNKNOWN",null,ct);throw;}
+            catch{await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",null,ct);throw;}
+        }
         ExchangeOrder? order=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);
         if(order is null)try
         {
