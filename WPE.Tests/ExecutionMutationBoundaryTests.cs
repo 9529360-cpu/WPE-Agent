@@ -247,6 +247,7 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         var executor=CreateExecutor(exchange,out var store,CapabilityStatus.Available);
         var authority=CreateAuthority();
         var gateway=new TradingExecutionGateway(executor,store,null,authority.Verifier);
+        await SeedManagedOpeningAsync(store);
 
         var result=await gateway.ExecuteReduceOnlyRecoveryAsync(RecoveryCommand(authority),CancellationToken.None);
 
@@ -255,6 +256,19 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         Assert.Equal(1,exchange.MarketOrderSubmissions);
         Assert.True(exchange.LastReduceOnly);
         Assert.Equal(1,exchange.MutationCount);
+    }
+
+    [Fact]
+    public async Task ReduceOnlyRecovery_UnownedExchangePositionRejectsWithoutMutation()
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out _,out var authority);
+
+        var result=await gateway.ExecuteReduceOnlyRecoveryAsync(RecoveryCommand(authority),CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.position-ownership-conflict",result.Code);
+        Assert.Equal(0,executor.CallCount);
     }
 
     [Fact]
@@ -364,7 +378,7 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
     {
         var executor=new RecordingMutationExecutor(true);
         var gateway=CreateGateway(executor,out var store,out var authority);
-        await store.SaveIntentAsync("opening",OpeningIntent(),"PROTECTED","order-open",CancellationToken.None);
+        await SeedManagedOpeningAsync(store);
         var command=ProtectionCommand(authority);
 
         var result=await gateway.ExecuteProtectionRecoveryAsync(command,CancellationToken.None);
@@ -372,6 +386,21 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         Assert.True(result.Executed);
         Assert.Equal("recovery.protection-adjusted",result.Code);
         Assert.Equal(1,executor.CallCount);
+    }
+
+    [Fact]
+    public async Task ProtectionRecovery_UnownedExchangePositionRejectsWithoutMutation()
+    {
+        var executor=new RecordingMutationExecutor(true);
+        var gateway=CreateGateway(executor,out var store,out var authority);
+        await store.SaveIntentAsync("opening",OpeningIntent(),"PROTECTED","order-open",CancellationToken.None);
+        var command=ProtectionCommand(authority);
+
+        var result=await gateway.ExecuteProtectionRecoveryAsync(command,CancellationToken.None);
+
+        Assert.False(result.Executed);
+        Assert.Equal("recovery.position-ownership-conflict",result.Code);
+        Assert.Equal(0,executor.CallCount);
     }
 
     [Fact]
@@ -445,6 +474,13 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
     }
 
     private static TestRecoveryAuthority CreateAuthority(int seed=0)=>new(Enumerable.Range(1,32).Select(x=>(byte)(x+seed)).ToArray());
+
+    private static async Task SeedManagedOpeningAsync(AgentSqliteStore store)
+    {
+        var opening=OpeningIntent();
+        await store.RecordExecutionAsync("opening",opening,FilledOrder(),"test",CancellationToken.None);
+        await store.SaveIntentAsync("opening",opening,"PROTECTED","order-1",CancellationToken.None);
+    }
 
     private static ReduceOnlyRecoveryCommand RecoveryCommand(
         TestRecoveryAuthority authority,
