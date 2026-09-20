@@ -9,6 +9,15 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "wpe-mutation-boundary-" + Guid.NewGuid().ToString("N"));
 
+    [Fact]
+    public void ProtectionReplacementFailureCarriesStableSafetyExitReasonCode()
+    {
+        var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
+        var source=File.ReadAllText(Path.Combine(root,"Services","Agent","EvidenceAndExecution.cs"));
+
+        Assert.Contains("ReasonCode:PositionExitReasonCodes.ProtectionReplaceFailed",source,StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(CapabilityStatus.Unsupported)]
     [InlineData(CapabilityStatus.Stale)]
