@@ -161,7 +161,12 @@ public sealed class StrategyResearchSkill
     private static double MonteCarloLossProbability(IReadOnlyList<double> r){if(r.Count==0)return .5;var random=new Random(42);var losses=0;for(var n=0;n<300;n++){var equity=1d;for(var i=0;i<r.Count;i++)equity*=1+r[random.Next(r.Count)];if(equity<1)losses++;}return losses/300d;}
 }
 
-public sealed record ProtectionAdjustment(string Symbol,PositionSide Side,decimal StopLoss,decimal TakeProfit,string Reason);
+public static class PositionManagementDurableState
+{
+    public static string ProtectionAdjustmentKey(string adjustmentId)=>"position-protection:"+adjustmentId;
+}
+
+public sealed record ProtectionAdjustment(string Symbol,PositionSide Side,decimal StopLoss,decimal TakeProfit,string Reason,string? AdjustmentId=null);
 public sealed record PositionManagementResult(IReadOnlyList<ExecutionIntent> Intents,IReadOnlyList<ProtectionAdjustment> ProtectionAdjustments,IReadOnlyList<string> Notes);
 
 public sealed class PositionManagementSkill
@@ -235,12 +240,13 @@ public sealed class PositionManagementSkill
                 notes.Add($"partial-2r:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
             }
 
-            var trailKey=$"breakeven:{position.Symbol}:{position.Side}";
-            if(favorable>=1&&!await db.HasStateAsync(trailKey,ct))
+            var protectionId=ActionId("BE",opening);
+            var protectionStateKey=PositionManagementDurableState.ProtectionAdjustmentKey(protectionId);
+            if(favorable>=1&&await db.GetStateAsync(protectionStateKey,ct) is null)
             {
                 var stop=position.Side==PositionSide.Long?position.EntryPrice*1.0005m:position.EntryPrice*.9995m;
-                protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.Breakeven")));
-                notes.Add(trailKey);
+                protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.Breakeven"),protectionId));
+                notes.Add($"breakeven:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
             }
         }
         return new(intents,protections,notes);
