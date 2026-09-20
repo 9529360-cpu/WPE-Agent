@@ -84,9 +84,9 @@ public static class MarketStructureIntelligence
     public static MarketStructureRead Analyze(MarketEvidence market)
     {
         ArgumentNullException.ThrowIfNull(market);
-        var m15 = AnalyzeFrame("15m", market.Candles);
-        var h1 = AnalyzeFrame("1h", market.Candles1h);
-        var h4 = AnalyzeFrame("4h", market.Candles4h);
+        var m15 = AnalyzeFrame("15m", market.Candles, market.CollectedAt);
+        var h1 = AnalyzeFrame("1h", market.Candles1h, market.CollectedAt);
+        var h4 = AnalyzeFrame("4h", market.Candles4h, market.CollectedAt);
         var available = m15.State != PriceStructureState.Unknown &&
                         h1.State != PriceStructureState.Unknown &&
                         h4.State != PriceStructureState.Unknown;
@@ -126,11 +126,12 @@ public static class MarketStructureIntelligence
             m15, h1, h4, narrative, evidence);
     }
 
-    private static TimeframeStructureRead AnalyzeFrame(string interval, IReadOnlyList<CandleEvidence> source)
+    private static TimeframeStructureRead AnalyzeFrame(
+        string interval,
+        IReadOnlyList<CandleEvidence> source,
+        DateTime observedAtUtc)
     {
-        var candles = source
-            .Where(Valid)
-            .OrderBy(x => x.OpenTime)
+        var candles = ConfirmedMarketCandlesV1.Select(source, interval, observedAtUtc)
             .TakeLast(160)
             .ToArray();
         if (candles.Length < 24)
