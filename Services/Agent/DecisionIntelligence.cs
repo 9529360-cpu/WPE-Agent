@@ -108,9 +108,9 @@ public sealed class DecisionGovernanceSkill
         TradeHypothesis? hypothesis=null;
         if(hypothesisDriven&&hypotheses is not null)hypotheses.TryGetValue(proposed.Instrument,out hypothesis);
 
-        if(assessment is null)blocks.Add(L("Review.NoAssessment"));
+        if(!hypothesisDriven&&assessment is null)blocks.Add(L("Review.NoAssessment"));
         if(evidence.Completeness<policy.MinimumEvidenceCompleteness&&riskIncreasing)blocks.Add(L("Review.Incomplete"));
-        if(assessment is{Fresh:false}&&riskIncreasing)blocks.Add(L("Review.Stale"));
+        if(!hypothesisDriven&&assessment is{Fresh:false}&&riskIncreasing)blocks.Add(L("Review.Stale"));
 
         if(hypothesisDriven&&riskIncreasing)
         {
@@ -166,7 +166,7 @@ public sealed class DecisionGovernanceSkill
         b.Append(hypothesisDriven
             ?$"{decision.Action} · Hypothesis {decision.HypothesisStage}"
             :$"{decision.Action} · Brain {decision.Confidence:P0}");
-        if(assessment is not null)
+        if(assessment is not null&&!hypothesisDriven)
         {
             b.Append(L("Review.Aggregation",assessment.Confidence,assessment.ConflictRatio)).Append('\n');
             b.Append(assessment.Summary);
