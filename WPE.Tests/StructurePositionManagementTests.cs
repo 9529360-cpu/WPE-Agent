@@ -300,6 +300,37 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task CanceledProtectionMutationDoesNotAutoCloseOnNextCycle()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            var opening=OpeningIntent("open-protection-canceled");
+            await db.SaveIntentAsync("cycle-open",opening,"PROTECTED","1008-canceled",CancellationToken.None);
+            var protectionId=PositionManagementDurableState.ProtectionAdjustmentKey(
+                PositionManagementActionId("BE",opening.ClientOrderId));
+            await db.SetStateAsync(protectionId,"CANCELED",CancellationToken.None);
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(110m)}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(),
+                tradingRules:Rules());
+
+            Assert.Empty(result.Intents);
+            Assert.Empty(result.ProtectionAdjustments);
+            Assert.DoesNotContain(result.Notes,x=>x.StartsWith("protection-recovery-close:",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task ProtectionRecoveryCloseDoesNotReplayAfterDurableAttempt()
     {
         var path=TempDb();
