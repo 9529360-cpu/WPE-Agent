@@ -613,6 +613,9 @@ public sealed class TradingExecutionGateway
     }
     private async Task<bool> HasExactLocalPositionOwnershipAsync(ManagedPosition position,CancellationToken ct)
     {
+        var opening=await _approvals.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);
+        if(opening is null||await _approvals.HasStateAsync(
+            PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId),ct))return false;
         var legs=await _approvals.GetExecutionPositionLedgerAsync(ct);
         var matches=legs.Where(x=>string.Equals(x.Symbol,position.Symbol,StringComparison.OrdinalIgnoreCase)&&x.Side==position.Side).ToArray();
         if(matches.Length!=1||matches[0].Quantity<=0||position.Quantity<=0)return false;
