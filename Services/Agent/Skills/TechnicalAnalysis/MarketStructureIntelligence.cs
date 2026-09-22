@@ -92,7 +92,9 @@ public sealed record MarketStructureRead(
     string Narrative,
     IReadOnlyList<string> Evidence)
 {
-    public const string DecisionBasis = "candles-structure-v3";
+    public const string DecisionBasis = "candles-structure-v4";
+    public decimal ConfirmationClose { get; init; }
+    public string ConfirmationSource { get; init; } = "none";
 }
 
 public static class MarketStructureIntelligence
@@ -118,7 +120,12 @@ public static class MarketStructureIntelligence
         var phase = DetectPhase(bias, m15);
         var scenario = DetectScenario(bias, phase, m15, nearDemand, nearSupply);
         var trigger = HasTrigger(scenario, m15);
-        var confirmation = HasConfirmation(scenario, m15);
+        var frameConfirmation = HasConfirmation(scenario, m15);
+        var candidateCandle = ConfirmedMarketCandlesV1.Select(market.Candles,"15m",market.CollectedAt).LastOrDefault();
+        var realtimeConfirmation = frameConfirmation ? null : FindRealtimeConfirmation(scenario,m15,candidateCandle,market.Candles1m,market.CollectedAt);
+        var confirmation = frameConfirmation || realtimeConfirmation is not null;
+        var confirmationSource = frameConfirmation ? "15m-closed" : realtimeConfirmation is not null ? "1m-realtime-closed" : "none";
+        var confirmationClose = frameConfirmation ? m15.LastClose : realtimeConfirmation?.Close ?? 0;
         var narrative = BuildNarrative(bias, phase, scenario, m15, h1, h4, nearDemand, nearSupply);
         var evidence = new List<string>
         {
@@ -136,13 +143,19 @@ public static class MarketStructureIntelligence
             $"15m_range={(m15.Compression ? "compression" : m15.RangeExpansion ? "expansion" : "normal")}",
             $"structure_trigger={(trigger ? "present" : "waiting")}",
             $"structure_confirmation={(confirmation ? "present" : "waiting")}",
+            $"structure_confirmation_source={confirmationSource}",
+            $"structure_confirmation_close={confirmationClose:F2}",
             $"structure_entry_ready={(trigger && confirmation ? "ready" : "waiting")}"
         };
 
         return new(true, bias, phase, scenario, trigger, confirmation,
             m15.Demand > 0 ? m15.Demand : market.Support,
             m15.Supply > 0 ? m15.Supply : market.Resistance,
-            m15, h1, h4, narrative, evidence);
+            m15, h1, h4, narrative, evidence)
+        {
+            ConfirmationClose=confirmationClose,
+            ConfirmationSource=confirmationSource
+        };
     }
 
     private static TimeframeStructureRead AnalyzeFrame(
@@ -403,6 +416,36 @@ public static class MarketStructureIntelligence
             m15.Event == MarketStructureEvent.BearishRetest || (m15.Event == MarketStructureEvent.BearishBreak && m15.VolumeExpansion),
         _ => false
     };
+
+    private static CandleEvidence? FindRealtimeConfirmation(
+        MarketStructureScenario scenario,
+        TimeframeStructureRead m15,
+        CandleEvidence? candidate,
+        IReadOnlyList<CandleEvidence> minuteCandles,
+        DateTime observedAtUtc)
+    {
+        if(candidate is null||minuteCandles.Count==0)return null;
+        var longCandidate=scenario is MarketStructureScenario.TrendPullbackLong or MarketStructureScenario.RangeReversionLong;
+        var shortCandidate=scenario is MarketStructureScenario.TrendPullbackShort or MarketStructureScenario.RangeReversionShort;
+        if(longCandidate&&m15.Event is not(MarketStructureEvent.LiquiditySweepLowReclaim or MarketStructureEvent.BullishRejection))return null;
+        if(shortCandidate&&m15.Event is not(MarketStructureEvent.LiquiditySweepHighReject or MarketStructureEvent.BearishRejection))return null;
+        if(!longCandidate&&!shortCandidate)return null;
+
+        var candidateClosedAt=candidate.OpenTime.ToUniversalTime()+TimeSpan.FromMinutes(15);
+        var observed=observedAtUtc.Kind==DateTimeKind.Utc?observedAtUtc:observedAtUtc.ToUniversalTime();
+        var confirmationBuffer=Math.Max(m15.Atr*.12m,candidate.Close*.0003m)*.15m;
+        return ConfirmedMarketCandlesV1.Select(minuteCandles,"1m",observed)
+            .Where(x=>x.OpenTime>=candidateClosedAt&&observed-(x.OpenTime+TimeSpan.FromMinutes(1))<=TimeSpan.FromMinutes(5))
+            .TakeLast(5)
+            .LastOrDefault(x=>
+            {
+                var range=Math.Max(.00000001m,x.High-x.Low);
+                var bodyRatio=Math.Abs(x.Close-x.Open)/range;
+                return longCandidate
+                    ?x.Close>x.Open&&bodyRatio>=.50m&&x.Close>candidate.High+confirmationBuffer
+                    :x.Close<x.Open&&bodyRatio>=.50m&&x.Close<candidate.Low-confirmationBuffer;
+            });
+    }
 
     private static bool HasConfirmation(MarketStructureScenario scenario, TimeframeStructureRead m15)
     {

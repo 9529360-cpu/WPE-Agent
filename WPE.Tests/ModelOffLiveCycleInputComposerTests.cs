@@ -60,15 +60,18 @@ public sealed class ModelOffLiveCycleInputComposerTests
     [Fact]
     public void TradingBrainSourceIsLocalOnly()
     {
-        var source=File.ReadAllText(Path.Combine(Root(),"Services","Agent","BrainProviders.cs"));
+        var provider=File.ReadAllText(Path.Combine(Root(),"Services","Agent","BrainProviders.cs"));
+        var agent=File.ReadAllText(Path.Combine(Root(),"Services","Agent","Agents","TechnicalDecisionAgent.cs"));
 
-        Assert.Contains("WPE Local Brain",source,StringComparison.Ordinal);
-        Assert.Contains("DirectMarketStructureDecisionSkill.Decide",source,StringComparison.Ordinal);
-        Assert.Contains("local-deterministic",source,StringComparison.Ordinal);
-        Assert.DoesNotContain("OpenAiCompatibleAdapter",source,StringComparison.Ordinal);
-        Assert.DoesNotContain("AnthropicMessagesAdapter",source,StringComparison.Ordinal);
-        Assert.DoesNotContain("GeminiGenerativeAdapter",source,StringComparison.Ordinal);
-        Assert.DoesNotContain("BrainPromptComposer",source,StringComparison.Ordinal);
+        Assert.Contains("WPE Local Brain",provider,StringComparison.Ordinal);
+        Assert.Contains("TechnicalDecisionAgent",provider,StringComparison.Ordinal);
+        Assert.Contains("local-deterministic",provider,StringComparison.Ordinal);
+        Assert.Contains("DirectMarketStructureDecisionSkill.Decide",agent,StringComparison.Ordinal);
+        Assert.Contains("IMarketStructureAnalysisTool",agent,StringComparison.Ordinal);
+        Assert.DoesNotContain("OpenAiCompatibleAdapter",provider,StringComparison.Ordinal);
+        Assert.DoesNotContain("AnthropicMessagesAdapter",provider,StringComparison.Ordinal);
+        Assert.DoesNotContain("GeminiGenerativeAdapter",provider,StringComparison.Ordinal);
+        Assert.DoesNotContain("BrainPromptComposer",provider,StringComparison.Ordinal);
     }
 
     [Fact]

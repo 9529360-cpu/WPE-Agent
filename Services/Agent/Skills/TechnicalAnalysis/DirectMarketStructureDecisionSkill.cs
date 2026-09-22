@@ -3,11 +3,15 @@
 public static class DirectMarketStructureDecisionSkill
 {
     public const string DecisionContextKind = "market-structure-direct";
-    public const string Version = "market-structure-direct-v2";
+    public const string Version = "market-structure-direct-v3";
 
-    public static DecisionPlan Decide(EvidencePack evidence, bool circuitBreakerActive)
+    public static DecisionPlan Decide(EvidencePack evidence, bool circuitBreakerActive)=>
+        Decide(evidence,circuitBreakerActive,MarketStructureAnalysisTool.Shared);
+
+    internal static DecisionPlan Decide(EvidencePack evidence,bool circuitBreakerActive,IMarketStructureAnalysisTool analysisTool)
     {
         ArgumentNullException.ThrowIfNull(evidence);
+        ArgumentNullException.ThrowIfNull(analysisTool);
         var markets=(evidence.Markets??new Dictionary<string,MarketEvidence>())
             .Values.Where(x=>x is not null)
             .OrderBy(x=>x.Symbol,StringComparer.Ordinal)
@@ -18,13 +22,13 @@ public static class DirectMarketStructureDecisionSkill
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         if(circuitBreakerActive)
-            return Hold(markets.FirstOrDefault(),"hard risk circuit breaker is active");
+            return Hold(markets.FirstOrDefault(),"hard risk circuit breaker is active",analysisTool);
 
         var holdReason="No confirmed direct candle-structure setup is actionable.";
         foreach(var market in markets)
         {
             if(openSymbols.Contains(market.Symbol))continue;
-            var structure=MarketStructureIntelligence.Analyze(market);
+            var structure=analysisTool.Analyze(market);
             if(!structure.Available)continue;
             if(structure.Scenario==MarketStructureScenario.None)continue;
             if(!structure.TriggerPresent)
@@ -82,7 +86,7 @@ public static class DirectMarketStructureDecisionSkill
             };
         }
 
-        return Hold(markets.FirstOrDefault(),holdReason);
+        return Hold(markets.FirstOrDefault(),holdReason,analysisTool);
     }
 
     public static bool IsDirect(DecisionPlan? decision)=>
@@ -123,7 +127,7 @@ public static class DirectMarketStructureDecisionSkill
     private static bool EntryStillActionable(MarketEvidence market,MarketStructureRead structure,bool longSide,bool shortSide)
     {
         if(market.Price<=0||(!longSide&&!shortSide))return false;
-        var confirmationClose=structure.FifteenMinute.LastClose;
+        var confirmationClose=structure.ConfirmationClose>0?structure.ConfirmationClose:structure.FifteenMinute.LastClose;
         if(confirmationClose<=0)return false;
         var chaseTolerance=Math.Max(structure.FifteenMinute.Atr*.75m,confirmationClose*.0015m);
         if(longSide)
@@ -137,13 +141,13 @@ public static class DirectMarketStructureDecisionSkill
     private static bool IsShort(MarketStructureScenario scenario)=>scenario is
         MarketStructureScenario.TrendPullbackShort or MarketStructureScenario.RangeReversionShort or MarketStructureScenario.BreakoutRetestShort;
 
-    private static DecisionPlan Hold(MarketEvidence? market,string reason)=>new()
+    private static DecisionPlan Hold(MarketEvidence? market,string reason,IMarketStructureAnalysisTool analysisTool)=>new()
     {
         Action=DecisionAction.Hold,
         Instrument=market?.Symbol??string.Empty,
         TargetTier=0,
         Confidence=0,
-        Regime=market is null?MarketRegime.Unknown.ToString():MarketStructureIntelligence.Analyze(market).HigherTimeframeBias.ToString(),
+        Regime=market is null?MarketRegime.Unknown.ToString():analysisTool.Analyze(market).HigherTimeframeBias.ToString(),
         Reason=reason,
         Invalidation="No risk-increasing decision exists.",
         StrategyVersion=Version,

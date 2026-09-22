@@ -63,6 +63,43 @@ public sealed class MarketStructureIntelligenceTests
     }
 
     [Fact]
+    public void ClosedRealtimeMinuteCanConfirmSweepWithoutWaitingForNext15MinuteClose()
+    {
+        var candles=SweepLowReclaimNext15m();
+        var candidate=candles[^1];
+        var minuteOpen=candidate.Close+.10m;
+        var minuteClose=candidate.High+.80m;
+        var minute=new CandleEvidence(
+            Now.AddMinutes(15).UtcDateTime,
+            minuteOpen,
+            minuteClose+.10m,
+            minuteOpen-.10m,
+            minuteClose,
+            80m,
+            8_000m,
+            120,
+            55m);
+        var baseline=Market(
+            candles,
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(16));
+        var market=baseline with{Price=minute.Close,Candles1m=[minute]};
+
+        var structure=MarketStructureIntelligence.Analyze(market);
+        var decision=DirectMarketStructureDecisionSkill.Decide(Evidence(market),false);
+
+        Assert.Equal(MarketStructureEvent.LiquiditySweepLowReclaim,structure.FifteenMinute.Event);
+        Assert.True(structure.TriggerPresent);
+        Assert.True(structure.ConfirmationPresent);
+        Assert.Equal("1m-realtime-closed",structure.ConfirmationSource);
+        Assert.Equal(minute.Close,structure.ConfirmationClose);
+        Assert.Contains("structure_confirmation_source=1m-realtime-closed",structure.Evidence);
+        Assert.Equal(DecisionAction.OpenLong,decision.Action);
+        Assert.True(DirectMarketStructureDecisionSkill.ContextMatches(decision,market));
+    }
+
+    [Fact]
     public void SweepFollowThroughCreatesConfirmedEntry()
     {
         var market=Market(
@@ -193,7 +230,27 @@ public sealed class MarketStructureIntelligenceTests
         Assert.True(DirectMarketStructureDecisionSkill.ContextMatches(result.Decision,market));
         Assert.Contains("decision_path=direct-market-structure",result.Decision.EvidenceReferences);
         Assert.Contains("entry_qualification=trigger-plus-confirmation",result.Decision.EvidenceReferences);
+        Assert.Contains("\"provider\":\"WPE Local Brain\"",result.Response,StringComparison.Ordinal);
+        Assert.Contains("\"agent\":\"Technical Market Decision Agent\"",result.Response,StringComparison.Ordinal);
+        Assert.Contains("\"tool\":\"market.structure.analyze\"",result.Response,StringComparison.Ordinal);
         Assert.DoesNotContain("score",result.Decision.ConflictSummary,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TechnicalDecisionAgentUsesInjectedAnalysisTool()
+    {
+        var market=Market(
+            SweepLowReclaimThenConfirm15m(),
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(30));
+        var tool=new CountingMarketStructureTool();
+
+        var result=await new TechnicalDecisionAgent(marketStructure:tool)
+            .DecideAsync(Evidence(market),new AgentContext("WPE Local Brain",false,null,[],0),CancellationToken.None);
+
+        Assert.Equal(DecisionAction.OpenLong,result.Decision.Action);
+        Assert.True(tool.Calls>=2);
     }
 
     [Fact]
@@ -407,6 +464,18 @@ public sealed class MarketStructureIntelligenceTests
             520,
             100m));
         return values;
+    }
+
+    private sealed class CountingMarketStructureTool : IMarketStructureAnalysisTool
+    {
+        public int Calls { get; private set; }
+        public string Name => MarketStructureAnalysisTool.ToolName;
+
+        public MarketStructureRead Analyze(MarketEvidence market)
+        {
+            Calls++;
+            return MarketStructureAnalysisTool.Shared.Analyze(market);
+        }
     }
 
     private static IReadOnlyList<CandleEvidence> Trend(int count,decimal start,decimal step,TimeSpan interval)

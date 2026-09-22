@@ -56,7 +56,7 @@
 | RuntimeSnapshotV1 | `Core/Runtime/RuntimeSnapshotV1.cs`，`Infrastructure/Runtime/RuntimeSnapshotMapper.cs` | `IAgentEventBus`、`AgentRuntimeEvent`、`WorkflowCheckpoint` | `components/runtime-bridge.tsx`、全站 runtime consumer | 统一状态模型，UI 只读快照 |
 | Master Backlog | `Docs/Backlog/`，`Services/Agent/MasterBacklogStore.cs` | `IAgentMemoryStore` | `app/(dashboard)/agents/page.tsx` | 任务、优先级、状态、完成度；不再依赖已退役的策略研究 Agent/策略注册表页面 |
 | 本地 Agent 角色/技能 | `Services/AgentRoleRuntimeRegistry.cs`、`Services/Agent/` | `IAssistantProvider`、`SkillExecutionGuard` | `app/(dashboard)/agents/page.tsx`、`plugins/page.tsx` | 仅暴露真实运行角色：market / decision / risk / execution / recovery / audit |
-| Local-only Decision | `Services/Agent/RuntimeModePolicy.cs`、`Services/Agent/DirectMarketStructureDecisionSkill.cs` | `AssistantProviderFactory`、`DecisionIntelligence` | `app/(dashboard)/settings/page.tsx`、`monitoring/page.tsx` | 自动交易固定 LocalOnly；旧远程配置无执行权 |
+| Local-only Decision | `Services/Agent/RuntimeModePolicy.cs`、`Services/Agent/Agents/TechnicalDecisionAgent.cs`、`Services/Agent/Skills/TechnicalAnalysis/DirectMarketStructureDecisionSkill.cs` | `AssistantProviderFactory`、`DecisionIntelligence` | `app/(dashboard)/settings/page.tsx`、`monitoring/page.tsx` | 自动交易固定 LocalOnly；旧远程配置无执行权 |
 | 动态市场选择器 handoff | `Services/Exchange/MarketSelector.cs`，`Services/Exchange/MarketHandoff.cs` | `IExchangeProvider`、`IMarketDataProvider` | `app/(dashboard)/backtest/page.tsx`、`orders/page.tsx` | 市场选择、切换、handoff |
 | 插件 Phase0 manifest | `.codex-plugin/plugin.json`，`Plugins/`，`Marketplace/` | `IExchangeProviderPlugin` | `app/(dashboard)/plugins/page.tsx` | 插件注册、可见性、权限 |
 | 品牌方案 | `WebUi/public/brand/`，`WebUi/app/globals.css`，`WebUi/components/brand/*` | 无 | 全站 shell、dashboard、settings | Logo、色板、命名、文案 |

@@ -265,7 +265,7 @@ Mainnet 不属于当前 P0/P1/P2 的默认授权结果。未来只有在独立�
 - 权威闭环：`Services/AutoTradingAgent.cs`
 - 风险与执行：`Services/Agent/EvidenceAndExecution.cs`
 - provider 目录与契约：`Services/Exchange/ExchangeProviderCatalog.cs`、`ExchangeContracts.cs`
-- 决策、回测、审计与记忆：`Services/Agent/DirectMarketStructureDecisionSkill.cs`、`Services/Agent/AgentSqliteStore.cs`、`Services/Runtime*StateStore.cs`
+- 决策、回测、审计与记忆：`Services/Agent/Agents/TechnicalDecisionAgent.cs`、`Services/Agent/Skills/TechnicalAnalysis/DirectMarketStructureDecisionSkill.cs`、`Services/Agent/AgentSqliteStore.cs`、`Services/Runtime*StateStore.cs`
 - 通知：`Services/Notifications/`
 - 自动化证据：`WPE.Tests/`
 
