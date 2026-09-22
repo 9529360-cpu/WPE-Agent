@@ -25,6 +25,29 @@ public sealed class PostTradeReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task RiskHistoryIgnoresSmokeOutcomesForDailyLossAndConsecutiveLosses()
+    {
+        var store=new AgentSqliteStore(Database);
+        await store.GetRiskHistoryAsync(default);
+        await using var connection=new SqliteConnection($"Data Source={Database}");
+        await connection.OpenAsync();
+        await using var command=connection.CreateCommand();
+        command.CommandText="""
+            INSERT INTO trade_outcomes(client_order_id,cycle_id,net_pnl,closed_at) VALUES
+            ('real-win','real-cycle-win','2',$now),
+            ('real-loss','real-cycle-loss','-5',$now),
+            ('smoke-cycle-loss','SMOKE-diagnostic','-1',$now),
+            ('WPE-SMOKE-CLOSE-diagnostic','diagnostic-cycle','-1',$now);
+            """;
+        command.Parameters.AddWithValue("$now",DateTime.UtcNow.ToString("O"));
+        await command.ExecuteNonQueryAsync();
+
+        var history=await store.GetRiskHistoryAsync(default);
+        Assert.Equal(-3m,history.DailyRealizedPnl);
+        Assert.Equal(1,history.ConsecutiveLosses);
+    }
+
+    [Fact]
     public async Task ReusedCloseIdentityWithDifferentFactsFailsClosed()
     {
         var store=new AgentSqliteStore(Database);var entry=Intent("entry",false,1m,100m);var close=Intent("close",true,1m,110m);await store.RecordExecutionAsync("open-cycle",entry,Order(entry,"FILLED",1m,100m),"strategy-v1",default);await store.RecordExecutionAsync("close-cycle",close,Order(close,"FILLED",1m,110m),"strategy-v1",default);
