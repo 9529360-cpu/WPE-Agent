@@ -84,7 +84,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         if(!intent.ReduceOnly||intent.OrderType!=ExecutionOrderType.Market)
             throw new InvalidOperationException("Recovery execution requires a reduce-only market intent.");
         EnsureTestnet();
-        EnsureCapability(intent);
+        await EnsureFreshCapabilityAsync(intent,ct);
         var gate=IntentLocks.GetOrAdd(intent.ClientOrderId,_=>new SemaphoreSlim(1,1));
         await gate.WaitAsync(ct);
         try
@@ -241,8 +241,19 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     }
     private async Task EnsureFreshCapabilityAsync(ExecutionIntent intent,CancellationToken ct)
     {
-        if(_capabilityRefresh is null){EnsureCapability(intent);return;}
-        var capability=await _capabilityRefresh(intent.Symbol,ct);var instrument=capability is null?new Instrument(intent.Symbol,intent.Symbol,string.Empty,string.Empty):new Instrument(capability.CanonicalSymbol,capability.NativeSymbol,capability.ExchangeId,capability.ProviderId,capability.MarketType);var result=(_capabilityPrecondition??new ProviderCapabilityPrecondition()).Check(instrument,capability,_testnet);if(!result.Allowed)throw new InvalidOperationException($"Execution.CapabilityBlocked: {result.Reason}");
+        if(_capabilityPrecondition is null||_capabilityResolver is null)return;
+        var (cachedInstrument,cachedCapability)=_capabilityResolver(intent);
+        var cachedResult=_capabilityPrecondition.Check(cachedInstrument,cachedCapability,_testnet);
+        if(cachedResult.Allowed)return;
+        if(_capabilityRefresh is null)
+            throw new InvalidOperationException($"Execution.CapabilityBlocked: {cachedResult.Reason}");
+        var capability=await _capabilityRefresh(intent.Symbol,ct);
+        var instrument=capability is null
+            ?new Instrument(intent.Symbol,intent.Symbol,string.Empty,string.Empty)
+            :new Instrument(capability.CanonicalSymbol,capability.NativeSymbol,capability.ExchangeId,capability.ProviderId,capability.MarketType);
+        var result=_capabilityPrecondition.Check(instrument,capability,_testnet);
+        if(!result.Allowed)
+            throw new InvalidOperationException($"Execution.CapabilityBlocked: {result.Reason}");
     }
 
     public async Task<string> ReplaceProtectionAsync(string cycle,ProtectionAdjustment adjustment,CancellationToken ct)

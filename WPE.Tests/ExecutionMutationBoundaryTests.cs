@@ -51,6 +51,55 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
     }
 
     [Fact]
+    public async Task ReduceOnlyRecovery_ExpiredCachedCapabilityRefreshesBeforeProviderMutation()
+    {
+        var exchange=new RecordingExchange();
+        var refreshCalls=0;
+        var stale=DateTimeOffset.UtcNow-ProviderCapabilityPrecondition.MaximumAge-TimeSpan.FromSeconds(1);
+        var executor=CreateExecutor(
+            exchange,out _,CapabilityStatus.Available,stale,
+            capabilityRefresh:(symbol,ct)=>
+            {
+                refreshCalls++;
+                return Task.FromResult<ExchangeCapability?>(new(
+                    "binance","binance-futures",symbol,symbol,MarketType.Perpetual,
+                    CapabilityStatus.Available,true,true,true,DateTimeOffset.UtcNow));
+            });
+
+        var result=await executor.ExecuteReduceOnlyRecoveryAsync(
+            "cycle",RecoveryIntent(),CancellationToken.None);
+
+        Assert.Equal(1,refreshCalls);
+        Assert.Equal(1,exchange.MarketOrderSubmissions);
+        Assert.True(exchange.LastReduceOnly);
+        Assert.NotEmpty(result);
+    }
+
+    [Fact]
+    public async Task ReduceOnlyRecovery_UnavailableRefreshRejectsBeforeProviderMutation()
+    {
+        var exchange=new RecordingExchange();
+        var refreshCalls=0;
+        var stale=DateTimeOffset.UtcNow-ProviderCapabilityPrecondition.MaximumAge-TimeSpan.FromSeconds(1);
+        var executor=CreateExecutor(
+            exchange,out _,CapabilityStatus.Available,stale,
+            capabilityRefresh:(symbol,ct)=>
+            {
+                refreshCalls++;
+                return Task.FromResult<ExchangeCapability?>(new(
+                    "binance","binance-futures",symbol,symbol,MarketType.Perpetual,
+                    CapabilityStatus.Error,true,false,true,DateTimeOffset.UtcNow,"probe failed"));
+            });
+
+        var error=await Assert.ThrowsAsync<InvalidOperationException>(()=>
+            executor.ExecuteReduceOnlyRecoveryAsync("cycle",RecoveryIntent(),CancellationToken.None));
+
+        Assert.Equal(1,refreshCalls);
+        Assert.Contains("CapabilityBlocked",error.Message,StringComparison.Ordinal);
+        Assert.Equal(0,exchange.MutationCount);
+    }
+
+    [Fact]
     public async Task ReplaceProtection_ExpiredAvailableCapabilityRejectsBeforeProviderMutation()
     {
         var exchange = new RecordingExchange();
@@ -594,14 +643,17 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         if(Directory.Exists(_directory))Directory.Delete(_directory,true);
     }
 
-    private ReliableOrderExecutor CreateExecutor(RecordingExchange exchange,out AgentSqliteStore store,CapabilityStatus status=CapabilityStatus.Unsupported,DateTimeOffset? checkedAt=null)
+    private ReliableOrderExecutor CreateExecutor(
+        RecordingExchange exchange,out AgentSqliteStore store,CapabilityStatus status=CapabilityStatus.Unsupported,
+        DateTimeOffset? checkedAt=null,Func<string,CancellationToken,Task<ExchangeCapability?>>? capabilityRefresh=null)
     {
         Directory.CreateDirectory(_directory);
         store = new AgentSqliteStore(Path.Combine(_directory,Guid.NewGuid().ToString("N")+".db"));
         var capability = new ExchangeCapability("binance","binance-futures","SOLUSDT","SOLUSDT",MarketType.Perpetual,
             status,true,status==CapabilityStatus.Available,true,checkedAt??DateTimeOffset.UtcNow,"unavailable in test");
         return new ReliableOrderExecutor(exchange,store,new RiskLimits(),SystemOrderPollScheduler.Instance,
-            new Dictionary<string,ExchangeCapability>(StringComparer.OrdinalIgnoreCase){{"SOLUSDT",capability}},true);
+            new Dictionary<string,ExchangeCapability>(StringComparer.OrdinalIgnoreCase){{"SOLUSDT",capability}},true,
+            capabilityRefresh:capabilityRefresh);
     }
 
     private TradingExecutionGateway CreateGateway(ITradingMutationExecutor executor,out AgentSqliteStore store,out TestRecoveryAuthority authority)
