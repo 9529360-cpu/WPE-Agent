@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using WpeAgent.RuntimeContracts;
@@ -136,6 +137,26 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
         var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath)).Read();
         var snapshot=RuntimeSnapshotFactory.Create(new SystemState{LastUpdated=DateTime.UtcNow},DateTime.UtcNow,agentOperationsState:state);
         Assert.DoesNotContain(secret,JsonSerializer.Serialize(snapshot),StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AutoTradingLoopPublishesOnlySupportedRuntimeRoles()
+    {
+        var source=ReadAutoTradingAgentSource();
+        var matches=System.Text.RegularExpressions.Regex.Matches(source,"roles\\.Publish\\(\"([^\"]+)\"");
+        var published=matches.Select(match=>match.Groups[1].Value).ToArray();
+        var allowed=new HashSet<string>(["market","decision","risk","execution","recovery","audit"],StringComparer.OrdinalIgnoreCase);
+
+        Assert.NotEmpty(published);
+        Assert.All(published,role=>Assert.Contains(role,allowed));
+        Assert.DoesNotContain(published,role=>string.Equals(role,"research",StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(published,role=>string.Equals(role,"strategy",StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string ReadAutoTradingAgentSource([CallerFilePath] string sourceFile="")
+    {
+        var root=Path.GetFullPath(Path.Combine(Path.GetDirectoryName(sourceFile)!,".."));
+        return File.ReadAllText(Path.Combine(root,"Services","AutoTradingAgent.cs"));
     }
 
     public void Dispose(){try{Directory.Delete(directory,true);}catch{}}

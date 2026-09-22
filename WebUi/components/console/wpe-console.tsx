@@ -31,7 +31,7 @@ const PAGE_META: Record<PageId, { title: string; description: string; glyph: str
   agents: { title: '智能体团队', description: '核心角色、协作链路与交接记录', glyph: '协' },
   teacher: { title: '金融导师', description: '市场讲解、研究候选、纪律提醒与结果复盘', glyph: '师' },
   trading: { title: '交易', description: '持仓、订单、待审核事项与历史记录', glyph: '交' },
-  research: { title: '策略与研究', description: '策略注册表、生命周期、回测与研究证据', glyph: '策' },
+  research: { title: '策略与研究', description: '市场分析、回测与只读研究证据', glyph: '策' },
   risk: { title: '风险', description: '风险准备、熔断、暴露与授权状态', glyph: '风' },
   monitoring: { title: '监控', description: '运行时、连接、通知、AI 使用和审计', glyph: '监' },
   settings: { title: '设置', description: '安全存储状态与宿主设置入口', glyph: '设' },

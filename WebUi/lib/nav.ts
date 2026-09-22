@@ -26,7 +26,7 @@ export const navGroups:NavGroup[]=[
   {labelKey:'nav.orders',href:'/orders',icon:Receipt,shortcut:'O'},
   {labelKey:'dashboard.portfolio',href:'/positions',icon:WalletCards},
  ]},
- {titleKey:'nav.strategyGroup',items:[
+ {titleKey:'nav.analysisRiskGroup',items:[
   {labelKey:'nav.backtest',href:'/backtest',icon:FlaskConical},
   {labelKey:'nav.risk',href:'/risk',icon:ShieldAlert,shortcut:'R'},
  ]},
