@@ -40,6 +40,17 @@ public sealed class RemoteBrainUsagePolicyTests
         Assert.DoesNotContain("BrainPromptComposer",source,StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void SkillCatalogDoesNotAdvertiseRemoteTradingBrain()
+    {
+        var source=File.ReadAllText(SourcePath("Services","Agent","DecisionIntelligence.cs"));
+
+        Assert.DoesNotContain("OptionalRemoteBrain",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("network:brain",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("ExperienceReplay",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("strategy performance",source,StringComparison.Ordinal);
+    }
+
     private static string SourcePath(params string[] path)
     {
         var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));

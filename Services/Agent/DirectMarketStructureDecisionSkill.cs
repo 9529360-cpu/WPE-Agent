@@ -3,7 +3,7 @@
 public static class DirectMarketStructureDecisionSkill
 {
     public const string DecisionContextKind = "market-structure-direct";
-    public const string Version = "market-structure-direct-v1";
+    public const string Version = "market-structure-direct-v2";
 
     public static DecisionPlan Decide(EvidencePack evidence, bool circuitBreakerActive)
     {
@@ -20,15 +20,32 @@ public static class DirectMarketStructureDecisionSkill
         if(circuitBreakerActive)
             return Hold(markets.FirstOrDefault(),"hard risk circuit breaker is active");
 
+        var holdReason="No confirmed direct candle-structure setup is actionable.";
         foreach(var market in markets)
         {
             if(openSymbols.Contains(market.Symbol))continue;
             var structure=MarketStructureIntelligence.Analyze(market);
-            if(!structure.Available||structure.Scenario==MarketStructureScenario.None||!structure.TriggerPresent)continue;
+            if(!structure.Available)continue;
+            if(structure.Scenario==MarketStructureScenario.None)continue;
+            if(!structure.TriggerPresent)
+            {
+                holdReason=$"{market.Symbol}: direct structure scenario is present but the entry trigger is still waiting.";
+                continue;
+            }
+            if(!structure.ConfirmationPresent)
+            {
+                holdReason=$"{market.Symbol}: direct structure trigger is present but confirmation is still waiting.";
+                continue;
+            }
 
             var longSide=IsLong(structure.Scenario);
             var shortSide=IsShort(structure.Scenario);
             if(!longSide&&!shortSide)continue;
+            if(!EntryStillActionable(market,structure,longSide,shortSide))
+            {
+                holdReason=$"{market.Symbol}: confirmed structure exists but the live price has moved beyond the bounded entry zone.";
+                continue;
+            }
 
             var entry=market.Price;
             var buffer=Math.Max(structure.FifteenMinute.Atr*.15m,entry*.0005m);
@@ -55,7 +72,7 @@ public static class DirectMarketStructureDecisionSkill
                 Invalidation=longSide
                     ?$"Exit if local structure breaks below {stop:F2} or higher-timeframe bias turns bearish."
                     :$"Exit if local structure breaks above {stop:F2} or higher-timeframe bias turns bullish.",
-                EvidenceReferences=structure.Evidence.Append("decision_path=direct-market-structure").ToList(),
+                EvidenceReferences=structure.Evidence.Append("decision_path=direct-market-structure").Append("entry_qualification=trigger-plus-confirmation").Append("live_entry_guard=bounded-chase").ToList(),
                 MissingConditions=[],
                 ConflictSummary=$"direct-structure; scenario={structure.Scenario}; event={structure.FifteenMinute.Event}; confirmation={structure.ConfirmationPresent}",
                 StrategyVersion=Version,
@@ -65,7 +82,7 @@ public static class DirectMarketStructureDecisionSkill
             };
         }
 
-        return Hold(markets.FirstOrDefault(),"No direct candle-structure trigger is present.");
+        return Hold(markets.FirstOrDefault(),holdReason);
     }
 
     public static bool IsDirect(DecisionPlan? decision)=>
@@ -75,9 +92,12 @@ public static class DirectMarketStructureDecisionSkill
     {
         if(!IsDirect(decision)||!string.Equals(decision.Instrument,market.Symbol,StringComparison.OrdinalIgnoreCase))return false;
         var structure=MarketStructureIntelligence.Analyze(market);
-        if(!structure.Available||structure.Scenario==MarketStructureScenario.None||!structure.TriggerPresent)return false;
-        var expectedAction=IsLong(structure.Scenario)?DecisionAction.OpenLong:IsShort(structure.Scenario)?DecisionAction.OpenShort:DecisionAction.Hold;
-        return expectedAction==decision.Action
+        if(!structure.Available||structure.Scenario==MarketStructureScenario.None||!structure.TriggerPresent||!structure.ConfirmationPresent)return false;
+        var longSide=IsLong(structure.Scenario);
+        var shortSide=IsShort(structure.Scenario);
+        var expectedAction=longSide?DecisionAction.OpenLong:shortSide?DecisionAction.OpenShort:DecisionAction.Hold;
+        return EntryStillActionable(market,structure,longSide,shortSide)
+            &&expectedAction==decision.Action
             &&string.Equals(ContextId(market,structure),decision.DecisionContextId,StringComparison.Ordinal)
             &&string.Equals(decision.StrategyVersion,Version,StringComparison.Ordinal);
     }
@@ -98,6 +118,17 @@ public static class DirectMarketStructureDecisionSkill
         var candle=ConfirmedMarketCandlesV1.Select(market.Candles,"15m",market.CollectedAt).LastOrDefault();
         var at=candle?.OpenTime.ToUniversalTime()??market.CollectedAt.ToUniversalTime();
         return $"DIRECT-{market.Symbol}-{at:yyyyMMddHHmm}-{structure.Scenario}-{structure.FifteenMinute.Event}";
+    }
+
+    private static bool EntryStillActionable(MarketEvidence market,MarketStructureRead structure,bool longSide,bool shortSide)
+    {
+        if(market.Price<=0||(!longSide&&!shortSide))return false;
+        var confirmationClose=structure.FifteenMinute.LastClose;
+        if(confirmationClose<=0)return false;
+        var chaseTolerance=Math.Max(structure.FifteenMinute.Atr*.75m,confirmationClose*.0015m);
+        if(longSide)
+            return market.Price>structure.StructuralSupport&&market.Price<=confirmationClose+chaseTolerance;
+        return market.Price<structure.StructuralResistance&&market.Price>=confirmationClose-chaseTolerance;
     }
 
     private static bool IsLong(MarketStructureScenario scenario)=>scenario is

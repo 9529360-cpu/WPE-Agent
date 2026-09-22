@@ -58,7 +58,6 @@ public sealed class AgentSkillRegistry
         new("MarketRegime","Reason","multi-timeframe evidence","MarketRegime","local:compute",3,0,true,"known regime result"),
         new("PortfolioRisk","Risk","positions, intents and returns","PortfolioRiskAssessment","read:account,local:compute",6,0,true,"VaR, CVaR, concentration and correlation"),
         new("BrainPlanner","Plan","audited evidence","DecisionPlan","local:compute",3,0,true,"deterministic local plan and schema-valid response"),
-        new("OptionalRemoteBrain","Assist","audited evidence","advisory DecisionPlan","network:brain",30,2,false,"optional remote provider; never required for execution"),
         new("DeterministicPlan","Plan","candidate and market","protected DecisionPlan","local:compute",3,0,true,"entry/stop/take/RR valid"),
         new("DecisionCritic","Critic","candidate and counter-evidence","DecisionReview","local:compute",3,0,true,"blocking reasons available"),
         new("DecisionReviewer","Review","candidate and assessments","approval verdict","local:compute",3,0,true,"verdict deterministic"),
@@ -69,7 +68,6 @@ public sealed class AgentSkillRegistry
         new("ProtectionRecovery","Recover","positions, orders, intents","RecoveryResult","testnet:trade,write:state",20,1,true,"every position protected"),
         new("ProtectionAudit","Recover","positions, orders and persisted intents","RecoveryResult","testnet:trade,write:state",20,1,true,"position protection reconciled"),
         new("DecisionMemory","Memory","decision audit","compressed memory","write:local-db",5,1,false,"database writable"),
-        new("ExperienceReplay","Reflect","trade outcomes","strategy performance","read:local-db",8,0,false,"bounded sample window"),
         new("RuntimeMonitor","Monitor","skill and error events","health status","read:telemetry",3,0,false,"recent heartbeat"),
         new("EmergencyClose","Safety","all open positions","flat account confirmation","testnet:trade",90,1,true,"no residual position")
     ];

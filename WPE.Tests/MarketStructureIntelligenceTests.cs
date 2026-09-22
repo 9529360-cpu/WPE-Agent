@@ -54,7 +54,96 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Equal(MarketStructureEvent.LiquiditySweepLowReclaim,structure.FifteenMinute.Event);
         Assert.Equal(MarketStructurePhase.BullishReversalAttempt,structure.Phase);
         Assert.True(structure.TriggerPresent);
+        Assert.False(structure.ConfirmationPresent);
         Assert.Equal(MarketStructureScenario.TrendPullbackLong,structure.Scenario);
+        Assert.Contains("structure_entry_ready=waiting",structure.Evidence);
+        var decision=DirectMarketStructureDecisionSkill.Decide(Evidence(market),false);
+        Assert.Equal(DecisionAction.Hold,decision.Action);
+        Assert.Contains("confirmation is still waiting",decision.Reason,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SweepFollowThroughCreatesConfirmedEntry()
+    {
+        var market=Market(
+            SweepLowReclaimThenConfirm15m(),
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(30));
+
+        var structure=MarketStructureIntelligence.Analyze(market);
+
+        Assert.Equal(MarketStructureEvent.BullishConfirmation,structure.FifteenMinute.Event);
+        Assert.Equal(MarketStructureScenario.TrendPullbackLong,structure.Scenario);
+        Assert.True(structure.TriggerPresent);
+        Assert.True(structure.ConfirmationPresent);
+        Assert.Contains("structure_entry_ready=ready",structure.Evidence);
+    }
+
+    [Fact]
+    public void RejectionNearDemandNeedsAndAcceptsFollowThroughConfirmation()
+    {
+        var rejectionOnly=Market(
+            RejectionNearDemand15m(),
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(15));
+        var candidate=MarketStructureIntelligence.Analyze(rejectionOnly);
+
+        Assert.Equal(MarketStructureEvent.BullishRejection,candidate.FifteenMinute.Event);
+        Assert.True(candidate.TriggerPresent);
+        Assert.False(candidate.ConfirmationPresent);
+        Assert.Equal(DecisionAction.Hold,DirectMarketStructureDecisionSkill.Decide(Evidence(rejectionOnly),false).Action);
+
+        var confirmed=Market(
+            RejectionNearDemandThenConfirm15m(),
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(30));
+        var structure=MarketStructureIntelligence.Analyze(confirmed);
+        var decision=DirectMarketStructureDecisionSkill.Decide(Evidence(confirmed),false);
+
+        Assert.Equal(MarketStructureEvent.BullishConfirmation,structure.FifteenMinute.Event);
+        Assert.True(structure.ConfirmationPresent);
+        Assert.Equal(DecisionAction.OpenLong,decision.Action);
+    }
+
+    [Fact]
+    public void ConfirmedSetupDoesNotChaseLivePriceBeyondAtrBound()
+    {
+        var market=Market(
+            SweepLowReclaimThenConfirm15m(),
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(30));
+        var structure=MarketStructureIntelligence.Analyze(market);
+        var chased=market with{Price=structure.FifteenMinute.LastClose+Math.Max(structure.FifteenMinute.Atr*2m,structure.FifteenMinute.LastClose*.01m)};
+
+        var decision=DirectMarketStructureDecisionSkill.Decide(Evidence(chased),false);
+
+        Assert.Equal(DecisionAction.Hold,decision.Action);
+        Assert.Contains("moved beyond the bounded entry zone",decision.Reason,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BearishSweepFollowThroughCreatesConfirmedShortEntry()
+    {
+        var market=Market(
+            SweepHighRejectThenConfirm15m(),
+            Trend(48,110m,-.55m,TimeSpan.FromHours(1)),
+            Trend(48,130m,-1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(30));
+
+        var structure=MarketStructureIntelligence.Analyze(market);
+        var decision=DirectMarketStructureDecisionSkill.Decide(Evidence(market),false);
+
+        Assert.Equal(MarketStructureEvent.BearishConfirmation,structure.FifteenMinute.Event);
+        Assert.Equal(MarketStructureScenario.TrendPullbackShort,structure.Scenario);
+        Assert.True(structure.TriggerPresent);
+        Assert.True(structure.ConfirmationPresent);
+        Assert.Equal(DecisionAction.OpenShort,decision.Action);
+        Assert.True(decision.StopLossPrice>market.Price);
+        Assert.True(DirectMarketStructureDecisionSkill.ContextMatches(decision,market));
     }
 
     [Fact]
@@ -88,10 +177,10 @@ public sealed class MarketStructureIntelligenceTests
     public async Task LocalBrainTradesDirectlyFromFreshCandleStructure()
     {
         var market=Market(
-            SweepLowReclaimNext15m(),
+            SweepLowReclaimThenConfirm15m(),
             Trend(48,90m,.55m,TimeSpan.FromHours(1)),
             Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
-            Now.AddMinutes(15));
+            Now.AddMinutes(30));
         var context=new AgentContext("WPE Local Brain",false,null,[],0);
 
         var result=await new DeterministicBrainProvider().DecideAsync(Evidence(market),context,CancellationToken.None);
@@ -103,6 +192,7 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Equal(0,result.Decision.TakeProfitPrice);
         Assert.True(DirectMarketStructureDecisionSkill.ContextMatches(result.Decision,market));
         Assert.Contains("decision_path=direct-market-structure",result.Decision.EvidenceReferences);
+        Assert.Contains("entry_qualification=trigger-plus-confirmation",result.Decision.EvidenceReferences);
         Assert.DoesNotContain("score",result.Decision.ConflictSummary,StringComparison.OrdinalIgnoreCase);
     }
 
@@ -110,10 +200,10 @@ public sealed class MarketStructureIntelligenceTests
     public void DirectReviewerNeedsNoScoreOrResearchGate()
     {
         var market=Market(
-            SweepLowReclaimNext15m(),
+            SweepLowReclaimThenConfirm15m(),
             Trend(48,90m,.55m,TimeSpan.FromHours(1)),
             Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
-            Now.AddMinutes(15));
+            Now.AddMinutes(30));
         var evidence=Evidence(market);
         var decision=DirectMarketStructureDecisionSkill.Decide(evidence,false);
 
@@ -129,10 +219,10 @@ public sealed class MarketStructureIntelligenceTests
     public async Task HardCircuitBreakerStillOverridesDirectTrade()
     {
         var market=Market(
-            SweepLowReclaimNext15m(),
+            SweepLowReclaimThenConfirm15m(),
             Trend(48,90m,.55m,TimeSpan.FromHours(1)),
             Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
-            Now.AddMinutes(15));
+            Now.AddMinutes(30));
         var context=new AgentContext("WPE Local Brain",true,null,[],0);
 
         var result=await new DeterministicBrainProvider().DecideAsync(Evidence(market),context,CancellationToken.None);
@@ -226,6 +316,96 @@ public sealed class MarketStructureIntelligenceTests
             30_000m,
             450,
             210m));
+        return values;
+    }
+
+    private static IReadOnlyList<CandleEvidence> SweepLowReclaimThenConfirm15m()
+    {
+        var values=SweepLowReclaimNext15m().ToList();
+        var sweep=values[^1];
+        var open=sweep.Close+.10m;
+        var close=sweep.High+1.20m;
+        values.Add(new(
+            Now.AddMinutes(15).UtcDateTime,
+            open,
+            close+.25m,
+            open-.20m,
+            close,
+            420m,
+            42_000m,
+            520,
+            320m));
+        return values;
+    }
+
+    private static IReadOnlyList<CandleEvidence> RejectionNearDemand15m()
+    {
+        var values=Pullback15m().ToList();
+        var referenceLow=values.TakeLast(20).SkipLast(1).Min(x=>x.Low);
+        var open=referenceLow+.32m;
+        var close=referenceLow+.47m;
+        values.Add(new(
+            Now.UtcDateTime,
+            open,
+            close+.07m,
+            referenceLow-.06m,
+            close,
+            190m,
+            19_000m,
+            310,
+            150m));
+        return values;
+    }
+
+    private static IReadOnlyList<CandleEvidence> RejectionNearDemandThenConfirm15m()
+    {
+        var values=RejectionNearDemand15m().ToList();
+        var rejection=values[^1];
+        var open=rejection.Close+.05m;
+        var close=rejection.High+.75m;
+        values.Add(new(
+            Now.AddMinutes(15).UtcDateTime,
+            open,
+            close+.15m,
+            open-.10m,
+            close,
+            300m,
+            30_000m,
+            420,
+            250m));
+        return values;
+    }
+
+    private static IReadOnlyList<CandleEvidence> SweepHighRejectThenConfirm15m()
+    {
+        var values=Trend(40,88m,.28m,TimeSpan.FromMinutes(15)).ToList();
+        var previous=values[^1];
+        var referenceHigh=values.TakeLast(20).Max(x=>x.High);
+        var open=previous.Close-.05m;
+        var close=referenceHigh-.75m;
+        values.Add(new(
+            Now.UtcDateTime,
+            open,
+            referenceHigh+1.40m,
+            Math.Min(open,close)-.35m,
+            close,
+            300m,
+            30_000m,
+            450,
+            90m));
+        var sweep=values[^1];
+        open=sweep.Close-.10m;
+        close=sweep.Low-1.20m;
+        values.Add(new(
+            Now.AddMinutes(15).UtcDateTime,
+            open,
+            open+.20m,
+            close-.25m,
+            close,
+            420m,
+            42_000m,
+            520,
+            100m));
         return values;
     }
 

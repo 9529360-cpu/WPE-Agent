@@ -20,6 +20,8 @@ public enum MarketStructureEvent
     LiquiditySweepHighReject,
     BullishRejection,
     BearishRejection,
+    BullishConfirmation,
+    BearishConfirmation,
     BullishDisplacement,
     BearishDisplacement,
     Compression
@@ -90,7 +92,7 @@ public sealed record MarketStructureRead(
     string Narrative,
     IReadOnlyList<string> Evidence)
 {
-    public const string DecisionBasis = "candles-structure-v2";
+    public const string DecisionBasis = "candles-structure-v3";
 }
 
 public static class MarketStructureIntelligence
@@ -133,7 +135,8 @@ public static class MarketStructureIntelligence
             $"15m_volume={(m15.VolumeExpansion ? "expanding" : "normal")}",
             $"15m_range={(m15.Compression ? "compression" : m15.RangeExpansion ? "expansion" : "normal")}",
             $"structure_trigger={(trigger ? "present" : "waiting")}",
-            $"structure_confirmation={(confirmation ? "present" : "waiting")}"
+            $"structure_confirmation={(confirmation ? "present" : "waiting")}",
+            $"structure_entry_ready={(trigger && confirmation ? "ready" : "waiting")}"
         };
 
         return new(true, bias, phase, scenario, trigger, confirmation,
@@ -234,15 +237,46 @@ public static class MarketStructureIntelligence
         var retestDown = brokeDownRecently && last.High >= referenceLow - buffer && last.Close <= referenceLow && last.Close < last.Open;
         var sweepLow = last.Low < referenceLow - buffer && last.Close > referenceLow + buffer;
         var sweepHigh = last.High > referenceHigh + buffer && last.Close < referenceHigh - buffer;
+        var priorCandles = candles.Take(Math.Max(0,candles.Count-1)).ToArray();
+        var priorAtr = Atr(priorCandles);
+        var priorBuffer = Math.Max(priorAtr * .12m, previous.Close * .0003m);
+        var priorHighs = Pivots(priorCandles, high: true);
+        var priorLows = Pivots(priorCandles, high: false);
+        var priorReferenceHigh = priorHighs.LastOrDefault(x => x.Index <= priorCandles.Length - 3)?.Price ?? priorCandles.TakeLast(20).SkipLast(1).Max(x => x.High);
+        var priorReferenceLow = priorLows.LastOrDefault(x => x.Index <= priorCandles.Length - 3)?.Price ?? priorCandles.TakeLast(20).SkipLast(1).Min(x => x.Low);
+        var previousSweepLow = previous.Low < priorReferenceLow - priorBuffer && previous.Close > priorReferenceLow + priorBuffer;
+        var previousSweepHigh = previous.High > priorReferenceHigh + priorBuffer && previous.Close < priorReferenceHigh - priorBuffer;
+        var previousBody = Math.Abs(previous.Close - previous.Open);
+        var previousRange = Math.Max(.00000001m, previous.High - previous.Low);
+        var previousLowerWick = Math.Min(previous.Open, previous.Close) - previous.Low;
+        var previousUpperWick = previous.High - Math.Max(previous.Open, previous.Close);
+        var priorZoneTolerance = Math.Max(previous.Close * .0035m, priorAtr * 1.5m);
+        var previousBullishRejection = previous.Close > previous.Open &&
+                                       previousLowerWick >= Math.Max(previousBody * 1.25m, previousRange * .35m) &&
+                                       Math.Abs(previous.Low - priorReferenceLow) <= priorZoneTolerance;
+        var previousBearishRejection = previous.Close < previous.Open &&
+                                       previousUpperWick >= Math.Max(previousBody * 1.25m, previousRange * .35m) &&
+                                       Math.Abs(previous.High - priorReferenceHigh) <= priorZoneTolerance;
 
         var body = Math.Abs(last.Close - last.Open);
         var range = Math.Max(.00000001m, last.High - last.Low);
+        var bodyRatio = body / range;
         var lowerWick = Math.Min(last.Open, last.Close) - last.Low;
         var upperWick = last.High - Math.Max(last.Open, last.Close);
         var bullishReject = last.Close > last.Open && lowerWick >= Math.Max(body * 1.25m, range * .35m);
         var bearishReject = last.Close < last.Open && upperWick >= Math.Max(body * 1.25m, range * .35m);
-        var displacementBody = body / range >= .68m;
+        var displacementBody = bodyRatio >= .68m;
+        var bullishConfirmation = (previousSweepLow || previousBullishRejection) &&
+                                  last.Close > previous.High + buffer * .15m &&
+                                  last.Close > last.Open &&
+                                  bodyRatio >= .50m;
+        var bearishConfirmation = (previousSweepHigh || previousBearishRejection) &&
+                                  last.Close < previous.Low - buffer * .15m &&
+                                  last.Close < last.Open &&
+                                  bodyRatio >= .50m;
 
+        if (bullishConfirmation) return MarketStructureEvent.BullishConfirmation;
+        if (bearishConfirmation) return MarketStructureEvent.BearishConfirmation;
         if (sweepLow) return MarketStructureEvent.LiquiditySweepLowReclaim;
         if (sweepHigh) return MarketStructureEvent.LiquiditySweepHighReject;
         if (retestUp) return MarketStructureEvent.BullishRetest;
@@ -267,6 +301,10 @@ public static class MarketStructureIntelligence
             return MarketStructurePhase.BullishReversalAttempt;
         if (m15.Event is MarketStructureEvent.LiquiditySweepHighReject or MarketStructureEvent.BearishRejection)
             return MarketStructurePhase.BearishReversalAttempt;
+        if (m15.Event == MarketStructureEvent.BullishConfirmation)
+            return MarketStructurePhase.BullishImpulse;
+        if (m15.Event == MarketStructureEvent.BearishConfirmation)
+            return MarketStructurePhase.BearishImpulse;
 
         if (bias == MarketStructureBias.Bullish)
         {
@@ -308,6 +346,10 @@ public static class MarketStructureIntelligence
     {
         if (bias == MarketStructureBias.Range)
         {
+            if (m15.Event == MarketStructureEvent.BullishConfirmation)
+                return MarketStructureScenario.RangeReversionLong;
+            if (m15.Event == MarketStructureEvent.BearishConfirmation)
+                return MarketStructureScenario.RangeReversionShort;
             if (phase == MarketStructurePhase.BullishReversalAttempt &&
                 (nearDemand || m15.Event == MarketStructureEvent.LiquiditySweepLowReclaim))
                 return MarketStructureScenario.RangeReversionLong;
@@ -318,6 +360,8 @@ public static class MarketStructureIntelligence
 
         if (bias == MarketStructureBias.Bullish)
         {
+            if (m15.Event == MarketStructureEvent.BullishConfirmation)
+                return MarketStructureScenario.TrendPullbackLong;
             if (m15.Event is MarketStructureEvent.BullishBreak or MarketStructureEvent.BullishRetest)
                 return MarketStructureScenario.BreakoutRetestLong;
             if (phase == MarketStructurePhase.BullishReversalAttempt &&
@@ -329,6 +373,8 @@ public static class MarketStructureIntelligence
 
         if (bias == MarketStructureBias.Bearish)
         {
+            if (m15.Event == MarketStructureEvent.BearishConfirmation)
+                return MarketStructureScenario.TrendPullbackShort;
             if (m15.Event is MarketStructureEvent.BearishBreak or MarketStructureEvent.BearishRetest)
                 return MarketStructureScenario.BreakoutRetestShort;
             if (phase == MarketStructurePhase.BearishReversalAttempt &&
@@ -344,13 +390,13 @@ public static class MarketStructureIntelligence
     private static bool HasTrigger(MarketStructureScenario scenario, TimeframeStructureRead m15) => scenario switch
     {
         MarketStructureScenario.TrendPullbackLong =>
-            m15.Event is MarketStructureEvent.LiquiditySweepLowReclaim or MarketStructureEvent.BullishRejection or MarketStructureEvent.BullishRetest or MarketStructureEvent.BullishDisplacement,
+            m15.Event is MarketStructureEvent.LiquiditySweepLowReclaim or MarketStructureEvent.BullishRejection or MarketStructureEvent.BullishConfirmation or MarketStructureEvent.BullishRetest or MarketStructureEvent.BullishDisplacement,
         MarketStructureScenario.TrendPullbackShort =>
-            m15.Event is MarketStructureEvent.LiquiditySweepHighReject or MarketStructureEvent.BearishRejection or MarketStructureEvent.BearishRetest or MarketStructureEvent.BearishDisplacement,
+            m15.Event is MarketStructureEvent.LiquiditySweepHighReject or MarketStructureEvent.BearishRejection or MarketStructureEvent.BearishConfirmation or MarketStructureEvent.BearishRetest or MarketStructureEvent.BearishDisplacement,
         MarketStructureScenario.RangeReversionLong =>
-            m15.Event is MarketStructureEvent.LiquiditySweepLowReclaim or MarketStructureEvent.BullishRejection,
+            m15.Event is MarketStructureEvent.LiquiditySweepLowReclaim or MarketStructureEvent.BullishRejection or MarketStructureEvent.BullishConfirmation,
         MarketStructureScenario.RangeReversionShort =>
-            m15.Event is MarketStructureEvent.LiquiditySweepHighReject or MarketStructureEvent.BearishRejection,
+            m15.Event is MarketStructureEvent.LiquiditySweepHighReject or MarketStructureEvent.BearishRejection or MarketStructureEvent.BearishConfirmation,
         MarketStructureScenario.BreakoutRetestLong =>
             m15.Event == MarketStructureEvent.BullishRetest || (m15.Event == MarketStructureEvent.BullishBreak && m15.VolumeExpansion),
         MarketStructureScenario.BreakoutRetestShort =>
@@ -363,10 +409,10 @@ public static class MarketStructureIntelligence
         var longSide = scenario is MarketStructureScenario.TrendPullbackLong or MarketStructureScenario.RangeReversionLong or MarketStructureScenario.BreakoutRetestLong;
         var shortSide = scenario is MarketStructureScenario.TrendPullbackShort or MarketStructureScenario.RangeReversionShort or MarketStructureScenario.BreakoutRetestShort;
         if (longSide)
-            return m15.Event is MarketStructureEvent.BullishBreak or MarketStructureEvent.BullishRetest or MarketStructureEvent.BullishDisplacement ||
+            return m15.Event is MarketStructureEvent.BullishConfirmation or MarketStructureEvent.BullishBreak or MarketStructureEvent.BullishRetest or MarketStructureEvent.BullishDisplacement ||
                    (m15.State == PriceStructureState.Bullish && m15.LastClose > m15.PreviousSwingHigh);
         if (shortSide)
-            return m15.Event is MarketStructureEvent.BearishBreak or MarketStructureEvent.BearishRetest or MarketStructureEvent.BearishDisplacement ||
+            return m15.Event is MarketStructureEvent.BearishConfirmation or MarketStructureEvent.BearishBreak or MarketStructureEvent.BearishRetest or MarketStructureEvent.BearishDisplacement ||
                    (m15.State == PriceStructureState.Bearish && m15.LastClose < m15.PreviousSwingLow);
         return false;
     }
