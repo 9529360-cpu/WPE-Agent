@@ -13,8 +13,6 @@ export type WpeRuntimeState = {
   previewMode?: boolean
   aiRuntimeMode?: string
   aiRuntimeEffectiveMode?: string
-  brainRemoteAllowed?: boolean
-  brainFallbackReason?: string
   activeBrainProvider?: string
   activeBrainModel?: string
   btcPrice?: number

@@ -31,11 +31,11 @@ public static class RuntimeModePolicy
             reason);
     }
 
-    public static BrainSlot? GetActiveBrain(AgentSettings settings)
+    public static BrainSlot GetActiveBrain(AgentSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        return settings.Brains.TryGetValue(settings.ActiveBrain,out var slot)
+        return settings.Brains.TryGetValue("WPE Local Brain",out var slot)
             ?slot
-            :settings.Brains.Values.FirstOrDefault();
+            :new BrainSlot();
     }
 }

@@ -224,7 +224,6 @@ public static class RuntimeSnapshotFactory
                 ["runtimeEventSequence"] = state.RuntimeEventSequence, ["runtimeHeartbeatAtUtc"] = state.RuntimeHeartbeatAtUtc,
                 ["exchangeConnected"] = state.ExchangeConnected, ["brainConnected"] = state.BrainConnected,
                 ["aiRuntimeMode"] = state.BrainMode.ToString(), ["aiRuntimeEffectiveMode"] = state.BrainEffectiveMode.ToString(),
-                ["brainRemoteAllowed"] = state.BrainRemoteAllowed, ["brainFallbackReason"] = string.IsNullOrWhiteSpace(state.BrainFallbackReason)?string.Empty:"Remote Brain unavailable; local deterministic fallback active.",
                 ["activeBrainProvider"] = state.ActiveBrainProvider, ["activeBrainModel"] = state.ActiveBrainModel,
                 ["apiTradePermission"] = state.ApiTradePermission, ["riskReady"] = state.RiskReady,
                 ["realtimeStatus"] = state.RealtimeStatus, ["positionsSummary"] = state.PositionsSummary,

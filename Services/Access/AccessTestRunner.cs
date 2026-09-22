@@ -77,9 +77,9 @@ public static class AccessTestRunner
             {
                 var settings=new AgentSettings{Environment=ExchangeEnvironment.Testnet,ActiveBrain="missing"};
                 var readiness=await new AccessReadinessService().CheckAsync(settings,ct);
-                Require(!readiness.Ready,"缺少交易所和 Brain 凭据时门禁错误放行");
+                Require(!readiness.Ready,"缺少交易所凭据时门禁错误放行");
                 Require(readiness.Checks.Any(x=>x.Key=="credentials"&&!x.Passed&&x.Critical),"未报告交易所凭据失败");
-                Require(readiness.Checks.Any(x=>x.Key=="brain"&&!x.Passed&&x.Critical),"未报告 Brain 失败");
+                Require(readiness.Checks.Any(x=>x.Key=="local_brain"&&x.Passed&&x.Critical),"本地 Brain 未保持可用");
                 return string.Join("; ",readiness.Checks.Where(x=>!x.Passed).Select(x=>x.Key));
             });
             report.Success=report.Cases.All(x=>x.Status=="PASSED");

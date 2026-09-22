@@ -8,7 +8,7 @@ using WpeAgent.TradingAuthorization;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed class BrainSlot { public string Provider { get; set; } = "DeepSeek"; public string Endpoint { get; set; } = "https://api.deepseek.com/chat/completions"; public string Model { get; set; } = "deepseek-chat"; public string EncryptedKey { get; set; } = string.Empty; public int MaxTokens { get; set; }=1200; public double Temperature { get; set; }=.1; public int TimeoutSeconds { get; set; }=75; public int RetryCount { get; set; }=2; public bool EnableFallback { get; set; } public string FallbackBrain { get; set; }=string.Empty; public bool IsLocal { get; set; } public string PromptVersion { get; set; }="wpe-core-v3"; public int ContextLimit { get; set; }=32000; }
+public sealed class BrainSlot { public string Provider { get; set; } = "WPE Local Brain"; public string Endpoint { get; set; } = string.Empty; public string Model { get; set; } = "deterministic-local-v1"; public string EncryptedKey { get; set; } = string.Empty; public int MaxTokens { get; set; }=1200; public double Temperature { get; set; }=.1; public int TimeoutSeconds { get; set; }=75; public int RetryCount { get; set; }=2; public bool EnableFallback { get; set; } public string FallbackBrain { get; set; }=string.Empty; public bool IsLocal { get; set; }=true; public string PromptVersion { get; set; }="wpe-local-deterministic-v1"; public int ContextLimit { get; set; }=32000; }
 public sealed class EnvironmentSlot { public string EncryptedApiKey { get; set; } = string.Empty; public string EncryptedApiSecret { get; set; } = string.Empty; public bool UseProxy { get; set; } public string ProxyUrl { get; set; }=string.Empty; public string ApiBaseUrl { get; set; }="https://testnet.binancefuture.com"; public int ReceiveWindow { get; set; }=5000; public int TimeoutSeconds { get; set; }=20; public DateTime? LastVerifiedAtUtc { get; set; } public bool ReadPermission { get; set; } public bool TradePermission { get; set; } public bool WithdrawPermission { get; set; } public string AccountId { get; set; }=string.Empty; }
 public sealed class TelegramNotificationSlot
 {
@@ -186,7 +186,13 @@ public sealed class AgentSettingsStore
     }
     public static void ValidateBrainEndpoint(BrainSlot slot)
     {
-        if(string.IsNullOrWhiteSpace(slot.Model))throw new InvalidOperationException("Brain model cannot be empty.");var provider=slot.Provider.Trim();if(provider.Equals("WPE Local Brain",StringComparison.OrdinalIgnoreCase)){if(!slot.IsLocal||!string.IsNullOrWhiteSpace(slot.Endpoint))throw new InvalidOperationException("WPE Local Brain must use the built-in local provider.");return;}if(!Uri.TryCreate(slot.Endpoint,UriKind.Absolute,out var endpoint)||!string.IsNullOrEmpty(endpoint.UserInfo))throw new InvalidOperationException("Brain endpoint is invalid.");var ollama=provider.Contains("Ollama",StringComparison.OrdinalIgnoreCase);if(ollama){if(!slot.IsLocal||endpoint.Scheme!=Uri.UriSchemeHttp||!endpoint.Host.Equals("127.0.0.1",StringComparison.Ordinal)||endpoint.Port!=11434)throw new InvalidOperationException("Local Ollama must use http://127.0.0.1:11434.");return;}if(endpoint.Scheme!=Uri.UriSchemeHttps)throw new InvalidOperationException("Remote Brain endpoint must use HTTPS.");var expectedHost=provider.ToLowerInvariant() switch{var p when p.Contains("deepseek")=>"api.deepseek.com",var p when p=="openai"=>"api.openai.com",var p when p.Contains("anthropic")||p.Contains("claude")=>"api.anthropic.com",var p when p.Contains("gemini")||p.Contains("google")=>"generativelanguage.googleapis.com",_=>null};if(expectedHost is not null&&!endpoint.Host.Equals(expectedHost,StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException($"{slot.Provider} endpoint must use {expectedHost}.");if(expectedHost is null&&(endpoint.IsLoopback||System.Net.IPAddress.TryParse(endpoint.Host,out _)))throw new InvalidOperationException("Remote custom Brain endpoint cannot use loopback or an IP address.");
+        ArgumentNullException.ThrowIfNull(slot);
+        if(!string.Equals(slot.Provider,"WPE Local Brain",StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Remote Brain providers are retired; trading uses WPE Local Brain only.");
+        if(!slot.IsLocal||!string.IsNullOrWhiteSpace(slot.Endpoint)||!string.IsNullOrWhiteSpace(slot.EncryptedKey))
+            throw new InvalidOperationException("WPE Local Brain is built in and does not accept an endpoint or API key.");
+        if(!string.Equals(slot.Model,"deterministic-local-v1",StringComparison.Ordinal))
+            throw new InvalidOperationException("WPE Local Brain must use deterministic-local-v1.");
     }
     public void ConfirmMainnet(AgentSettings settings,string confirmation)
     {
@@ -197,6 +203,7 @@ public sealed class AgentSettingsStore
     {
         settings.Risk??=new();settings.Decision??=new();settings.Notification??=new();settings.DataSources??=new();settings.Brains??=new(StringComparer.OrdinalIgnoreCase);settings.Testnet??=new();settings.Mainnet??=new(){ApiBaseUrl="https://fapi.binance.com"};settings.AiMode=Enum.IsDefined(typeof(global::币安量化机器人.Core.Models.AiRuntimeMode),settings.AiMode)?settings.AiMode:global::币安量化机器人.Core.Models.AiRuntimeMode.LocalOnly;settings.AuthorizationMode=Enum.IsDefined(settings.AuthorizationMode)?settings.AuthorizationMode:TradingAuthorizationMode.Review;settings.Testnet.ApiBaseUrl=SafeEndpoint(settings.Testnet.ApiBaseUrl,"https://testnet.binancefuture.com");settings.Mainnet.ApiBaseUrl=SafeEndpoint(settings.Mainnet.ApiBaseUrl,"https://fapi.binance.com");settings.Testnet.ReceiveWindow=Math.Clamp(settings.Testnet.ReceiveWindow,1000,60000);settings.Mainnet.ReceiveWindow=Math.Clamp(settings.Mainnet.ReceiveWindow,1000,60000);settings.Testnet.TimeoutSeconds=Math.Clamp(settings.Testnet.TimeoutSeconds,5,120);settings.Mainnet.TimeoutSeconds=Math.Clamp(settings.Mainnet.TimeoutSeconds,5,120);settings.Symbols=settings.Symbols?.Select(x=>x.Trim().ToUpperInvariant()).Where(x=>x.EndsWith("USDT",StringComparison.Ordinal)&&x.Length is >=7 and <=20).Distinct().Take(8).ToList()??[];EnsureExchangeProfiles(settings);
         foreach(var brain in settings.Brains.Values){brain.MaxTokens=Math.Clamp(brain.MaxTokens,128,32768);brain.Temperature=Math.Clamp(brain.Temperature,0,2);brain.TimeoutSeconds=Math.Clamp(brain.TimeoutSeconds,5,300);brain.RetryCount=Math.Clamp(brain.RetryCount,0,5);brain.ContextLimit=Math.Clamp(brain.ContextLimit,2048,1000000);}
+        EnsureLocalBrain(settings);
         settings.Notification.Telegram??=new();settings.Notification.WhatsApp??=new();settings.Notification.EventKinds??=[];
         settings.Notification.Telegram.TimeoutSeconds=Math.Clamp(settings.Notification.Telegram.TimeoutSeconds,1,60);
         settings.Notification.Telegram.MaxRequestsPerMinute=Math.Clamp(settings.Notification.Telegram.MaxRequestsPerMinute,1,600);
@@ -229,6 +236,28 @@ public sealed class AgentSettingsStore
         settings.Risk.MarginTiers=settings.Risk.MarginTiers?.Where(x=>x>0).Select(x=>Math.Min(x,settings.Risk.MaxMargin)).Distinct().OrderBy(x=>x).Take(3).ToArray()??[];if(settings.Risk.MarginTiers.Length==0)settings.Risk.MarginTiers=[.10m,.20m,.35m];
         return settings;
     }
+    private static void EnsureLocalBrain(AgentSettings settings)
+    {
+        const string name="WPE Local Brain";
+        var local=settings.Brains.TryGetValue(name,out var existing)
+            ?existing
+            :new BrainSlot();
+
+        local.Provider=name;
+        local.Endpoint=string.Empty;
+        local.Model="deterministic-local-v1";
+        local.EncryptedKey=string.Empty;
+        local.IsLocal=true;
+        local.EnableFallback=false;
+        local.FallbackBrain=string.Empty;
+        local.PromptVersion="wpe-local-deterministic-v1";
+
+        settings.Brains=new Dictionary<string,BrainSlot>(StringComparer.OrdinalIgnoreCase)
+        {
+            [name]=local
+        };
+        settings.ActiveBrain=name;
+    }
     private static string SafeEndpoint(string? value,string fallback)=>Uri.TryCreate(value,UriKind.Absolute,out var uri)&&uri.Scheme==Uri.UriSchemeHttps?uri.ToString().TrimEnd('/'):fallback;
     private static void EnsureExchangeProfiles(AgentSettings settings)
     {
@@ -236,7 +265,7 @@ public sealed class AgentSettingsStore
         if(settings.Exchanges.Count==0){var profile=new ExchangeConnectionProfile{Id="binance-testnet-default",ProviderId="binance-futures",DisplayName="Binance Futures Testnet",IsTestnet=true,Endpoint=settings.Testnet.ApiBaseUrl,UseProxy=settings.Testnet.UseProxy,ProxyUrl=settings.Testnet.ProxyUrl,ReceiveWindow=settings.Testnet.ReceiveWindow,TimeoutSeconds=settings.Testnet.TimeoutSeconds,LastVerifiedAtUtc=settings.Testnet.LastVerifiedAtUtc,ReadPermission=settings.Testnet.ReadPermission,TradePermission=settings.Testnet.TradePermission,WithdrawPermission=settings.Testnet.WithdrawPermission,AccountId=settings.Testnet.AccountId,EncryptedCredentials=new(StringComparer.OrdinalIgnoreCase){{"apiKey",settings.Testnet.EncryptedApiKey},{"secret",settings.Testnet.EncryptedApiSecret}}};settings.Exchanges.Add(profile);settings.ActiveExecutionConnectionId=profile.Id;}
         if(string.IsNullOrWhiteSpace(settings.ActiveExecutionConnectionId)||settings.Exchanges.All(x=>!x.Id.Equals(settings.ActiveExecutionConnectionId,StringComparison.OrdinalIgnoreCase)))settings.ActiveExecutionConnectionId=settings.Exchanges.First().Id;
     }
-    private static AgentSettings Defaults() => new() { Brains = new(StringComparer.OrdinalIgnoreCase) { ["DeepSeek"] = new BrainSlot() } };
+    private static AgentSettings Defaults() => new() { Brains = new(StringComparer.OrdinalIgnoreCase) { ["WPE Local Brain"] = new BrainSlot() } };
 }
 
 public enum ThemeMode { Dark, Light, Auto }

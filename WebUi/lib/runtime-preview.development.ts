@@ -9,8 +9,6 @@ export const previewState: WpeRuntimeState = {
   status: 'Running',
   aiRuntimeMode: 'LocalOnly',
   aiRuntimeEffectiveMode: 'LocalOnly',
-  brainRemoteAllowed: false,
-  brainFallbackReason: 'Preview mode uses the built-in deterministic provider.',
   activeBrainProvider: 'WPE Local Brain',
   activeBrainModel: 'local-deterministic',
   loggedInUser: 'Preview',
