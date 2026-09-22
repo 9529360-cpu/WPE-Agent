@@ -47,6 +47,19 @@ public sealed class TradingReviewProductionWiringTests
     }
 
     [Fact]
+    public void ReferenceUi_HasOneRouteBasedOwnerAndNoRetiredConsoleAssets()
+    {
+        var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
+        var layout=Source("WebUi","app","layout.tsx");
+
+        Assert.Contains("import './globals.css'",layout,StringComparison.Ordinal);
+        Assert.DoesNotContain("console.css",layout,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("colorScheme: 'dark'",layout,StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(root,"WebUi","app","console.css")));
+        Assert.False(File.Exists(Path.Combine(root,"WebUi","components","console","wpe-console.tsx")));
+    }
+
+    [Fact]
     public void ProductionRun_UsesDurableQueueAndSingleMutationChain()
     {
         var source=Source("Services","AutoTradingAgent.cs");
