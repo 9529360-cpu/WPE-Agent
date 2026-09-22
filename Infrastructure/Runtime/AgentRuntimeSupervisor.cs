@@ -119,6 +119,28 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
         UpdateHealth("RECOVERED");
     }
 
+    public async Task<int> RecoverNonExecutionInterruptedAsync(string evidence, CancellationToken cancellationToken)
+    {
+        EnsureRuntimeAuthority();
+        if (string.IsNullOrWhiteSpace(evidence))
+            throw new ArgumentException("Recovery evidence is required.", nameof(evidence));
+        if (_interrupted.Count == 0) return 0;
+        if (_interrupted.Any(item => item.LastNode is WorkflowNode.Execution or WorkflowNode.SafetyExecution))
+            throw new InvalidOperationException("Interrupted execution-capable workflow requires explicit execution reconciliation.");
+
+        UpdateHealth("RECONCILING");
+        var recovered = _interrupted;
+        foreach (var item in recovered)
+        {
+            const string action = "RESTART_OBSERVATION_FROM_VERIFIED_CURRENT_STATE";
+            await _database.MarkWorkflowRecoveredAsync(item, action, cancellationToken);
+            await PublishAsync("workflow.recovered", new { item.RunId, item.CycleId, item.LastNode, action, result = evidence }, cancellationToken);
+        }
+        _interrupted = Array.Empty<WorkflowRecovery>();
+        UpdateHealth("RECOVERED");
+        return recovered.Count;
+    }
+
     public async Task BeginCycleAsync(string cycleId, object state, CancellationToken cancellationToken)
     {
         EnsureRuntimeAuthority();

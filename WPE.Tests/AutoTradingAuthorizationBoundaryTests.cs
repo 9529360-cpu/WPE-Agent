@@ -42,6 +42,9 @@ public sealed class AutoTradingAuthorizationBoundaryTests
         Assert.Contains("TradingAuthorizationMode.Auto",automaticRun,StringComparison.Ordinal);
         Assert.Contains("AssessUnverifiedAutomaticMutation",automaticRun,StringComparison.Ordinal);
         Assert.Contains("recoveryServices.Recovery.RecoverPendingAsync(ct)",automaticRun,StringComparison.Ordinal);
+        Assert.Contains("safeToIncreaseRisk&&startupWorkflowRecoveryPending&&startupWorkflowMetadataOnly",automaticRun,StringComparison.Ordinal);
+        Assert.Contains("LastNode is not WorkflowNode.Execution and not WorkflowNode.SafetyExecution",automaticRun,StringComparison.Ordinal);
+        Assert.Contains("runtime.RecoverNonExecutionInterruptedAsync(safetyMessage,ct)",automaticRun,StringComparison.Ordinal);
         Assert.Contains("ExecutePositionProtectionRecoveryAsync(recoveryServices.Recovery",automaticRun,StringComparison.Ordinal);
         Assert.DoesNotContain("AssessUnverifiedAutomaticMutation(AutomaticMutationPath.PositionManagement",automaticRun,StringComparison.Ordinal);
     }
