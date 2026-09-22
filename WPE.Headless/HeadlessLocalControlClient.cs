@@ -18,10 +18,17 @@ public static class HeadlessLocalControlClient
         PropertyNameCaseInsensitive = true
     };
 
-    public static async Task<int> RunAsync(
+    public static Task<int> RunAsync(
         IReadOnlyList<string> args,
+        CancellationToken cancellationToken = default) =>
+        RunAsync(args, HeadlessLocalControlWorker.PipeName, cancellationToken);
+
+    internal static async Task<int> RunAsync(
+        IReadOnlyList<string> args,
+        string pipeName,
         CancellationToken cancellationToken = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         var request = CreateRequest(args);
         if (request is null)
             return WriteFailure("control.arguments-invalid", InvalidArgumentsExitCode);
@@ -35,7 +42,7 @@ public static class HeadlessLocalControlClient
             timeout.CancelAfter(ConnectTimeout);
             await using var pipe = new NamedPipeClientStream(
                 ".",
-                HeadlessLocalControlWorker.PipeName,
+                pipeName,
                 PipeDirection.InOut,
                 PipeOptions.Asynchronous);
 

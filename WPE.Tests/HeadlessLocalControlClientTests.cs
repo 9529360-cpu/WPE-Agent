@@ -13,8 +13,9 @@ public sealed class HeadlessLocalControlClientTests
         if (!OperatingSystem.IsWindows()) return;
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var pipeName=HeadlessLocalControlWorker.PipeName+"-test-"+Guid.NewGuid().ToString("N");
         await using var server = new NamedPipeServerStream(
-            HeadlessLocalControlWorker.PipeName,
+            pipeName,
             PipeDirection.InOut,
             1,
             PipeTransmissionMode.Byte,
@@ -52,6 +53,7 @@ public sealed class HeadlessLocalControlClientTests
 
         var exitCode = await HeadlessLocalControlClient.RunAsync(
             new[] { "health" },
+            pipeName,
             timeout.Token);
         await serverTask;
 
