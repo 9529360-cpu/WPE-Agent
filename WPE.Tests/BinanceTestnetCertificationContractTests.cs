@@ -284,6 +284,44 @@ public sealed class BinanceTestnetCertificationContractTests
     }
 
     [Fact]
+    public async Task PositionsUsePositionRiskFactsAndFilterFlatRows()
+    {
+        var clock=DateTimeOffset.FromUnixTimeMilliseconds(1_700_000_000_000);
+        var observedPaths=new List<string>();
+        var handler=new FaultHandler(request=>
+        {
+            var path=request.RequestUri!.AbsolutePath;
+            if(path=="/fapi/v1/time")
+                return Json(HttpStatusCode.OK,"{\"serverTime\":1700000000000}");
+            observedPaths.Add(path);
+            if(path=="/fapi/v2/positionRisk")
+                return Json(HttpStatusCode.OK,"""
+                    [
+                      {"symbol":"BTCUSDT","positionAmt":"0.0089","entryPrice":"86000","markPrice":"86123.4","unRealizedProfit":"1.23","liquidationPrice":"75000","leverage":"5","marginType":"isolated","positionSide":"LONG"},
+                      {"symbol":"ETHUSDT","positionAmt":"0","entryPrice":"0","markPrice":"2500","unRealizedProfit":"0","liquidationPrice":"0","leverage":"10","marginType":"cross","positionSide":"BOTH"}
+                    ]
+                    """);
+            return Json(HttpStatusCode.NotFound,"{}");
+        });
+        using var client=Client(handler,5000,()=>clock);
+        client.SetApiCredentials("offline-key","offline-secret");
+
+        var positions=await client.GetPositionsAsync();
+
+        var position=Assert.Single(positions);
+        Assert.Equal("BTCUSDT",position.Symbol);
+        Assert.Equal(.0089m,position.PositionAmt);
+        Assert.Equal(86000m,position.EntryPrice);
+        Assert.Equal(86123.4m,position.MarkPrice);
+        Assert.Equal(5m,position.Leverage);
+        Assert.Equal(75000m,position.LiquidationPrice);
+        Assert.True(position.IsIsolated);
+        Assert.Equal("LONG",position.PositionSide);
+        Assert.Equal(new[]{"/fapi/v2/positionRisk"},observedPaths);
+        Assert.Equal(0,handler.MutationCount);
+    }
+
+    [Fact]
     public void DuplicateOrderEvents_AreCollapsedWithoutInventingATransition()
     {
         var observed = new DateTime(2026, 7, 22, 1, 0, 0, DateTimeKind.Utc);
