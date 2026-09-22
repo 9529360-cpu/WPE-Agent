@@ -582,14 +582,15 @@ public sealed class ModelOffLiveCycleInputComposerTests
     }
 
     [Fact]
-    public void LiveLoopInvokesShadowAfterRiskReviewAndBeforeOrderAuthorization()
+    public void LiveLoopKeepsModelOffAsShadowOnlyBeforeOrderAuthorization()
     {
         var source = File.ReadAllText(Path.Combine(ProjectRoot(), "Services", "AutoTradingAgent.cs"));
         var risk = source.IndexOf("var riskReview=", StringComparison.Ordinal);
         var shadow = source.IndexOf("RunModelOffProductionShadowAsync(Db,cycle", risk, StringComparison.Ordinal);
         var authorization = source.IndexOf("if(intents.Count>0&&tradingRule is not null)", shadow, StringComparison.Ordinal);
         Assert.True(risk >= 0 && shadow > risk && authorization > shadow);
-        Assert.Contains("ApplyModelOffProductionRiskIncreaseGate(intents,modelOffCycle)", source[shadow..authorization], StringComparison.Ordinal);
+        Assert.DoesNotContain("ApplyModelOffProductionRiskIncreaseGate(intents,modelOffCycle)", source[shadow..authorization], StringComparison.Ordinal);
+        Assert.Contains("never overrides direct local execution authority",source[shadow..authorization],StringComparison.Ordinal);
     }
 
     [Fact]
@@ -625,7 +626,7 @@ public sealed class ModelOffLiveCycleInputComposerTests
 
             var increase = new ExecutionIntent("BTCUSDT", PositionSide.Long, .01m, false, 98_000m, 104_000m, "increase", "test");
             var reduce = new ExecutionIntent("BTCUSDT", PositionSide.Short, .01m, true, 0, 0, "reduce", "test");
-            Assert.Equal(new[] { reduce }, AutoTradingAgent.ApplyModelOffProductionRiskIncreaseGate([increase, reduce], blocked));
+            Assert.Equal(new[] { increase, reduce }, AutoTradingAgent.ApplyModelOffProductionRiskIncreaseGate([increase, reduce], blocked));
             Assert.Equal(new[] { increase, reduce }, AutoTradingAgent.ApplyModelOffProductionRiskIncreaseGate([increase, reduce], ready));
             Assert.Equal(new[] { reduce }, AutoTradingAgent.ApplyModelOffProductionRiskIncreaseGate([reduce], null));
         }

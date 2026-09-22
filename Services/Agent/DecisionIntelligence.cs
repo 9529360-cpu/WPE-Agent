@@ -105,14 +105,21 @@ public sealed class DecisionGovernanceSkill
         var assessment=assessments.FirstOrDefault(x=>x.Symbol.Equals(proposed.Instrument,StringComparison.OrdinalIgnoreCase));
         var riskIncreasing=DeterministicPlanSkill.IsRiskIncreasing(proposed.Action);
         var hypothesisDriven=string.Equals(proposed.DecisionContextKind,TradeHypothesisEngine.DecisionContextKind,StringComparison.Ordinal);
+        var directDriven=DirectMarketStructureDecisionSkill.IsDirect(proposed);
         TradeHypothesis? hypothesis=null;
         if(hypothesisDriven&&hypotheses is not null)hypotheses.TryGetValue(proposed.Instrument,out hypothesis);
 
-        if(!hypothesisDriven&&assessment is null)blocks.Add(L("Review.NoAssessment"));
+        if(!hypothesisDriven&&!directDriven&&assessment is null)blocks.Add(L("Review.NoAssessment"));
         if(evidence.Completeness<policy.MinimumEvidenceCompleteness&&riskIncreasing)blocks.Add(L("Review.Incomplete"));
-        if(!hypothesisDriven&&assessment is{Fresh:false}&&riskIncreasing)blocks.Add(L("Review.Stale"));
+        if(!hypothesisDriven&&!directDriven&&assessment is{Fresh:false}&&riskIncreasing)blocks.Add(L("Review.Stale"));
 
-        if(hypothesisDriven&&riskIncreasing)
+        if(directDriven&&riskIncreasing)
+        {
+            if(!evidence.Markets.TryGetValue(proposed.Instrument,out var directMarket)||
+               !DirectMarketStructureDecisionSkill.ContextMatches(proposed,directMarket))
+                blocks.Add("direct candle-structure context is stale or no longer actionable");
+        }
+        else if(hypothesisDriven&&riskIncreasing)
         {
             if(hypothesis is null||
                !string.Equals(hypothesis.Id,proposed.DecisionContextId,StringComparison.Ordinal)||
@@ -162,11 +169,14 @@ public sealed class DecisionGovernanceSkill
     private static string Explain(DecisionPlan decision,MarketDecisionAssessment? assessment,IReadOnlyList<string> blocks)
     {
         var hypothesisDriven=string.Equals(decision.DecisionContextKind,TradeHypothesisEngine.DecisionContextKind,StringComparison.Ordinal);
+        var directDriven=DirectMarketStructureDecisionSkill.IsDirect(decision);
         var b=new StringBuilder();
-        b.Append(hypothesisDriven
-            ?$"{decision.Action} · Hypothesis {decision.HypothesisStage}"
-            :$"{decision.Action} · Brain {decision.Confidence:P0}");
-        if(assessment is not null&&!hypothesisDriven)
+        b.Append(directDriven
+            ?$"{decision.Action} · Direct candle structure"
+            :hypothesisDriven
+                ?$"{decision.Action} · Hypothesis {decision.HypothesisStage}"
+                :$"{decision.Action} · Brain {decision.Confidence:P0}");
+        if(assessment is not null&&!hypothesisDriven&&!directDriven)
         {
             b.Append(L("Review.Aggregation",assessment.Confidence,assessment.ConflictRatio)).Append('\n');
             b.Append(assessment.Summary);
@@ -174,7 +184,7 @@ public sealed class DecisionGovernanceSkill
             b.Append('\n').Append(L("Review.Signals")).Append(string.Join("; ",strongest));
         }
         b.Append('\n').Append(L("Review.Reason")).Append(decision.Reason);
-        var legacyMissing=hypothesisDriven?Array.Empty<string>():assessment?.MissingConditions??Array.Empty<string>();
+        var legacyMissing=hypothesisDriven||directDriven?Array.Empty<string>():assessment?.MissingConditions??Array.Empty<string>();
         var missing=blocks.Concat(decision.MissingConditions).Concat(legacyMissing).Where(x=>!string.IsNullOrWhiteSpace(x)).Distinct().ToArray();
         if(missing.Length>0)b.Append('\n').Append(L("Review.Missing")).Append(string.Join("; ",missing));
         return b.ToString();

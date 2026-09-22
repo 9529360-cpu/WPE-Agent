@@ -18,15 +18,16 @@ public sealed class RemoteBrainUsagePolicyTests
     }
 
     [Fact]
-    public void HypothesisDrivenUi_DoesNotProjectLegacyDirectionalScoresAsDecisionBasis()
+    public void DirectStructureUi_DoesNotProjectLegacyDirectionalScoresAsDecisionBasis()
     {
         var source = File.ReadAllText(SourcePath());
 
-        Assert.Contains("if(hypothesisDriven)", source, StringComparison.Ordinal);
+        Assert.Contains("var directDriven=DirectMarketStructureDecisionSkill.IsDirect(decision);", source, StringComparison.Ordinal);
+        Assert.Contains("if(directDriven||hypothesisDriven)", source, StringComparison.Ordinal);
         Assert.Contains("state.DecisionScore=0;", source, StringComparison.Ordinal);
         Assert.Contains("state.ConflictRate=0;", source, StringComparison.Ordinal);
         Assert.Contains("state.SignalContributions=new Dictionary<string,double>();", source, StringComparison.Ordinal);
-        Assert.Contains("state.RiskLoad=Math.Clamp(decision.RiskBudgetMultiplier,0,1)*100;", source, StringComparison.Ordinal);
+        Assert.Contains("state.RiskLoad=directDriven?0:", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -35,7 +36,7 @@ public sealed class RemoteBrainUsagePolicyTests
         var source = File.ReadAllText(SourcePath());
 
         Assert.Contains("SkillAsync(\"BrainPlanner\"", source, StringComparison.Ordinal);
-        Assert.Contains("local=true", source, StringComparison.Ordinal);
+        Assert.Contains("direct=true", source, StringComparison.Ordinal);
         Assert.Contains("ct,false", source, StringComparison.Ordinal);
         Assert.Contains("bool? remoteLlmUsed=null", source, StringComparison.Ordinal);
         Assert.Contains("var remote=remoteLlmUsed??(name==\"BrainPlanner\"&&ServiceLocator.SystemState.BrainRemoteAllowed);", source, StringComparison.Ordinal);

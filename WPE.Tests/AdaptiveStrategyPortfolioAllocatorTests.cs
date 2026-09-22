@@ -116,7 +116,7 @@ public sealed class AdaptiveStrategyPortfolioAllocatorTests
     }
 
     [Fact]
-    public async Task PortfolioScoresCannotTriggerEntryWithoutARealMarketHypothesis()
+    public async Task PortfolioScoresCannotTriggerEntryWithoutADirectCandleStructureTrigger()
     {
         var btc=Assessment("BTCUSDT",.90,DecisionAction.OpenLong);
         var eth=Assessment("ETHUSDT",.65,DecisionAction.OpenLong);
@@ -133,7 +133,7 @@ public sealed class AdaptiveStrategyPortfolioAllocatorTests
         Assert.Equal(DecisionAction.Hold,result.Decision.Action);
         Assert.Equal(0,result.Decision.TargetTier);
         Assert.Equal("market-observation",result.Decision.DecisionContextKind);
-        Assert.Contains("No coherent market hypothesis",result.Decision.Reason,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("No direct candle-structure trigger",result.Decision.Reason,StringComparison.OrdinalIgnoreCase);
     }
 
     private static StrategyCycleSelection Selection(

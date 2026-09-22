@@ -385,7 +385,7 @@ public sealed class TradeHypothesisEngineTests
     }
 
     [Fact]
-    public async Task ScoutCanBecomeConfirmedButExistingPositionPreventsRepeatedEntryDecision()
+    public async Task ExistingHypothesisCannotOverrideDirectCandleDecisionAuthority()
     {
         var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
@@ -394,17 +394,12 @@ public sealed class TradeHypothesisEngineTests
             watching,[],Now.AddMinutes(1));
         var confirmedMarket=Market(81180m,80906m,81805.3m,39,.08,.03,4.95,.22);
         var confirmed=TradeHypothesisEngine.EvaluateMarket(confirmedMarket,scout,[],Now.AddMinutes(2));
-
-        Assert.Equal(TradeHypothesisStage.Confirmed,confirmed.Stage);
-        Assert.Equal(.45,confirmed.RiskBudgetMultiplier,10);
-
         var evidence=Evidence(confirmedMarket,
         [
             new("BTCUSDT",PositionSide.Long,.001m,81100m,81180m,0,5,true,75000m)
         ]);
-        var assessment=Assessment("BTCUSDT",entryReady:false,netScore:-.35,confidence:.25);
         var context=new AgentContext(
-            "WPE Local Brain",false,"BTCUSDT",[],[assessment],0,null,null,
+            "WPE Local Brain",false,"BTCUSDT",[],[],0,null,null,
             new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase)
             {
                 ["BTCUSDT"]=confirmed
@@ -413,8 +408,8 @@ public sealed class TradeHypothesisEngineTests
         var decision=(await new DeterministicBrainProvider().DecideAsync(evidence,context,CancellationToken.None)).Decision;
 
         Assert.Equal(DecisionAction.Hold,decision.Action);
-        Assert.Equal(TradeHypothesisEngine.DecisionContextKind,decision.DecisionContextKind);
-        Assert.Equal(confirmed.Id,decision.DecisionContextId);
+        Assert.Equal("market-observation",decision.DecisionContextKind);
+        Assert.Empty(decision.DecisionContextId);
     }
 
     [Fact]
@@ -503,7 +498,7 @@ public sealed class TradeHypothesisEngineTests
     }
 
     [Fact]
-    public async Task BrainActsOnScoutHypothesisEvenWhenLegacyAggregationIsNotEntryReady()
+    public async Task ScoutHypothesisCannotForceTradeWithoutDirectCandleTrigger()
     {
         var first=Market(81075.2m,80906m,81805.3m,27.3,-.376,-.225,5.13,-.82);
         var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
@@ -519,13 +514,12 @@ public sealed class TradeHypothesisEngineTests
 
         var result=await new DeterministicBrainProvider().DecideAsync(Evidence(current),context,CancellationToken.None);
 
-        Assert.Equal(DecisionAction.OpenLong,result.Decision.Action);
-        Assert.Equal(1,result.Decision.TargetTier);
+        Assert.Equal(DecisionAction.Hold,result.Decision.Action);
+        Assert.Equal(0,result.Decision.TargetTier);
         Assert.Equal(0,result.Decision.Confidence);
-        Assert.Equal(.18,result.Decision.RiskBudgetMultiplier,10);
-        Assert.Equal(TradeHypothesisEngine.DecisionContextKind,result.Decision.DecisionContextKind);
-        Assert.Equal(scout.Id,result.Decision.DecisionContextId);
-        Assert.Equal(TradeHypothesisStage.ScoutReady.ToString(),result.Decision.HypothesisStage);
+        Assert.Equal(0,result.Decision.RiskBudgetMultiplier);
+        Assert.Equal("market-observation",result.Decision.DecisionContextKind);
+        Assert.Empty(result.Decision.DecisionContextId);
     }
 
     [Fact]
@@ -584,9 +578,21 @@ public sealed class TradeHypothesisEngineTests
     }
 
     [Fact]
-    public void IndependentRiskTreatsHypothesisResearchAsContextNotEntryPermission()
+    public void IndependentRiskKeepsHardSafetyButDoesNotUseScoresOrResearchAsDirectEntryPermission()
     {
-        var market=Market(100m,98m,106m,40,-.10,-.05,1.2,.1) with { CollectedAt=DateTime.UtcNow };
+        var market=Market(100m,98m,106m,40,-.10,-.05,1.2,.1) with
+        {
+            CollectedAt=DateTime.UtcNow,
+            Quality=new()
+            {
+                BestBid=99.99m,
+                BestAsk=100.01m,
+                SpreadBps=2,
+                AtrPercent=.01,
+                LiquidityScore=.95,
+                QualityScore=1
+            }
+        };
         var decision=new DecisionPlan
         {
             Action=DecisionAction.OpenLong,
@@ -595,13 +601,13 @@ public sealed class TradeHypothesisEngineTests
             StopLossPrice=98m,
             TakeProfitPrice=104m,
             RiskRewardRatio=2,
-            DecisionContextKind=TradeHypothesisEngine.DecisionContextKind,
-            DecisionContextId="HYP-BTCUSDT-TEST",
-            HypothesisStage=TradeHypothesisStage.ScoutReady.ToString(),
-            RiskBudgetMultiplier=.18
+            DecisionContextKind=DirectMarketStructureDecisionSkill.DecisionContextKind,
+            DecisionContextId="DIRECT-BTCUSDT-TEST",
+            StrategyVersion=DirectMarketStructureDecisionSkill.Version,
+            RiskBudgetMultiplier=1
         };
         var intent=new ExecutionIntent(
-            "BTCUSDT",PositionSide.Long,.1m,false,98m,104m,"test-intent","hypothesis scout",
+            "BTCUSDT",PositionSide.Long,.1m,false,98m,104m,"test-intent","direct structure",
             DecisionAction.OpenLong,ExpectedPrice:100m);
         var portfolio=new PortfolioRiskAssessment
         {
@@ -625,24 +631,25 @@ public sealed class TradeHypothesisEngineTests
         };
 
         var review=new IndependentRiskManagerSkill().Review(
-            decision,Evidence(market),Assessment("BTCUSDT",false,-.4,.2),[intent],limits,
+            decision,Evidence(market),assessment:null,[intent],limits,
             new RiskHistorySnapshot(0,0,0,false),research:null,portfolio);
 
         Assert.True(review.Approved);
-        Assert.Contains("market_hypothesis_context",review.Checks);
+        Assert.Contains("direct_market_structure_context",review.Checks);
+        Assert.DoesNotContain("market_quality",review.Checks);
         Assert.DoesNotContain(review.BlockingReasons,x=>x.Contains("research",StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
-    public void ModelOffSafetyGateStillBlocksRiskIncreaseUntilHypothesisAuditIsCanonical()
+    public void ModelOffShadowCannotBlockDirectExecutionAuthority()
     {
         var intent=new ExecutionIntent(
-            "BTCUSDT",PositionSide.Long,.1m,false,98m,104m,"test-intent","hypothesis scout",
+            "BTCUSDT",PositionSide.Long,.1m,false,98m,104m,"test-intent","direct structure",
             DecisionAction.OpenLong,ExpectedPrice:100m);
 
         var gated=AutoTradingAgent.ApplyModelOffProductionRiskIncreaseGate([intent],null);
 
-        Assert.Empty(gated);
+        Assert.Equal(new[] { intent },gated);
     }
 
     private static EvidencePack Evidence(MarketEvidence market,IReadOnlyList<ManagedPosition>? positions=null) =>

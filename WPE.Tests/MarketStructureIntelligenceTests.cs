@@ -179,14 +179,13 @@ public sealed class MarketStructureIntelligenceTests
     }
 
     [Fact]
-    public async Task LocalBrainUsesStructureHypothesisWithoutPublishingLegacyScoreAsDecisionBasis()
+    public async Task LocalBrainTradesDirectlyFromFreshCandleStructureWithoutScoresOrHypotheses()
     {
-        var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
-        var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
-        var first=Market(Pullback15m(),h1,h4);
-        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
-        var current=Market(SweepLowReclaimNext15m(),h1,h4,Now.AddMinutes(15));
-        var scout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
+        var current=Market(
+            SweepLowReclaimNext15m(),
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(15));
         var legacy=new MarketDecisionAssessment
         {
             Symbol="BTCUSDT",
@@ -200,87 +199,56 @@ public sealed class MarketStructureIntelligenceTests
             MissingConditions=["legacy score disagrees"],
             Summary="legacy observation only"
         };
-        var context=new AgentContext(
-            "WPE Local Brain",false,null,[],[legacy],0,null,null,
-            new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["BTCUSDT"]=scout
-            });
+        var context=new AgentContext("WPE Local Brain",false,null,[],[legacy],0,null,null,null);
 
         var result=await new DeterministicBrainProvider().DecideAsync(Evidence(current),context,CancellationToken.None);
 
         Assert.Equal(DecisionAction.OpenLong,result.Decision.Action);
-        Assert.Equal(current.Price,result.Decision.EntryPrice);
-        Assert.Equal(scout.InvalidationPrice,result.Decision.StopLossPrice);
-        Assert.Equal(MarketStructureRead.DecisionBasis,scout.DecisionBasis);
-        Assert.DoesNotContain("legacy_score",result.Decision.ConflictSummary,StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("basis=candles-structure-v2",result.Decision.ConflictSummary,StringComparison.Ordinal);
+        Assert.Equal(DirectMarketStructureDecisionSkill.DecisionContextKind,result.Decision.DecisionContextKind);
+        Assert.Equal(DirectMarketStructureDecisionSkill.Version,result.Decision.StrategyVersion);
+        Assert.Equal(0,result.Decision.Confidence);
+        Assert.Equal(1,result.Decision.RiskBudgetMultiplier);
+        Assert.True(result.Decision.StopLossPrice<current.Price);
+        Assert.Equal(0,result.Decision.TakeProfitPrice);
+        Assert.Contains("decision_path=direct-market-structure",result.Decision.EvidenceReferences);
+        Assert.Contains("direct-structure",result.Decision.ConflictSummary,StringComparison.Ordinal);
+        Assert.DoesNotContain("score",result.Decision.ConflictSummary,StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task LocalBrainPrefersStructureGroundedHypothesisOverLegacyPeerAtSameStage()
+    public void DirectStructureReviewDoesNotRequireAggregationScoreOrResearchPromotion()
     {
-        var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
-        var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
-        var first=Market(Pullback15m(),h1,h4);
-        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
-        var current=Market(SweepLowReclaimNext15m(),h1,h4,Now.AddMinutes(15));
-        var structureScout=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
-        var legacyPeer=structureScout with
-        {
-            Id="HYP-ETHUSDT-LEGACY",
-            Symbol="ETHUSDT",
-            DecisionBasis="summary-v1",
-            Revision=structureScout.Revision+100,
-            UpdatedAtUtc=structureScout.UpdatedAtUtc.AddSeconds(1)
-        };
-        var context=new AgentContext(
-            "WPE Local Brain",false,null,[],[],0,null,null,
-            new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["ETHUSDT"]=legacyPeer,
-                ["BTCUSDT"]=structureScout
-            });
+        var current=Market(
+            SweepLowReclaimNext15m(),
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(15));
+        var decision=DirectMarketStructureDecisionSkill.Decide(Evidence(current),false);
 
-        var result=await new DeterministicBrainProvider().DecideAsync(Evidence(current),context,CancellationToken.None);
+        var review=new DecisionGovernanceSkill().Review(
+            decision,[],Evidence(current),new DecisionPolicy(),null);
 
-        Assert.Equal("BTCUSDT",result.Decision.Instrument);
-        Assert.Equal(structureScout.Id,result.Decision.DecisionContextId);
-        Assert.Equal(MarketStructureRead.DecisionBasis,structureScout.DecisionBasis);
+        Assert.True(review.Accepted);
+        Assert.Empty(review.BlockingReasons);
+        Assert.Equal(DecisionAction.OpenLong,review.Decision.Action);
+        Assert.Contains("Direct candle structure",review.Explanation,StringComparison.Ordinal);
+        Assert.DoesNotContain("Aggregation",review.Explanation,StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task LocalBrainPrefersFresherStructureEvidenceOverRepeatedCycleRevisionCount()
+    public async Task HardCircuitBreakerStillOverridesDirectStructureTrade()
     {
-        var h1=Trend(48,90m,.55m,TimeSpan.FromHours(1));
-        var h4=Trend(48,70m,1.1m,TimeSpan.FromHours(4));
-        var first=Market(Pullback15m(),h1,h4);
-        var watching=TradeHypothesisEngine.EvaluateMarket(first,null,[],Now);
-        var current=Market(SweepLowReclaimNext15m(),h1,h4,Now.AddMinutes(15));
-        var fresher=TradeHypothesisEngine.EvaluateMarket(current,watching,[],Now.AddMinutes(15));
-        var staleButRepeated=fresher with
-        {
-            Id="HYP-ETHUSDT-REPEATED",
-            Symbol="ETHUSDT",
-            Revision=fresher.Revision+100,
-            UpdatedAtUtc=fresher.UpdatedAtUtc.AddHours(1),
-            LastStructureEvidenceAtUtc=fresher.LastStructureEvidenceAtUtc.AddMinutes(-15)
-        };
-        var context=new AgentContext(
-            "WPE Local Brain",false,null,[],[],0,null,null,
-            new Dictionary<string,TradeHypothesis>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["ETHUSDT"]=staleButRepeated,
-                ["BTCUSDT"]=fresher
-            });
+        var current=Market(
+            SweepLowReclaimNext15m(),
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(15));
+        var context=new AgentContext("WPE Local Brain",true,null,[],[],0,null,null,null);
 
         var result=await new DeterministicBrainProvider().DecideAsync(Evidence(current),context,CancellationToken.None);
 
-        Assert.Equal("BTCUSDT",result.Decision.Instrument);
-        Assert.Equal(fresher.Id,result.Decision.DecisionContextId);
-        Assert.True(staleButRepeated.Revision>fresher.Revision);
-        Assert.True(staleButRepeated.UpdatedAtUtc>fresher.UpdatedAtUtc);
-        Assert.True(staleButRepeated.LastStructureEvidenceAtUtc<fresher.LastStructureEvidenceAtUtc);
+        Assert.Equal(DecisionAction.Hold,result.Decision.Action);
+        Assert.Contains("circuit breaker",result.Decision.Reason,StringComparison.OrdinalIgnoreCase);
     }
 
     private static EvidencePack Evidence(MarketEvidence market)=>new()

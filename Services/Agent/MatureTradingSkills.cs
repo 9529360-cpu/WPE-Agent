@@ -98,7 +98,8 @@ public sealed class IndependentRiskManagerSkill
         var market=evidence.Markets.GetValueOrDefault(decision.Instrument);var equity=evidence.Account.Equity;
         Check(evidence.Completeness>=70,"evidence_complete",L("RiskReview.Evidence"));
         Check(market is not null&&DateTime.UtcNow-market.CollectedAt<=TimeSpan.FromMinutes(5),"market_fresh",L("RiskReview.Stale"));
-        Check(market is not null&&market.Quality.QualityScore>=65,"market_quality",L("RiskReview.Quality",market?.Quality.QualityScore??0));
+        if(!DirectMarketStructureDecisionSkill.IsDirect(decision))
+            Check(market is not null&&market.Quality.QualityScore>=65,"market_quality",L("RiskReview.Quality",market?.Quality.QualityScore??0));
         Check(market is not null&&market.Quality.LiquidityScore>=limits.MinimumLiquidityScore,"liquidity",L("RiskReview.Liquidity",market?.Quality.LiquidityScore??0));
         Check(market is not null&&market.Quality.SpreadBps<=limits.MaximumSpreadBps,"spread",L("RiskReview.Spread",market?.Quality.SpreadBps??999));
         Check(market is not null&&market.Quality.AtrPercent<=limits.MaxAtrPercent,"volatility",L("RiskReview.Volatility",market?.Quality.AtrPercent??1));
@@ -108,7 +109,12 @@ public sealed class IndependentRiskManagerSkill
         Check(history.ApiFailures<limits.ApiFailureThreshold,"api_health",L("RiskReview.ApiFailures",history.ApiFailures));
         Check(!history.OrderStateUncertain,"order_state",L("RiskReview.OrderUncertain"));
         var hypothesisDriven=string.Equals(decision.DecisionContextKind,TradeHypothesisEngine.DecisionContextKind,StringComparison.Ordinal);
-        if(hypothesisDriven)
+        var directDriven=DirectMarketStructureDecisionSkill.IsDirect(decision);
+        if(directDriven)
+        {
+            checks.Add("direct_market_structure_context");
+        }
+        else if(hypothesisDriven)
         {
             checks.Add("market_hypothesis_context");
             if(research is not null&&research.CoverageDays>=limits.MinimumHistoricalDays)checks.Add("historical_context_available");
@@ -220,6 +226,27 @@ public sealed class PositionManagementSkill
             }
 
             if(!markets.TryGetValue(position.Symbol,out var market))continue;
+
+            if(DirectMarketStructureDecisionSkill.PositionInvalidated(position,market))
+            {
+                var actionId=ActionId("STRUCT",opening);
+                if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
+                    intents.Add(new(
+                        position.Symbol,
+                        position.Side,
+                        position.Quantity,
+                        true,
+                        0,
+                        0,
+                        actionId,
+                        L("Position.StructureInvalidated"),
+                        position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
+                        ExpectedPrice:market.Price,
+                        ReasonCode:PositionExitReasonCodes.StructureInvalidated));
+                var structure=MarketStructureIntelligence.Analyze(market);
+                notes.Add($"direct-structure-invalidated:{position.Symbol}:{position.Side}:{structure.HigherTimeframeBias}:{structure.FifteenMinute.Event}");
+                continue;
+            }
 
             if(hypotheses is not null &&
                hypotheses.TryGetValue(position.Symbol,out var hypothesis) &&

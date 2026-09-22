@@ -85,97 +85,28 @@ public sealed class DeterministicBrainProvider : IAssistantProvider
 
     public Task<BrainDecisionResult> DecideAsync(EvidencePack evidence, AgentContext context, CancellationToken ct)
     {
-        var hypotheses=(context.TradeHypotheses?.Values??Array.Empty<TradeHypothesis>())
-            .Where(x=>x.IsLive)
-            .OrderByDescending(x=>x.Stage==TradeHypothesisStage.Confirmed)
-            .ThenByDescending(x=>x.Stage==TradeHypothesisStage.ScoutReady)
-            .ThenByDescending(x=>string.Equals(x.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal))
-            .ThenByDescending(x=>string.Equals(x.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal)
-                ?x.LastStructureEvidenceAtUtc
-                :x.UpdatedAtUtc)
-            .ThenByDescending(x=>string.Equals(x.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal)
-                ?0
-                :x.Revision)
-            .ThenBy(x=>x.Symbol,StringComparer.Ordinal)
-            .ToArray();
-
-        var actionable=hypotheses.FirstOrDefault(x=>x.Actionable&&
-            !evidence.Positions.Any(position=>position.Symbol.Equals(x.Symbol,StringComparison.OrdinalIgnoreCase)));
-        var watching=hypotheses.FirstOrDefault();
-        var selected=actionable??watching;
-        var blocked=context.CircuitBreakerActive||actionable is null;
-        var instrument=selected?.Symbol??evidence.Markets.Keys.FirstOrDefault()??"BTCUSDT";
-        var assessment=context.MarketAssessments.FirstOrDefault(x=>x.Symbol.Equals(instrument,StringComparison.OrdinalIgnoreCase));
-        evidence.Markets.TryGetValue(instrument,out var selectedMarket);
-        var action=DecisionAction.Hold;
-        var targetTier=0;
-        var riskBudget=0d;
-        var entryPrice=0m;
-        var stopLossPrice=0m;
-        var takeProfitPrice=0m;
-
-        if(!blocked&&actionable is not null)
-        {
-            action=actionable.Direction>0?DecisionAction.OpenLong:DecisionAction.OpenShort;
-            targetTier=actionable.Stage==TradeHypothesisStage.Confirmed?2:1;
-            riskBudget=actionable.RiskBudgetMultiplier;
-            entryPrice=selectedMarket?.Price>0?selectedMarket.Price:actionable.ReferencePrice;
-            stopLossPrice=actionable.InvalidationPrice;
-            var structuralTarget=actionable.Direction>0?actionable.Resistance:actionable.Support;
-            if(actionable.Direction>0&&structuralTarget>entryPrice)takeProfitPrice=structuralTarget;
-            if(actionable.Direction<0&&structuralTarget>0&&structuralTarget<entryPrice)takeProfitPrice=structuralTarget;
-        }
-
-        var reason=context.CircuitBreakerActive
-            ?"local risk circuit breaker is active"
-            :selected is null
-                ?"No coherent market hypothesis is currently forming."
-                :selected.Thesis+" "+(selected.Actionable
-                    ?$"Action stage={selected.Stage}; trigger has matured enough for bounded risk."
-                    :$"Watching stage={selected.Stage}; {selected.Trigger}");
-
-        var decision=new DecisionPlan
-        {
-            Action=action,
-            Instrument=instrument,
-            TargetTier=targetTier,
-            Confidence=0,
-            EntryPrice=entryPrice,
-            StopLossPrice=stopLossPrice,
-            TakeProfitPrice=takeProfitPrice,
-            Regime=selected?.Regime.ToString()??assessment?.Regime.ToString()??MarketRegime.Unknown.ToString(),
-            Reason=reason,
-            Invalidation=selected?.Invalidation??"Market hypothesis is absent or invalidated.",
-            EvidenceReferences=selected?.Evidence.ToList()??[],
-            MissingConditions=selected is {Actionable:false}?[selected.Trigger]:[],
-            ConflictSummary=selected is null
-                ?"no active market hypothesis"
-                :$"hypothesis={selected.Kind}; stage={selected.Stage}; revision={selected.Revision}; basis={selected.DecisionBasis}",
-            StrategyVersion=selected?.Version??TradeHypothesis.CurrentVersion,
-            DecisionContextKind=selected is null?"market-observation":TradeHypothesisEngine.DecisionContextKind,
-            DecisionContextId=selected?.Id??string.Empty,
-            HypothesisStage=selected?.Stage.ToString()??TradeHypothesisStage.Observing.ToString(),
-            RiskBudgetMultiplier=riskBudget
-        };
-
+        ct.ThrowIfCancellationRequested();
+        var decision=DirectMarketStructureDecisionSkill.Decide(evidence,context.CircuitBreakerActive);
+        var market=evidence.Markets.GetValueOrDefault(decision.Instrument);
+        var structure=market is null?null:MarketStructureIntelligence.Analyze(market);
         var audit=JsonSerializer.Serialize(new
         {
             provider=Name,
+            decisionPath=DirectMarketStructureDecisionSkill.DecisionContextKind,
             decision.Action,
             decision.Instrument,
-            decision.TargetTier,
-            decision.DecisionContextKind,
             decision.DecisionContextId,
-            decision.HypothesisStage,
-            decision.RiskBudgetMultiplier,
-            hypothesis=selected,
-            marketStructureBasis=selected?.DecisionBasis,
-            legacyObservation=assessment is null?null:new
+            decision.StrategyVersion,
+            structure=structure is null?null:new
             {
-                assessment.NetScore,
-                assessment.Confidence,
-                assessment.ConflictRatio,
-                assessment.EntryReady
+                structure.HigherTimeframeBias,
+                structure.Phase,
+                structure.Scenario,
+                structure.TriggerPresent,
+                structure.ConfirmationPresent,
+                structure.StructuralSupport,
+                structure.StructuralResistance,
+                event15m=structure.FifteenMinute.Event
             },
             decision.Reason
         });
