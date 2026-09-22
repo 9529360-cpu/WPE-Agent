@@ -76,6 +76,70 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
     }
 
     [Fact]
+    public async Task ReduceOnlyRecovery_NewResponseWaitsForFillAndSubmitsOnlyOnce()
+    {
+        var pending=new ExchangeOrder(
+            "SOLUSDT","close-order","recover-sol","NEW",0,0,
+            "MARKET",PositionSide.Long,false,DateTime.UtcNow);
+        var filled=pending with
+        {
+            Status="FILLED",
+            ExecutedQuantity=1m,
+            AvgPrice=149m,
+            UpdatedAt=DateTime.UtcNow.AddSeconds(1)
+        };
+        var exchange=new RecordingExchange
+        {
+            MarketOrderResult=pending,
+            FindOrderResults=new Queue<ExchangeOrder?>([null,filled])
+        };
+        var executor=CreateExecutor(
+            exchange,out var store,CapabilityStatus.Available,
+            poll:new VirtualPollScheduler());
+
+        var result=await executor.ExecuteReduceOnlyRecoveryAsync(
+            "cycle",RecoveryIntent(),CancellationToken.None);
+
+        Assert.NotEmpty(result);
+        Assert.Equal(1,exchange.MarketOrderSubmissions);
+        Assert.True(exchange.LastReduceOnly);
+        Assert.Equal("COMPLETED",await store.GetOrderIntentStatusAsync("recover-sol",CancellationToken.None));
+        Assert.True(await store.HasExecutionEventAsync("recover-sol",CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task PendingUnknownReduceOnlyFillIsReconciledWithoutResubmission()
+    {
+        var filled=new ExchangeOrder(
+            "SOLUSDT","close-order","recover-sol","FILLED",1m,149m,
+            "MARKET",PositionSide.Long,false,DateTime.UtcNow);
+        var protection=new ExchangeOrder(
+            "SOLUSDT","protect-order","position-protection","NEW",0,0,
+            "STOP_MARKET",PositionSide.Long,true,DateTime.UtcNow);
+        var exchange=new RecordingExchange
+        {
+            FoundOrder=filled,
+            OpenOrders=[protection]
+        };
+        var executor=CreateExecutor(exchange,out var store,CapabilityStatus.Available);
+        await SeedManagedOpeningAsync(store);
+        await store.SaveIntentAsync(
+            "recovery-cycle",RecoveryIntent(),"UNKNOWN","close-order",CancellationToken.None);
+
+        var first=await executor.RecoverPendingAsync(CancellationToken.None);
+        var second=await executor.RecoverPendingAsync(CancellationToken.None);
+
+        Assert.True(first.SafeToIncreaseRisk);
+        Assert.True(second.SafeToIncreaseRisk);
+        Assert.Equal(0,exchange.MarketOrderSubmissions);
+        Assert.Equal(1,exchange.CancelAttempts);
+        Assert.Equal("COMPLETED",await store.GetOrderIntentStatusAsync("recover-sol",CancellationToken.None));
+        Assert.True(await store.HasExecutionEventAsync("recover-sol",CancellationToken.None));
+        Assert.DoesNotContain(await store.GetExecutionPositionLedgerAsync(CancellationToken.None),x=>x.Quantity>0);
+        Assert.Empty(await store.GetRecoverableIntentsAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task ReduceOnlyRecovery_UnavailableRefreshRejectsBeforeProviderMutation()
     {
         var exchange=new RecordingExchange();
@@ -645,13 +709,14 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
 
     private ReliableOrderExecutor CreateExecutor(
         RecordingExchange exchange,out AgentSqliteStore store,CapabilityStatus status=CapabilityStatus.Unsupported,
-        DateTimeOffset? checkedAt=null,Func<string,CancellationToken,Task<ExchangeCapability?>>? capabilityRefresh=null)
+        DateTimeOffset? checkedAt=null,Func<string,CancellationToken,Task<ExchangeCapability?>>? capabilityRefresh=null,
+        IOrderPollScheduler? poll=null)
     {
         Directory.CreateDirectory(_directory);
         store = new AgentSqliteStore(Path.Combine(_directory,Guid.NewGuid().ToString("N")+".db"));
         var capability = new ExchangeCapability("binance","binance-futures","SOLUSDT","SOLUSDT",MarketType.Perpetual,
             status,true,status==CapabilityStatus.Available,true,checkedAt??DateTimeOffset.UtcNow,"unavailable in test");
-        return new ReliableOrderExecutor(exchange,store,new RiskLimits(),SystemOrderPollScheduler.Instance,
+        return new ReliableOrderExecutor(exchange,store,new RiskLimits(),poll??SystemOrderPollScheduler.Instance,
             new Dictionary<string,ExchangeCapability>(StringComparer.OrdinalIgnoreCase){{"SOLUSDT",capability}},true,
             capabilityRefresh:capabilityRefresh);
     }
@@ -748,6 +813,21 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
     private static ExchangeOrder FilledOrder() => new("SOLUSDT","order-1","open-sol","FILLED",1m,150m,
         "MARKET",PositionSide.Long,false,DateTime.UtcNow);
 
+    private sealed class VirtualPollScheduler:IOrderPollScheduler
+    {
+        private DateTimeOffset _now=DateTimeOffset.UtcNow;
+        public TimeSpan OrderTimeout=>TimeSpan.FromSeconds(3);
+        public TimeSpan PollInterval=>TimeSpan.FromSeconds(1);
+        public TimeSpan PostCancelWindow=>TimeSpan.FromSeconds(1);
+        public DateTimeOffset UtcNow=>_now;
+        public ValueTask DelayAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _now+=PollInterval;
+            return ValueTask.CompletedTask;
+        }
+    }
+
     private class RecordingExchange : IExchangeAdapter
     {
         public ExchangeEnvironment Environment => ExchangeEnvironment.Testnet;
@@ -760,15 +840,21 @@ public sealed class ExecutionMutationBoundaryTests : IDisposable
         public CancellationTokenSource? CancelCancellationSource { get; init; }
         public CancellationTokenSource? ProtectionCancellationSource { get; init; }
         public ExchangeOrder? FoundOrder { get; init; }
+        public Queue<ExchangeOrder?>? FindOrderResults { get; init; }
+        public ExchangeOrder? MarketOrderResult { get; init; }
         public IReadOnlyList<ExchangeOrder> OpenOrders { get; init; }=[];
         public IReadOnlyList<ManagedPosition> Positions { get; init; }=[];
-        public Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct) => Task.FromResult(FoundOrder);
+        public Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct)
+        {
+            if(FindOrderResults is {Count:>0})return Task.FromResult(FindOrderResults.Dequeue());
+            return Task.FromResult(FoundOrder);
+        }
         public Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol,CancellationToken ct) => Task.FromResult(OpenOrders);
         public Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct) => Task.FromResult(Positions);
         public Task SetHedgeModeAsync(bool enabled,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
         public Task SetMarginModeAsync(string symbol,bool isolated,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
         public Task SetLeverageAsync(string symbol,int leverage,CancellationToken ct){MutationCount++;return Task.CompletedTask;}
-        public Task<ExchangeOrder> PlaceMarketAsync(string symbol,PositionSide side,decimal quantity,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;MarketOrderSubmissions++;LastReduceOnly=reduceOnly;return Task.FromResult(FilledOrder() with{ClientOrderId=clientOrderId,ExecutedQuantity=quantity,PositionSide=side});}
+        public Task<ExchangeOrder> PlaceMarketAsync(string symbol,PositionSide side,decimal quantity,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;MarketOrderSubmissions++;LastReduceOnly=reduceOnly;return Task.FromResult(MarketOrderResult??FilledOrder() with{ClientOrderId=clientOrderId,ExecutedQuantity=quantity,PositionSide=side});}
         public Task<ExchangeOrder> PlaceLimitAsync(string symbol,PositionSide side,decimal quantity,decimal price,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;return Task.FromResult(FilledOrder());}
         public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide sideToClose,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct)
         {

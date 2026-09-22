@@ -36,7 +36,9 @@ internal static class ProductionRecoveryComposition
         var observations=new AuthenticatedProviderRecoveryObservationSource(provider,permissions.AccountId,utcNow);
         var authority=RecoveryReconciliationComposition.Create(keys,observations,utcNow);
         var gateway=new TradingExecutionGateway(trustedExecutor,store,utcNow,authority.Verifier);
-        return new(gateway,new ProductionRecoveryService(authority.Reconciler,gateway,provider.ProviderId,permissions.AccountId));
+        return new(gateway,new ProductionRecoveryService(
+            authority.Reconciler,gateway,provider.ProviderId,permissions.AccountId,
+            executor as IPendingExecutionRecovery));
     }
 
     internal static string DefaultKeyPath()=>Path.Combine(
@@ -61,8 +63,13 @@ internal sealed class ProductionRecoveryService(
     ITrustedRecoveryReconciler reconciler,
     TradingExecutionGateway gateway,
     string providerId,
-    string accountId)
+    string accountId,
+    IPendingExecutionRecovery? pendingRecovery=null)
 {
+    internal Task<RecoveryResult> RecoverPendingAsync(CancellationToken ct)=>
+        pendingRecovery?.RecoverPendingAsync(ct)
+        ?? Task.FromResult(new RecoveryResult(false,["recovery.pending-recovery-unavailable"]));
+
     internal async Task<TradingExecutionGatewayResult> ExecuteAsync(
         string correlationId,ExecutionIntent intent,int leverage,bool isolated,CancellationToken ct)
     {
