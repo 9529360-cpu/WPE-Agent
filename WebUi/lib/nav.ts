@@ -1,5 +1,5 @@
 import type {LucideIcon} from 'lucide-react'
-import {LayoutDashboard,Bot,Receipt,Workflow,History,ShieldAlert,Activity,Settings,WalletCards,GraduationCap,FlaskConical,Plug,ShieldCheck} from 'lucide-react'
+import {LayoutDashboard,Bot,Receipt,History,ShieldAlert,Activity,Settings,WalletCards,GraduationCap,FlaskConical,Plug,ShieldCheck} from 'lucide-react'
 import type {Locale,TranslationKey} from '@/lib/i18n/dictionaries'
 
 export type NavItem={labelKey?:TranslationKey;labels?:Record<Locale,string>;href:string;icon:LucideIcon;shortcut?:string;badge?:string}
@@ -27,7 +27,6 @@ export const navGroups:NavGroup[]=[
   {labelKey:'dashboard.portfolio',href:'/positions',icon:WalletCards},
  ]},
  {titleKey:'nav.strategyGroup',items:[
-  {labelKey:'nav.strategies',href:'/strategies',icon:Workflow,shortcut:'S'},
   {labelKey:'nav.backtest',href:'/backtest',icon:FlaskConical},
   {labelKey:'nav.risk',href:'/risk',icon:ShieldAlert,shortcut:'R'},
  ]},

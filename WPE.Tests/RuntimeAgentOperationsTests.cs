@@ -33,7 +33,7 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
     }
 
     [Fact]
-    public async Task WorkflowProjectionDoesNotInventResearchToExecutionBypass()
+    public async Task WorkflowProjectionDoesNotInventDecisionToExecutionBypass()
     {
         var db=new AgentSqliteStore(DatabasePath);
         await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("run-roles","runtime.heartbeat","AgentRuntimeSupervisor",new{RunId="run-roles",LeaseRenewed=true}),default);
@@ -42,9 +42,9 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
 
         var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath),new AgentRoleRuntimeRegistry()).Read();
 
-        Assert.Contains(state.Handoffs,x=>x.SourceRoleId=="research"&&x.TargetRoleId=="risk");
+        Assert.Contains(state.Handoffs,x=>x.SourceRoleId=="decision"&&x.TargetRoleId=="risk");
         Assert.Contains(state.Handoffs,x=>x.SourceRoleId=="risk"&&x.TargetRoleId=="audit");
-        Assert.DoesNotContain(state.Handoffs,x=>x.SourceRoleId=="research"&&x.TargetRoleId=="execution");
+        Assert.DoesNotContain(state.Handoffs,x=>x.SourceRoleId=="decision"&&x.TargetRoleId=="execution");
     }
 
     [Fact]
@@ -62,9 +62,9 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
     public void EmptyAvailableAndFourStatesWithholdUnavailableEvidence()
     {
         var empty=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath)).Read();
-        Assert.Equal(RuntimeCollectionState.Available,empty.State);Assert.Equal(7,empty.Operations.Count);Assert.Empty(empty.Handoffs);Assert.All(empty.Operations,x=>Assert.Equal("stopped",x.Status));
+        Assert.Equal(RuntimeCollectionState.Available,empty.State);Assert.Equal(6,empty.Operations.Count);Assert.Empty(empty.Handoffs);Assert.All(empty.Operations,x=>Assert.Equal("stopped",x.Status));
         var now=DateTime.UtcNow;var missing=RuntimeSnapshotFactory.Create(new SystemState{LastUpdated=now},now);Assert.Equal(RuntimeCollectionState.Unsupported,missing.AgentOperations.State);Assert.Empty(missing.AgentHandoffs.Items);
-        var staleState=new RuntimeAgentOperationsState(RuntimeCollectionState.Available,[new("risk","idle",now-TimeSpan.FromMinutes(6),"Skill risk SUCCESS","Local Only")],[],new DateTimeOffset(now-TimeSpan.FromMinutes(6)),null);
+        var staleState=new RuntimeAgentOperationsState(RuntimeCollectionState.Available,[new("risk","waiting",now-TimeSpan.FromMinutes(6),"Skill risk SUCCESS","Local Only")],[],new DateTimeOffset(now-TimeSpan.FromMinutes(6)),null);
         var stale=RuntimeSnapshotFactory.Create(new SystemState{LastUpdated=now},now,agentOperationsState:staleState);Assert.Equal(RuntimeCollectionState.Stale,stale.AgentOperations.State);Assert.Empty(stale.AgentOperations.Items);
         var error=RuntimeSnapshotFactory.Create(new SystemState{LastUpdated=now},now,agentOperationsState:RuntimeAgentOperationsState.Error("db failed"));Assert.Equal(RuntimeCollectionState.Error,error.AgentOperations.State);Assert.Empty(error.AgentHandoffs.Items);
     }
@@ -90,7 +90,7 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
         }
 
         var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath)).Read();
-        Assert.Equal(7,state.Operations.Count);Assert.Empty(state.Handoffs);
+        Assert.Equal(6,state.Operations.Count);Assert.Empty(state.Handoffs);
         Assert.All(state.Operations,x=>Assert.Equal("stopped",x.Status));
         Assert.All(state.Operations,x=>Assert.Null(x.Activity));
     }
@@ -100,8 +100,7 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
     {
         var registry=new AgentRoleRuntimeRegistry();
         registry.Publish("market","monitoring","Market stream active.");
-        registry.Publish("research","running","Research cycle active.");
-        registry.Publish("strategy","waiting","Next strategy run scheduled.");
+        registry.Publish("decision","running","Direct decision cycle active.");
         registry.Publish("risk","monitoring","Risk gate active.");
         registry.Publish("execution","waiting","No approved order pending.");
         registry.Publish("recovery","monitoring","No unresolved order.");
@@ -110,7 +109,7 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
         var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath),registry).Read();
 
         Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="market").Status);
-        Assert.Equal("running",state.Operations.Single(x=>x.RoleId=="research").Status);
+        Assert.Equal("running",state.Operations.Single(x=>x.RoleId=="decision").Status);
         Assert.Equal("waiting",state.Operations.Single(x=>x.RoleId=="execution").Status);
         Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="audit").Status);
     }
@@ -119,7 +118,7 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
     public void RuntimeWideFailureCannotLeaveAnyRoleLookingHealthy()
     {
         var registry=new AgentRoleRuntimeRegistry();
-        foreach(var role in new[]{"market","research","strategy","risk","execution","recovery","audit"})
+        foreach(var role in new[]{"market","decision","risk","execution","recovery","audit"})
             registry.Publish(role,"monitoring","healthy");
 
         registry.DegradeAll("runtime failed");

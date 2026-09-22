@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.IO;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
@@ -104,39 +104,6 @@ public partial class App : global::System.Windows.Application
             Shutdown(result.Accepted?0:19);
             return;
         }
-
-        if (e.Args.Any(x => string.Equals(x, "--research-local-acceptance", StringComparison.OrdinalIgnoreCase)))
-        {
-            ShutdownMode=ShutdownMode.OnExplicitShutdown;
-            var result=await WpeAgent.ModelOff.ResearchLocalAcceptanceRunnerV1.RunAsync(e.Args);
-            Log.Information("Research local acceptance collection completed. Success={Success}; Directory={Directory}; Errors={Errors}",result.Success,result.ArtifactDirectory,string.Join(',',result.Errors));
-            Shutdown(result.Success?0:20);
-            return;
-        }
-        if (e.Args.Any(x => string.Equals(x, "--strategy-local-acceptance", StringComparison.OrdinalIgnoreCase)))
-        {
-            ShutdownMode=ShutdownMode.OnExplicitShutdown;
-            var result=await WpeAgent.ModelOff.StrategyLocalAcceptanceRunnerV1.RunAsync(e.Args);
-            Log.Information("Strategy local acceptance collection completed. Success={Success}; Directory={Directory}; Errors={Errors}",result.Success,result.ArtifactDirectory,string.Join(',',result.Errors));
-            Shutdown(result.Success?0:23);
-            return;
-        }
-        if (e.Args.Any(x => string.Equals(x, "--strategy-aggregate-acceptance", StringComparison.OrdinalIgnoreCase)))
-        {
-            ShutdownMode=ShutdownMode.OnExplicitShutdown;
-            var result=await WpeAgent.ModelOff.StrategyAggregateAcceptanceRunnerV1.RunAsync();
-            Log.Information("Strategy aggregate acceptance collection completed. Success={Success}; Directory={Directory}; Errors={Errors}",result.Success,result.ArtifactDirectory,string.Join(',',result.Errors));
-            Shutdown(result.Success?0:24);
-            return;
-        }
-        if (e.Args.Any(x => string.Equals(x, "--strategy-acceptance-assess", StringComparison.OrdinalIgnoreCase)))
-        {
-            ShutdownMode=ShutdownMode.OnExplicitShutdown;
-            var result=await WpeAgent.ModelOff.StrategyAcceptanceAssessmentRunnerV1.RunAsync(e.Args);
-            Log.Information("Strategy aggregate assessment completed. Accepted={Accepted}; Report={Report}; Errors={Errors}",result.Accepted,result.ReportPath,string.Join(',',result.Errors));
-            Shutdown(result.Accepted?0:25);
-            return;
-        }
         if (e.Args.Any(x => string.Equals(x, "--risk-local-acceptance", StringComparison.OrdinalIgnoreCase)))
         {
             ShutdownMode=ShutdownMode.OnExplicitShutdown;
@@ -234,38 +201,12 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
-        if (e.Args.Any(x => string.Equals(x, "--research-aggregate-acceptance", StringComparison.OrdinalIgnoreCase)))
-        {
-            ShutdownMode=ShutdownMode.OnExplicitShutdown;
-            var result=await WpeAgent.ModelOff.ResearchAggregateAcceptanceRunnerV1.RunAsync();
-            Log.Information("Research aggregate acceptance collection completed. Success={Success}; Directory={Directory}; Errors={Errors}",result.Success,result.ArtifactDirectory,string.Join(',',result.Errors));
-            Shutdown(result.Success?0:21);
-            return;
-        }
-
-        if (e.Args.Any(x => string.Equals(x, "--research-acceptance-assess", StringComparison.OrdinalIgnoreCase)))
-        {
-            ShutdownMode=ShutdownMode.OnExplicitShutdown;
-            var result=await WpeAgent.ModelOff.ResearchAcceptanceAssessmentRunnerV1.RunAsync(e.Args);
-            Log.Information("Research aggregate assessment completed. Accepted={Accepted}; Report={Report}; Errors={Errors}",result.Accepted,result.ReportPath,string.Join(',',result.Errors));
-            Shutdown(result.Accepted?0:22);
-            return;
-        }
-
         if (e.Args.Any(x => string.Equals(x, "--architecture-test", StringComparison.OrdinalIgnoreCase)))
         {
             ShutdownMode=ShutdownMode.OnExplicitShutdown;
             var result=await ArchitectureTestRunner.RunAsync();
             Log.Information("Runtime architecture tests completed. Success={Success}; Report={Report}",result.Success,result.ReportPath);
             Shutdown(result.Success?0:14);
-            return;
-        }
-        if (e.Args.Any(x => string.Equals(x, "--strategy-lifecycle-test", StringComparison.OrdinalIgnoreCase)))
-        {
-            ShutdownMode=ShutdownMode.OnExplicitShutdown;
-            var result=await StrategyLifecycleTestRunner.RunAsync();
-            Log.Information("Strategy lifecycle tests completed. Success={Success}; Report={Report}",result.Success,result.ReportPath);
-            Shutdown(result.Success?0:15);
             return;
         }
 
@@ -419,15 +360,6 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
-        if (e.Args.Any(x => string.Equals(x, "--autonomy-test", StringComparison.OrdinalIgnoreCase)))
-        {
-            ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            var result = await AutonomyTestRunner.RunAsync();
-            Log.Information("Autonomy fault-injection tests completed. Success={Success}; Report={Report}", result.Success, result.ReportPath);
-            Shutdown(result.Success ? 0 : 5);
-            return;
-        }
-
         if (e.Args.Any(x => string.Equals(x, "--four-pillars-test", StringComparison.OrdinalIgnoreCase)))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -452,15 +384,6 @@ public partial class App : global::System.Windows.Application
             var result = await SmokeTestRunner.RunAsync();
             Log.Information("Testnet smoke test completed. Success={Success}; Report={Report}", result.Success, result.ReportPath);
             Shutdown(result.Success ? 0 : 2);
-            return;
-        }
-
-        if (e.Args.Any(x => string.Equals(x, "--maturity-test", StringComparison.OrdinalIgnoreCase)))
-        {
-            ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            var result = await MaturityTestRunner.RunAsync();
-            Log.Information("Maturity tests completed. Success={Success}; Report={Report}", result.Success, result.ReportPath);
-            Shutdown(result.Success ? 0 : 3);
             return;
         }
 

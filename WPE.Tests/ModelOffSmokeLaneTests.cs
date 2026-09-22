@@ -29,19 +29,15 @@ public sealed class ModelOffSmokeLaneTests
     }
 
     [Fact]
-    public void CanonicalInputValidityDoesNotDependOnDecisionFreshnessFlag()
+    public void CanonicalInputValidityAcceptsCanonicalHoldDecision()
     {
         var now=DateTime.UtcNow;
         var raw=new MarketEvidence("BTCUSDT",50_000m,49_000m,51_000m,50,0.01,0.02,0.03,new(0,1,1,1,1,1,0),now);
         var market=raw with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(raw,"binance-futures","Testnet")};
-        var assessment=new MarketDecisionAssessment
-        {
-            Symbol="BTCUSDT",Regime=MarketRegime.Transition,Fresh=false,
-            Signals=Enumerable.Range(0,8).Select(i=>new SignalContribution("s"+i,"test",1,.1,.1,"LONG","test")).ToArray()
-        };
         var evidence=new EvidencePack{CollectedAt=now,Markets=new Dictionary<string,MarketEvidence>{{"BTCUSDT",market}},Completeness=100};
+        var decision=new DecisionPlan{Action=DecisionAction.Hold,Instrument="BTCUSDT",DecisionContextKind="market-observation"};
 
-        Assert.True(SmokeTestRunner.CanonicalSmokeInputsValid(evidence,assessment));
+        Assert.True(SmokeTestRunner.CanonicalSmokeInputsValid(evidence,decision));
     }
 
     [Fact]
@@ -51,14 +47,10 @@ public sealed class ModelOffSmokeLaneTests
         var raw=new MarketEvidence("BTCUSDT",50_000m,49_000m,51_000m,50,0.01,0.02,0.03,new(0,1,1,1,1,1,0),now);
         var canonical=raw with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(raw,"binance-futures","Testnet")};
         var tampered=canonical with{Price=50_001m};
-        var assessment=new MarketDecisionAssessment
-        {
-            Symbol="BTCUSDT",Regime=MarketRegime.Transition,Fresh=true,
-            Signals=Enumerable.Range(0,8).Select(i=>new SignalContribution("s"+i,"test",1,.1,.1,"LONG","test")).ToArray()
-        };
         var evidence=new EvidencePack{CollectedAt=now,Markets=new Dictionary<string,MarketEvidence>{{"BTCUSDT",tampered}},Completeness=100};
+        var decision=new DecisionPlan{Action=DecisionAction.Hold,Instrument="BTCUSDT",DecisionContextKind="market-observation"};
 
-        Assert.False(SmokeTestRunner.CanonicalSmokeInputsValid(evidence,assessment));
+        Assert.False(SmokeTestRunner.CanonicalSmokeInputsValid(evidence,decision));
     }
 
     [Theory]

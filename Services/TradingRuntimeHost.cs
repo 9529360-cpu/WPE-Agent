@@ -250,7 +250,6 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
 
         await ServiceLocator.RuntimeAudit.RefreshAsync(ct);
         await ServiceLocator.RuntimeEquity.RefreshAsync(ct);
-        await ServiceLocator.RuntimeStrategyRegistry.RefreshAsync(ct);
         await ServiceLocator.RuntimeSkillCalls.RefreshAsync(ct);
         await ServiceLocator.RuntimeMemory.RefreshAsync(ct);
         await ServiceLocator.RuntimeAgentOperations.RefreshAsync(ct);
@@ -266,7 +265,6 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
             ServiceLocator.RuntimeTrading.Read(),
             ServiceLocator.RuntimeEquity.Read(),
             ServiceLocator.RuntimeConnection.Read(),
-            ServiceLocator.RuntimeStrategyRegistry.Read(),
             ServiceLocator.RuntimeSkillCalls.Read(),
             ServiceLocator.RuntimeMemory.Read(),
             ServiceLocator.RuntimeAgentOperations.Read(),

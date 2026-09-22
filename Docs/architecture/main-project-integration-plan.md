@@ -4,15 +4,15 @@
 
 ## 1. 集成目标
 
-- 把已完成的 `Master Backlog`、`RuntimeSnapshotV1`、多 Agent 角色/技能、`Local Only / Hybrid / AI Research` 架构、动态市场选择器 handoff、插件 `Phase0 manifest`、品牌方案，统一纳入主项目主线。
+- 把 `Master Backlog`、`RuntimeSnapshotV1`、真实六角色本地 Agent、LocalOnly direct-decision 架构、动态市场选择器 handoff、插件 `Phase0 manifest`、品牌方案，统一纳入主项目主线。
 - 保证本地 Agent 在无 LLM 时可完整运行。
 - 保证 Brain 只是可选增强，不是单点依赖。
 
 ## 2. 核心原则
 
-- `Local First`: 默认路径只依赖本地规则、回测、风控和持久化。
-- `Brain Optional`: Brain 只负责建议，不负责闭环生存。
-- `Fail Closed`: 任何远端不可用、配置不全、解析失败都回退到本地确定性路径。
+- `Local Only Trading`: 自动交易只依赖本地市场证据、direct decision、风控、持久化和执行/恢复链。
+- `Remote Brain Retired`: 旧远程 Brain 配置只为兼容读取；不能进入自动交易决策、授权或执行。
+- `Fail Closed`: 本地证据不完整、上下文不一致、风控/对账失败时不增加风险；不以远程模型或旧评分兜底。
 - `Snapshot Driven`: UI 和编排只消费 `RuntimeSnapshotV1`，不直连服务内部状态。
 
 ## 3. 无 LLM 完整运行方案
@@ -20,7 +20,7 @@
 ### 本地最小闭环
 
 - 数据采集: 本地行情/账户/订单缓存。
-- 研究: 本地规则、历史特征、策略评分、回测。
+- 研究: 本地历史特征、回测与旁路审计；不生成交易评分权威。
 - 决策: `DeterministicBrainProvider` 或同类本地 provider。
 - 风控: 本地 `Risk Gate` 强制门禁。
 - 执行: 仅在本地风控通过后下单。
@@ -28,54 +28,52 @@
 
 ### 运行时降级顺序
 
-1. `Remote Brain` 可用 -> 仅输出建议。
-2. `Remote Brain` 不可用 -> 切本地 deterministic provider。
-3. `Local AI` 不可用 -> 继续用规则/评分/阈值。
-4. `Research` 不可用 -> 继续执行已批准的稳定策略。
-5. `Exchange` 不可用 -> 只读、回放、研究、等待。
+1. 自动交易决策永远使用本地 deterministic provider，不接入远程大模型。
+2. 本地决策不可用或证据不完整 -> fail closed，只允许 Hold/风险降低/恢复动作。
+3. Research/Backtest 不可用 -> 不阻塞已有持仓的保护与恢复，但不得用旧评分或旧策略状态替代当前行情事实。
+4. Exchange 不可用 -> 只读、回放、研究、等待，不增加风险。
 
 ### 必须保留的本地能力
 
-- 策略候选生成
+- 直接 K 线/市场结构决策
 - 风险门禁
 - 仓位/杠杆计算
 - 市场选择器
 - 交易记录与恢复
 - UI 状态展示
 
-## 4. Brain 非单点设计
+## 4. 本地决策单权威设计
 
-- `Brain` 只挂在 `AssistantProviderFactory.Create(...)` 之后。
-- `allowRemote=false` 时永远回落本地 provider。
-- `Brain` 失败不影响 `workflow graph` 前进，只影响“建议质量”。
-- 同一决策链保留 `local decision`、`remote suggestion`、`final decision` 三层结果。
-- 增加多 provider 轮询/优先级：`local -> remote A -> remote B`。
+- `AssistantProviderFactory` 的交易运行时只创建 `local-deterministic` provider。
+- 旧 `Hybrid / AI Research / Remote Brain` 配置可以被读取用于兼容展示，但不能改变交易决策 provider。
+- 决策链只有一个执行权威：fresh canonical market evidence -> direct local decision -> deterministic plan -> independent risk -> execution/recovery。
+- 外部研究、回测和 Model-off Research/Strategy 输出只能作为旁路审计证据，不能覆盖、提升或批准订单。
 
 ## 5. 文件级迁移表
 
 | 领域 | 新增目录/文件 | 扩展接口 | 修改 UI | 说明 |
 |---|---|---|---|---|
 | RuntimeSnapshotV1 | `Core/Runtime/RuntimeSnapshotV1.cs`，`Infrastructure/Runtime/RuntimeSnapshotMapper.cs` | `IAgentEventBus`、`AgentRuntimeEvent`、`WorkflowCheckpoint` | `components/runtime-bridge.tsx`、全站 runtime consumer | 统一状态模型，UI 只读快照 |
-| Master Backlog | `Docs/Backlog/`，`Services/Agent/MasterBacklogStore.cs` | `IStrategyResearchAgent`、`IAgentMemoryStore` | `app/(dashboard)/strategies/page.tsx` | 任务、优先级、状态、完成度 |
-| 多 Agent 角色/技能 | `Services/Agent/Roles/`，`Services/Agent/Skills/` | `IAssistantProvider`、`IAssistantProtocolAdapter`、`SkillExecutionGuard` | `app/(dashboard)/agents/page.tsx`、`plugins/page.tsx` | 角色、技能、权限范围 |
-| Local/Hybrid/AI Research | `Services/Agent/ModeRouter.cs`，`Services/Agent/DecisionPipeline.cs` | `AssistantProviderFactory`、`DecisionIntelligence`、`LlmRequestGovernor` | `app/(dashboard)/settings/page.tsx`、`monitoring/page.tsx` | 模式切换与降级 |
+| Master Backlog | `Docs/Backlog/`，`Services/Agent/MasterBacklogStore.cs` | `IAgentMemoryStore` | `app/(dashboard)/agents/page.tsx` | 任务、优先级、状态、完成度；不再依赖已退役的策略研究 Agent/策略注册表页面 |
+| 本地 Agent 角色/技能 | `Services/AgentRoleRuntimeRegistry.cs`、`Services/Agent/` | `IAssistantProvider`、`SkillExecutionGuard` | `app/(dashboard)/agents/page.tsx`、`plugins/page.tsx` | 仅暴露真实运行角色：market / decision / risk / execution / recovery / audit |
+| Local-only Decision | `Services/Agent/RuntimeModePolicy.cs`、`Services/Agent/DirectMarketStructureDecisionSkill.cs` | `AssistantProviderFactory`、`DecisionIntelligence` | `app/(dashboard)/settings/page.tsx`、`monitoring/page.tsx` | 自动交易固定 LocalOnly；旧远程配置无执行权 |
 | 动态市场选择器 handoff | `Services/Exchange/MarketSelector.cs`，`Services/Exchange/MarketHandoff.cs` | `IExchangeProvider`、`IMarketDataProvider` | `app/(dashboard)/backtest/page.tsx`、`orders/page.tsx` | 市场选择、切换、handoff |
 | 插件 Phase0 manifest | `.codex-plugin/plugin.json`，`Plugins/`，`Marketplace/` | `IExchangeProviderPlugin` | `app/(dashboard)/plugins/page.tsx` | 插件注册、可见性、权限 |
 | 品牌方案 | `WebUi/public/brand/`，`WebUi/app/globals.css`，`WebUi/components/brand/*` | 无 | 全站 shell、dashboard、settings | Logo、色板、命名、文案 |
 
 ## 6. 接口扩展建议
 
-- `RuntimeSnapshotV1`: 增加 `mode`、`brainPolicy`、`localOnly`、`fallbackReason`、`providerChain`、`marketHandoffState`。
-- `IAssistantProvider`: 增加 `CanOperateOffline`、`Priority`、`IsFallback`.
+- `RuntimeSnapshotV1`: 保留 `mode`、`localOnly`、`fallbackReason`、`marketHandoffState` 等可观测状态；不再暴露远程 Brain provider chain 作为交易能力。
+- `IAssistantProvider`: 自动交易只要求本地 deterministic 实现；不再设计远程 provider 优先级/回退链。
 - `IExchangeProvider`: 增加 `SupportsHandoff`、`PreferredSymbols`、`CanServeAsPrimary`.
 - `IAgentRuntimeSupervisor`: 增加 `RecoverFromBrainLossAsync`、`RecoverFromExchangeLossAsync`.
 
 ## 7. UI 页面修改范围
 
-- `/` 仪表盘：显示本地/混合/Brain 状态与回退原因。
-- `/agents`：展示角色、技能、provider 链、当前工作流节点。
+- `/` 仪表盘：显示 LocalOnly、direct decision、风险与运行时事实。
+- `/agents`：展示真实六角色（market / decision / risk / execution / recovery / audit）、技能与当前工作流节点。
 - `/backtest`：展示本地研究产物、市场选择结果、离线回放。
-- `/orders`：展示 final decision、handoff 来源、执行门禁。
+- `/orders`：展示 direct decision 上下文、handoff 来源与执行门禁。
 - `/risk`：展示风控门禁、降级原因、拒单原因。
 - `/plugins`：展示 manifest、插件状态、权限、可用性。
 - `/settings`：展示模式切换、本地 only 开关、Brain 接入开关。

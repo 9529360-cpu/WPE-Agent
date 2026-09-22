@@ -8,7 +8,7 @@ namespace 币安量化机器人.Services.Agent;
 
 public sealed class DeterministicPlanSkill
 {
-    public DecisionPlan Complete(DecisionPlan source, MarketEvidence? market, MarketDecisionAssessment? assessment, RiskLimits risk)
+    public DecisionPlan Complete(DecisionPlan source,MarketEvidence? market,RiskLimits risk)
     {
         if (market is null || !IsRiskIncreasing(source.Action)) return source;
         var longSide = source.Action is DecisionAction.OpenLong or DecisionAction.AddLong or DecisionAction.ReverseToLong;
@@ -31,7 +31,6 @@ public sealed class DeterministicPlanSkill
         var reward = longSide ? take-entry : entry-take;
         source.EntryPrice=entry;source.StopLossPrice=stop;source.TakeProfitPrice=take;source.RiskRewardRatio=distance>0?(double)(reward/distance):0;
         source.OrderType=market.Quality.BestBid>0&&market.Quality.BestAsk>0&&market.Quality.SpreadBps<=risk.MaximumSpreadBps?ExecutionOrderType.Limit:ExecutionOrderType.Market;
-        if(assessment is not null&&string.IsNullOrWhiteSpace(source.Regime))source.Regime=assessment.Regime.ToString();
         return source;
     }
     public static bool IsRiskIncreasing(DecisionAction action)=>action is DecisionAction.OpenLong or DecisionAction.OpenShort or DecisionAction.AddLong or DecisionAction.AddShort or DecisionAction.Lock or DecisionAction.ReverseToLong or DecisionAction.ReverseToShort;
@@ -90,16 +89,17 @@ public sealed record RiskHistorySnapshot(decimal DailyRealizedPnl,int Consecutiv
 
 public sealed class IndependentRiskManagerSkill
 {
-    public IndependentRiskReview Review(DecisionPlan decision, EvidencePack evidence, MarketDecisionAssessment? assessment,
-        IReadOnlyList<ExecutionIntent> intents,RiskLimits limits,RiskHistorySnapshot history,ResearchValidationResult? research,PortfolioRiskAssessment? portfolio=null)
+    public IndependentRiskReview Review(DecisionPlan decision,EvidencePack evidence,
+        IReadOnlyList<ExecutionIntent> intents,RiskLimits limits,RiskHistorySnapshot history,PortfolioRiskAssessment? portfolio=null)
     {
         var checks=new List<string>();var blocks=new List<string>();var increasing=DeterministicPlanSkill.IsRiskIncreasing(decision.Action);
         if(!increasing)return new(){Approved=true,RiskLevel="LOW",PlannedQuantity=intents.Sum(x=>x.Quantity),Checks=["risk_reducing_action"],Summary=L("RiskReview.Reducing")};
         var market=evidence.Markets.GetValueOrDefault(decision.Instrument);var equity=evidence.Account.Equity;
         Check(evidence.Completeness>=70,"evidence_complete",L("RiskReview.Evidence"));
         Check(market is not null&&DateTime.UtcNow-market.CollectedAt<=TimeSpan.FromMinutes(5),"market_fresh",L("RiskReview.Stale"));
-        if(!DirectMarketStructureDecisionSkill.IsDirect(decision))
-            Check(market is not null&&market.Quality.QualityScore>=65,"market_quality",L("RiskReview.Quality",market?.Quality.QualityScore??0));
+        Check(DirectMarketStructureDecisionSkill.IsDirect(decision),"direct_market_structure_context","risk.direct-context-required");
+        if(market is not null&&DirectMarketStructureDecisionSkill.IsDirect(decision))
+            Check(DirectMarketStructureDecisionSkill.ContextMatches(decision,market),"direct_context_fresh","risk.direct-context-stale");
         Check(market is not null&&market.Quality.LiquidityScore>=limits.MinimumLiquidityScore,"liquidity",L("RiskReview.Liquidity",market?.Quality.LiquidityScore??0));
         Check(market is not null&&market.Quality.SpreadBps<=limits.MaximumSpreadBps,"spread",L("RiskReview.Spread",market?.Quality.SpreadBps??999));
         Check(market is not null&&market.Quality.AtrPercent<=limits.MaxAtrPercent,"volatility",L("RiskReview.Volatility",market?.Quality.AtrPercent??1));
@@ -108,23 +108,6 @@ public sealed class IndependentRiskManagerSkill
         Check(equity<=0||history.DailyRealizedPnl>-equity*limits.MaxDailyLoss,"daily_loss",L("RiskReview.DailyLoss",history.DailyRealizedPnl));
         Check(history.ApiFailures<limits.ApiFailureThreshold,"api_health",L("RiskReview.ApiFailures",history.ApiFailures));
         Check(!history.OrderStateUncertain,"order_state",L("RiskReview.OrderUncertain"));
-        var hypothesisDriven=string.Equals(decision.DecisionContextKind,TradeHypothesisEngine.DecisionContextKind,StringComparison.Ordinal);
-        var directDriven=DirectMarketStructureDecisionSkill.IsDirect(decision);
-        if(directDriven)
-        {
-            checks.Add("direct_market_structure_context");
-        }
-        else if(hypothesisDriven)
-        {
-            checks.Add("market_hypothesis_context");
-            if(research is not null&&research.CoverageDays>=limits.MinimumHistoricalDays)checks.Add("historical_context_available");
-            if(research is{Promoted:true,Approved:true})checks.Add("promoted_research_support");
-        }
-        else
-        {
-            Check(research is not null&&research.CoverageDays>=limits.MinimumHistoricalDays,"historical_coverage",L("RiskReview.History",research?.CoverageDays??0,limits.MinimumHistoricalDays));
-            Check(research is{Promoted:true,Approved:true},"research_gate",L("RiskReview.Research",research?.QualityScore??0));
-        }
         Check(portfolio is{Approved:true},"portfolio_risk",L("RiskReview.Portfolio",portfolio?.Summary??"unavailable"));
         var newNotional=intents.Where(x=>!x.ReduceOnly).Sum(x=>x.Quantity*(x.ExpectedPrice>0?x.ExpectedPrice:decision.EntryPrice));var reducedNotional=intents.Where(x=>x.ReduceOnly).Sum(x=>x.Quantity*(x.ExpectedPrice>0?x.ExpectedPrice:decision.EntryPrice));var currentNotional=evidence.Positions.Sum(x=>x.Quantity*x.MarkPrice);var postNotional=Math.Max(0,currentNotional+newNotional-reducedNotional);var exposure=equity>0?postNotional/equity:1;var currentSymbol=evidence.Positions.Where(x=>x.Symbol==decision.Instrument).Sum(x=>x.Quantity*x.MarkPrice);var symbolExposure=equity>0?Math.Max(0,currentSymbol+newNotional-reducedNotional)/equity:1;
         Check(equity>0&&evidence.Account.AvailableBalance>0,"balance",L("RiskReview.Balance"));
@@ -137,34 +120,6 @@ public sealed class IndependentRiskManagerSkill
         void Check(bool condition,string name,string failure){if(condition)checks.Add(name);else blocks.Add(failure);}
     }
     private static string L(string key,params object?[] args)=>LocalizationService.Current.T(key,args);
-}
-
-public sealed class StrategyResearchSkill
-{
-    private const double FeeRate=.0004,SlippageRate=.0003,FundingRate=.00005;
-    public ResearchValidationResult Evaluate(MarketEvidence market,string version="wpe-core-v2")
-    {
-        var validatedAt=DateTimeOffset.UtcNow;var candles=market.Candles;if(candles.Count<80)return new(){ValidatedAtUtc=validatedAt,Symbol=market.Symbol,StrategyVersion=version,SampleSize=candles.Count,QualityScore=.5,Approved=true,Summary="insufficient_history_observe_only"};
-        var returns=Simulate(candles);var split=Math.Max(1,(int)(returns.Count*.60));var train=returns.Take(split).ToArray();var test=returns.Skip(split).ToArray();var all=Metrics(returns);var outSample=Metrics(test);var walk=WalkForward(candles);var mc=MonteCarloLossProbability(returns);
-        var score=Math.Clamp(.25*(all.ProfitFactor/2)+.20*Math.Max(0,all.Expectancy*100)+.20*Math.Max(0,1-all.MaxDrawdown/.20)+.20*Math.Max(0,(outSample.TotalReturn+.10)/.20)+.15*walk,0,1);
-        var approved=returns.Count<5||(outSample.Expectancy>=-.001&&all.MaxDrawdown<=.20&&mc<=.75);
-        return new(){ValidatedAtUtc=validatedAt,Symbol=market.Symbol,StrategyVersion=version,SampleSize=candles.Count,Trades=returns.Count,WinRate=all.WinRate,ProfitFactor=all.ProfitFactor,Expectancy=all.Expectancy,MaxDrawdown=all.MaxDrawdown,Sharpe=all.Sharpe,OutOfSampleReturn=outSample.TotalReturn,WalkForwardScore=walk,MonteCarloLossProbability=mc,QualityScore=score,Approved=approved,Summary=$"{market.Symbol} trades={returns.Count} win={all.WinRate:P0} PF={all.ProfitFactor:F2} exp={all.Expectancy:P2} DD={all.MaxDrawdown:P1} OOS={outSample.TotalReturn:P1} WF={walk:F2} MC-loss={mc:P0}"};
-    }
-    private static List<double> Simulate(IReadOnlyList<CandleEvidence> c)
-    {
-        var result=new List<double>();int side=0;decimal entry=0;for(var i=50;i<c.Count;i++)
-        {
-            var fast=c.Skip(i-12).Take(12).Average(x=>x.Close);var slow=c.Skip(i-48).Take(48).Average(x=>x.Close);var next=fast>slow?1:-1;
-            if(side==0){side=next;entry=c[i].Close;continue;}if(next==side)continue;
-            var gross=entry>0?(double)((c[i].Close-entry)/entry)*side:0;var bars=Math.Max(1,i-50);result.Add(gross-FeeRate*2-SlippageRate*2-FundingRate*bars/32);side=next;entry=c[i].Close;
-        }return result;
-    }
-    private static (double WinRate,double ProfitFactor,double Expectancy,double MaxDrawdown,double Sharpe,double TotalReturn) Metrics(IReadOnlyList<double> r)
-    {
-        if(r.Count==0)return(0,0,0,0,0,0);var wins=r.Where(x=>x>0).Sum();var losses=-r.Where(x=>x<0).Sum();var equity=1d;var high=1d;var dd=0d;foreach(var x in r){equity*=1+x;high=Math.Max(high,equity);dd=Math.Max(dd,(high-equity)/high);}var avg=r.Average();var sd=Math.Sqrt(r.Select(x=>(x-avg)*(x-avg)).Average());return(r.Count(x=>x>0)/(double)r.Count,losses>0?wins/losses:wins>0?9:0,avg,dd,sd>0?avg/sd*Math.Sqrt(r.Count):0,equity-1);
-    }
-    private static double WalkForward(IReadOnlyList<CandleEvidence> c){var scores=new List<double>();for(var n=0;n<3;n++){var start=n*c.Count/5;var end=Math.Min(c.Count,start+c.Count*3/5);var r=Simulate(c.Skip(start).Take(end-start).ToArray());var m=Metrics(r);scores.Add(Math.Clamp(.5+m.Expectancy*20-m.MaxDrawdown,0,1));}return scores.Average();}
-    private static double MonteCarloLossProbability(IReadOnlyList<double> r){if(r.Count==0)return .5;var random=new Random(42);var losses=0;for(var n=0;n<300;n++){var equity=1d;for(var i=0;i<r.Count;i++)equity*=1+r[random.Next(r.Count)];if(equity<1)losses++;}return losses/300d;}
 }
 
 public static class PositionManagementDurableState
@@ -185,7 +140,6 @@ public sealed class PositionManagementSkill
         AgentSqliteStore db,
         CancellationToken ct,
         IReadOnlyList<ExecutionPositionLegV1> managedLegs,
-        IReadOnlyDictionary<string,TradeHypothesis>? hypotheses=null,
         IReadOnlyDictionary<string,TradingRule>? tradingRules=null)
     {
         ArgumentNullException.ThrowIfNull(managedLegs);
@@ -245,28 +199,6 @@ public sealed class PositionManagementSkill
                         ReasonCode:PositionExitReasonCodes.StructureInvalidated));
                 var structure=MarketStructureIntelligence.Analyze(market);
                 notes.Add($"direct-structure-invalidated:{position.Symbol}:{position.Side}:{structure.HigherTimeframeBias}:{structure.FifteenMinute.Event}");
-                continue;
-            }
-
-            if(hypotheses is not null &&
-               hypotheses.TryGetValue(position.Symbol,out var hypothesis) &&
-               StructureHypothesisInvalidated(position,hypothesis))
-            {
-                var actionId=ActionId("STRUCT",opening);
-                if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
-                    intents.Add(new(
-                        position.Symbol,
-                        position.Side,
-                        position.Quantity,
-                        true,
-                        0,
-                        0,
-                        actionId,
-                        L("Position.StructureInvalidated"),
-                        position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
-                        ExpectedPrice:market.Price,
-                        ReasonCode:PositionExitReasonCodes.StructureInvalidated));
-                notes.Add($"structure-invalidated:{position.Symbol}:{position.Side}:{hypothesis.Id}:{hypothesis.Revision}");
                 continue;
             }
 
@@ -356,13 +288,6 @@ public sealed class PositionManagementSkill
         if(value<=0||tickSize<=0)return 0;
         var units=value/tickSize;
         return (side==PositionSide.Long?Math.Ceiling(units):Math.Floor(units))*tickSize;
-    }
-
-    private static bool StructureHypothesisInvalidated(ManagedPosition position,TradeHypothesis hypothesis)
-    {
-        if(hypothesis.Stage!=TradeHypothesisStage.Invalidated)return false;
-        if(!string.Equals(hypothesis.DecisionBasis,MarketStructureRead.DecisionBasis,StringComparison.Ordinal))return false;
-        return position.Side==PositionSide.Long?hypothesis.Direction>0:hypothesis.Direction<0;
     }
 
     private static string ActionId(string tag,ExecutionIntent opening)

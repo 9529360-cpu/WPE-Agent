@@ -111,7 +111,7 @@ public sealed class RuntimeAuthorizationProjectionTests:IDisposable
     private static int Count(string value,string token){int count=0,index=0;while((index=value.IndexOf(token,index,StringComparison.Ordinal))>=0){count++;index+=token.Length;}return count;}
     private static async Task PersistArtifact(AgentSqliteStore database,string correlation,DecisionPlan decision,IndependentRiskReview risk)
     {
-        await database.StartCycleAsync(correlation,new EvidencePack(),"local",CancellationToken.None);await database.CompleteCycleAsync(correlation,decision,"authorization.review-waiting",null,null,CancellationToken.None);await database.RecordMaturityAuditAsync(correlation,decision,new DecisionReview{Decision=decision,Accepted=true},risk,null,"authorization.review-waiting",CancellationToken.None);
+        await database.StartCycleAsync(correlation,new EvidencePack(),"local",CancellationToken.None);await database.CompleteCycleAsync(correlation,decision,"authorization.review-waiting",null,null,CancellationToken.None);await database.RecordMaturityAuditAsync(correlation,decision,new DecisionReview{Decision=decision,Accepted=true},risk,"authorization.review-waiting",CancellationToken.None);
     }
     private async Task InsertRequests(int count)
     {

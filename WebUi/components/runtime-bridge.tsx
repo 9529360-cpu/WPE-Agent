@@ -5,8 +5,8 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 export type WpeRuntimeState = {
   contractVersion?: string
   freshness?: { fresh: boolean; ageSeconds: number; staleAfterSeconds: number }
-  collectionStates?: { account?: RuntimeCollectionState; positions?: RuntimeCollectionState; orders?: RuntimeCollectionState; risk?: RuntimeCollectionState; strategies?: RuntimeCollectionState; backtests?: RuntimeCollectionState; crossAssetResearch?:RuntimeCollectionState; distribution?:RuntimeCollectionState; telemetry?: RuntimeCollectionState; markets?: RuntimeCollectionState; publicMarkets?: RuntimeCollectionState; publicKlines?: RuntimeCollectionState; capabilities?: RuntimeCollectionState; llmGovernance?: RuntimeCollectionState; plugins?: RuntimeCollectionState; auditEvents?: RuntimeCollectionState; equityHistory?: RuntimeCollectionState; equityMarkets?: RuntimeCollectionState; equityBroker?: RuntimeCollectionState; historicalOrders?:RuntimeCollectionState; historicalEquity?:RuntimeCollectionState; historicalBacktests?:RuntimeCollectionState; historicalSkillCalls?:RuntimeCollectionState; historicalAuditEvents?:RuntimeCollectionState; connectionStatus?: RuntimeCollectionState; strategyRegistry?: RuntimeCollectionState; strategyLifecycleEvents?: RuntimeCollectionState; skillCalls?: RuntimeCollectionState; memoryStatus?:RuntimeCollectionState; recentMemoryRetrievals?:RuntimeCollectionState; agentOperations?:RuntimeCollectionState; agentHandoffs?:RuntimeCollectionState; teacherLessons?:RuntimeCollectionState; teacherRecommendations?:RuntimeCollectionState; teacherCorrections?:RuntimeCollectionState; teacherOutcomes?:RuntimeCollectionState; notificationStatus?:RuntimeCollectionState; notificationOutbox?:RuntimeCollectionState; telegramSubscribers?:RuntimeCollectionState; authorizationMode?: RuntimeCollectionState; automaticExecutions?:RuntimeCollectionState; pendingApprovals?: RuntimeCollectionState; securityStorage?:RuntimeCollectionState }
-  collectionMessages?: { positions?: string; orders?: string; backtests?: string; equityHistory?: string; equityMarkets?: string; equityBroker?: string; connectionStatus?: string; strategyRegistry?: string; strategyLifecycleEvents?: string }
+  collectionStates?: { account?: RuntimeCollectionState; positions?: RuntimeCollectionState; orders?: RuntimeCollectionState; risk?: RuntimeCollectionState; backtests?: RuntimeCollectionState; crossAssetResearch?:RuntimeCollectionState; distribution?:RuntimeCollectionState; telemetry?: RuntimeCollectionState; markets?: RuntimeCollectionState; publicMarkets?: RuntimeCollectionState; publicKlines?: RuntimeCollectionState; capabilities?: RuntimeCollectionState; llmGovernance?: RuntimeCollectionState; plugins?: RuntimeCollectionState; auditEvents?: RuntimeCollectionState; equityHistory?: RuntimeCollectionState; equityMarkets?: RuntimeCollectionState; equityBroker?: RuntimeCollectionState; historicalOrders?:RuntimeCollectionState; historicalEquity?:RuntimeCollectionState; historicalBacktests?:RuntimeCollectionState; historicalSkillCalls?:RuntimeCollectionState; historicalAuditEvents?:RuntimeCollectionState; connectionStatus?: RuntimeCollectionState; skillCalls?: RuntimeCollectionState; memoryStatus?:RuntimeCollectionState; recentMemoryRetrievals?:RuntimeCollectionState; agentOperations?:RuntimeCollectionState; agentHandoffs?:RuntimeCollectionState; teacherLessons?:RuntimeCollectionState; teacherRecommendations?:RuntimeCollectionState; teacherCorrections?:RuntimeCollectionState; teacherOutcomes?:RuntimeCollectionState; notificationStatus?:RuntimeCollectionState; notificationOutbox?:RuntimeCollectionState; telegramSubscribers?:RuntimeCollectionState; authorizationMode?: RuntimeCollectionState; automaticExecutions?:RuntimeCollectionState; pendingApprovals?: RuntimeCollectionState; securityStorage?:RuntimeCollectionState }
+  collectionMessages?: { positions?: string; orders?: string; backtests?: string; equityHistory?: string; equityMarkets?: string; equityBroker?: string; connectionStatus?: string }
   positions?: RuntimePosition[]
   orders?: RuntimeOrder[]
   backtests?: RuntimeBacktest[]
@@ -22,10 +22,7 @@ export type WpeRuntimeState = {
   btcTrend?: number
   ethTrend?: number
   marketRegime?: string
-  brainConfidence?: number
-  decisionScore?: number
   riskLoad?: number
-  conflictRate?: number
   walletBalance?: number
   availableBalance?: number
   positionQuantity?: number
@@ -42,18 +39,13 @@ export type WpeRuntimeState = {
   dataQualityScore?: number
   liquidityScore?: number
   volatilityPercent?: number
-  researchScore?: number
   historicalCoverageDays?: number
   missingConditions?: string
   riskSummary?: string
-  signalContributions?: Record<string, number>
   lastUpdated?: string
   lastDecision?: string
   lastReason?: string
   decisionAuditSummary?: string
-  strategyStatus?: string
-  strategySummary?: string
-  strategyCandidates?: number
   plannedEntry?: number
   plannedStop?: number
   plannedTakeProfit?: number
@@ -102,8 +94,6 @@ export type WpeRuntimeState = {
   equityHistory?: RuntimeEquityPoint[]
   /** Host-authoritative, non-sensitive access readiness projection. */
   connectionStatus?: RuntimeConnectionStatusCollection
-  strategyRegistry?: RuntimeStrategyProfile[]
-  strategyLifecycleEvents?: RuntimeStrategyLifecycleEvent[]
   skillCalls?: RuntimeSkillCall[]
   diagnostic?: RuntimeDiagnosticCollection
   memoryStatus?:RuntimeMemoryStatusCollection
@@ -188,8 +178,6 @@ export type RuntimeConnectionStatusCollection = {
   message?: string
   value?: RuntimeConnectionStatusValue
 }
-export type RuntimeStrategyProfile = { id: string; version: string; symbol: string; family: string; lifecycle: string; lastReason: string; stateChangedAtUtc: string | null; qualityScore: number }
-export type RuntimeStrategyLifecycleEvent = { id: number; strategyId: string; fromState: string; toState: string; occurredAtUtc: string; reason: string }
 export type RuntimeSkillCall = { id:string; occurredAtUtc:string; skill:string; status:string; durationMs:number; mode:string|null; remoteLlmUsed:boolean|null; tokens:number|null; costUsd:number|null }
 export type RuntimeDiagnosticCollection={state:RuntimeCollectionState;value?:{code:string;timeUtc:string;summary:string}}
 export type RuntimeMemoryStatusCollection={state:RuntimeCollectionState;message?:string;value?:{workingCount:number;episodicCount:number;longTermCount:number;lastRetrievedAtUtc:string|null}}
@@ -423,12 +411,6 @@ function normalizeBacktest(input: unknown): RuntimeBacktest | null {
   if (!backtestId || !strategyId || !strategyVersion || !symbol || !status || !completedAtUtc || Number.isNaN(Date.parse(completedAtUtc)) || coverageDays === null || coverageDays < 0 || !Number.isInteger(coverageDays) || trades === null || trades < 0 || !Number.isInteger(trades) || outOfSampleReturn === null || maxDrawdown === null || maxDrawdown < 0 || sharpe === null) return null
   return { backtestId, strategyId, strategyVersion, symbol, completedAtUtc, status, coverageDays, trades, outOfSampleReturn, maxDrawdown, sharpe }
 }
-function normalizeStrategyProfile(input: unknown): RuntimeStrategyProfile | null {
-  if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>;const id=nonEmptyString(x.id),version=nonEmptyString(x.version),symbol=nonEmptyString(x.symbol),family=nonEmptyString(x.family),lifecycle=nonEmptyString(x.lifecycle),lastReason=nonEmptyString(x.lastReason);const changed=x.stateChangedAtUtc===null?null:nonEmptyString(x.stateChangedAtUtc);const qualityScore=finiteNumber(x.qualityScore);if(!id||!version||!symbol||!family||!lifecycle||!lastReason||qualityScore===null||(changed!==null&&Number.isNaN(Date.parse(changed))))return null;return{id,version,symbol,family,lifecycle,lastReason,stateChangedAtUtc:changed,qualityScore}
-}
-function normalizeStrategyEvent(input: unknown): RuntimeStrategyLifecycleEvent | null {
-  if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>;const id=finiteNumber(x.id),strategyId=nonEmptyString(x.strategyId),fromState=nonEmptyString(x.fromState),toState=nonEmptyString(x.toState),occurredAtUtc=nonEmptyString(x.occurredAtUtc),reason=nonEmptyString(x.reason);if(id===null||!Number.isInteger(id)||!strategyId||!fromState||!toState||!occurredAtUtc||Number.isNaN(Date.parse(occurredAtUtc))||!reason)return null;return{id,strategyId,fromState,toState,occurredAtUtc,reason}
-}
 function normalizeSkillCall(input:unknown):RuntimeSkillCall|null{if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>,id=nonEmptyString(x.id),occurredAtUtc=nonEmptyString(x.occurredAtUtc),skill=nonEmptyString(x.skill),status=nonEmptyString(x.status),durationMs=finiteNumber(x.durationMs);const mode=x.mode===null?null:nonEmptyString(x.mode);const remoteLlmUsed=x.remoteLlmUsed===null?null:typeof x.remoteLlmUsed==='boolean'?x.remoteLlmUsed:undefined;const tokens=x.tokens===null?null:finiteNumber(x.tokens);const costUsd=x.costUsd===null?null:finiteNumber(x.costUsd);if(!id||!occurredAtUtc||Number.isNaN(Date.parse(occurredAtUtc))||!skill||!status||durationMs===null||durationMs<0||remoteLlmUsed===undefined||(tokens!==null&&(tokens<0||!Number.isInteger(tokens)))||(costUsd!==null&&costUsd<0))return null;return{id,occurredAtUtc,skill,status,durationMs,mode,remoteLlmUsed,tokens,costUsd}}
 function normalizeAgentOperation(input:unknown):RuntimeAgentOperation|null{if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>,roleId=nonEmptyString(x.roleId),status=nonEmptyString(x.status),activity=x.activity===null?null:nonEmptyString(x.activity),mode=nonEmptyString(x.mode),last=x.lastActivityAtUtc===null?null:nonEmptyString(x.lastActivityAtUtc);if(!roleId||!status||!['running','monitoring','waiting','degraded','stopped'].includes(status)||!mode||!['Local Only','Hybrid','AI Research'].includes(mode)||(last!==null&&Number.isNaN(Date.parse(last))))return null;return{roleId,status:status as RuntimeAgentOperation['status'],lastActivityAtUtc:last,activity,mode:mode as RuntimeAgentOperation['mode']}}
 function normalizeAgentHandoff(input:unknown):RuntimeAgentHandoff|null{if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>,id=nonEmptyString(x.id),occurredAtUtc=nonEmptyString(x.occurredAtUtc),sourceRoleId=nonEmptyString(x.sourceRoleId),targetRoleId=nonEmptyString(x.targetRoleId),result=nonEmptyString(x.result);if(!id||!occurredAtUtc||Number.isNaN(Date.parse(occurredAtUtc))||!sourceRoleId||!targetRoleId||sourceRoleId===targetRoleId||!result)return null;return{id,occurredAtUtc,sourceRoleId,targetRoleId,result}}
@@ -659,7 +641,7 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
   const freshness = value.freshness && typeof value.freshness === 'object' ? value.freshness as { fresh: boolean; ageSeconds: number; staleAfterSeconds: number } : undefined
   const generatedAtUtc=nonEmptyString(value.generatedAtUtc),sourceUpdatedAtUtc=nonEmptyString(value.sourceUpdatedAtUtc),environment=nonEmptyString(value.environment)
   if(!freshness||typeof freshness.fresh!=='boolean'||finiteNumber(freshness.ageSeconds)===null||freshness.ageSeconds<0||finiteNumber(freshness.staleAfterSeconds)===null||freshness.staleAfterSeconds<=0||!generatedAtUtc||!sourceUpdatedAtUtc||Number.isNaN(Date.parse(generatedAtUtc))||Number.isNaN(Date.parse(sourceUpdatedAtUtc))||environment!=='Testnet')return null
-  const collections = ['account', 'positions', 'orders', 'risk', 'strategies', 'backtests', 'crossAssetResearch', 'distribution', 'telemetry', 'markets', 'publicMarkets', 'publicKlines', 'capabilities', 'llmGovernance', 'plugins', 'auditEvents', 'equityHistory', 'equityMarkets', 'equityBroker','historicalOrders','historicalEquity','historicalBacktests','historicalSkillCalls','historicalAuditEvents', 'connectionStatus', 'strategyRegistry', 'strategyLifecycleEvents','skillCalls','memoryStatus','recentMemoryRetrievals','agentOperations','agentHandoffs','teacherLessons','teacherRecommendations','teacherCorrections','teacherOutcomes','notificationStatus','notificationOutbox','telegramSubscribers','authorizationMode','automaticExecutions','pendingApprovals','securityStorage']
+  const collections = ['account', 'positions', 'orders', 'risk', 'backtests', 'crossAssetResearch', 'distribution', 'telemetry', 'markets', 'publicMarkets', 'publicKlines', 'capabilities', 'llmGovernance', 'plugins', 'auditEvents', 'equityHistory', 'equityMarkets', 'equityBroker','historicalOrders','historicalEquity','historicalBacktests','historicalSkillCalls','historicalAuditEvents', 'connectionStatus','skillCalls','memoryStatus','recentMemoryRetrievals','agentOperations','agentHandoffs','teacherLessons','teacherRecommendations','teacherCorrections','teacherOutcomes','notificationStatus','notificationOutbox','telegramSubscribers','authorizationMode','automaticExecutions','pendingApprovals','securityStorage']
   const collectionStates = Object.fromEntries(collections.map((key) => [key, normalizeCollectionState((value[key] as { state?: unknown } | undefined)?.state)])) as NonNullable<WpeRuntimeState['collectionStates']>
   const positions = normalizeItems(value.positions, normalizePosition)
   const orders = normalizeItems(value.orders, normalizeOrder)
@@ -683,8 +665,6 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
   const diagnostic=normalizeDiagnostic(value.diagnostic)
   const memoryStatus=normalizeMemoryStatus(value.memoryStatus)
   const recentMemoryRetrievals=normalizeItems(value.recentMemoryRetrievals,normalizeMemoryRetrieval)
-  const strategyRegistry=normalizeItems(value.strategyRegistry,normalizeStrategyProfile)
-  const strategyLifecycleEvents=normalizeItems(value.strategyLifecycleEvents,normalizeStrategyEvent)
   const skillCalls=normalizeItems(value.skillCalls,normalizeSkillCall)
   const agentOperations=normalizeItems(value.agentOperations,normalizeAgentOperation)
   const agentHandoffs=normalizeItems(value.agentHandoffs,normalizeAgentHandoff)
@@ -714,8 +694,6 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
   collectionStates.equityBroker=equityBroker.state
   collectionStates.historicalOrders=historicalOrders.state;collectionStates.historicalEquity=historicalEquity.state;collectionStates.historicalBacktests=historicalBacktests.state;collectionStates.historicalSkillCalls=historicalSkillCalls.state;collectionStates.historicalAuditEvents=historicalAuditEvents.state
   collectionStates.connectionStatus = connectionStatus.state
-  collectionStates.strategyRegistry=strategyRegistry.state
-  collectionStates.strategyLifecycleEvents=strategyLifecycleEvents.state
   collectionStates.skillCalls=skillCalls.state
   collectionStates.memoryStatus=memoryStatus.state
   collectionStates.recentMemoryRetrievals=recentMemoryRetrievals.state
@@ -770,10 +748,8 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
     pendingApprovals,
     research,
     distribution,
-    strategyRegistry:strategyRegistry.items,
-    strategyLifecycleEvents:strategyLifecycleEvents.items,
     skillCalls:skillCalls.items,
-    collectionMessages: { positions: positions.message, orders: orders.message, backtests: backtests.message, equityHistory: equityHistory.message, equityMarkets:equityMarkets.message, equityBroker:equityBroker.message, connectionStatus: connectionStatus.message, strategyRegistry:strategyRegistry.message, strategyLifecycleEvents:strategyLifecycleEvents.message },
+    collectionMessages: { positions: positions.message, orders: orders.message, backtests: backtests.message, equityHistory: equityHistory.message, equityMarkets:equityMarkets.message, equityBroker:equityBroker.message, connectionStatus: connectionStatus.message },
     backtests: backtests.items,
     runtimeFresh: trusted,
     runtimeAgeSeconds: freshness?.ageSeconds,
@@ -794,7 +770,6 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
   if ((value.telemetry as { value?: unknown } | undefined)?.value) Object.assign(state, (value.telemetry as { value: object }).value)
   if ((value.account as { value?: unknown } | undefined)?.value) Object.assign(state, (value.account as { value: object }).value)
   if ((value.risk as { value?: unknown } | undefined)?.value) Object.assign(state, (value.risk as { value: object }).value)
-  if ((value.strategies as { value?: unknown } | undefined)?.value) Object.assign(state, (value.strategies as { value: object }).value)
   const marketCollection = value.markets as { items?: unknown[] } | undefined
   if (Array.isArray(marketCollection?.items)) state.markets = marketCollection.items as RuntimeMarket[]
   const capabilityCollection = value.capabilities as { items?: unknown[] } | undefined

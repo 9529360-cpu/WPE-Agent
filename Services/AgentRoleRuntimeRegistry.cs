@@ -4,7 +4,7 @@ namespace WpeAgent.RuntimeServices;
 
 public sealed class AgentRoleRuntimeRegistry
 {
-    private static readonly string[] Roles = ["market", "research", "strategy", "risk", "execution", "recovery", "audit"];
+    private static readonly string[] Roles = ["market", "decision", "risk", "execution", "recovery", "audit"];
     private readonly object gate = new();
     private readonly Dictionary<string, RuntimeAgentOperationV1> states = new(StringComparer.OrdinalIgnoreCase);
 

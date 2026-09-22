@@ -192,25 +192,9 @@ public sealed class DecisionPlan
     public string StrategyVersion { get; set; } = "wpe-core-v2";
     public string DecisionContextKind { get; set; } = "legacy-signal";
     public string DecisionContextId { get; set; } = string.Empty;
-    public string HypothesisStage { get; set; } = string.Empty;
     public double RiskBudgetMultiplier { get; set; } = 1;
 }
 public enum MarketRegime { Trending, Ranging, Transition, Extreme, Unknown }
-public sealed record SignalContribution(string Name,string Horizon,double RawValue,double Weight,double WeightedScore,string Direction,string Explanation);
-public sealed class MarketDecisionAssessment
-{
-    public string Symbol { get; init; } = string.Empty;
-    [JsonConverter(typeof(JsonStringEnumConverter))] public MarketRegime Regime { get; init; }
-    public double NetScore { get; init; }
-    public double Confidence { get; init; }
-    public double ConflictRatio { get; init; }
-    public bool Fresh { get; init; }
-    public bool EntryReady { get; init; }
-    [JsonConverter(typeof(JsonStringEnumConverter))] public DecisionAction RecommendedAction { get; init; } = DecisionAction.Hold;
-    public IReadOnlyList<SignalContribution> Signals { get; init; } = Array.Empty<SignalContribution>();
-    public IReadOnlyList<string> MissingConditions { get; init; } = Array.Empty<string>();
-    public string Summary { get; init; } = string.Empty;
-}
 public sealed class DecisionReview
 {
     public DecisionPlan Decision { get; init; } = new();
@@ -230,31 +214,6 @@ public sealed class IndependentRiskReview
     public IReadOnlyList<string> Checks { get; init; } = Array.Empty<string>();
     public string Summary { get; init; } = string.Empty;
 }
-public sealed class ResearchValidationResult
-{
-    public DateTimeOffset ValidatedAtUtc { get; init; }
-    public string Symbol { get; init; } = string.Empty;
-    public string StrategyVersion { get; init; } = string.Empty;
-    public int SampleSize { get; init; }
-    public int Trades { get; init; }
-    public double WinRate { get; init; }
-    public double ProfitFactor { get; init; }
-    public double Expectancy { get; init; }
-    public double MaxDrawdown { get; init; }
-    public double Sharpe { get; init; }
-    public double OutOfSampleReturn { get; init; }
-    public double WalkForwardScore { get; init; }
-    public double MonteCarloLossProbability { get; init; }
-    public double QualityScore { get; init; }
-    public bool Approved { get; init; }
-    public bool Promoted { get; init; }
-    public int CoverageDays { get; init; }
-    public int OutOfSampleTrades { get; init; }
-    public double StrategyReturn { get; init; }
-    public double BenchmarkReturn { get; init; }
-    public IReadOnlyDictionary<string,double> RegimeReturns { get; init; } = new Dictionary<string,double>();
-    public string Summary { get; init; } = string.Empty;
-}
 public sealed class PortfolioRiskAssessment
 {
     public decimal GrossExposure { get; init; }
@@ -270,7 +229,7 @@ public sealed class PortfolioRiskAssessment
     public bool Approved { get; init; }
     public string Summary { get; init; } = string.Empty;
 }
-public sealed record AgentContext(string BrainName, bool CircuitBreakerActive, string? ActiveSymbol, IReadOnlyList<StructuredOutcomeMemory> OutcomeMemories, IReadOnlyList<MarketDecisionAssessment> MarketAssessments, int ConsecutiveHolds, IReadOnlyList<PlannerMemoryFact>? RelevantMemories=null,AdaptiveStrategyPortfolioPlan? StrategyPortfolio=null,IReadOnlyDictionary<string,TradeHypothesis>? TradeHypotheses=null);
+public sealed record AgentContext(string BrainName,bool CircuitBreakerActive,string? ActiveSymbol,IReadOnlyList<StructuredOutcomeMemory> OutcomeMemories,int ConsecutiveHolds,IReadOnlyList<PlannerMemoryFact>? RelevantMemories=null);
 public sealed record PlannerMemoryFact(string Tier,DateTime OccurredAtUtc,string Result,string Source,string Summary);
 public sealed record StructuredOutcomeMemory(
     DateTime CycleStartedUtc,
@@ -347,13 +306,9 @@ public sealed class RiskLimits
 }
 public sealed class DecisionPolicy
 {
-    public double MinimumConfidence { get; set; } = .62;
-    public double MinimumDirectionalScore { get; set; } = .28;
-    public double MaximumConflictRatio { get; set; } = .65;
     public int MinimumEvidenceCompleteness { get; set; } = 70;
     public int MaximumEvidenceAgeMinutes { get; set; } = 5;
     public int MinimumMarketQuality { get; set; } = 65;
-    public double MinimumResearchScore { get; set; } = .45;
 }
 public static class PositionExitReasonCodes
 {

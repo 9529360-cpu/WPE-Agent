@@ -76,7 +76,10 @@ public sealed class TradingReviewProductionWiringTests
         Assert.Contains("settings.AuthorizationMode!=TradingAuthorizationMode.Review",source,StringComparison.Ordinal);
         Assert.Contains("!context.IsTestnet",source,StringComparison.Ordinal);
         Assert.Contains("review.context-mismatch",source,StringComparison.Ordinal);
-        Assert.Contains("StrategyLifecycle.Active",source,StringComparison.Ordinal);
+        Assert.Contains("DirectMarketStructureDecisionSkill.Version",source,StringComparison.Ordinal);
+        Assert.Contains("review.decision-context-invalid",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("GetStrategiesAsync",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("StrategyLifecycle.Active",source,StringComparison.Ordinal);
         Assert.Contains("_capabilityGate.Check",source,StringComparison.Ordinal);
         Assert.Contains("_collector.CollectAsync(ct)",source,StringComparison.Ordinal);
         Assert.Contains("_risk.Review",source,StringComparison.Ordinal);

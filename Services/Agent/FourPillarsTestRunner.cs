@@ -5,11 +5,19 @@ using 币安量化机器人.Services.Exchange;
 
 namespace 币安量化机器人.Services.Agent;
 
+public sealed record FourPillarsTestCase(string Name,string Status,long DurationMs,string Detail);
+public sealed class FourPillarsTestReport
+{
+    public bool Success { get; set; }
+    public DateTime CompletedAtUtc { get; set; }
+    public List<FourPillarsTestCase> Cases { get; } = new();
+}
+
 public static class FourPillarsTestRunner
 {
     public static async Task<SmokeRunResult> RunLiveAsync(CancellationToken ct=default)
     {
-        var report=new MaturityTestReport();var dir=Path.Combine(AppDataPaths.TestArtifactsDirectory,"four-pillars-live-tests");Directory.CreateDirectory(dir);var path=Path.Combine(dir,$"four-pillars-live-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");var dbPath=Path.Combine(dir,$"four-pillars-live-{Guid.NewGuid():N}.db");
+        var report=new FourPillarsTestReport();var dir=Path.Combine(AppDataPaths.TestArtifactsDirectory,"four-pillars-live-tests");Directory.CreateDirectory(dir);var path=Path.Combine(dir,$"four-pillars-live-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");var dbPath=Path.Combine(dir,$"four-pillars-live-{Guid.NewGuid():N}.db");
         try
         {
             var store=new AgentSettingsStore();var settings=store.Load();var profile=store.GetActiveExchange(settings);if(!profile.IsTestnet)throw new InvalidOperationException("Live verification refuses Mainnet.");var catalog=new ExchangeProviderCatalog();await using IExchangeProvider provider=catalog.Create(profile,store.GetExchangeCredentials(profile));IExchangeAdapter exchange=provider;var db=new AgentSqliteStore(dbPath);
@@ -26,13 +34,13 @@ public static class FourPillarsTestRunner
 
     public static async Task<SmokeRunResult> RunAsync(CancellationToken ct=default)
     {
-        var report=new MaturityTestReport();var dir=Path.Combine(AppDataPaths.TestArtifactsDirectory,"four-pillars-tests");Directory.CreateDirectory(dir);var path=Path.Combine(dir,$"four-pillars-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");var dbPath=Path.Combine(dir,$"four-pillars-{Guid.NewGuid():N}.db");
+        var report=new FourPillarsTestReport();var dir=Path.Combine(AppDataPaths.TestArtifactsDirectory,"four-pillars-tests");Directory.CreateDirectory(dir);var path=Path.Combine(dir,$"four-pillars-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");var dbPath=Path.Combine(dir,$"four-pillars-{Guid.NewGuid():N}.db");
         try
         {
             var db=new AgentSqliteStore(dbPath);
             await TestAsync(report,"实时行情解析与触发",async()=>{await using var hub=new RealTimeMarketHub(ExchangeEnvironment.Testnet,["BTCUSDT"],"test-key",db);await hub.HandleMarketAsync("{\"data\":{\"e\":\"bookTicker\",\"s\":\"BTCUSDT\",\"b\":\"99990\",\"a\":\"100010\",\"B\":\"12\",\"A\":\"8\"}}",ct);await hub.HandleMarketAsync("{\"data\":{\"e\":\"aggTrade\",\"s\":\"BTCUSDT\",\"p\":\"100000\",\"q\":\"2\",\"m\":false}}",ct);await hub.HandleMarketAsync("{\"data\":{\"e\":\"aggTrade\",\"s\":\"BTCUSDT\",\"p\":\"100001\",\"q\":\"1\",\"m\":true}}",ct);await hub.HandleMarketAsync("{\"data\":{\"e\":\"kline\",\"s\":\"BTCUSDT\",\"k\":{\"c\":\"100002\",\"v\":\"50\",\"x\":true}}}",ct);var s=hub.GetSnapshot("BTCUSDT")??throw new InvalidOperationException("snapshot missing");Require(s.Messages==4&&s.LastPrice==100002&&s.SpreadBps>0,"websocket evidence was not aggregated");Require(s.OrderFlowImbalance>0,"taker flow direction was not retained");var trigger=await hub.WaitForTriggerAsync(TimeSpan.FromMilliseconds(100),ct);Require(trigger?.StartsWith("minute_close:")==true,"closed minute did not trigger cycle");return $"messages={s.Messages} spread={s.SpreadBps:F2}bp flow={s.OrderFlowImbalance:F2}";});
             await TestAsync(report,"新闻全文索引与检索",async()=>{var n=new NewsEvidence("SEC","Bitcoin ETF market structure update","https://example.test/a",DateTime.UtcNow,DateTime.UtcNow,"OFFICIAL","news-a",["BTC"],"Regulator published a detailed market structure and custody update for digital asset exchange traded products.",.93,2,"REGULATION",true,.15);await db.SaveNewsAsync([n],ct);var found=await db.SearchNewsAsync("custody",10,ct);Require(found.Count==1&&found[0].Title.Contains("ETF"),"full-text news index did not return stored document");return $"indexed={found.Count} confidence={found[0].Confidence:F2}";});
-            await TestAsync(report,"三年历史数据持久化与研究门禁",async()=>{var candles=Synthetic("BTCUSDT",24*365*2,.00008);await db.UpsertHistoricalCandlesAsync("BTCUSDT","1h",candles,ct);var stored=await db.LoadHistoricalCandlesAsync("BTCUSDT","1h",30000,ct);var result=new LongHorizonResearchSkill().Evaluate("BTCUSDT",stored,new RiskLimits());Require(stored.Count==candles.Length&&result.CoverageDays>=700,"historical coverage was not persisted");Require(double.IsFinite(result.Sharpe)&&double.IsFinite(result.MaxDrawdown),"research metrics must be finite");Require(result.Promoted==result.Approved,"promotion gate must be deterministic");return result.Summary;});
+            await TestAsync(report,"三年历史数据持久化",async()=>{var candles=Synthetic("BTCUSDT",24*365*2,.00008);await db.UpsertHistoricalCandlesAsync("BTCUSDT","1h",candles,ct);var stored=await db.LoadHistoricalCandlesAsync("BTCUSDT","1h",30000,ct);var coverage=stored.Count<2?0:(int)(stored[^1].OpenTime-stored[0].OpenTime).TotalDays;Require(stored.Count==candles.Length&&coverage>=700,"historical coverage was not persisted");return $"stored={stored.Count} coverage={coverage}d";});
             await TestAsync(report,"组合相关性与集中度拦截",async()=>{await Task.CompletedTask;var btc=Synthetic("BTCUSDT",1500,.0002);var eth=btc.Select(x=>x with{Open=x.Open/20,High=x.High/20,Low=x.Low/20,Close=x.Close/20}).ToArray();var market1=Market("BTCUSDT",100000);var market2=Market("ETHUSDT",5000);var evidence=new EvidencePack{Account=new(1000,1000,1000,DateTime.UtcNow),Markets=new Dictionary<string,MarketEvidence>{{market1.Symbol,market1},{market2.Symbol,market2}},Completeness=100};var intents=new[]{new ExecutionIntent("BTCUSDT",PositionSide.Long,.003m,false,98000,104000,"test-btc","test",DecisionAction.OpenLong,ExpectedPrice:100000),new ExecutionIntent("ETHUSDT",PositionSide.Long,.08m,false,4800,5400,"test-eth","test",DecisionAction.OpenLong,ExpectedPrice:5000)};var risk=new PortfolioRiskSkill().Evaluate(evidence,new Dictionary<string,IReadOnlyList<CandleEvidence>>{{"BTCUSDT",btc},{"ETHUSDT",eth}},intents,new RiskLimits{MaxCorrelatedExposure=.40});Require(!risk.Approved&&risk.MaximumPairCorrelation>.99,"highly correlated portfolio must be blocked");Require(risk.BlockingReasons.Count>0,"correlation block reason missing");return risk.Summary;});
             report.Success=true;
         }
@@ -40,7 +48,7 @@ public static class FourPillarsTestRunner
         report.CompletedAtUtc=DateTime.UtcNow;await global::币安量化机器人.Services.SensitiveDataRedactor.WriteRedactedJsonAsync(path,report,ct);return new(report.Success,path);
     }
 
-    private static async Task TestAsync(MaturityTestReport report,string name,Func<Task<string>> body){var sw=Stopwatch.StartNew();try{var detail=await body();report.Cases.Add(new(name,"PASSED",sw.ElapsedMilliseconds,detail));}catch(Exception ex){report.Cases.Add(new(name,"FAILED",sw.ElapsedMilliseconds,ex.Message));throw;}}
+    private static async Task TestAsync(FourPillarsTestReport report,string name,Func<Task<string>> body){var sw=Stopwatch.StartNew();try{var detail=await body();report.Cases.Add(new(name,"PASSED",sw.ElapsedMilliseconds,detail));}catch(Exception ex){report.Cases.Add(new(name,"FAILED",sw.ElapsedMilliseconds,ex.Message));throw;}}
     private static void Require(bool value,string message){if(!value)throw new InvalidOperationException(message);}
     private static MarketEvidence Market(string symbol,decimal price)=>new(symbol,price,price*.95m,price*1.05m,55,.003,.006,.012,new(0,100000,1,1,1,1,0),DateTime.UtcNow);
     private static CandleEvidence[] Synthetic(string symbol,int count,double drift)

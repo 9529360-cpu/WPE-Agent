@@ -45,15 +45,14 @@ public static class SmokeTestRunner
             var positions=await exchange.GetPositionsAsync(ct);symbol=settings.Symbols.FirstOrDefault(s=>positions.All(p=>!p.Symbol.Equals(s,StringComparison.OrdinalIgnoreCase)));if(symbol is null)throw new InvalidOperationException(settings.Symbols.Count==0?"未配置交易品种，请先在 Setup 中选择至少一个品种":"所有已配置品种均已有仓位，无法选择不干扰现有仓位的冒烟品种");
             TradingRule? rule=null;MarketEvidence? market=null;DateTimeOffset ruleObservedAt=default;await Step(report,"交易规则与市场证据",async()=>{rule=await exchange.GetRulesAsync(symbol,ct);ruleObservedAt=DateTimeOffset.UtcNow;market=await exchange.GetMarketAsync(symbol,ct);market=realtime?.Enrich(market)??market;if(rule.StepSize<=0||rule.MinQuantity<=0||market.Price<=0)throw new InvalidOperationException("交易规则或市场价格无效");return $"{symbol} price={market.Price:F2}, step={rule.StepSize}, minQty={rule.MinQuantity}, minNotional={rule.MinNotional}, basis={market.Derivatives.Basis:P4}";});
             EvidencePack? evidence=null;await Step(report,"完整证据包与新闻",async()=>{evidence=await new EvidenceCollector(exchange,settings.Symbols,realtime).CollectAsync(ct);if(evidence.Markets.Count==0)throw new InvalidOperationException("没有可用市场证据");return $"completeness={evidence.Completeness}/100, markets={evidence.Markets.Count}, news={evidence.News.Count}, missing={string.Join(',',evidence.MissingSources)}";});
-            IReadOnlyList<MarketDecisionAssessment>? assessments=null;await Step(report,"市场状态、信号聚合与冲突解释",()=>{assessments=new SignalAggregationSkill().Analyze(evidence!,settings.Decision);if(assessments.Count==0)throw new InvalidOperationException("没有生成本地市场评估");if(assessments.Any(x=>x.Signals.Count<8))throw new InvalidOperationException("信号贡献不完整");return Task.FromResult(string.Join(" | ",assessments.Select(x=>x.Summary)));});
+            DecisionPlan? directPlan=null;await Step(report,"Direct candle-structure decision",()=>{directPlan=DirectMarketStructureDecisionSkill.Decide(evidence!,false);if(string.IsNullOrWhiteSpace(directPlan.Instrument)&&evidence!.Markets.Count>0)throw new InvalidOperationException("direct decision did not identify a market");return Task.FromResult($"{directPlan.Action} {directPlan.Instrument} · {directPlan.Reason}");});
             await Step(report,"Model-off deterministic readiness",()=>
             {
-                var assessment=assessments!.First();
-                var plan=new DecisionPlan{Action=DecisionAction.Hold,Instrument=assessment.Symbol,TargetTier=0,Confidence=assessment.Confidence,Regime=assessment.Regime.ToString(),Reason="deterministic smoke readiness; no optional model",EvidenceReferences=[],MissingConditions=[],ConflictSummary="none"};
-                var review=new DecisionGovernanceSkill().Review(plan,assessments!,evidence!,settings.Decision);
-                var verdict=ModelOffSmokeSafetyVerdict.Evaluate(review.Accepted&&!string.IsNullOrWhiteSpace(review.Explanation),CanonicalSmokeInputsValid(evidence!,assessment));
+                var plan=directPlan??throw new InvalidOperationException("direct decision unavailable");
+                var review=new DecisionGovernanceSkill().Review(plan,evidence!,settings.Decision);
+                var verdict=ModelOffSmokeSafetyVerdict.Evaluate(review.Accepted&&!string.IsNullOrWhiteSpace(review.Explanation),CanonicalSmokeInputsValid(evidence!,plan));
                 if(!verdict.Allowed)throw new InvalidOperationException(verdict.Code);
-                return Task.FromResult($"{verdict.Code}; action={review.Decision.Action}; instrument={review.Decision.Instrument}; optional_model=omitted");
+                return Task.FromResult($"{verdict.Code}; action={review.Decision.Action}; instrument={review.Decision.Instrument}; local_direct=true");
             });
             await Step(report,"最小仓位开仓、成交与保护单",async()=>
             {
@@ -75,13 +74,13 @@ public static class SmokeTestRunner
     }
 
     private static async Task Step(SmokeReport report,string name,Func<Task<string>> action){var sw=Stopwatch.StartNew();try{var detail=await action();report.Steps.Add(new(name,"PASSED",sw.ElapsedMilliseconds,detail));}catch(Exception ex){report.Steps.Add(new(name,"FAILED",sw.ElapsedMilliseconds,SensitiveDataRedactor.ForLog(ex.Message,500)));throw;}}
-    internal static bool CanonicalSmokeInputsValid(EvidencePack evidence,MarketDecisionAssessment assessment)
+    internal static bool CanonicalSmokeInputsValid(EvidencePack evidence,DecisionPlan decision)
     {
-        if(evidence is null||assessment is null||string.IsNullOrWhiteSpace(assessment.Symbol))return false;
-        if(!evidence.Markets.TryGetValue(assessment.Symbol,out var market)||market is null)return false;
+        if(evidence is null||decision is null||string.IsNullOrWhiteSpace(decision.Instrument))return false;
+        if(!evidence.Markets.TryGetValue(decision.Instrument,out var market)||market is null)return false;
         if(!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)||market.Price<=0||market.CollectedAt.Kind!=DateTimeKind.Utc)return false;
-        if(assessment.Signals.Count<8||assessment.Regime==MarketRegime.Unknown)return false;
-        return assessment.Signals.All(x=>double.IsFinite(x.RawValue)&&double.IsFinite(x.Weight)&&double.IsFinite(x.WeightedScore));
+        if(!DeterministicPlanSkill.IsRiskIncreasing(decision.Action))return decision.Action==DecisionAction.Hold;
+        return DirectMarketStructureDecisionSkill.IsDirect(decision)&&DirectMarketStructureDecisionSkill.ContextMatches(decision,market);
     }
     internal static SmokeMutationGateResult AssessMutationReadiness(SmokeMutationReadiness readiness,DateTimeOffset now)
     {
@@ -138,17 +137,10 @@ public static class SmokeTestRunner
     }
     private static async Task CloseSmokePosition(IExchangeAdapter exchange,TradingExecutionGateway gateway,TestnetSmokeAuthorization authorization,string symbol,CancellationToken ct){var position=(await exchange.GetPositionsAsync(ct)).FirstOrDefault(p=>p.Symbol==symbol&&p.Side==PositionSide.Long);if(position is null||position.Quantity<=0)return;var intent=new ExecutionIntent(symbol,PositionSide.Long,position.Quantity,true,0,0,ClientId("CLOSE"),"Testnet smoke cleanup",DecisionAction.CloseLong,ExpectedPrice:position.MarkPrice);var execution=await gateway.ExecuteTestnetSmokeAsync(new(authorization,intent,Math.Max(1,(int)position.Leverage),position.Isolated,ObservedPosition:position),ct);if(!execution.Executed)throw new InvalidOperationException(execution.Code);}
     private static TestnetSmokeAuthorization CreateAuthorization(AgentSettings settings){if(string.IsNullOrWhiteSpace(settings.ActiveUser))throw new InvalidOperationException("smoke.authorization-user-required");var now=DateTimeOffset.UtcNow;var id=Guid.NewGuid().ToString("N");return new(id,"SMOKE-"+id,settings.ActiveUser,DeviceLicenseService.GetCurrentDeviceCode(),"smoke-session-"+id,now,now.AddMinutes(10));}
-    internal static IAssistantProvider CreateBrain(
-        AgentSettings settings,Func<string,string>? decrypt=null,Func<IAssistantProvider>? createLocal=null,
-        Func<BrainSlot,string,global::币安量化机器人.Core.Models.AiRuntimeMode,IAssistantProvider>? createRemote=null)
+    internal static IAssistantProvider CreateBrain(AgentSettings settings,Func<IAssistantProvider>? createLocal=null)
     {
-        var runtimeMode=RuntimeModePolicy.Resolve(settings);
-        if(!runtimeMode.AllowRemoteBrain)return(createLocal??AssistantProviderFactory.CreateLocal)();
-        var slot=RuntimeModePolicy.GetActiveBrain(settings)??throw new InvalidOperationException("当前大脑未配置");
-        var secret=slot.Provider.Contains("Ollama",StringComparison.OrdinalIgnoreCase)&&string.IsNullOrWhiteSpace(slot.EncryptedKey)
-            ?"ollama-local"
-            :(decrypt??SecretVaultService.Decrypt)(slot.EncryptedKey);
-        return(createRemote??((configured,key,mode)=>AssistantProviderFactory.Create(configured,key,mode)))(slot,secret,runtimeMode.EffectiveMode);
+        ArgumentNullException.ThrowIfNull(settings);
+        return(createLocal??AssistantProviderFactory.CreateLocal)();
     }
     private static decimal CeilingToStep(decimal value,decimal step)=>step<=0?value:Math.Ceiling(value/step)*step;
     private static string ClientId(string action){var raw=$"WPE-SMOKE-{action}-{DateTime.UtcNow:HHmmss}-{Guid.NewGuid():N}";return raw[..Math.Min(36,raw.Length)];}

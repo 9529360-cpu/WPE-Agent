@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using WpeAgent.ModelOff;
 using 币安量化机器人.Core.Strategy;
@@ -6,155 +6,26 @@ using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed class SignalAggregationSkill
-{
-    private readonly Func<DateTimeOffset> _evaluationClock;
-
-    public SignalAggregationSkill():this(()=>DateTimeOffset.UtcNow){}
-    public SignalAggregationSkill(Func<DateTimeOffset> evaluationClock)=>
-        _evaluationClock=evaluationClock??throw new ArgumentNullException(nameof(evaluationClock));
-
-    public IReadOnlyList<MarketDecisionAssessment> Analyze(EvidencePack evidence,DecisionPolicy policy,IReadOnlyDictionary<string,StrategySignal>? localSignals=null)
-        =>Analyze(evidence,policy,_evaluationClock(),localSignals);
-
-    public IReadOnlyList<MarketDecisionAssessment> Analyze(EvidencePack evidence,DecisionPolicy policy,DateTimeOffset evaluationTimeUtc,IReadOnlyDictionary<string,StrategySignal>? localSignals=null)
-    {
-        ArgumentNullException.ThrowIfNull(evidence);ArgumentNullException.ThrowIfNull(policy);
-        if(evaluationTimeUtc==default||evaluationTimeUtc.Offset!=TimeSpan.Zero)throw new ArgumentException("Signal evaluation time must be an explicit UTC instant.",nameof(evaluationTimeUtc));
-        if(evidence.Markets is null)throw new ArgumentException("Market evidence collection is required.",nameof(evidence));
-        return evidence.Markets.Values.Select(m=>m is null?InvalidMarket(null):AnalyzeMarket(m,evidence.Completeness,policy,evaluationTimeUtc,localSignals?.GetValueOrDefault(m.Symbol)))
-            .OrderByDescending(Quality).ThenBy(x=>x.Symbol,StringComparer.Ordinal).ToArray();
-    }
-
-    private static MarketDecisionAssessment AnalyzeMarket(MarketEvidence market,int completeness,DecisionPolicy policy,DateTimeOffset evaluationTimeUtc,StrategySignal? localSignal)
-    {
-        if(!ValidMarket(market))return InvalidMarket(market?.Symbol);
-        var signals=new List<SignalContribution>();
-        Add("trend_15m","15m",market.Trend15m,.17,.006);
-        Add("trend_1h","1h",market.Trend1h,.19,.012);
-        Add("trend_4h","4h",market.Trend4h,.23,.025);
-        Add("rsi","15m",market.Rsi-50,.08,20);
-        if(market.Quality.OrderFlowAvailable)
-            Add("order_flow","realtime_5m",market.Quality.OrderFlowImbalance,.08,.35);
-        else if(market.Derivatives.TakerBuySellRatio>0)
-            Add("order_flow","derivatives",(double)(market.Derivatives.TakerBuySellRatio-1),.08,.20);
-        Add("funding","derivatives",(double)-market.Derivatives.FundingRate,.04,.001);
-        Add("crowd","derivatives",(double)(1-market.Derivatives.LongShortRatio),.04,.30);
-        Add("basis","derivatives",(double)market.Derivatives.Basis,.03,.003);
-        if(!market.Quality.Anomalies.Contains("order_book_missing",StringComparer.OrdinalIgnoreCase))
-            Add("order_book","microstructure",market.Quality.OrderBookImbalance,.06,.35);
-            Add("relative_volume","volume",Math.Sign(market.Trend15m)*Math.Max(0,market.Quality.RelativeVolume-1),.04,1);
-            if(localSignal is not null) Add("local_strategy","strategy",localSignal.Direction*localSignal.Confidence,.20,1);
-
-        var positive=signals.Where(x=>x.WeightedScore>0).Sum(x=>x.WeightedScore);
-        var negative=-signals.Where(x=>x.WeightedScore<0).Sum(x=>x.WeightedScore);
-        var gross=positive+negative;
-        var score=signals.Sum(x=>x.WeightedScore);
-        var conflict=gross<.0001?1:Math.Clamp(1-Math.Abs(score)/gross,0,1);
-        var agreement=gross<.0001?0:Math.Max(positive,negative)/gross;
-        var maximumAge=TimeSpan.FromMinutes(policy.MaximumEvidenceAgeMinutes);
-        var fresh=maximumAge>=TimeSpan.Zero&&market.CollectedAt.Kind==DateTimeKind.Utc&&market.CollectedAt<=evaluationTimeUtc.UtcDateTime&&evaluationTimeUtc.UtcDateTime-market.CollectedAt<=maximumAge;
-        var confidence=Math.Clamp((Math.Abs(score)*.72+agreement*.28)*(completeness/100d)*(market.Quality.QualityScore/100d)*(fresh?1:.25),0,1);
-        var regime=MarketRegimeClassifier.Detect(market);
-        var missing=new List<string>();
-        if(!fresh)missing.Add(L("Decision.Stale",policy.MaximumEvidenceAgeMinutes));
-        if(completeness<policy.MinimumEvidenceCompleteness)missing.Add(L("Decision.Completeness",policy.MinimumEvidenceCompleteness));
-        if(Math.Abs(score)<policy.MinimumDirectionalScore)missing.Add(L("Decision.Score",policy.MinimumDirectionalScore,score));
-        if(conflict>policy.MaximumConflictRatio)missing.Add(L("Decision.Conflict",policy.MaximumConflictRatio,conflict));
-        if(confidence<policy.MinimumConfidence)missing.Add(L("Decision.Confidence",policy.MinimumConfidence,confidence));
-        if(market.Quality.QualityScore<policy.MinimumMarketQuality)missing.Add(L("Decision.MarketQuality",policy.MinimumMarketQuality,market.Quality.QualityScore));
-        if(regime==MarketRegime.Extreme)missing.Add(L("Decision.ExtremeRegime"));
-        var entryReady=missing.Count==0;
-        var action=entryReady?(score>0?DecisionAction.OpenLong:DecisionAction.OpenShort):DecisionAction.Hold;
-        var summary=L("Decision.Summary",market.Symbol,regime,score,confidence,conflict,L(entryReady?"Decision.Ready":"Decision.Waiting"));
-        return new(){Symbol=market.Symbol,Regime=regime,NetScore=score,Confidence=confidence,ConflictRatio=conflict,Fresh=fresh,EntryReady=entryReady,RecommendedAction=action,Signals=signals,MissingConditions=missing,Summary=summary};
-
-        void Add(string name,string horizon,double raw,double weight,double scale)
-        {
-            var normalized=Math.Clamp(raw/scale,-1,1);var weighted=normalized*weight;
-            signals.Add(new(name,horizon,raw,weight,weighted,weighted>.0001?"LONG":weighted<-.0001?"SHORT":"NEUTRAL",name));
-        }
-    }
-
-    private static bool ValidMarket(MarketEvidence? market)=>market is not null&&market.Derivatives is not null&&MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)&&
-        !string.IsNullOrWhiteSpace(market.Symbol)&&market.Price>0&&market.CollectedAt!=default&&market.CollectedAt.Kind==DateTimeKind.Utc&&
-        market.Rsi is>=0 and<=100&&market.Support>0&&market.Resistance>0&&market.Support<=market.Resistance&&market.Quality.QualityScore is>=0 and<=100&&market.Quality.LiquidityScore is>=0 and<=1&&
-        (!market.Quality.OrderFlowAvailable||double.IsFinite(market.Quality.OrderFlowImbalance))&&
-        Finite(market.Rsi,market.Trend15m,market.Trend1h,market.Trend4h,market.Quality.OrderBookImbalance,market.Quality.RelativeVolume,market.Quality.AtrPercent,market.Quality.LiquidationIntensity);
-    private static bool Finite(params double[] values)=>values.All(double.IsFinite);
-    private static MarketDecisionAssessment InvalidMarket(string? symbol)=>new()
-    {
-        Symbol=string.IsNullOrWhiteSpace(symbol)?"UNKNOWN":symbol,Regime=MarketRegime.Unknown,Fresh=false,EntryReady=false,
-        RecommendedAction=DecisionAction.Hold,MissingConditions=["signal.invalid-market-evidence"],Summary="signal.invalid-market-evidence"
-    };
-
-    private static double Quality(MarketDecisionAssessment x)=>Math.Abs(x.NetScore)*(1-x.ConflictRatio)+(x.Fresh?.05:0);
-    private static string L(string key,params object?[] args)=>LocalizationService.Current.T(key,args);
-}
-
 public sealed class DecisionGovernanceSkill
 {
-    public DecisionReview Review(
-        DecisionPlan proposed,
-        IReadOnlyList<MarketDecisionAssessment> assessments,
-        EvidencePack evidence,
-        DecisionPolicy policy,
-        IReadOnlyDictionary<string,TradeHypothesis>? hypotheses=null)
+    public DecisionReview Review(DecisionPlan proposed,EvidencePack evidence,DecisionPolicy policy)
     {
+        ArgumentNullException.ThrowIfNull(proposed);
+        ArgumentNullException.ThrowIfNull(evidence);
+        ArgumentNullException.ThrowIfNull(policy);
         var blocks=new List<string>();
-        var assessment=assessments.FirstOrDefault(x=>x.Symbol.Equals(proposed.Instrument,StringComparison.OrdinalIgnoreCase));
         var riskIncreasing=DeterministicPlanSkill.IsRiskIncreasing(proposed.Action);
-        var hypothesisDriven=string.Equals(proposed.DecisionContextKind,TradeHypothesisEngine.DecisionContextKind,StringComparison.Ordinal);
         var directDriven=DirectMarketStructureDecisionSkill.IsDirect(proposed);
-        TradeHypothesis? hypothesis=null;
-        if(hypothesisDriven&&hypotheses is not null)hypotheses.TryGetValue(proposed.Instrument,out hypothesis);
-
-        if(!hypothesisDriven&&!directDriven&&assessment is null)blocks.Add(L("Review.NoAssessment"));
-        if(evidence.Completeness<policy.MinimumEvidenceCompleteness&&riskIncreasing)blocks.Add(L("Review.Incomplete"));
-        if(!hypothesisDriven&&!directDriven&&assessment is{Fresh:false}&&riskIncreasing)blocks.Add(L("Review.Stale"));
-
+        if(riskIncreasing&&!directDriven)blocks.Add("only direct candle-structure decisions may increase risk");
+        if(riskIncreasing&&evidence.Completeness<policy.MinimumEvidenceCompleteness)blocks.Add(L("Review.Incomplete"));
         if(directDriven&&riskIncreasing)
         {
-            if(!evidence.Markets.TryGetValue(proposed.Instrument,out var directMarket)||
-               !DirectMarketStructureDecisionSkill.ContextMatches(proposed,directMarket))
+            if(!evidence.Markets.TryGetValue(proposed.Instrument,out var market)||!DirectMarketStructureDecisionSkill.ContextMatches(proposed,market))
                 blocks.Add("direct candle-structure context is stale or no longer actionable");
         }
-        else if(hypothesisDriven&&riskIncreasing)
-        {
-            if(hypothesis is null||
-               !string.Equals(hypothesis.Id,proposed.DecisionContextId,StringComparison.Ordinal)||
-               !hypothesis.Actionable)
-                blocks.Add("market hypothesis is missing, stale, or not actionable");
-            else
-            {
-                if(!hypothesis.DirectionMatches(proposed.Action))blocks.Add("market hypothesis direction does not match the proposed action");
-                if(hypothesis.Stage is not (TradeHypothesisStage.ScoutReady or TradeHypothesisStage.Confirmed))
-                    blocks.Add("market hypothesis has not reached an actionable stage");
-                if(hypothesis.Regime==MarketRegime.Extreme)blocks.Add("market hypothesis is blocked in an extreme regime");
-                if(proposed.RiskBudgetMultiplier<=0||proposed.RiskBudgetMultiplier>1)
-                    blocks.Add("market hypothesis risk budget is invalid");
-            }
-
-            if(evidence.Markets.TryGetValue(proposed.Instrument,out var market)&&
-               market.Quality.QualityScore<policy.MinimumMarketQuality)
-                blocks.Add(L("Review.Incomplete"));
-        }
-        else
-        {
-            if(proposed.Confidence<policy.MinimumConfidence&&riskIncreasing)blocks.Add(L("Review.BrainConfidence",proposed.Confidence,policy.MinimumConfidence));
-            if(assessment is{EntryReady:false}&&riskIncreasing)blocks.AddRange(assessment.MissingConditions);
-            if(assessment is not null&&riskIncreasing)
-            {
-                var wantsLong=proposed.Action is DecisionAction.OpenLong or DecisionAction.AddLong or DecisionAction.ReverseToLong;
-                var wantsShort=proposed.Action is DecisionAction.OpenShort or DecisionAction.AddShort or DecisionAction.ReverseToShort;
-                if((wantsLong&&assessment.NetScore<0)||(wantsShort&&assessment.NetScore>0))blocks.Add(L("Review.DirectionConflict"));
-            }
-        }
-
         var final=blocks.Count==0?proposed:CopyAsHold(proposed,blocks);
         var accepted=blocks.Count==0;
-        var explanation=Explain(final,assessment,blocks);
-        return new(){Decision=final,Accepted=accepted,Verdict=L(accepted?(final.Action==DecisionAction.Hold?"Review.Hold":"Review.Accepted"):"Review.Rejected"),BlockingReasons=blocks.Distinct().ToArray(),Explanation=explanation};
+        return new(){Decision=final,Accepted=accepted,Verdict=L(accepted?(final.Action==DecisionAction.Hold?"Review.Hold":"Review.Accepted"):"Review.Rejected"),BlockingReasons=blocks.Distinct().ToArray(),Explanation=Explain(final,blocks)};
     }
 
     private static DecisionPlan CopyAsHold(DecisionPlan p,IReadOnlyList<string> blocks)=>new()
@@ -162,36 +33,18 @@ public sealed class DecisionGovernanceSkill
         Action=DecisionAction.Hold,Instrument=p.Instrument,TargetTier=0,Confidence=p.Confidence,Invalidation=p.Invalidation,Regime=p.Regime,Reason=p.Reason,
         EvidenceReferences=p.EvidenceReferences,MissingConditions=blocks.Distinct().ToList(),ConflictSummary=p.ConflictSummary,
         EntryPrice=p.EntryPrice,StopLossPrice=p.StopLossPrice,TakeProfitPrice=p.TakeProfitPrice,RiskRewardRatio=p.RiskRewardRatio,OrderType=p.OrderType,
-        StrategyVersion=p.StrategyVersion,DecisionContextKind=p.DecisionContextKind,DecisionContextId=p.DecisionContextId,HypothesisStage=p.HypothesisStage,
+        StrategyVersion=p.StrategyVersion,DecisionContextKind=p.DecisionContextKind,DecisionContextId=p.DecisionContextId,
         RiskBudgetMultiplier=p.RiskBudgetMultiplier
     };
 
-    private static string Explain(DecisionPlan decision,MarketDecisionAssessment? assessment,IReadOnlyList<string> blocks)
+    private static string Explain(DecisionPlan decision,IReadOnlyList<string> blocks)
     {
-        var hypothesisDriven=string.Equals(decision.DecisionContextKind,TradeHypothesisEngine.DecisionContextKind,StringComparison.Ordinal);
-        var directDriven=DirectMarketStructureDecisionSkill.IsDirect(decision);
-        var b=new StringBuilder();
-        b.Append(directDriven
-            ?$"{decision.Action} · Direct candle structure"
-            :hypothesisDriven
-                ?$"{decision.Action} · Hypothesis {decision.HypothesisStage}"
-                :$"{decision.Action} · Brain {decision.Confidence:P0}");
-        if(assessment is not null&&!hypothesisDriven&&!directDriven)
-        {
-            b.Append(L("Review.Aggregation",assessment.Confidence,assessment.ConflictRatio)).Append('\n');
-            b.Append(assessment.Summary);
-            var strongest=assessment.Signals.OrderByDescending(x=>Math.Abs(x.WeightedScore)).Take(5).Select(x=>L("Review.Signal",L("SignalName."+x.Name),L("Direction."+x.Direction),x.Weight,x.WeightedScore));
-            b.Append('\n').Append(L("Review.Signals")).Append(string.Join("; ",strongest));
-        }
-        b.Append('\n').Append(L("Review.Reason")).Append(decision.Reason);
-        var legacyMissing=hypothesisDriven||directDriven?Array.Empty<string>():assessment?.MissingConditions??Array.Empty<string>();
-        var missing=blocks.Concat(decision.MissingConditions).Concat(legacyMissing).Where(x=>!string.IsNullOrWhiteSpace(x)).Distinct().ToArray();
-        if(missing.Length>0)b.Append('\n').Append(L("Review.Missing")).Append(string.Join("; ",missing));
-        return b.ToString();
+        var prefix=DirectMarketStructureDecisionSkill.IsDirect(decision)?$"{decision.Action} · Direct candle structure":$"{decision.Action} · No risk-increasing direct context";
+        var missing=blocks.Concat(decision.MissingConditions).Where(x=>!string.IsNullOrWhiteSpace(x)).Distinct().ToArray();
+        return missing.Length==0?$"{prefix}\n{L("Review.Reason")}{decision.Reason}":$"{prefix}\n{L("Review.Reason")}{decision.Reason}\n{L("Review.Missing")}{string.Join("; ",missing)}";
     }
     private static string L(string key,params object?[] args)=>LocalizationService.Current.T(key,args);
 }
-
 public sealed record SkillDescriptor(string Name,string Category,string Input,string Output,string Permission,int TimeoutSeconds,int Retries,bool Critical,string HealthCheck);
 public sealed class AgentSkillRegistry
 {
@@ -202,10 +55,7 @@ public sealed class AgentSkillRegistry
         new("NewsResearch","Observe","multi-source feeds and articles","NewsEvidence[]","network:web,write:news-index",30,1,false,"source quorum, full text and corroboration"),
         new("HistoricalData","Research","symbol and time range","hourly candles","network:testnet,write:history",60,2,true,"coverage and continuity"),
         new("DataQuality","Validate","MarketEvidence","MarketQualityEvidence","read:market",8,1,true,"quality score and clock skew"),
-        new("SignalAggregation","Reason","EvidencePack","MarketDecisionAssessment[]","local:compute",5,0,true,"finite weighted contributions"),
         new("MarketRegime","Reason","multi-timeframe evidence","MarketRegime","local:compute",3,0,true,"known regime result"),
-        new("TradeHypothesis","Reason","fresh market evidence and prior hypothesis","TradeHypothesis[]","local:compute,write:local-db",4,0,true,"persistent market thesis and explicit invalidation"),
-        new("StrategyResearch","Research","candles and costs","ResearchValidationResult","local:compute,write:research",12,0,true,"in/out-sample metrics"),
         new("PortfolioRisk","Risk","positions, intents and returns","PortfolioRiskAssessment","read:account,local:compute",6,0,true,"VaR, CVaR, concentration and correlation"),
         new("BrainPlanner","Plan","audited evidence","DecisionPlan","local:compute",3,0,true,"deterministic local plan and schema-valid response"),
         new("OptionalRemoteBrain","Assist","audited evidence","advisory DecisionPlan","network:brain",30,2,false,"optional remote provider; never required for execution"),

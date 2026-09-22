@@ -126,17 +126,17 @@
 | Market Data | 行情、历史、账户、订单、衍生品与数据质量 | Provider catalog、RealTimeMarketHub、EvidenceCollector、HistoricalData | **部分实现**，加密市场为主 |
 | News | 来源抓取、去重、可信度、时间和影响资产 | NewsResearch、NewsEvidence | **部分实现** |
 | Macro | 宏观事件到资产影响的可验证逻辑链 | 可使用通用研究/新闻 artifact | **未形成独立角色** |
-| Technical | 多周期结构、趋势、波动、量价与技术因子 | MarketRegime、SignalAggregation、本地策略 | **部分实现** |
+| Technical | 多周期结构、趋势、波动、量价与技术因子 | MarketStructureIntelligence、DirectMarketStructureDecisionSkill | **部分实现** |
 | Fundamental | 股票财报/估值与加密项目/链上基本面 | 无足够生产证据 | **未实现 / Unknown** |
-| Strategy | 把合格事实组合成完整、可验证交易计划 | StrategyResearchAgent、DeterministicPlan、DecisionGovernance | **部分实现** |
-| Backtest | 历史验证、成本、样本外、稳健性和复现 | StrategyResearch、RuntimeBacktest | **已实现基础，专业覆盖部分实现** |
+| Decision | 把合格行情事实直接组合成完整、可验证交易计划 | DirectMarketStructureDecisionSkill、DeterministicPlan、DecisionGovernance | **部分实现；旧 StrategyResearchAgent/评分晋升链已退役** |
+| Backtest | 历史验证、成本、样本外、稳健性和复现 | RuntimeBacktest、历史行情持久化 | **已实现基础；仅验证/研究用途，不具订单授权权** |
 | Risk | 独立阻断、限额、组合和异常门禁 | IndependentRisk、PortfolioRisk、Risk Gate | **已实现且验证** |
 | Execution | 仅执行已批准且能力可用的订单 | ReliableOrderExecutor、provider adapters | **Testnet 基础已验证；商业认证部分实现** |
 | Position | 跟踪持仓、保护、减仓和重新风险评估 | PositionManagement、保护单审计 | **有限验收**：本地确定性数量、保护与外部仓位隔离门禁已通过；尚无实盘 Testnet provider 认证 |
 | Review | 交易前审批；交易后事实归因和改进 | DecisionReviewer、audit、memory | **部分实现，需拆分 pre-trade / post-trade** |
 | Teacher | 只把可追踪交易事实解释成课程和客户内容 | 无独立实现 | **未实现** |
 
-Teacher 不能成为新的研究真源。任何课程或客户答复必须引用 Market Data、News/Macro、Strategy、Risk、Execution、Position 或 Review artifact；来源过期、冲突或缺失时只允许说明未知。
+Teacher 不能成为新的研究真源。任何课程或客户答复必须引用 Market Data、News/Macro、Decision、Risk、Execution、Position 或 Review artifact；来源过期、冲突或缺失时只允许说明未知。
 
 ## 通知和内容风险分级
 
@@ -265,7 +265,7 @@ Mainnet 不属于当前 P0/P1/P2 的默认授权结果。未来只有在独立�
 - 权威闭环：`Services/AutoTradingAgent.cs`
 - 风险与执行：`Services/Agent/EvidenceAndExecution.cs`
 - provider 目录与契约：`Services/Exchange/ExchangeProviderCatalog.cs`、`ExchangeContracts.cs`
-- 策略、回测、审计与记忆：`Services/Agent/AgentSqliteStore.cs`、`StrategyResearchAgent.cs`、`Services/Runtime*StateStore.cs`
+- 决策、回测、审计与记忆：`Services/Agent/DirectMarketStructureDecisionSkill.cs`、`Services/Agent/AgentSqliteStore.cs`、`Services/Runtime*StateStore.cs`
 - 通知：`Services/Notifications/`
 - 自动化证据：`WPE.Tests/`
 

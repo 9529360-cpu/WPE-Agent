@@ -43,9 +43,6 @@ public sealed record RuntimeRiskV1(
     double PortfolioCorrelation,
     string Summary);
 
-public sealed record RuntimeStrategyV1(string Status, string Summary, int CandidateCount);
-public sealed record RuntimeStrategyProfileV1(string Id,string Version,string Symbol,string Family,string Lifecycle,string LastReason,DateTime? StateChangedAtUtc,double QualityScore);
-public sealed record RuntimeStrategyLifecycleEventV1(long Id,string StrategyId,string FromState,string ToState,DateTime OccurredAtUtc,string Reason);
 public sealed record RuntimeSkillCallV1(string Id,DateTime OccurredAtUtc,string Skill,string Status,long DurationMs,string? Mode,bool? RemoteLlmUsed,int? Tokens,decimal? CostUsd,int? ContextCharacters=null,int? InputTokens=null,int? OutputTokens=null,bool? CacheHit=null,string? LlmOutcome=null,string? TokenSource=null);
 public sealed record RuntimeDiagnosticV1(string Code,DateTime TimeUtc,string Summary);
 public sealed record RuntimeMemoryStatusV1(int WorkingCount,int EpisodicCount,int LongTermCount,DateTime? LastRetrievedAtUtc);
@@ -306,9 +303,6 @@ public sealed class RuntimeSnapshotV1
     public RuntimeCollectionV1<RuntimePositionV1> Positions { get; init; } = new(RuntimeCollectionState.Unsupported, []);
     public RuntimeCollectionV1<RuntimeOrderV1> Orders { get; init; } = new(RuntimeCollectionState.Unsupported, []);
     public RuntimeValueV1<RuntimeRiskV1> Risk { get; init; } = new(RuntimeCollectionState.Unsupported, null);
-    public RuntimeValueV1<RuntimeStrategyV1> Strategies { get; init; } = new(RuntimeCollectionState.Unsupported, null);
-    public RuntimeCollectionV1<RuntimeStrategyProfileV1> StrategyRegistry { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Strategy registry is not connected.");
-    public RuntimeCollectionV1<RuntimeStrategyLifecycleEventV1> StrategyLifecycleEvents { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Strategy lifecycle persistence is not connected.");
     public RuntimeCollectionV1<RuntimeSkillCallV1> SkillCalls { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Skill-call persistence is not connected.");
     public RuntimeValueV1<RuntimeDiagnosticV1> Diagnostic { get; init; } = new(RuntimeCollectionState.Available, null);
     public RuntimeValueV1<RuntimeMemoryStatusV1> MemoryStatus { get; init; } = new(RuntimeCollectionState.Unsupported, null, "Memory persistence is not connected.");

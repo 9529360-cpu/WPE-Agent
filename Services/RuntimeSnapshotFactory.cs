@@ -20,7 +20,6 @@ public static class RuntimeSnapshotFactory
         RuntimeTradingState? tradingState = null,
         RuntimeEquityState? equityState = null,
         RuntimeConnectionState? connectionState = null,
-        RuntimeStrategyRegistryState? strategyRegistryState = null,
         RuntimeSkillCallState? skillCallState = null,
         RuntimeMemoryState? memoryState = null,
         RuntimeAgentOperationsState? agentOperationsState = null,
@@ -71,11 +70,6 @@ public static class RuntimeSnapshotFactory
         var connectionStale=runtimeConnection.State==RuntimeCollectionState.Available&&connectionAge>RuntimeConnectionStateStore.StaleAfter.TotalSeconds;
         var connectionCollectionState=connectionStale?RuntimeCollectionState.Stale:runtimeConnection.State;
         var connectionMessage=connectionStale?"The latest access readiness check is older than 30 minutes.":runtimeConnection.Message;
-        var runtimeStrategyRegistry=strategyRegistryState??RuntimeStrategyRegistryState.Unsupported("Strategy registry is not connected.");
-        var strategyRegistryAge=runtimeStrategyRegistry.UpdatedAt is null?double.PositiveInfinity:Math.Max(0,(generatedAtUtc-runtimeStrategyRegistry.UpdatedAt.Value.UtcDateTime).TotalSeconds);
-        var strategyRegistryStale=runtimeStrategyRegistry.State==RuntimeCollectionState.Available&&strategyRegistryAge>RuntimeStrategyRegistryStateStore.StaleAfter.TotalSeconds;
-        var strategyRegistryCollectionState=strategyRegistryStale?RuntimeCollectionState.Stale:runtimeStrategyRegistry.State;
-        var strategyRegistryMessage=strategyRegistryStale?"Strategy registry projection is stale.":runtimeStrategyRegistry.Message;
         var runtimeSkills=skillCallState??RuntimeSkillCallState.Unsupported("Skill-call persistence is not connected.");var skillsAge=runtimeSkills.UpdatedAt is null?double.PositiveInfinity:Math.Max(0,(generatedAtUtc-runtimeSkills.UpdatedAt.Value.UtcDateTime).TotalSeconds);var skillsStale=runtimeSkills.State==RuntimeCollectionState.Available&&skillsAge>RuntimeSkillCallStateStore.StaleAfter.TotalSeconds;var skillsState=skillsStale?RuntimeCollectionState.Stale:runtimeSkills.State;var skillsMessage=skillsStale?"Skill-call projection is stale.":runtimeSkills.Message;
         var runtimeMemory=memoryState??RuntimeMemoryState.Unsupported("Memory persistence is not connected.");var memoryAge=runtimeMemory.UpdatedAt is null?double.PositiveInfinity:Math.Max(0,(generatedAtUtc-runtimeMemory.UpdatedAt.Value.UtcDateTime).TotalSeconds);var memoryStale=runtimeMemory.State==RuntimeCollectionState.Available&&memoryAge>RuntimeMemoryStateStore.StaleAfter.TotalSeconds;var memoryCollectionState=memoryStale?RuntimeCollectionState.Stale:runtimeMemory.State;var memoryMessage=memoryStale?"Memory projection is stale.":runtimeMemory.Message;
         var runtimeAgentOperations=agentOperationsState??RuntimeAgentOperationsState.Unsupported("Agent operations persistence is not connected.");var agentOperationsAge=runtimeAgentOperations.UpdatedAt is null?double.PositiveInfinity:Math.Max(0,(generatedAtUtc-runtimeAgentOperations.UpdatedAt.Value.UtcDateTime).TotalSeconds);var agentOperationsStale=runtimeAgentOperations.State==RuntimeCollectionState.Available&&runtimeAgentOperations.Operations.Any(x=>x.LastActivityAtUtc is not null)&&agentOperationsAge>RuntimeAgentOperationsStateStore.StaleAfter.TotalSeconds;var agentOperationsCollectionState=agentOperationsStale?RuntimeCollectionState.Stale:runtimeAgentOperations.State;var agentOperationsMessage=agentOperationsStale?"Agent operations projection is stale.":runtimeAgentOperations.Message;
@@ -167,7 +161,6 @@ public static class RuntimeSnapshotFactory
                 state.RiskApprovalStatus, state.RiskLoad, state.DailyPnl, state.MaxDrawdown,
                 state.PortfolioVaR99, state.PortfolioCVaR99, state.PortfolioConcentration,
                 state.PortfolioCorrelation, UiDiagnostic.SafeText(state.RiskSummary)), message),
-            Strategies = new(collectionState, new RuntimeStrategyV1(UiDiagnostic.SafeText(state.StrategyStatus), UiDiagnostic.SafeText(state.StrategySummary), state.StrategyCandidates), message),
             Backtests = new(backtestCollectionState,backtestCollectionState==RuntimeCollectionState.Available?runtimeBacktests.Items:Array.Empty<RuntimeBacktestV1>(),SafeMessage(backtestCollectionState,backtestMessage,"Backtest read failed.",generatedAtUtc)),
             CrossAssetResearch = new(runtimeResearch.State,runtimeResearch.State==RuntimeCollectionState.Available?runtimeResearch.Items:Array.Empty<RuntimeCrossAssetResearchV1>(),runtimeResearch.Message),
             Distribution = new(runtimeDistribution.State,runtimeDistribution.Value,runtimeDistribution.Message),
@@ -179,8 +172,6 @@ public static class RuntimeSnapshotFactory
             HistoricalSkillCalls = Historical(history.SkillCalls),
             HistoricalAuditEvents = Historical(history.AuditEvents),
             ConnectionStatus = new(connectionCollectionState,connectionCollectionState==RuntimeCollectionState.Available?runtimeConnection.Value:null,SafeMessage(connectionCollectionState,connectionMessage,"Connection readiness check failed.",generatedAtUtc)),
-            StrategyRegistry = new(strategyRegistryCollectionState,strategyRegistryCollectionState==RuntimeCollectionState.Available?runtimeStrategyRegistry.Profiles.Select(x=>x with{LastReason=UiDiagnostic.SafeText(x.LastReason)}).ToArray():Array.Empty<RuntimeStrategyProfileV1>(),SafeMessage(strategyRegistryCollectionState,strategyRegistryMessage,"Strategy registry read failed.",generatedAtUtc)),
-            StrategyLifecycleEvents = new(strategyRegistryCollectionState,strategyRegistryCollectionState==RuntimeCollectionState.Available?runtimeStrategyRegistry.Events.Select(x=>x with{Reason=UiDiagnostic.SafeText(x.Reason)}).ToArray():Array.Empty<RuntimeStrategyLifecycleEventV1>(),SafeMessage(strategyRegistryCollectionState,strategyRegistryMessage,"Strategy lifecycle read failed.",generatedAtUtc)),
             SkillCalls = new(skillsState,skillsState==RuntimeCollectionState.Available?runtimeSkills.Items:Array.Empty<RuntimeSkillCallV1>(),SafeMessage(skillsState,skillsMessage,"Skill-call history read failed.",generatedAtUtc)),
             Diagnostic = new(RuntimeCollectionState.Available,diagnostic is null?null:new RuntimeDiagnosticV1(diagnostic.Code,diagnostic.TimeUtc,diagnostic.Summary)),
             MemoryStatus = new(memoryCollectionState,memoryCollectionState==RuntimeCollectionState.Available?runtimeMemory.Status:null,SafeMessage(memoryCollectionState,memoryMessage,"Memory projection failed.",generatedAtUtc)),
@@ -227,8 +218,7 @@ public static class RuntimeSnapshotFactory
                 ["environment"] = state.Mode.ToString(), ["runtimeFresh"] = fresh, ["runtimeAgeSeconds"] = age,
                 ["workflowNode"] = state.WorkflowNode, ["thinkingProgress"] = state.ThinkingProgress,
                 ["riskLoad"] = state.RiskLoad, ["riskSummary"] = UiDiagnostic.SafeText(state.RiskSummary),
-                ["strategyStatus"] = UiDiagnostic.SafeText(state.StrategyStatus), ["strategySummary"] = UiDiagnostic.SafeText(state.StrategySummary),
-                ["strategyCandidates"] = state.StrategyCandidates, ["lastUpdated"] = state.LastUpdated,
+                ["lastUpdated"] = state.LastUpdated,
                 ["lastDecision"] = UiDiagnostic.SafeText(state.LastDecision), ["lastReason"] = UiDiagnostic.SafeText(state.LastReason),
                 ["dailyPnl"] = state.DailyPnl, ["maxDrawdown"] = state.MaxDrawdown,
                 ["runtimeEventSequence"] = state.RuntimeEventSequence, ["runtimeHeartbeatAtUtc"] = state.RuntimeHeartbeatAtUtc,

@@ -61,7 +61,6 @@ public static class DirectMarketStructureDecisionSkill
                 StrategyVersion=Version,
                 DecisionContextKind=DecisionContextKind,
                 DecisionContextId=ContextId(market,structure),
-                HypothesisStage=string.Empty,
                 RiskBudgetMultiplier=1
             };
         }

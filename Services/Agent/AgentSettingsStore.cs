@@ -203,13 +203,9 @@ public sealed class AgentSettingsStore
         settings.Notification.WhatsApp.TimeoutSeconds=Math.Clamp(settings.Notification.WhatsApp.TimeoutSeconds,1,60);
         settings.Notification.WhatsApp.MaxRequestsPerMinute=Math.Clamp(settings.Notification.WhatsApp.MaxRequestsPerMinute,1,600);
         if(!System.Text.RegularExpressions.Regex.IsMatch(settings.Notification.WhatsApp.ApiVersion??string.Empty,"^v[0-9]{1,2}\\.[0-9]{1,2}$"))settings.Notification.WhatsApp.ApiVersion="v22.0";
-        settings.Decision.MinimumConfidence=Math.Clamp(settings.Decision.MinimumConfidence,.50,.95);
-        settings.Decision.MinimumDirectionalScore=Math.Clamp(settings.Decision.MinimumDirectionalScore,.10,.80);
-        settings.Decision.MaximumConflictRatio=Math.Clamp(settings.Decision.MaximumConflictRatio,.10,.90);
         settings.Decision.MinimumEvidenceCompleteness=Math.Clamp(settings.Decision.MinimumEvidenceCompleteness,60,100);
         settings.Decision.MaximumEvidenceAgeMinutes=Math.Clamp(settings.Decision.MaximumEvidenceAgeMinutes,1,30);
         settings.Decision.MinimumMarketQuality=Math.Clamp(settings.Decision.MinimumMarketQuality,50,95);
-        settings.Decision.MinimumResearchScore=Math.Clamp(settings.Decision.MinimumResearchScore,.20,.90);
         settings.Risk.Leverage=Math.Clamp(settings.Risk.Leverage,1,20);
         settings.Risk.MaxMargin=Math.Clamp(settings.Risk.MaxMargin,.10m,.50m);
         settings.Risk.DailyDrawdownLimit=Math.Clamp(settings.Risk.DailyDrawdownLimit,.02m,.10m);
