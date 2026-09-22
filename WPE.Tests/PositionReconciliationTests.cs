@@ -229,6 +229,27 @@ public sealed class PositionReconciliationTests : IDisposable
     }
 
     [Fact]
+    public async Task DelayedReduceOnlyConfirmationAfterRetirementDoesNotCreateNegativeGeneration()
+    {
+        var clock=Now;
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var opening=Intent("open-retired-delayed-close",false,1m);
+        await store.RecordExecutionAsync("open",opening,Order(opening,"FILLED",1m,clock),"v1",default);
+        Assert.True(await store.RetireExecutionPositionLedgerAsync("BTCUSDT",PositionSide.Long,Now.AddSeconds(1),default));
+        Assert.Empty(await store.GetExecutionPositionLedgerAsync(default));
+
+        clock=Now.AddMinutes(5);
+        var close=Intent("close-retired-delayed",true,1m) with {Action=DecisionAction.CloseLong};
+        await store.RecordExecutionAsync("close",close,Order(close,"FILLED",1m,clock),"v1",default);
+
+        var ledger=await store.GetExecutionPositionLedgerAsync(default);
+        Assert.Empty(ledger);
+        var report=PositionReconciliationServiceV1.Reconcile(ledger,[],clock,clock);
+        Assert.Equal(PositionReconciliationStateV1.Confirmed,report.State);
+        Assert.True(report.AllowsRiskIncrease);
+    }
+
+    [Fact]
     public async Task OwnershipLedgerAsOfObservationDoesNotRetireConcurrentLaterFill()
     {
         var clock=Now;

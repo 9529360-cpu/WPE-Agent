@@ -280,7 +280,15 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
     private static decimal Decimal(JsonElement e)=>decimal.TryParse(e.GetString(),NumberStyles.Any,CultureInfo.InvariantCulture,out var v)?v:0;
     private static PositionSide ParseSide(PositionSnapshot p)=>p.PositionSide.Equals("SHORT",StringComparison.OrdinalIgnoreCase)||p.PositionAmt<0?PositionSide.Short:PositionSide.Long;
     private ExchangeOrder Map(OrderResponse o){var type=o.Type.ToUpperInvariant();return new(C(o.Symbol),o.OrderId.ToString(CultureInfo.InvariantCulture),o.ClientOrderId,NormalizeStandardOrderStatus(o.Status),o.ExecutedQuantity,o.AvgPrice,type,ParseSide(o.PositionSide),(type is "STOP_MARKET" or "TAKE_PROFIT_MARKET")||LooksLikeProtectionClientOrderId(o.ClientOrderId),o.Time);}
-    private ExchangeOrder MapRaw(JsonElement e){var type=S(e,"type").ToUpperInvariant();var clientId=S(e,"clientOrderId");return new(C(S(e,"symbol")),e.GetProperty("orderId").GetRawText().Trim('"'),clientId,NormalizeStandardOrderStatus(S(e,"status")),D(e,"executedQty"),D(e,"avgPrice"),type,ParseSide(S(e,"positionSide")),(type is "STOP_MARKET" or "TAKE_PROFIT_MARKET")||LooksLikeProtectionClientOrderId(clientId),DateTime.UtcNow);}
+    internal static DateTime ParseOrderUpdatedAt(JsonElement e)
+    {
+        if(e.TryGetProperty("updateTime",out var updated)&&updated.TryGetInt64(out var updateMs))
+            return DateTimeOffset.FromUnixTimeMilliseconds(updateMs).UtcDateTime;
+        if(e.TryGetProperty("time",out var created)&&created.TryGetInt64(out var createdMs))
+            return DateTimeOffset.FromUnixTimeMilliseconds(createdMs).UtcDateTime;
+        return DateTime.UtcNow;
+    }
+    private ExchangeOrder MapRaw(JsonElement e){var type=S(e,"type").ToUpperInvariant();var clientId=S(e,"clientOrderId");return new(C(S(e,"symbol")),e.GetProperty("orderId").GetRawText().Trim('"'),clientId,NormalizeStandardOrderStatus(S(e,"status")),D(e,"executedQty"),D(e,"avgPrice"),type,ParseSide(S(e,"positionSide")),(type is "STOP_MARKET" or "TAKE_PROFIT_MARKET")||LooksLikeProtectionClientOrderId(clientId),ParseOrderUpdatedAt(e));}
     private ExchangeOrder MapAlgo(JsonElement e){var type=S(e,"orderType").ToUpperInvariant();var updated=e.TryGetProperty("updateTime",out var u)&&u.TryGetInt64(out var ms)?DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime:DateTime.UtcNow;return new(C(S(e,"symbol")),e.GetProperty("algoId").GetRawText().Trim('"'),S(e,"clientAlgoId"),S(e,"algoStatus"),D(e,"actualQty"),D(e,"actualPrice"),type,ParseSide(S(e,"positionSide")),true,updated);}
     private string N(string symbol)=>Symbols.ToNative(symbol);
     private string C(string symbol)=>Symbols.ToCanonical(symbol);

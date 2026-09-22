@@ -1,6 +1,7 @@
 using WpeAgent.RuntimeContracts;
 using System.Net;
 using System.Globalization;
+using System.Text.Json;
 using 币安量化机器人.Models;
 using 币安量化机器人.Services;
 using 币安量化机器人.Services.Agent;
@@ -319,6 +320,20 @@ public sealed class BinanceTestnetCertificationContractTests
         Assert.Equal("LONG",position.PositionSide);
         Assert.Equal(new[]{"/fapi/v2/positionRisk"},observedPaths);
         Assert.Equal(0,handler.MutationCount);
+    }
+
+    [Fact]
+    public void RawOrderTimestampUsesExchangeUpdateTimeBeforeLocalObservationTime()
+    {
+        const long updateMs=1_700_000_123_456;
+        const long createdMs=1_700_000_000_000;
+        using var updated=JsonDocument.Parse($"{{\"updateTime\":{updateMs},\"time\":{createdMs}}}");
+        using var created=JsonDocument.Parse($"{{\"time\":{createdMs}}}");
+
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(updateMs).UtcDateTime,
+            BinanceFuturesAdapter.ParseOrderUpdatedAt(updated.RootElement));
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(createdMs).UtcDateTime,
+            BinanceFuturesAdapter.ParseOrderUpdatedAt(created.RootElement));
     }
 
     [Fact]

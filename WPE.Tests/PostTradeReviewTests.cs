@@ -102,7 +102,7 @@ public sealed class PostTradeReviewTests : IDisposable
     }
 
     [Fact]
-    public async Task FullClosePersistsObservedExcursionsAndExitReason()
+    public async Task FullClosePersistsObservedExcursionsExitReasonAndAppendOnlyMarks()
     {
         var now=new DateTimeOffset(2026,9,20,10,0,0,TimeSpan.Zero);
         var store=new AgentSqliteStore(Database,()=>now);
@@ -125,7 +125,7 @@ public sealed class PostTradeReviewTests : IDisposable
         await connection.OpenAsync();
         await using var count=connection.CreateCommand();
         count.CommandText="SELECT COUNT(*) FROM position_mark_observations";
-        Assert.Equal(0L,(long)(await count.ExecuteScalarAsync())!);
+        Assert.Equal(2L,(long)(await count.ExecuteScalarAsync())!);
     }
 
     [Fact]
