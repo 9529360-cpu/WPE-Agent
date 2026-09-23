@@ -145,7 +145,7 @@ public sealed class RecoveryProductionWiringTests
             var executor=Executor(provider,store);
             var services=await ProductionRecoveryComposition.CreateAsync(provider,executor,store,Path.Combine(root,"receipt-key.json"));
             var adjustment=new ProtectionAdjustment(
-                "SOLUSDT",PositionSide.Long,150.075m,170m,"breakeven","WPE-PM-BE-recoverytest");
+                "SOLUSDT",PositionSide.Long,150.075m,170m,"breakeven","WPE-PM-BE-recoverytest","open-protection-1");
 
             var completed=await 币安量化机器人.Services.AutoTradingAgent.ExecutePositionProtectionRecoveryAsync(
                 services.Recovery,"protection-correlation",[adjustment],provider.Positions,CancellationToken.None);
@@ -155,6 +155,17 @@ public sealed class RecoveryProductionWiringTests
             Assert.Equal(adjustment.AdjustmentId,provider.LastProtectionGroup);
             Assert.Equal("COMPLETED",await store.GetStateAsync(
                 PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId!),CancellationToken.None));
+            var effectiveRaw=await store.GetStateAsync(
+                PositionManagementDurableState.EffectiveProtectionKey("open-protection-1"),CancellationToken.None);
+            Assert.True(PositionManagementDurableState.TryParseEffectiveProtection(effectiveRaw,out var effective));
+            Assert.Equal(150.075m,effective.StopLoss);
+            Assert.Equal(170m,effective.TakeProfit);
+
+            var repaired=await executor.AuditAndRepairProtectionAsync(provider.Positions,[],CancellationToken.None);
+            Assert.True(repaired.Safe);
+            Assert.Equal(2,provider.ProtectionMutationCount);
+            Assert.Equal(150.075m,provider.LastProtectionStopLoss);
+            Assert.Equal(170m,provider.LastProtectionTakeProfit);
         }
         finally{TryDelete(root);}
     }
@@ -234,6 +245,8 @@ public sealed class RecoveryProductionWiringTests
         public int ProtectionMutationCount{get;private set;}
         public bool LastReduceOnly{get;private set;}
         public string? LastProtectionGroup{get;private set;}
+        public decimal LastProtectionStopLoss{get;private set;}
+        public decimal LastProtectionTakeProfit{get;private set;}
         public IReadOnlyList<ManagedPosition> Positions{get;init;}=[new("SOLUSDT",PositionSide.Long,1m,150m,151m,1m,5m,true,120m)];
         public ExchangeEnvironment Environment=>ExchangeEnvironment.Testnet;
         public string ConnectionId=>"test-account";
@@ -259,7 +272,7 @@ public sealed class RecoveryProductionWiringTests
         public Task<ExchangeOrder> PlaceLimitAsync(string symbol,PositionSide side,decimal quantity,decimal price,string clientOrderId,bool reduceOnly,CancellationToken ct)=>throw new InvalidOperationException();
         public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide side,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct)
         {
-            ProtectionMutationCount++;LastProtectionGroup=groupId;
+            ProtectionMutationCount++;LastProtectionGroup=groupId;LastProtectionStopLoss=stopLoss;LastProtectionTakeProfit=takeProfit;
             return Task.FromResult(new ExchangeOrder(symbol,"protection-1",groupId,"NEW",0,0,"STOP_MARKET",side,true,DateTime.UtcNow));
         }
         public Task CancelOrderAsync(string symbol,string orderId,CancellationToken ct)=>throw new InvalidOperationException();
