@@ -125,11 +125,27 @@ public sealed class IndependentRiskManagerSkill
 public static class PositionManagementDurableState
 {
     public static string ProtectionAdjustmentKey(string adjustmentId)=>"position-protection:"+adjustmentId;
+    public static string EffectiveProtectionKey(string openingClientOrderId)=>"position-protection-effective:"+openingClientOrderId;
     public static string OwnershipRevocationKey(string openingClientOrderId)=>"position-ownership-revoked:"+openingClientOrderId;
     public static string OwnershipMissingCandidateKey(string openingClientOrderId)=>"position-ownership-missing-candidate:"+openingClientOrderId;
+
+    public static string SerializeEffectiveProtection(EffectiveProtectionStateV1 value)=>JsonSerializer.Serialize(value);
+    public static bool TryParseEffectiveProtection(string? raw,out EffectiveProtectionStateV1 value)
+    {
+        value=null!;
+        if(string.IsNullOrWhiteSpace(raw))return false;
+        try
+        {
+            var parsed=JsonSerializer.Deserialize<EffectiveProtectionStateV1>(raw);
+            if(parsed is null||parsed.Version!=1||string.IsNullOrWhiteSpace(parsed.OpeningClientOrderId)||parsed.StopLoss<=0||parsed.TakeProfit<=0||string.IsNullOrWhiteSpace(parsed.AdjustmentId))return false;
+            value=parsed;return true;
+        }
+        catch(JsonException){return false;}
+    }
 }
 
-public sealed record ProtectionAdjustment(string Symbol,PositionSide Side,decimal StopLoss,decimal TakeProfit,string Reason,string? AdjustmentId=null);
+public sealed record EffectiveProtectionStateV1(int Version,string OpeningClientOrderId,decimal StopLoss,decimal TakeProfit,string AdjustmentId,DateTimeOffset UpdatedAtUtc);
+public sealed record ProtectionAdjustment(string Symbol,PositionSide Side,decimal StopLoss,decimal TakeProfit,string Reason,string? AdjustmentId=null,string? OpeningClientOrderId=null);
 public sealed record PositionManagementResult(IReadOnlyList<ExecutionIntent> Intents,IReadOnlyList<ProtectionAdjustment> ProtectionAdjustments,IReadOnlyList<string> Notes);
 
 public sealed class PositionManagementSkill
@@ -288,7 +304,7 @@ public sealed class PositionManagementSkill
                     notes.Add($"breakeven-price-unavailable:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
                     continue;
                 }
-                protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.Breakeven"),protectionId));
+                protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.Breakeven"),protectionId,opening.ClientOrderId));
                 notes.Add($"breakeven:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
             }
 
@@ -314,12 +330,18 @@ public sealed class PositionManagementSkill
                     position.Side==PositionSide.Long?breakevenAnchor*1.0005m:breakevenAnchor*.9995m,
                     rule.TickSize,
                     position.Side);
-                var validStop=structureLevel>0&&stop>0&&breakevenStop>0&&opening.TakeProfit>0&&(position.Side==PositionSide.Long
-                    ?stop>breakevenStop&&stop<market.Price&&stop<opening.TakeProfit
-                    :stop<breakevenStop&&stop>market.Price&&stop>opening.TakeProfit);
+                var currentProtectedStop=breakevenStop;
+                var effectiveRaw=await db.GetStateAsync(PositionManagementDurableState.EffectiveProtectionKey(opening.ClientOrderId),ct);
+                if(PositionManagementDurableState.TryParseEffectiveProtection(effectiveRaw,out var effective)&&
+                   string.Equals(effective.OpeningClientOrderId,opening.ClientOrderId,StringComparison.Ordinal)&&
+                   effective.TakeProfit==opening.TakeProfit)
+                    currentProtectedStop=effective.StopLoss;
+                var validStop=structureLevel>0&&stop>0&&currentProtectedStop>0&&opening.TakeProfit>0&&(position.Side==PositionSide.Long
+                    ?stop>currentProtectedStop&&stop<market.Price&&stop<opening.TakeProfit
+                    :stop<currentProtectedStop&&stop>market.Price&&stop>opening.TakeProfit);
                 if(validStop)
                 {
-                    protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.StructureProfitLock"),profitLockId));
+                    protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.StructureProfitLock"),profitLockId,opening.ClientOrderId));
                     notes.Add($"structure-profit-lock:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}");
                 }
                 else notes.Add($"structure-profit-lock-waiting:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}");
