@@ -33,6 +33,32 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task NormalLeveragedPositionDoesNotExitWhenProtectiveStopIsSafelyAheadOfLiquidation()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent(), "PROTECTED", "1003-safe", CancellationToken.None);
+            var position=Position() with{LiquidationPrice=80m};
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [position],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(100m)}},
+                db,
+                CancellationToken.None,
+                ManagedLedger());
+
+            Assert.Empty(result.Intents);
+            Assert.DoesNotContain(result.Notes,x=>x.StartsWith("liquidation-safety-compromised:",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task TwoRPartialTakeCarriesStableReasonCode()
     {
         var path=TempDb();
