@@ -310,9 +310,13 @@ public sealed class PositionManagementSkill
                     ?structureLevel-structureBuffer
                     :structureLevel+structureBuffer;
                 var stop=RoundProtectiveStop(rawStop,rule.TickSize,position.Side);
-                var validStop=structureLevel>0&&stop>0&&opening.TakeProfit>0&&(position.Side==PositionSide.Long
-                    ?stop>breakevenAnchor&&stop<market.Price&&stop<opening.TakeProfit
-                    :stop<breakevenAnchor&&stop>market.Price&&stop>opening.TakeProfit);
+                var breakevenStop=RoundProtectiveStop(
+                    position.Side==PositionSide.Long?breakevenAnchor*1.0005m:breakevenAnchor*.9995m,
+                    rule.TickSize,
+                    position.Side);
+                var validStop=structureLevel>0&&stop>0&&breakevenStop>0&&opening.TakeProfit>0&&(position.Side==PositionSide.Long
+                    ?stop>breakevenStop&&stop<market.Price&&stop<opening.TakeProfit
+                    :stop<breakevenStop&&stop>market.Price&&stop>opening.TakeProfit);
                 if(validStop)
                 {
                     protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.StructureProfitLock"),profitLockId));
