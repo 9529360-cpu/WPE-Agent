@@ -54,7 +54,6 @@ public static class ServiceLocator
     private static readonly Lazy<RuntimeConnectionStateStore> RuntimeConnectionFactory = new(() => new RuntimeConnectionStateStore());
     private static readonly Lazy<RuntimeSkillCallStateStore> RuntimeSkillCallFactory = new(() => new RuntimeSkillCallStateStore(new AgentSqliteStore()));
     private static readonly Lazy<RuntimeAgentOperationsStateStore> RuntimeAgentOperationsFactory = new(() => new RuntimeAgentOperationsStateStore(new AgentSqliteStore()));
-    private static readonly Lazy<RuntimeTeacherStateStore> RuntimeTeacherFactory = new(() => new RuntimeTeacherStateStore(new AgentSqliteStore()));
     private static readonly Lazy<RuntimeAuditStateStore> RuntimeAuditFactory = new(() => new RuntimeAuditStateStore(new AgentSqliteStore()));
     private static readonly Lazy<RuntimeNotificationStateStore> RuntimeNotificationFactory = new(() => new RuntimeNotificationStateStore());
     private static readonly Lazy<RuntimeAuthorizationStateStore> RuntimeAuthorizationFactory = new(() => new RuntimeAuthorizationStateStore(new AgentSettingsStore(), new AgentSqliteStore()));
@@ -83,7 +82,6 @@ public static class ServiceLocator
     public static RuntimeConnectionStateStore RuntimeConnection => RuntimeConnectionFactory.Value;
     public static RuntimeSkillCallStateStore RuntimeSkillCalls => RuntimeSkillCallFactory.Value;
     public static RuntimeAgentOperationsStateStore RuntimeAgentOperations => RuntimeAgentOperationsFactory.Value;
-    public static RuntimeTeacherStateStore RuntimeTeacher => RuntimeTeacherFactory.Value;
     public static RuntimeAuditStateStore RuntimeAudit => RuntimeAuditFactory.Value;
     public static RuntimeNotificationStateStore RuntimeNotifications => RuntimeNotificationFactory.Value;
     public static RuntimeAuthorizationStateStore RuntimeAuthorization => RuntimeAuthorizationFactory.Value;
