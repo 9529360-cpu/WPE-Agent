@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
+using WpeAgent.RuntimeContracts;
 using 币安量化机器人.Services.Agent;
 using 币安量化机器人.Services.Exchange;
 
@@ -30,6 +31,16 @@ public sealed class BinanceNativeReadMcpTools
             readOnly=!_runtime.AllowWrite,
             health
         });
+    }
+
+    [McpServerTool(Name="exchange_get_market_catalog",ReadOnly=true,Destructive=false)]
+    [Description("Read the canonical Binance Futures Testnet market catalog from the existing WPE provider.")]
+    public async Task<string> GetMarketCatalogAsync(CancellationToken cancellationToken)
+    {
+        if(_runtime.Provider is not IProviderMarketCatalog catalog)
+            throw new InvalidOperationException("The upstream Binance provider does not expose a market catalog.");
+        return BinanceNativeMcpJson.Serialize(
+            await catalog.DiscoverMarketCatalogAsync(cancellationToken));
     }
 
     [McpServerTool(Name="exchange_get_market",ReadOnly=true,Destructive=false)]

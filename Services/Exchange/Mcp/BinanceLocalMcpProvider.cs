@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using WpeAgent.RuntimeContracts;
 using 币安量化机器人.Services.Agent;
 
 namespace 币安量化机器人.Services.Exchange.Mcp;
@@ -50,6 +51,7 @@ public sealed class BinanceLocalMcpProvider :
     IProviderEnvironmentGuard,
     IRecentOrderProvider,
     IProtectionFillEvidenceProvider,
+    IProviderMarketCatalog,
     IExchangeOrderFeeEvidenceReader,
     IExchangeFundingIncomeReader
 {
@@ -112,6 +114,9 @@ public sealed class BinanceLocalMcpProvider :
     public IRealtimeMarketFeed? CreateRealtimeFeed(
         IEnumerable<string> canonicalSymbols,
         AgentSqliteStore database)=>null;
+
+    public Task<ProviderMarketCatalog> DiscoverMarketCatalogAsync(CancellationToken ct)=>
+        CallAsync<ProviderMarketCatalog>("exchange_get_market_catalog",null,ct);
 
     public Task<TradingRule> GetRulesAsync(string canonicalSymbol,CancellationToken ct)=>
         CallAsync<TradingRule>(

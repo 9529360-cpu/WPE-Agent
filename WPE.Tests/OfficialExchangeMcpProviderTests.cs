@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using WpeAgent.RuntimeContracts;
 using 币安量化机器人.Services.Agent;
 using 币安量化机器人.Services.Exchange;
 using 币安量化机器人.Services.Exchange.Mcp;
@@ -435,6 +436,40 @@ public sealed class OfficialExchangeMcpProviderTests
         var call=Assert.Single(client.Calls);
         Assert.Equal("exchange_get_rules",call.Tool);
         Assert.Equal("BTCUSDT",call.Arguments["symbol"]);
+    }
+
+    [Fact]
+    public async Task BinanceLocalMcpProviderForwardsCanonicalMarketCatalog()
+    {
+        var checkedAt=DateTimeOffset.UtcNow;
+        var expected=new ProviderMarketCatalog(
+            ProviderCatalogState.Available,
+            [
+                new(
+                    new Instrument("BTCUSDT","BTCUSDT","binance-futures","binance-futures",MarketType.Perpetual),
+                    CapabilityStatus.Available,
+                    true,
+                    true,
+                    true,
+                    checkedAt)
+            ],
+            checkedAt);
+        await using var client=new FakeMcpClient(
+            readOnly:false,
+            (tool,args)=>tool switch
+            {
+                "exchange_get_market_catalog"=>LocalSuccess(expected),
+                _=>throw new InvalidOperationException($"Unexpected MCP tool {tool}")
+            });
+        await using var provider=BinanceLocalProvider(client,executionEnabled:true);
+
+        var catalog=await provider.DiscoverMarketCatalogAsync(CancellationToken.None);
+
+        Assert.Equal(ProviderCatalogState.Available,catalog.State);
+        var market=Assert.Single(catalog.Markets);
+        Assert.Equal("BTCUSDT",market.Instrument.CanonicalSymbol);
+        Assert.True(market.CanTrade);
+        Assert.Equal("exchange_get_market_catalog",Assert.Single(client.Calls).Tool);
     }
 
     [Fact]
