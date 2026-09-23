@@ -59,6 +59,13 @@ public static class DirectMarketStructureDecisionSkill
                 stop=longSide?entry-fallback:entry+fallback;
             }
 
+            var targetBuffer=Math.Max(structure.FifteenMinute.Atr*.10m,entry*.0003m);
+            var take=longSide
+                ?structure.StructuralResistance-targetBuffer
+                :structure.StructuralSupport+targetBuffer;
+            if(take<=0||(longSide&&take<=entry)||(shortSide&&take>=entry))
+                take=entry;
+
             return new DecisionPlan
             {
                 Action=longSide?DecisionAction.OpenLong:DecisionAction.OpenShort,
@@ -67,13 +74,13 @@ public static class DirectMarketStructureDecisionSkill
                 Confidence=0,
                 EntryPrice=entry,
                 StopLossPrice=stop,
-                TakeProfitPrice=0,
+                TakeProfitPrice=take,
                 Regime=structure.HigherTimeframeBias.ToString(),
                 Reason=$"Direct local candle-structure decision: {structure.Narrative}",
                 Invalidation=longSide
                     ?$"Exit if local structure breaks below {stop:F2} or higher-timeframe bias turns bearish."
                     :$"Exit if local structure breaks above {stop:F2} or higher-timeframe bias turns bullish.",
-                EvidenceReferences=structure.Evidence.Append("decision_path=direct-market-structure").Append("entry_qualification=trigger-plus-confirmation").Append("live_entry_guard=bounded-chase").ToList(),
+                EvidenceReferences=structure.Evidence.Append("decision_path=direct-market-structure").Append("entry_qualification=trigger-plus-confirmation").Append("live_entry_guard=bounded-chase").Append("target_geometry=structural-opposite-boundary").ToList(),
                 MissingConditions=[],
                 ConflictSummary=$"direct-structure; scenario={structure.Scenario}; event={structure.FifteenMinute.Event}; confirmation={structure.ConfirmationPresent}",
                 StrategyVersion=Version,

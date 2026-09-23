@@ -87,14 +87,15 @@ public sealed class RiskAndPositionPlanner
             if(otherMargin+targetMargin>e.Account.Equity*limits.MaxMargin)return(null,L("Risk.MarginLimit",limits.MaxMargin));
 
             var stopDistance=Math.Abs(entry-d.StopLossPrice);
-            var riskQuantity=e.Account.Equity*limits.MaxRiskPerTrade*(decimal)adaptiveRiskMultiplier/Math.Max(stopDistance,.00000001m);
+            var riskQuantity=e.Account.Equity*limits.MaxRiskPerTrade/Math.Max(stopDistance,.00000001m);
             var exposureQuantity=e.Account.Equity*limits.MaxSymbolExposure/Math.Max(entry,.00000001m);
             var accountExposure=e.Positions.Where(x=>x.Symbol!=d.Instrument).Sum(x=>x.Quantity*x.MarkPrice);
             var accountRoom=Math.Max(0,e.Account.Equity*limits.MaxAccountExposure-accountExposure);
             var accountQuantity=accountRoom/Math.Max(entry,.00000001m);
             var tierQuantity=targetMargin*effectiveLeverage/Math.Max(entry,.00000001m);
             var targetQty=new[]{riskQuantity,exposureQuantity,accountQuantity,tierQuantity}.Min();
-            var qty=rule.RoundQuantity(Math.Max(0,targetQty-current));
+            var requestedIncrease=Math.Max(0,targetQty-current)*(decimal)adaptiveRiskMultiplier;
+            var qty=rule.RoundQuantity(requestedIncrease);
             if(qty<rule.MinQuantity||qty*entry<rule.MinNotional)return(null,L("Risk.Quantity"));
             var limit=d.OrderType==ExecutionOrderType.Limit?(side==PositionSide.Long?m.Quality.BestAsk:m.Quality.BestBid):0;
             if(limit<=0)limit=entry;

@@ -226,7 +226,10 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Equal(DirectMarketStructureDecisionSkill.DecisionContextKind,result.Decision.DecisionContextKind);
         Assert.Equal(DirectMarketStructureDecisionSkill.Version,result.Decision.StrategyVersion);
         Assert.True(result.Decision.StopLossPrice<market.Price);
-        Assert.Equal(0,result.Decision.TakeProfitPrice);
+        var structure=MarketStructureIntelligence.Analyze(market);
+        Assert.True(result.Decision.TakeProfitPrice>market.Price);
+        Assert.True(result.Decision.TakeProfitPrice<structure.StructuralResistance);
+        Assert.Contains("target_geometry=structural-opposite-boundary",result.Decision.EvidenceReferences);
         Assert.True(DirectMarketStructureDecisionSkill.ContextMatches(result.Decision,market));
         Assert.Contains("decision_path=direct-market-structure",result.Decision.EvidenceReferences);
         Assert.Contains("entry_qualification=trigger-plus-confirmation",result.Decision.EvidenceReferences);
