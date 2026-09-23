@@ -33,6 +33,57 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task NormalLeverageLiquidationDistanceDoesNotForceImmediateExit()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent(),"PROTECTED","1003-safe",CancellationToken.None);
+            var position=Position() with{LiquidationPrice=85m};
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [position],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(100m)}},
+                db,
+                CancellationToken.None,
+                ManagedLedger());
+
+            Assert.DoesNotContain(result.Intents,intent=>intent.ReasonCode==PositionExitReasonCodes.LiquidationBuffer);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public async Task LiquidationInsideStopSafetyZoneForcesRiskExit()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent(),"PROTECTED","1003-unsafe",CancellationToken.None);
+            var position=Position() with{LiquidationPrice=88m};
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [position],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(100m)}},
+                db,
+                CancellationToken.None,
+                ManagedLedger());
+
+            var intent=Assert.Single(result.Intents);
+            Assert.Equal(PositionExitReasonCodes.LiquidationBuffer,intent.ReasonCode);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task TwoRPartialTakeCarriesStableReasonCode()
     {
         var path=TempDb();
