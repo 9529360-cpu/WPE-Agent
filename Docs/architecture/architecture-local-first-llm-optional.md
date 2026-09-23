@@ -1,40 +1,18 @@
-# WPE Agent Local-First / LLM-Optional Architecture
+# Retired: Local-First / LLM-Optional Architecture
 
-## 1. Layers
-- UI layer
-- Policy and mode manager
-- Local rules engine
-- Metrics and confidence engine
-- Task router
-- Brain provider adapter
-- Memory, summary, and cache services
-- Telemetry and cost ledger
+This architecture is no longer active.
 
-## 2. Routing
-1. Classify task by type: deterministic, analytical, generative, research.
-2. Score local confidence using rule coverage, data freshness, and risk.
-3. Check mode policy, privacy policy, budget, and connectivity.
-4. Route to local execution or Brain provider.
-5. On failure, fall back to cached summary, local heuristic, or user prompt.
+The current trading architecture has one decision brain: local deterministic technical analysis. There is no provider router, remote Brain adapter, prompt cache, LLM budget gate, token-cost ledger, or Hybrid / AI Research runtime mode in the trading product.
 
-## 3. Brain Provider
-- Single interface for all LLM vendors.
-- Supports model selection, token limits, timeout, retries, and circuit breaking.
-- Provider is optional and fully disabled in Local Only mode.
+Current authority chain:
 
-## 4. Local Engines
-- Rules engine: deterministic task handling.
-- Metrics engine: confidence, coverage, freshness, risk, and cost estimate.
-- Memory engine: short-term state, long-term summaries, and retrieval.
-- Cache engine: prompt/result cache with TTL and hash keys.
+1. Read fresh market/account/order evidence.
+2. Analyze multi-timeframe market structure locally.
+3. Produce BUY / SELL / HOLD locally.
+4. Calculate stop, take-profit, and position size.
+5. Pass deterministic risk gates.
+6. Execute through the exchange gateway.
+7. Manage position and protection orders.
+8. Persist trade/execution/audit facts.
 
-## 5. Reliability
-- Hard timeout per call.
-- Per-provider circuit breaker.
-- Budget gate before request dispatch.
-- Offline-first execution path.
-
-## 6. Mode Matrix
-- Local Only: no provider, local engines only.
-- Hybrid: local first, provider on gated tasks.
-- AI Research: provider preferred, local guardrails always on.
+Remote/online LLM capability must not be reattached to this chain.
