@@ -21,9 +21,6 @@ public static class DirectMarketStructureDecisionSkill
             .Select(x=>x.Symbol)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        if(circuitBreakerActive)
-            return Hold(markets.FirstOrDefault(),"hard risk circuit breaker is active",analysisTool);
-
         var holdReason="No confirmed direct candle-structure setup is actionable.";
         foreach(var market in markets)
         {
