@@ -1270,11 +1270,6 @@ public sealed partial class AgentSqliteStore
         }
         return list;
     }
-    public async Task<int> ConsecutiveHoldCountAsync(CancellationToken ct)
-    {
-        var count=0;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT decision_json FROM cycles WHERE status='COMPLETED' ORDER BY completed_at DESC LIMIT 20";await using var r=await q.ExecuteReaderAsync(ct);
-        while(await r.ReadAsync(ct)){try{var d=JsonSerializer.Deserialize<DecisionPlan>(r.GetString(0));if(d?.Action!=DecisionAction.Hold)break;count++;}catch(JsonException){break;}}return count;
-    }
     public Task BeginWorkflowRunAsync(string runId,string cycleId,string stateJson,CancellationToken ct)=>Exec("INSERT INTO workflow_runs(run_id,cycle_id,status,current_node,state_json,started_at,updated_at) VALUES($r,$c,'RUNNING',$n,$s,$t,$t)",ct,("$r",runId),("$c",cycleId),("$n",WorkflowNode.Observation.ToString()),("$s",stateJson),("$t",DateTime.UtcNow.ToString("O")));
     public async Task SaveWorkflowCheckpointAsync(WorkflowCheckpoint checkpoint,CancellationToken ct)
     {
@@ -1459,21 +1454,6 @@ public sealed partial class AgentSqliteStore
     public async Task<IReadOnlyList<PersistedMemory>> SearchMemoriesAsync(MemoryQuery filter,CancellationToken ct)
     {
         var tier=string.IsNullOrWhiteSpace(filter.Tier)?null:NormalizeTier(filter.Tier);var symbol=Token(filter.Symbol);var provider=Token(filter.ProviderId);var strategy=Token(filter.StrategyId);var result=string.IsNullOrWhiteSpace(filter.Result)?null:SensitiveDataRedactor.ForLog(filter.Result,80);var since=filter.SinceUtc?.ToUniversalTime();var list=new List<PersistedMemory>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using(var q=c.CreateCommand()){q.CommandText="DELETE FROM agent_memories WHERE expires_at<$now; SELECT id,tier,occurred_at,expires_at,symbol,provider_id,strategy_id,result,source,summary FROM agent_memories WHERE ($tier IS NULL OR tier=$tier) AND ($symbol IS NULL OR symbol=$symbol) AND ($provider IS NULL OR provider_id=$provider) AND ($strategy IS NULL OR strategy_id=$strategy) AND ($result IS NULL OR result=$result) AND ($since IS NULL OR occurred_at>=$since) ORDER BY occurred_at DESC LIMIT $limit";q.Parameters.AddWithValue("$now",DateTime.UtcNow.ToString("O"));q.Parameters.AddWithValue("$tier",(object?)tier??DBNull.Value);q.Parameters.AddWithValue("$symbol",(object?)symbol??DBNull.Value);q.Parameters.AddWithValue("$provider",(object?)provider??DBNull.Value);q.Parameters.AddWithValue("$strategy",(object?)strategy??DBNull.Value);q.Parameters.AddWithValue("$result",(object?)result??DBNull.Value);q.Parameters.AddWithValue("$since",since is null?DBNull.Value:since.Value.ToString("O"));q.Parameters.AddWithValue("$limit",Math.Clamp(filter.Limit,1,100));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))list.Add(new(r.GetString(0),r.GetString(1),DateTime.Parse(r.GetString(2),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),DateTime.Parse(r.GetString(3),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),r.IsDBNull(4)?null:r.GetString(4),r.IsDBNull(5)?null:r.GetString(5),r.IsDBNull(6)?null:r.GetString(6),r.GetString(7),r.GetString(8),r.GetString(9)));}await Exec("INSERT INTO memory_retrievals(retrieved_at,tier,symbol,provider_id,strategy_id,result,since_utc,result_count) VALUES($t,$tier,$symbol,$provider,$strategy,$result,$since,$count)",ct,("$t",DateTime.UtcNow.ToString("O")),("$tier",tier),("$symbol",symbol),("$provider",provider),("$strategy",strategy),("$result",result),("$since",since?.ToString("O")),("$count",list.Count));return list;
-    }
-    public async Task<IReadOnlyList<PlannerMemoryFact>> RetrievePlannerMemoriesAsync(string? symbol,CancellationToken ct)
-    {
-        var normalized=Token(symbol);var now=DateTime.UtcNow;var list=new List<PlannerMemoryFact>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using(var q=c.CreateCommand()){q.CommandText="""
-        DELETE FROM agent_memories WHERE expires_at<$now;
-        WITH ranked AS (
-          SELECT tier,occurred_at,result,source,summary,
-                 ROW_NUMBER() OVER(PARTITION BY tier ORDER BY occurred_at DESC,id DESC) AS tier_rank
-          FROM agent_memories
-          WHERE ($symbol IS NULL OR symbol IS NULL OR symbol=$symbol)
-        )
-        SELECT tier,occurred_at,result,source,summary FROM ranked
-        WHERE tier_rank<=2
-        ORDER BY CASE tier WHEN 'working' THEN 0 WHEN 'episodic' THEN 1 ELSE 2 END,tier_rank;
-        """;q.Parameters.AddWithValue("$now",now.ToString("O"));q.Parameters.AddWithValue("$symbol",(object?)normalized??DBNull.Value);await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))list.Add(new(r.GetString(0),DateTime.Parse(r.GetString(1),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),r.GetString(2),r.GetString(3),UiDiagnostic.SafeText(r.GetString(4),100)));}await Exec("INSERT INTO memory_retrievals(retrieved_at,tier,symbol,result_count) VALUES($t,'planner-balanced',$symbol,$count)",ct,("$t",now.ToString("O")),("$symbol",normalized),("$count",list.Count));return list;
     }
     public async Task<MemoryRuntimeSnapshot> GetMemoryRuntimeSnapshotAsync(CancellationToken ct)
     {
