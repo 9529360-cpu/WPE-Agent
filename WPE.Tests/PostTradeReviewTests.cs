@@ -83,6 +83,56 @@ public sealed class PostTradeReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task PositionManagementCloseInheritsOpeningAutomaticArtifactAttribution()
+    {
+        var store=new AgentSqliteStore(Database);var now=DateTimeOffset.UtcNow;
+        const string contextId="DIRECT-BTCUSDT-202609231045-TrendPullbackLong-BullishConfirmation";
+        const string version="market-structure-direct-v3";
+        var entry=Intent("entry-opening-attribution",false,1m,100m);
+        var artifact=new DurableExecutionArtifactV2(
+            2,"open-cycle",
+            [new(0,"BTCUSDT","Long",1m,false,90m,120m,entry.ClientOrderId,"automatic.risk-approved","OpenLong","Market",0,100m)],
+            1,true,"binance","Testnet",contextId,version,now.AddSeconds(-10),"provider-market-v1",now.AddSeconds(-5),now.AddMinutes(1));
+        Assert.True((await store.SaveAutomaticExecutionAsync("opening-execution",artifact,default)).Succeeded);
+        await store.RecordExecutionAsync("open-cycle",entry,Order(entry,"FILLED",1m,100m),version,default);
+
+        var close=Intent("close-position-management",true,1m,105m);
+        await store.RecordExecutionAsync("position-management-cycle",close,Order(close,"FILLED",1m,105m),version,default);
+
+        var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));
+        Assert.Equal(contextId,review.StrategyId);
+        Assert.Equal(version,review.StrategyVersion);
+        Assert.Equal("opening-artifact",review.AttributionBasis);
+        var memory=Assert.Single(await store.SearchMemoriesAsync(new(StrategyId:contextId),default));
+        Assert.Equal("post-trade",memory.Source);
+    }
+
+    [Fact]
+    public async Task MixedOpeningContextsRemainExplicitlyUnattributed()
+    {
+        var store=new AgentSqliteStore(Database);var now=DateTimeOffset.UtcNow;
+        async Task Open(string cycle,string client,string context,decimal price)
+        {
+            var entry=Intent(client,false,.5m,price);
+            var artifact=new DurableExecutionArtifactV2(
+                2,cycle,
+                [new(0,"BTCUSDT","Long",.5m,false,90m,120m,client,"automatic.risk-approved","OpenLong","Market",0,price)],
+                1,true,"binance","Testnet",context,"market-structure-direct-v3",now.AddSeconds(-10),"provider-market-v1",now.AddSeconds(-5),now.AddMinutes(1));
+            Assert.True((await store.SaveAutomaticExecutionAsync("execution-"+client,artifact,default)).Succeeded);
+            await store.RecordExecutionAsync(cycle,entry,Order(entry,"FILLED",.5m,price),"market-structure-direct-v3",default);
+        }
+
+        await Open("open-a","entry-a","DIRECT-BTCUSDT-202609231000-TrendPullbackLong-BullishConfirmation",100m);
+        await Open("open-b","entry-b","DIRECT-BTCUSDT-202609231100-BreakoutRetestLong-BullishRetest",102m);
+        var close=Intent("close-mixed",true,1m,105m);
+        await store.RecordExecutionAsync("close-mixed-cycle",close,Order(close,"FILLED",1m,105m),"market-structure-direct-v3",default);
+
+        var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));
+        Assert.Null(review.StrategyId);
+        Assert.Equal("mixed-opening-artifacts",review.AttributionBasis);
+    }
+
+    [Fact]
     public async Task ConflictingAutomaticArtifactsNeverInventStrategyAttribution()
     {
         var store=new AgentSqliteStore(Database);var now=DateTimeOffset.UtcNow;DurableExecutionArtifactV2 Artifact(string strategy,string version,string client)=>new(2,"close-cycle",[new(0,"BTCUSDT","Long",1m,true,0,0,client,"strategy.exit","CloseLong","Market",0,110m)],1,true,"binance","Testnet",strategy,version,now.AddSeconds(-10),"book-v1",now.AddSeconds(-5),now.AddMinutes(1));Assert.True((await store.SaveAutomaticExecutionAsync("execution-a",Artifact("btc-trend","v7","close-a"),default)).Succeeded);Assert.True((await store.SaveAutomaticExecutionAsync("execution-b",Artifact("btc-revert","v3","close-b"),default)).Succeeded);
