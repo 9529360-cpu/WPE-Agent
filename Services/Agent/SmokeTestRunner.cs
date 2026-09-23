@@ -40,7 +40,7 @@ public static class SmokeTestRunner
         var report=new SmokeReport{StartedAtUtc=DateTime.UtcNow};var reportDir=Path.Combine(AppDataPaths.TestArtifactsDirectory,"smoke-tests");Directory.CreateDirectory(reportDir);var reportPath=Path.Combine(reportDir,$"smoke-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");IExchangeProvider? exchange=null;IRealtimeMarketFeed? realtime=null;TradingExecutionGateway? gateway=null;TestnetSmokeAuthorization? authorization=null;System.Collections.Concurrent.ConcurrentDictionary<string,ExchangeCapability>? capabilities=null;string? symbol=null;var openedBySmoke=false;
         try
         {
-            var store=new AgentSettingsStore();var settings=store.Load();var profile=store.GetActiveExchange(settings);if(!profile.IsTestnet)throw new InvalidOperationException("冒烟入口只允许 Testnet，当前配置不是测试网");var credentials=store.GetExchangeCredentials(profile);var catalog=new ExchangeProviderCatalog();
+            var store=new AgentSettingsStore();var settings=store.Load();var requestedConnection=Environment.GetEnvironmentVariable("WPE_SMOKE_EXCHANGE_CONNECTION_ID");var allowOverride=string.Equals(Environment.GetEnvironmentVariable("WPE_SMOKE_ALLOW_EXCHANGE_OVERRIDE"),"1",StringComparison.Ordinal);var profile=ResolveSmokeExchangeProfile(store,settings,requestedConnection,allowOverride);if(!profile.IsTestnet)throw new InvalidOperationException("冒烟入口只允许 Testnet，当前配置不是测试网");var credentials=store.GetExchangeCredentials(profile);var catalog=new ExchangeProviderCatalog();
             exchange=catalog.Create(profile,credentials);report.Environment=$"{profile.DisplayName} / Testnet";var db=new AgentSqliteStore();realtime=exchange.CreateRealtimeFeed(settings.Symbols,db);if(realtime is not null){await realtime.StartAsync(ct);var streamDeadline=DateTime.UtcNow.AddSeconds(30);while(DateTime.UtcNow<streamDeadline&&!realtime.Healthy)await Task.Delay(500,ct);if(!realtime.Healthy)throw new InvalidOperationException("smoke.realtime-unhealthy:"+realtime.Status);}capabilities=new(StringComparer.OrdinalIgnoreCase);await RefreshCapabilitiesAsync(exchange,settings.Symbols,capabilities,ct);var executor=new ReliableOrderExecutor(exchange,db,settings.Risk,SystemOrderPollScheduler.Instance,capabilities,true);gateway=new TradingExecutionGateway(executor,db);AccountSnapshot? account=null;ExchangePermissionSnapshot? permission=null;ExchangeHealthSnapshot? health=null;DateTimeOffset permissionObservedAt=default;await Step(report,"测试网账户与持仓读取",async()=>{health=await exchange.HealthCheckAsync(ct);permission=await exchange.CheckPermissionsAsync(ct);permissionObservedAt=DateTimeOffset.UtcNow;account=await exchange.GetAccountAsync(ct);var p=await exchange.GetPositionsAsync(ct);var o=await exchange.GetOpenOrdersAsync(null,ct);if(account.Equity<=0)throw new InvalidOperationException("测试网账户权益为0，需要 Faucet Token");return $"provider={profile.ProviderId}, equity={account.Equity:F2}, available={account.AvailableBalance:F2}, positions={p.Count}, openOrders={o.Count}";});
             var positions=await exchange.GetPositionsAsync(ct);symbol=settings.Symbols.FirstOrDefault(s=>positions.All(p=>!p.Symbol.Equals(s,StringComparison.OrdinalIgnoreCase)));if(symbol is null)throw new InvalidOperationException(settings.Symbols.Count==0?"未配置交易品种，请先在 Setup 中选择至少一个品种":"所有已配置品种均已有仓位，无法选择不干扰现有仓位的冒烟品种");
             TradingRule? rule=null;MarketEvidence? market=null;DateTimeOffset ruleObservedAt=default;await Step(report,"交易规则与市场证据",async()=>{rule=await exchange.GetRulesAsync(symbol,ct);ruleObservedAt=DateTimeOffset.UtcNow;market=await exchange.GetMarketAsync(symbol,ct);market=realtime?.Enrich(market)??market;if(rule.StepSize<=0||rule.MinQuantity<=0||market.Price<=0)throw new InvalidOperationException("交易规则或市场价格无效");return $"{symbol} price={market.Price:F2}, step={rule.StepSize}, minQty={rule.MinQuantity}, minNotional={rule.MinNotional}, basis={market.Derivatives.Basis:P4}";});
@@ -73,6 +73,23 @@ public static class SmokeTestRunner
         return new(report.Success,reportPath);
     }
 
+    internal static ExchangeConnectionProfile ResolveSmokeExchangeProfile(AgentSettingsStore store,AgentSettings settings,string? requestedConnectionId,bool allowOverride)
+    {
+        ArgumentNullException.ThrowIfNull(store);ArgumentNullException.ThrowIfNull(settings);
+        if(string.IsNullOrWhiteSpace(requestedConnectionId))return store.GetActiveExchange(settings);
+        if(!allowOverride)throw new InvalidOperationException("smoke.exchange-override-not-authorized");
+        var profile=settings.Exchanges.FirstOrDefault(x=>x.Enabled&&x.Id.Equals(requestedConnectionId.Trim(),StringComparison.OrdinalIgnoreCase))
+            ??throw new InvalidOperationException("smoke.exchange-override-not-found");
+        if(!profile.IsTestnet)throw new InvalidOperationException("smoke.exchange-override-mainnet-denied");
+        return new ExchangeConnectionProfile
+        {
+            Id=profile.Id,ProviderId=profile.ProviderId,DisplayName=profile.DisplayName,Enabled=true,ExecutionEnabled=true,IsTestnet=true,
+            Endpoint=profile.Endpoint,UseProxy=profile.UseProxy,ProxyUrl=profile.ProxyUrl,ReceiveWindow=profile.ReceiveWindow,TimeoutSeconds=profile.TimeoutSeconds,
+            SubAccount=profile.SubAccount,UpstreamConnectionId=profile.UpstreamConnectionId,EncryptedCredentials=new(profile.EncryptedCredentials,StringComparer.OrdinalIgnoreCase),
+            SymbolMappings=new(profile.SymbolMappings,StringComparer.OrdinalIgnoreCase),LastVerifiedAtUtc=profile.LastVerifiedAtUtc,ReadPermission=profile.ReadPermission,
+            TradePermission=profile.TradePermission,WithdrawPermission=profile.WithdrawPermission,AccountId=profile.AccountId
+        };
+    }
     private static async Task Step(SmokeReport report,string name,Func<Task<string>> action){var sw=Stopwatch.StartNew();try{var detail=await action();report.Steps.Add(new(name,"PASSED",sw.ElapsedMilliseconds,detail));}catch(Exception ex){report.Steps.Add(new(name,"FAILED",sw.ElapsedMilliseconds,SensitiveDataRedactor.ForLog(ex.Message,500)));throw;}}
     internal static bool CanonicalSmokeInputsValid(EvidencePack evidence,DecisionPlan decision)
     {
