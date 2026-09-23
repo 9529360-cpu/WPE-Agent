@@ -64,15 +64,15 @@ public sealed class ModelOffAutonomousLoopTests : IDisposable
     [Fact]
     public void FixtureCompositionSourceContainsNoModelNetworkOrMutationInvocation()
     {
-        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));
-        var start=source.IndexOf("RunModelOffFixtureCycleAsync",StringComparison.Ordinal);var end=source.IndexOf("private static ModelOffAgentOutputV1 Output",start,StringComparison.Ordinal);var composition=source[start..end];
+        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"WPE.Tests","ModelOffFixtureCycleTestHarness.cs"));
+        var start=source.IndexOf("RunAsync(",StringComparison.Ordinal);var end=source.IndexOf("private static ModelOffAgentOutputV1 Output",start,StringComparison.Ordinal);var composition=source[start..end];
         Assert.DoesNotContain("HttpClient",composition,StringComparison.Ordinal);Assert.DoesNotContain("DecideAsync",composition,StringComparison.Ordinal);
         Assert.DoesNotContain("CreateBrain",composition,StringComparison.Ordinal);Assert.DoesNotContain("ExecutePlanAsync",composition,StringComparison.Ordinal);
         Assert.DoesNotContain("TradingExecutionGateway(",composition,StringComparison.Ordinal);Assert.Contains("MainnetRequested",composition,StringComparison.Ordinal);
     }
 
     private AgentSqliteStore Store(string name)=>new(Path.Combine(_dir,name+".db"),()=>Now);
-    private static Task<AutoTradingAgent.ModelOffAutonomousCycleResultV1> Run(AgentSqliteStore store,AutoTradingAgent.ModelOffFixtureCycleRequestV1 request)=>AutoTradingAgent.RunModelOffFixtureCycleAsync(request,store,null,CancellationToken.None);
-    internal static AutoTradingAgent.ModelOffFixtureCycleRequestV1 Request(string cycle)=>new(cycle,Now,[ModelOffCollectionCorpusTests.MarketRecord()],ModelOffCollectionCorpusTests.Request());
+    private static Task<ModelOffFixtureCycleTestHarness.Result> Run(AgentSqliteStore store,ModelOffFixtureCycleTestHarness.Request request)=>ModelOffFixtureCycleTestHarness.RunAsync(request,store,null,CancellationToken.None);
+    internal static ModelOffFixtureCycleTestHarness.Request Request(string cycle)=>ModelOffFixtureCycleTestHarness.RequestFor(cycle,Now);
     private static string ProjectRoot()=>Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
 }

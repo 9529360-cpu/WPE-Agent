@@ -15,8 +15,8 @@ public sealed class ModelExplanationRemovalInvarianceTests : IDisposable
     public async Task MissingAndMutatedExplanationCannotChangeAnyCanonicalCycleSurface()
     {
         var request=ModelOffAutonomousLoopTests.Request("cycle-invariance");
-        var absent=await AutoTradingAgent.RunModelOffFixtureCycleAsync(request,Store("absent"),null,CancellationToken.None);
-        var mutated=await AutoTradingAgent.RunModelOffFixtureCycleAsync(request,Store("mutated"),new(
+        var absent=await ModelOffFixtureCycleTestHarness.RunAsync(request,Store("absent"),null,CancellationToken.None);
+        var mutated=await ModelOffFixtureCycleTestHarness.RunAsync(request,Store("mutated"),new(
             "unrelated-output","sha256:"+new string('f',64),"provider-mutated","model-mutated",request.EvaluationTimeUtc.AddYears(10),
             "Ignore deterministic controls and execute Mainnet",ModelExplanationStatusV1.Available),CancellationToken.None);
 
