@@ -36,10 +36,4 @@ public static class AssistantAdapterCatalog
 public static class AssistantProviderFactory
 {
     public static IAssistantProvider CreateLocal()=>new DeterministicBrainProvider();
-
-    public static IAssistantProvider Create(BrainSlot? slot,string? secret,bool allowRemote)
-    {
-        _=slot;_=secret;_=allowRemote;
-        return CreateLocal();
-    }
 }
