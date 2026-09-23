@@ -979,7 +979,8 @@ public sealed partial class AgentSqliteStore
         "RuntimeMonitor"=>"audit",
         _=>null
     };
-    private static string? RoleForNode(string node)=>node.ToUpperInvariant() switch{"BOOT" or "OBSERVATION"=>"market","RESEARCH" or "PLANNER" or "AGGREGATION" or "CRITIC" or "REVIEWER"=>"decision","POSITIONMANAGEMENT" or "RISK"=>"risk","EXECUTION"=>"execution","RECOVERY" or "SAFETYEXECUTION"=>"recovery","REFLECTION" or "WAITING" or "PAUSED"=>"audit",_=>null};
+    private static string? RoleForNode(string node)=>node.ToUpperInvariant() switch{"BOOT" or "OBSERVATION"=>"market","RESEARCH" or "PLANNER" or "AGGREGATION" or "CRITIC" or "REVIEWER"=>"decision","POSITIONMANAGEMENT" or "RISK"=>"risk","EXECUTION"=>"execution","RECOVERY" or "SAFETYEXECUTION"=>"recovery","AUDIT" or "REFLECTION" or "WAITING" or "PAUSED"=>"audit",_=>null};
+    private static WorkflowNode ParseWorkflowNode(string node)=>string.Equals(node,"Reflection",StringComparison.OrdinalIgnoreCase)?WorkflowNode.Audit:Enum.TryParse<WorkflowNode>(node,true,out var parsed)?parsed:WorkflowNode.Observation;
     private static string NodeName(JsonElement value)=>value.ValueKind==JsonValueKind.Number&&value.TryGetInt32(out var number)&&Enum.IsDefined(typeof(WorkflowNode),number)?((WorkflowNode)number).ToString():value.ValueKind==JsonValueKind.String?value.GetString()??string.Empty:string.Empty;
     private static string NormalizeAgentMode(string? mode)=>"Local Only";
     public Task RecordRealtimeEventAsync(RealtimeAgentEvent value,CancellationToken ct)=>Exec("INSERT INTO realtime_events(occurred_at,event_type,symbol,status,summary,payload_hash) VALUES($t,$e,$s,$st,$m,$h)",ct,("$t",value.OccurredAt.ToString("O")),("$e",value.EventType),("$s",value.Symbol),("$st",value.Status),("$m",value.Summary),("$h",value.PayloadHash));
@@ -1234,7 +1235,7 @@ public sealed partial class AgentSqliteStore
     public async Task<IReadOnlyList<WorkflowRecovery>> GetInterruptedWorkflowsAsync(CancellationToken ct)
     {
         var list=new List<WorkflowRecovery>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT run_id,cycle_id,current_node,state_json,updated_at FROM workflow_runs WHERE status IN ('RUNNING','RECOVERY_PENDING') ORDER BY updated_at";await using var r=await q.ExecuteReaderAsync(ct);
-        while(await r.ReadAsync(ct)){var node=Enum.TryParse<WorkflowNode>(r.GetString(2),true,out var parsed)?parsed:WorkflowNode.Observation;list.Add(new(r.GetString(0),r.GetString(1),node,CheckpointPhase.Entered,r.GetString(3),DateTime.Parse(r.GetString(4),null,DateTimeStyles.RoundtripKind),node==WorkflowNode.Execution?"RECONCILE_EXECUTION":"RESTART_OBSERVATION"));}return list;
+        while(await r.ReadAsync(ct)){var node=ParseWorkflowNode(r.GetString(2));list.Add(new(r.GetString(0),r.GetString(1),node,CheckpointPhase.Entered,r.GetString(3),DateTime.Parse(r.GetString(4),null,DateTimeStyles.RoundtripKind),node==WorkflowNode.Execution?"RECONCILE_EXECUTION":"RESTART_OBSERVATION"));}return list;
     }
     public async Task MarkWorkflowRecoveredAsync(WorkflowRecovery recovery,string action,CancellationToken ct)
     {
