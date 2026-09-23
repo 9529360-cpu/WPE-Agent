@@ -341,15 +341,6 @@ public partial class App : global::System.Windows.Application
             return;
         }
 
-        if (e.Args.Any(x => string.Equals(x, "--llm-governance-test", StringComparison.OrdinalIgnoreCase)))
-        {
-            ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            var result = await LlmGovernanceTestRunner.RunAsync();
-            Log.Information("LLM governance tests completed. Success={Success}; Report={Report}", result.Success, result.ReportPath);
-            Shutdown(result.Success ? 0 : 12);
-            return;
-        }
-
         if (e.Args.Any(x => string.Equals(x, "--four-pillars-test", StringComparison.OrdinalIgnoreCase)))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;

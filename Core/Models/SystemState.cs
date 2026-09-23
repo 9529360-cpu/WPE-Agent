@@ -12,13 +12,6 @@ public enum TradingMode
     Live
 }
 
-public enum AiRuntimeMode
-{
-    LocalOnly,
-    Hybrid,
-    AIResearch
-}
-
 /// <summary>
 /// 智能体运行状态。
 /// </summary>
