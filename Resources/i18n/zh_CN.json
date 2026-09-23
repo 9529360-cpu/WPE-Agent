@@ -323,6 +323,7 @@
     "Position.LiquidationBuffer":  "强平安全缓冲不足",
     "Position.PartialTake":  "达到 2R，自动分批止盈",
     "Position.Breakeven":  "自动移动到保本保护",
+    "Position.StructureProfitLock":  "分批止盈后，将剩余仓位保护推进到新的15分钟结构后方",
     "Position.ManagementCycle":  "本周期已执行持仓管理，暂停新增风险",
     "Execution.NoFill":  "限价单超时且未成交，没有建立仓位",
     "Execution.PartialClose":  "已确认部分平仓：{0}/{1}",
