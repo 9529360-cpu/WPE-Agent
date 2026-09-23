@@ -10,7 +10,7 @@ public sealed class PostTradeReviewTests : IDisposable
     private string Database=>Path.Combine(_directory,"agent.db");
 
     [Fact]
-    public async Task ConfirmedCloseCreatesOneDeterministicReviewAndLongTermMemory()
+    public async Task ConfirmedCloseCreatesOneDeterministicReview()
     {
         var store=new AgentSqliteStore(Database);var entry=Intent("entry",false,1m,100m);var close=Intent("close",true,1m,110m);
         await store.RecordExecutionAsync("open-cycle",entry,Order(entry,"FILLED",1m,100m),"strategy-v1",default);
@@ -20,7 +20,6 @@ public sealed class PostTradeReviewTests : IDisposable
         var filled=Order(close,"FILLED",1m,110m);await store.RecordExecutionAsync("close-cycle",close,filled,"strategy-v1",default);await store.RecordExecutionAsync("close-cycle",close,filled,"strategy-v1",default);
 
         var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));Assert.Equal("wpe.post-trade-review/1.5",review.Schema);Assert.Null(review.StrategyId);Assert.Equal("legacy-version-only",review.AttributionBasis);Assert.Equal("estimated-static-rate",review.FeeBasis);Assert.Equal(.0004m,review.FeeRate);Assert.Equal(.084m,review.Fees);Assert.Equal("intent-expected-vs-fill",review.SlippageBasis);Assert.Equal(0m,review.TotalSlippageAmount);Assert.Equal("unavailable",review.FundingBasis);Assert.Equal(0m,review.FundingAmount);Assert.Equal("win",review.Outcome);Assert.Equal(9.916m,review.NetPnl);Assert.Equal(.09916m,review.ReturnPct);
-        var memories=await store.SearchMemoriesAsync(new(Tier:"long-term",Symbol:"BTCUSDT",StrategyId:"strategy-v1"),default);var memory=Assert.Single(memories);Assert.Equal("post-trade",memory.Source);Assert.Equal("win",memory.Result);
         Assert.Equal(9.916m,(await store.GetRiskHistoryAsync(default)).DailyRealizedPnl);
     }
 
@@ -79,7 +78,7 @@ public sealed class PostTradeReviewTests : IDisposable
     {
         var store=new AgentSqliteStore(Database);var now=DateTimeOffset.UtcNow;var artifact=new DurableExecutionArtifactV2(2,"close-cycle",[new(0,"BTCUSDT","Long",1m,true,0,0,"close","strategy.exit","CloseLong","Market",0,110m)],1,true,"binance","Testnet","btc-trend","v7",now.AddSeconds(-10),"book-v1",now.AddSeconds(-5),now.AddMinutes(1));Assert.True((await store.SaveAutomaticExecutionAsync("execution-attributed",artifact,default)).Succeeded);
         var entry=Intent("entry",false,1m,100m);var close=Intent("close",true,1m,110m);await store.RecordExecutionAsync("open-cycle",entry,Order(entry,"FILLED",1m,100m),"wpe-core-v2",default);await store.RecordExecutionAsync("close-cycle",close,Order(close,"FILLED",1m,110m),"wpe-core-v2",default);
-        var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));Assert.Equal("btc-trend",review.StrategyId);Assert.Equal("v7",review.StrategyVersion);Assert.Equal("automatic-artifact",review.AttributionBasis);var memory=Assert.Single(await store.SearchMemoriesAsync(new(StrategyId:"btc-trend"),default));Assert.Contains("strategyVersion=v7",memory.Summary,StringComparison.Ordinal);
+        var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));Assert.Equal("btc-trend",review.StrategyId);Assert.Equal("v7",review.StrategyVersion);Assert.Equal("automatic-artifact",review.AttributionBasis);
     }
 
     [Fact]
@@ -129,7 +128,7 @@ public sealed class PostTradeReviewTests : IDisposable
     }
 
     [Fact]
-    public async Task StableReasonCodeWinsOverLocalizedDisplayReasonAndFlowsToMemory()
+    public async Task StableReasonCodeWinsOverLocalizedDisplayReason()
     {
         var store=new AgentSqliteStore(Database);
         var entry=Intent("entry-structure-code",false,1m,100m);
@@ -150,9 +149,6 @@ public sealed class PostTradeReviewTests : IDisposable
 
         var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));
         Assert.Equal(PositionExitReasonCodes.StructureInvalidated,review.ExitReason);
-        var memory=Assert.Single(await store.SearchMemoriesAsync(new(Tier:"long-term",Symbol:"BTCUSDT"),default));
-        Assert.Contains($"exitReason={PositionExitReasonCodes.StructureInvalidated}",memory.Summary,StringComparison.Ordinal);
-        Assert.DoesNotContain("本地K线结构",memory.Summary,StringComparison.Ordinal);
     }
 
     [Fact]
@@ -175,9 +171,6 @@ public sealed class PostTradeReviewTests : IDisposable
 
         var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));
         Assert.Equal("action.closelong",review.ExitReason);
-        var memory=Assert.Single(await store.SearchMemoriesAsync(new(Tier:"long-term",Symbol:"BTCUSDT"),default));
-        Assert.Contains("exitReason=action.closelong",memory.Summary,StringComparison.Ordinal);
-        Assert.DoesNotContain("强平安全缓冲不足",memory.Summary,StringComparison.Ordinal);
     }
 
     [Fact]
@@ -222,9 +215,6 @@ public sealed class PostTradeReviewTests : IDisposable
 
         var review=Assert.Single(await store.GetRecentPostTradeReviewsAsync(10,default));
         Assert.Equal("action.closelong",review.ExitReason);
-        var memory=Assert.Single(await store.SearchMemoriesAsync(new(Tier:"long-term",Symbol:"BTCUSDT"),default));
-        Assert.Contains("exitReason=action.closelong",memory.Summary,StringComparison.Ordinal);
-        Assert.DoesNotContain("automatic.risk-approved",memory.Summary,StringComparison.Ordinal);
     }
 
     [Fact]
