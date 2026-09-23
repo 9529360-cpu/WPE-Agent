@@ -11,13 +11,6 @@ public enum NotificationEventKind
     ProtectionFailed,
     RiskBlocked,
     AgentDegraded,
-    MarketBrief,
-    TeacherMorningLesson,
-    TeacherAfternoonLesson,
-    TeacherEveningLesson,
-    TeacherEventLesson,
-    TeacherRecommendation,
-    TeacherCorrection,
     Test
 }
 public enum NotificationOutboxState{Queued,Sending,Sent,Failed,DeadLetter}

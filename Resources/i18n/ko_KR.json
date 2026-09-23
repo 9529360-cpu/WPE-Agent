@@ -272,7 +272,7 @@
     "Stage.Review":  "Critic / Reviewer: 방향, 충돌 및 신뢰도 검토",
     "Stage.Risk":  "Risk Manager: 결정, 포지션 및 리스크 검증",
     "Stage.Execution":  "Execution: 주문, 체결 및 보호 주문 확인",
-    "Stage.Reflection":  "Reflection: 경험 기록 후 다음 주기 대기",
+    "Stage.Completed":  "주기 완료: 감사 기록 후 새 시장 근거 대기",
     "Stage.Paused":  "일시정지",
     "Agent.Started":  "{0} · {1} · 계정 상태 제어 중",
     "Agent.Paused":  "일시정지됨. 새 주기를 시작하지 않음",

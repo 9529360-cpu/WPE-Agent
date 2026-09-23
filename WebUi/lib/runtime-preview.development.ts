@@ -27,7 +27,6 @@ export const previewState: WpeRuntimeState = {
   riskLoad: 24,
   workflowNode: 'RISK_REVIEW',
   thinkingProgress: 68,
-  reflectionStatus: 'READY',
   reviewerStatus: 'APPROVED',
   riskApprovalStatus: 'APPROVED',
   executionApprovalStatus: 'WAITING',

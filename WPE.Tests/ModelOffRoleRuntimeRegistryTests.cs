@@ -14,14 +14,11 @@ public sealed class ModelOffRoleRuntimeRegistryTests
         var registry = Assert.IsType<ModelOffRoleRuntimeRegistryV1>(result.Registry);
         Assert.Equal(7, registry.Roles.Count);
         Assert.Equal(7, registry.Roles.Select(x => x.Role).Distinct().Count());
-        Assert.Equal(13, registry.Capabilities.Count);
-        Assert.Equal(13, registry.Capabilities.Select(x => x.Id).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(12, registry.Capabilities.Count);
+        Assert.Equal(12, registry.Capabilities.Select(x => x.Id).Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(Enum.GetValues<ModelOffRuntimeRoleV1>(), registry.Roles.Select(x => x.Role));
         Assert.False(registry.MainnetEnabled);
         Assert.Equal("Testnet", registry.Environment);
-        var teacher=registry.Capabilities.Single(x=>x.Id=="teacher");
-        Assert.Equal("current",teacher.Lifecycle);Assert.True(teacher.Implemented);Assert.True(teacher.Accepted);
-        Assert.Contains("opt-in notification",teacher.AcceptanceScope,StringComparison.Ordinal);
         var news=registry.Capabilities.Single(x=>x.Id=="news");
         Assert.Equal("yes",news.Maturity);Assert.True(news.Implemented);Assert.True(news.Accepted);
         Assert.Contains("article-text exclusion",news.AcceptanceScope,StringComparison.Ordinal);
