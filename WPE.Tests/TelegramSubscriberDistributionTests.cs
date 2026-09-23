@@ -41,9 +41,9 @@ public sealed class TelegramSubscriberDistributionTests:IDisposable
     public async Task Approved_subscribers_receive_independent_batch_deliveries()
     {
         var store=Store();
-        foreach(var chat in new[]{3001L,3002L}){await store.ApplyUpdateAsync(new(chat,chat,"private","/start"),default);await store.ApproveAsync(chat,new HashSet<NotificationEventKind>{NotificationEventKind.MarketBrief},"owner",default);}
+        foreach(var chat in new[]{3001L,3002L}){await store.ApplyUpdateAsync(new(chat,chat,"private","/start"),default);await store.ApproveAsync(chat,new HashSet<NotificationEventKind>{NotificationEventKind.RiskBlocked},"owner",default);}
         var transport=new RecordingTransport();var dispatcher=new TelegramSubscriberDispatcher(store,new StaticConfiguration(),transport);
-        Assert.Equal(2,await store.EnqueueApprovedAsync(Event("batch",NotificationEventKind.MarketBrief),default));
+        Assert.Equal(2,await store.EnqueueApprovedAsync(Event("batch",NotificationEventKind.RiskBlocked),default));
         Assert.Equal(2,await dispatcher.DispatchOnceAsync(default));
         Assert.Equal(new[]{"3001","3002"},transport.Destinations.Order().ToArray());
     }
@@ -105,8 +105,8 @@ public sealed class TelegramSubscriberDistributionTests:IDisposable
         var store=new TelegramSubscriberStore(path,_clock,new ReversibleTestProtector());
         await store.ApplyUpdateAsync(new(41,chatId,"supergroup","/start"),default);
         var subscriber=Assert.Single(await store.ListAsync(default));
-        await store.ApproveAsync(subscriber.SubscriberKey,new HashSet<NotificationEventKind>{NotificationEventKind.MarketBrief},"owner",default);
-        await store.EnqueueApprovedAsync(Event("encrypted-target",NotificationEventKind.MarketBrief),default);
+        await store.ApproveAsync(subscriber.SubscriberKey,new HashSet<NotificationEventKind>{NotificationEventKind.RiskBlocked},"owner",default);
+        await store.EnqueueApprovedAsync(Event("encrypted-target",NotificationEventKind.RiskBlocked),default);
 
         await using var connection=new SqliteConnection(new SqliteConnectionStringBuilder{DataSource=path,Mode=SqliteOpenMode.ReadOnly}.ToString());
         await connection.OpenAsync();
