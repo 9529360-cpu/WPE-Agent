@@ -311,8 +311,6 @@
     "RiskReview.Spread":  "Spread too wide ({0:F2} bps)",
     "RiskReview.Volatility":  "Extreme volatility ({0:P2})",
     "RiskReview.RiskReward":  "Risk/reward {0:F2} below {1:F2}",
-    "RiskReview.LossStreak":  "Consecutive-loss breaker ({0})",
-    "RiskReview.DailyLoss":  "Daily loss breaker ({0:N2})",
     "RiskReview.ApiFailures":  "Exchange/API failures exceeded ({0})",
     "RiskReview.OrderUncertain":  "An order state is uncertain",
     "RiskReview.Research":  "Research validation failed ({0:P0})",
