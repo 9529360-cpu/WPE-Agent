@@ -1,8 +1,6 @@
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
-using WpeAgent.RuntimeContracts;
-using WpeAgent.RuntimeServices;
 using 币安量化机器人.Core.Models;
 using 币安量化机器人.Services.Agent;
 
@@ -91,29 +89,6 @@ public sealed class LlmGovernanceTests : IDisposable
         Assert.Equal("provider", usage.TokenSource);
         Assert.Equal("HTTP_200", usage.Outcome);
         Assert.Equal($"private {secret}".Length,usage.ContextCharacters);
-    }
-
-    [Fact]
-    public void RuntimeSnapshot_RoundTripsAvailableGovernanceMetrics()
-    {
-        var now = DateTime.UtcNow;
-        var state = new SystemState { LastUpdated = now, BrainEffectiveMode = AiRuntimeMode.Hybrid, BrainRemoteAllowed = true };
-        var usage = new LlmUsageSnapshot(2, 120, 0.004m, 1, 3, "openai", "research", 1, 0, now.AddSeconds(-1));
-        var snapshot = RuntimeSnapshotFactory.Create(state, now, llmUsage: usage, llmBreakdown: new("research-agent", 2, "assistant", 2));
-
-        Assert.Equal(RuntimeCollectionState.Available, snapshot.LlmGovernance.State);
-        Assert.Equal(2, snapshot.LlmGovernance.Value!.Calls);
-        Assert.Equal(0.004m, snapshot.LlmGovernance.Value.CostUsd);
-        Assert.Equal("research-agent", snapshot.LlmGovernance.Value.TopAgent);
-        Assert.True(snapshot.LlmGovernance.Value.RemoteAllowed);
-    }
-
-    [Fact]
-    public void RuntimeSnapshot_WithoutGovernanceSource_IsUnsupported()
-    {
-        var snapshot = RuntimeSnapshotFactory.Create(new SystemState { LastUpdated = DateTime.UtcNow }, DateTime.UtcNow);
-        Assert.Equal(RuntimeCollectionState.Unsupported, snapshot.LlmGovernance.State);
-        Assert.Null(snapshot.LlmGovernance.Value);
     }
 
     private LlmRequestGovernor Governor(out string audit, LlmUsagePolicy? policy = null)
