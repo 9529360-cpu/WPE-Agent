@@ -11,8 +11,8 @@ This document freezes the first commercial Beta boundary. It does not authorize 
 | Binance Futures Testnet | Conditional | Catalog, capability probe, Risk Gate and `ReliableOrderExecutor` path are integrated. A credentialed Testnet smoke test is required for each release candidate. |
 | OKX, Bybit, Gate.io, Bitget | Catalog only | Official read-only instrument discovery is supported. Trading is not Beta-certified and must remain unavailable until provider-specific Testnet lifecycle certification passes. |
 | Mainnet | Disabled | No Mainnet execution, plugin trading, or production credential rollout is permitted. |
-| Local Only | Supported | Deterministic local operation is the default and does not require an LLM. |
-| Hybrid / AI Research | Supported with limits | Optional remote research is governed by budgets, redacted audit, privacy gates, and deterministic local fallback. It has no execution authority. |
+| Local deterministic brain | Supported | Trading decisions use the built-in deterministic technical brain. No online/remote LLM is part of the trading product. |
+| Hybrid / AI Research / Remote Brain | Retired | Historical designs/configuration may exist only as migration history. They are not runtime capabilities and must not be advertised or reconnected to trading. |
 | Plugin Phase 0 | Metadata registry only | Local manifest discovery, compatibility and permission validation are supported. Arbitrary code loading, marketplace installation, hot loading, and Mainnet plugin execution are unsupported. |
 | Web UI | Read-only projection | Runtime truth comes from the WPF host. Browser preview exists only in development and is excluded from production artifacts. |
 | Team workflows / multi-account operations | Unsupported | No commercial Beta certification yet. |
