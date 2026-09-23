@@ -71,8 +71,7 @@ public sealed class AccessReadinessService
         var providerCanRead = false;
         void Add(string key, bool pass, bool critical, string detail, long ms = 0) => report.Checks.Add(new(key, pass, critical, detail, ms));
 
-        var runtimeMode = RuntimeModePolicy.Resolve(settings);
-        Add("runtime_mode", true, true, $"AI runtime mode {runtimeMode.RequestedMode}; effective {runtimeMode.EffectiveMode}");
+        Add("runtime_mode", true, true, "Local deterministic trading brain");
 
         var settingsStore = new AgentSettingsStore();
         var profile = settingsStore.GetActiveExchange(settings);
