@@ -8,7 +8,6 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const navRoutes = [
   '/',
   '/agents',
-  '/teacher',
   '/orders',
   '/positions',
   '/backtest',
