@@ -249,14 +249,16 @@ public static class ExchangeMcpSidecarLocator
         var directory=new DirectoryInfo(AppContext.BaseDirectory);
         for(var depth=0;directory is not null&&depth<8;depth++,directory=directory.Parent)
         {
-            var development=Path.Combine(
+            var developmentRoot=Path.Combine(
                 directory.FullName,
                 "WPE.ExchangeMcp",
                 "bin",
                 "Release",
-                "net8.0",
-                "WPE.ExchangeMcp.dll");
-            if(File.Exists(development))return development;
+                "net8.0");
+            var executable=Path.Combine(developmentRoot,"WPE.ExchangeMcp.exe");
+            if(File.Exists(executable))return executable;
+            var library=Path.Combine(developmentRoot,"WPE.ExchangeMcp.dll");
+            if(File.Exists(library))return library;
         }
 
         throw new FileNotFoundException(

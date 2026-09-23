@@ -43,6 +43,18 @@ public sealed class BinanceNativeReadMcpTools
             await catalog.DiscoverMarketCatalogAsync(cancellationToken));
     }
 
+    [McpServerTool(Name="exchange_get_instrument_fundamentals",ReadOnly=true,Destructive=false)]
+    [Description("Read canonical Binance Futures Testnet instrument fundamentals from the existing WPE provider.")]
+    public async Task<string> GetInstrumentFundamentalsAsync(
+        [Description("Canonical symbols such as BTCUSDT.")] string[] symbols,
+        CancellationToken cancellationToken)
+    {
+        if(_runtime.Provider is not ICryptoInstrumentFundamentalReader reader)
+            throw new InvalidOperationException("The upstream Binance provider does not expose instrument fundamentals.");
+        return BinanceNativeMcpJson.Serialize(
+            await reader.GetInstrumentFundamentalsAsync(symbols,cancellationToken));
+    }
+
     [McpServerTool(Name="exchange_get_market",ReadOnly=true,Destructive=false)]
     [Description("Read canonical WPE market evidence for a Binance Futures Testnet symbol.")]
     public async Task<string> GetMarketAsync(

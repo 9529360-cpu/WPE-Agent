@@ -473,6 +473,32 @@ public sealed class OfficialExchangeMcpProviderTests
     }
 
     [Fact]
+    public async Task BinanceLocalMcpProviderForwardsCanonicalInstrumentFundamentals()
+    {
+        var now=DateTimeOffset.UtcNow;
+        var expected=CryptoInstrumentFundamentalCanonicalizerV1.Create(
+            "binance-futures","Testnet","BTCUSDT","BTCUSDT","BTC","USDT","USDT","PERPETUAL","TRADING",
+            now.AddYears(-2),now,new string('a',64));
+        await using var client=new FakeMcpClient(
+            readOnly:true,
+            (tool,args)=>tool switch
+            {
+                "exchange_get_instrument_fundamentals"=>LocalSuccess(new[]{expected}),
+                _=>throw new InvalidOperationException($"Unexpected MCP tool {tool}")
+            });
+        await using var provider=BinanceLocalProvider(client,executionEnabled:false);
+
+        var facts=await provider.GetInstrumentFundamentalsAsync(["BTCUSDT"],CancellationToken.None);
+
+        var fact=Assert.Single(facts);
+        Assert.True(CryptoInstrumentFundamentalCanonicalizerV1.IsCanonical(fact,DateTimeOffset.UtcNow));
+        var call=Assert.Single(client.Calls);
+        Assert.Equal("exchange_get_instrument_fundamentals",call.Tool);
+        var symbols=Assert.IsAssignableFrom<IReadOnlyList<string>>(call.Arguments["symbols"]);
+        Assert.Equal("BTCUSDT",Assert.Single(symbols));
+    }
+
+    [Fact]
     public async Task BinanceLocalMcpProviderMapsApprovedWriteToMcpTool()
     {
         var expected=new ExchangeOrder(
@@ -530,6 +556,18 @@ public sealed class OfficialExchangeMcpProviderTests
         Assert.DoesNotContain("X-MBX-APIKEY",source,StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("HttpRequestMessage",source,StringComparison.Ordinal);
         Assert.DoesNotContain("Binance.Net.Clients",source,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DevelopmentSidecarLocatorPrefersExecutableBeforeDllFallback()
+    {
+        var source=File.ReadAllText(Path.Combine(
+            ProjectRoot(),"Services","Exchange","Mcp","ExchangeMcpBridgeClient.cs"));
+        var executable=source.IndexOf("WPE.ExchangeMcp.exe",StringComparison.Ordinal);
+        var library=source.IndexOf("WPE.ExchangeMcp.dll",StringComparison.Ordinal);
+        Assert.True(executable>=0);
+        Assert.True(library>executable);
+        Assert.Contains("if(File.Exists(executable))return executable",source,StringComparison.Ordinal);
     }
 
     [Fact]

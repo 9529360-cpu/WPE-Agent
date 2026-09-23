@@ -52,6 +52,7 @@ public sealed class BinanceLocalMcpProvider :
     IRecentOrderProvider,
     IProtectionFillEvidenceProvider,
     IProviderMarketCatalog,
+    ICryptoInstrumentFundamentalReader,
     IExchangeOrderFeeEvidenceReader,
     IExchangeFundingIncomeReader
 {
@@ -117,6 +118,14 @@ public sealed class BinanceLocalMcpProvider :
 
     public Task<ProviderMarketCatalog> DiscoverMarketCatalogAsync(CancellationToken ct)=>
         CallAsync<ProviderMarketCatalog>("exchange_get_market_catalog",null,ct);
+
+    public Task<IReadOnlyList<CryptoInstrumentFundamentalV1>> GetInstrumentFundamentalsAsync(
+        IReadOnlyList<string> canonicalSymbols,
+        CancellationToken ct)=>
+        CallListAsync<CryptoInstrumentFundamentalV1>(
+            "exchange_get_instrument_fundamentals",
+            Args(("symbols",canonicalSymbols)),
+            ct);
 
     public Task<TradingRule> GetRulesAsync(string canonicalSymbol,CancellationToken ct)=>
         CallAsync<TradingRule>(
