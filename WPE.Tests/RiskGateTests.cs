@@ -73,6 +73,41 @@ public sealed class RiskGateTests
     }
 
     [Fact]
+    public void Planner_PerformanceThrottleReducesActualOrderQuantityEvenWhenExposureCapWouldOtherwiseBind()
+    {
+        var planner = new RiskAndPositionPlanner();
+        var evidence = new EvidencePack
+        {
+            Completeness = 100,
+            Account = new AccountSnapshot(1_000, 1_000, 1_000, DateTime.UtcNow),
+            Markets = new Dictionary<string, MarketEvidence>
+            {
+                ["BTCUSDT"] = new("BTCUSDT", 100, 95, 110, 50, 0, 0, 0, new(0, 0, 0, 0, 0, 0, 0), DateTime.UtcNow)
+            }
+        };
+        var decision = new DecisionPlan
+        {
+            Action = DecisionAction.OpenLong,
+            Instrument = "BTCUSDT",
+            TargetTier = 1,
+            EntryPrice = 100,
+            StopLossPrice = 99,
+            TakeProfitPrice = 102,
+            RiskRewardRatio = 2
+        };
+        var rule = new TradingRule("BTCUSDT", .1m, .1m, .1m, 5m, 20);
+        var limits = new RiskLimits { MaxRiskPerTrade = .01m, MaxSymbolExposure = .25m, MaxAccountExposure = .50m };
+
+        var normal = planner.Plan(decision, evidence, rule, limits, 1_000, riskBudgetMultiplier: 1);
+        var reduced = planner.Plan(decision, evidence, rule, limits, 1_000, riskBudgetMultiplier: .50);
+
+        var normalIntent = Assert.Single(normal.Intents);
+        var reducedIntent = Assert.Single(reduced.Intents);
+        Assert.True(reducedIntent.Quantity < normalIntent.Quantity);
+        Assert.InRange(reducedIntent.Quantity / normalIntent.Quantity, .45m, .55m);
+    }
+
+    [Fact]
     public void Planner_DoesNotHardBlockWhenDailyDrawdownThresholdIsExceeded()
     {
         var planner = new RiskAndPositionPlanner();
