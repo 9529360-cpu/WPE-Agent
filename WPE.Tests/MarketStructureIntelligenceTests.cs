@@ -273,7 +273,7 @@ public sealed class MarketStructureIntelligenceTests
     }
 
     [Fact]
-    public async Task HardCircuitBreakerStillOverridesDirectTrade()
+    public async Task PerformanceRiskStateDoesNotOverrideDirectMarketAnalysis()
     {
         var market=Market(
             SweepLowReclaimThenConfirm15m(),
@@ -284,8 +284,9 @@ public sealed class MarketStructureIntelligenceTests
 
         var result=await new DeterministicBrainProvider().DecideAsync(Evidence(market),context,CancellationToken.None);
 
-        Assert.Equal(DecisionAction.Hold,result.Decision.Action);
-        Assert.Contains("circuit breaker",result.Decision.Reason,StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(DecisionAction.OpenLong,result.Decision.Action);
+        Assert.DoesNotContain("circuit breaker",result.Decision.Reason,StringComparison.OrdinalIgnoreCase);
+        Assert.True(DirectMarketStructureDecisionSkill.IsDirect(result.Decision));
     }
 
     [Fact]
