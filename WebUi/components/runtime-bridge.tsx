@@ -423,6 +423,55 @@ function normalizeCrossAssetResearch(input:unknown):RuntimeCrossAssetResearch|nu
 function normalizeCrossAssetResearchCollection(input:unknown):RuntimeCrossAssetResearchCollection{const normalized=normalizeItems(input,normalizeCrossAssetResearch);const source=input&&typeof input==='object'?nonEmptyString((input as Record<string,unknown>).sourceUpdatedAtUtc)??undefined:undefined;return{...normalized,sourceUpdatedAtUtc:source}}
 function normalizeDistribution(input:unknown):RuntimeDistributionCollection{if(!input||typeof input!=='object')return{state:'unsupported',message:'The host runtime does not expose professional distribution status.'};const c=input as Record<string,unknown>,state=normalizeCollectionState(c.state),message=nonEmptyString(c.message)??undefined;if(state!=='available')return{state,message};if(!c.value||typeof c.value!=='object')return{state:'error',message:'Distribution status is marked available without a value.'};const v=c.value as Record<string,unknown>,forbidden=['recipient','destination','reviewerId','primaryReviewerId','secondaryReviewerId','reviewText','opinion','body','content','message','send','retry','approve','approvalId','configuration','config'];if(forbidden.some(k=>Object.hasOwn(v,k)))return{state:'error',message:'Distribution status contains a forbidden field.'};const status=nonEmptyString(v.status),asOfUtc=nonEmptyString(v.asOfUtc);if(!status||!['Denied','Authorized','Error'].includes(status)||typeof v.allowed!=='boolean'||typeof v.withdrawn!=='boolean'||!asOfUtc||Number.isNaN(Date.parse(asOfUtc))||!Array.isArray(v.approvalRoles)||!v.approvalRoles.every(role=>role==='PrimaryReviewer'||role==='SecondaryReviewer')||!Array.isArray(v.reasonCodes)||!v.reasonCodes.every(reason=>typeof reason==='string'))return{state:'error',message:'Distribution status contains invalid fields.'};if(status==='Error')return{state:'error',message:'Distribution status could not be validated.'};if(v.allowed!== (status==='Authorized'))return{state:'error',message:'Distribution status violates fail-closed semantics.'};const nullable=(key:string)=>v[key]===null?null:nonEmptyString(v[key]),validUntilUtc=nullable('validUntilUtc');if(validUntilUtc!==null&&Number.isNaN(Date.parse(validUntilUtc)))return{state:'error',message:'Distribution validity is invalid.'};const hashes=['receiptHash','policyHash','contentFactsHash','consentScopeHash','auditCorrelationHash'] as const,hashValues=Object.fromEntries(hashes.map(key=>[key,nullable(key)])) as Record<(typeof hashes)[number],string|null>;if(hashes.some(key=>hashValues[key]!==null&&!/^[A-F0-9]{64}$/.test(hashValues[key]!)))return{state:'error',message:'Distribution hash metadata is invalid.'};const consentVersion=nullable('consentVersion'),suitabilityVersion=nullable('suitabilityVersion');if(consentVersion===undefined||suitabilityVersion===undefined)return{state:'error',message:'Distribution version metadata is invalid.'};return{state:'available',message,value:{status:status as RuntimeDistribution['status'],allowed:v.allowed,approvalRoles:v.approvalRoles as RuntimeDistribution['approvalRoles'],validUntilUtc,withdrawn:v.withdrawn,receiptHash:hashValues.receiptHash,policyHash:hashValues.policyHash,contentFactsHash:hashValues.contentFactsHash,consentScopeHash:hashValues.consentScopeHash,consentVersion,suitabilityVersion,auditCorrelationHash:hashValues.auditCorrelationHash,reasonCodes:v.reasonCodes as string[],asOfUtc}}}
 function normalizeDiagnostic(input:unknown):RuntimeDiagnosticCollection{if(!input||typeof input!=='object')return{state:'unsupported'};const c=input as Record<string,unknown>,state=normalizeCollectionState(c.state);if(state!=='available'||c.value===null)return{state};if(!c.value||typeof c.value!=='object')return{state:'error'};const v=c.value as Record<string,unknown>,code=nonEmptyString(v.code),timeUtc=nonEmptyString(v.timeUtc),summary=nonEmptyString(v.summary);if(!code||!timeUtc||Number.isNaN(Date.parse(timeUtc))||!summary)return{state:'error'};return{state:'available',value:{code,timeUtc,summary}}}
+const pluginTypes = new Set<RuntimePluginType>(['exchange-adapter', 'data-source', 'notification'])
+const pluginRiskLevels = new Set<RuntimePlugin['riskLevel']>(['low', 'medium', 'high'])
+const pluginPermissions: Record<RuntimePluginType, Set<string>> = {
+  'data-source': new Set(['market.read', 'account.read', 'data.read']),
+  notification: new Set(['notify.emit', 'notify.webhook']),
+  'exchange-adapter': new Set(['exchange.testnet.read', 'exchange.testnet.trade']),
+}
+
+function normalizePlugin(input: unknown): RuntimePlugin | null {
+  if (!input || typeof input !== 'object') return null
+  const value = input as Record<string, unknown>
+  const id = nonEmptyString(value.id)
+  const name = nonEmptyString(value.name)
+  const type = nonEmptyString(value.type) as RuntimePluginType | null
+  const version = nonEmptyString(value.version)
+  const publisherId = nonEmptyString(value.publisherId)
+  const publisherName = nonEmptyString(value.publisherName)
+  const entryKind = nonEmptyString(value.entryKind)
+  const permissions = Array.isArray(value.permissions) ? value.permissions.map(nonEmptyString) : []
+  const compatibilityStatus = nonEmptyString(value.compatibilityStatus)
+  const signatureStatus = nonEmptyString(value.signatureStatus)
+  const riskLevel = nonEmptyString(value.riskLevel) as RuntimePlugin['riskLevel'] | null
+  const runtimeStatus = nonEmptyString(value.runtimeStatus)
+  const booleansValid = [value.enabled, value.defaultEnabled, value.active, value.testnetOnly].every((item) => typeof item === 'boolean')
+  const permissionsValid = Array.isArray(value.permissions) && permissions.every((item): item is string => item !== null) &&
+    new Set(permissions).size === permissions.length && type !== null && pluginTypes.has(type) && permissions.every((permission) => pluginPermissions[type].has(permission))
+  const statusMessageValid = value.statusMessage === null || value.statusMessage === undefined || typeof value.statusMessage === 'string'
+  if (!id || !name || !type || !pluginTypes.has(type) || !version || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(version) || !publisherId || !publisherName || entryKind !== 'wpe-contract' || !permissionsValid || !booleansValid || !runtimeStatus || !['running', 'stale', 'unavailable', 'not-configured'].includes(runtimeStatus) || !compatibilityStatus || !['compatible', 'incompatible'].includes(compatibilityStatus) || signatureStatus !== 'metadataPresent' || !riskLevel || !pluginRiskLevels.has(riskLevel) || !statusMessageValid) return null
+  return {
+    id,
+    name,
+    type,
+    version,
+    publisherId,
+    publisherName,
+    entryKind: 'wpe-contract',
+    permissions,
+    enabled: value.enabled as boolean,
+    defaultEnabled: value.defaultEnabled as boolean,
+    active: value.active as boolean,
+    runtimeStatus: runtimeStatus as RuntimePlugin['runtimeStatus'],
+    testnetOnly: value.testnetOnly as boolean,
+    compatibilityStatus: compatibilityStatus as RuntimePlugin['compatibilityStatus'],
+    signatureStatus: 'metadataPresent',
+    riskLevel,
+    statusMessage: nonEmptyString(value.statusMessage),
+  }
+}
+
 function normalizePlugins(input: unknown): RuntimePluginCollection {
   if (!input || typeof input !== 'object') {
     return { state: 'unsupported', items: [], message: 'The host runtime does not expose a plugin registry.' }
