@@ -45,6 +45,7 @@ public sealed class TechnicalDecisionAgent : ITradingDecisionAgent
         var structure=market is null
             ?null
             :_marketStructure.Analyze(market);
+        decision=ApplyTradeMemoryConfirmation(decision,structure,context.RelevantMemories,out var memoryUsed);
 
         var audit=JsonSerializer.Serialize(new
         {
@@ -65,11 +66,67 @@ public sealed class TechnicalDecisionAgent : ITradingDecisionAgent
                 structure.ConfirmationPresent,
                 structure.StructuralSupport,
                 structure.StructuralResistance,
+                structure.ConfirmationSource,
                 event15m=structure.FifteenMinute.Event
+            },
+            memoryAdaptation=memoryUsed is null?null:new
+            {
+                memoryUsed.StrategyId,
+                memoryUsed.Result,
+                memoryUsed.OccurredAtUtc,
+                policy="same-setup-loss-requires-15m-confirmation"
             },
             decision.Reason
         });
 
         return Task.FromResult(new BrainDecisionResult(decision,audit,audit));
     }
+
+    private static DecisionPlan ApplyTradeMemoryConfirmation(
+        DecisionPlan decision,
+        MarketStructureRead? structure,
+        IReadOnlyList<PlannerMemoryFact>? memories,
+        out PlannerMemoryFact? memoryUsed)
+    {
+        memoryUsed=null;
+        if(structure is null||
+           decision.Action is not (DecisionAction.OpenLong or DecisionAction.OpenShort)||
+           !string.Equals(structure.ConfirmationSource,"1m-realtime-closed",StringComparison.Ordinal)||
+           memories is null||memories.Count==0||
+           structure.Scenario==MarketStructureScenario.None)
+            return decision;
+
+        var latest=memories
+            .Where(x=>string.Equals(x.Source,"post-trade",StringComparison.OrdinalIgnoreCase)&&
+                      SetupFamilyMatches(x.StrategyId,structure.Scenario))
+            .OrderByDescending(x=>x.OccurredAtUtc)
+            .FirstOrDefault();
+        if(latest is null||!string.Equals(latest.Result,"loss",StringComparison.OrdinalIgnoreCase))
+            return decision;
+
+        memoryUsed=latest;
+        return new DecisionPlan
+        {
+            Action=DecisionAction.Hold,
+            Instrument=decision.Instrument,
+            TargetTier=0,
+            Confidence=0,
+            Regime=decision.Regime,
+            Reason=$"{decision.Instrument}: recent {structure.Scenario} loss requires a closed 15m confirmation before re-entry.",
+            Invalidation="No risk-increasing decision exists until the setup confirms on a closed 15m candle.",
+            EvidenceReferences=decision.EvidenceReferences
+                .Append("trade_memory=recent-same-setup-loss")
+                .Append("memory_confirmation=15m-closed-required")
+                .ToList(),
+            MissingConditions=["15m-closed confirmation after recent same-setup loss"],
+            ConflictSummary=$"trade-memory-confirmation; scenario={structure.Scenario}; latest_result=loss",
+            StrategyVersion=decision.StrategyVersion,
+            DecisionContextKind="market-observation",
+            RiskBudgetMultiplier=0
+        };
+    }
+
+    private static bool SetupFamilyMatches(string? strategyId,MarketStructureScenario scenario)=>
+        !string.IsNullOrWhiteSpace(strategyId)&&
+        strategyId.Contains("-"+scenario+"-",StringComparison.Ordinal);
 }
