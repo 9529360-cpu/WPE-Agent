@@ -39,6 +39,7 @@ internal static class ConfirmedMarketCandlesV1
 }
 public sealed record RealtimeMarketSnapshot(string Symbol,decimal LastPrice,decimal BestBid,decimal BestAsk,decimal BidQuantity,decimal AskQuantity,decimal BuyVolume5m,decimal SellVolume5m,decimal LastMinuteVolume,DateTime UpdatedAt,long Messages,bool Connected)
 {
+    public IReadOnlyList<CandleEvidence> ClosedMinuteCandles { get; init; } = Array.Empty<CandleEvidence>();
     public double SpreadBps=>BestBid>0&&BestAsk>=BestBid?(double)((BestAsk-BestBid)/((BestAsk+BestBid)/2)*10000):999;
     public bool HasOrderFlow=>BuyVolume5m+SellVolume5m>0;
     public double OrderFlowImbalance=>HasOrderFlow?(double)((BuyVolume5m-SellVolume5m)/(BuyVolume5m+SellVolume5m)):0;
@@ -68,6 +69,7 @@ public sealed record MarketEvidence(string Symbol, decimal Price, decimal Suppor
 {
     public MarketQualityEvidence Quality { get; init; } = new();
     public IReadOnlyList<CandleEvidence> Candles { get; init; } = Array.Empty<CandleEvidence>();
+    public IReadOnlyList<CandleEvidence> Candles1m { get; init; } = Array.Empty<CandleEvidence>();
     public IReadOnlyList<CandleEvidence> Candles1h { get; init; } = Array.Empty<CandleEvidence>();
     public IReadOnlyList<CandleEvidence> Candles4h { get; init; } = Array.Empty<CandleEvidence>();
     public MarketEvidenceProvenanceV1? Provenance { get; init; }
@@ -75,14 +77,15 @@ public sealed record MarketEvidence(string Symbol, decimal Price, decimal Suppor
 public sealed record MarketEvidenceProvenanceV1(string Schema,string ProviderId,string Environment,string Symbol,DateTime CollectedAtUtc,DateTime? FirstCandleOpenUtc,DateTime? LastCandleOpenUtc,int CandleCount,byte[] CanonicalBytes,string CanonicalSha256);
 public static class MarketEvidenceProvenanceCanonicalizerV1
 {
-    public const string Schema="wpe.market-evidence-provenance/1.1";
+    public const string Schema="wpe.market-evidence-provenance/1.2";
 
     public static MarketEvidenceProvenanceV1 Create(MarketEvidence market,string providerId,string environment)
     {
+        var candles1m=market.Candles1m.OrderBy(x=>x.OpenTime).ToArray();
         var candles15m=market.Candles.OrderBy(x=>x.OpenTime).ToArray();
         var candles1h=market.Candles1h.OrderBy(x=>x.OpenTime).ToArray();
         var candles4h=market.Candles4h.OrderBy(x=>x.OpenTime).ToArray();
-        var bytes=Serialize(market,providerId,environment,candles15m,candles1h,candles4h);
+        var bytes=Serialize(market,providerId,environment,candles1m,candles15m,candles1h,candles4h);
         return new(
             Schema,providerId,environment,market.Symbol,market.CollectedAt,
             candles15m.FirstOrDefault()?.OpenTime,candles15m.LastOrDefault()?.OpenTime,candles15m.Length,
@@ -108,6 +111,7 @@ public static class MarketEvidenceProvenanceCanonicalizerV1
         MarketEvidence market,
         string providerId,
         string environment,
+        IReadOnlyList<CandleEvidence> candles1m,
         IReadOnlyList<CandleEvidence> candles15m,
         IReadOnlyList<CandleEvidence> candles1h,
         IReadOnlyList<CandleEvidence> candles4h)
@@ -116,6 +120,7 @@ public static class MarketEvidenceProvenanceCanonicalizerV1
         using(var writer=new Utf8JsonWriter(stream))
         {
             writer.WriteStartObject();
+            writer.WriteNumber("candle_count_1m",candles1m.Count);
             writer.WriteNumber("candle_count_15m",candles15m.Count);
             writer.WriteNumber("candle_count_1h",candles1h.Count);
             writer.WriteNumber("candle_count_4h",candles4h.Count);
@@ -131,6 +136,7 @@ public static class MarketEvidenceProvenanceCanonicalizerV1
             writer.WriteNumber("trend_15m",market.Trend15m);
             writer.WriteNumber("trend_1h",market.Trend1h);
             writer.WriteNumber("trend_4h",market.Trend4h);
+            WriteCandles(writer,"candles_1m",candles1m);
             WriteCandles(writer,"candles_15m",candles15m);
             WriteCandles(writer,"candles_1h",candles1h);
             WriteCandles(writer,"candles_4h",candles4h);
@@ -192,25 +198,9 @@ public sealed class DecisionPlan
     public string StrategyVersion { get; set; } = "wpe-core-v2";
     public string DecisionContextKind { get; set; } = "legacy-signal";
     public string DecisionContextId { get; set; } = string.Empty;
-    public string HypothesisStage { get; set; } = string.Empty;
     public double RiskBudgetMultiplier { get; set; } = 1;
 }
 public enum MarketRegime { Trending, Ranging, Transition, Extreme, Unknown }
-public sealed record SignalContribution(string Name,string Horizon,double RawValue,double Weight,double WeightedScore,string Direction,string Explanation);
-public sealed class MarketDecisionAssessment
-{
-    public string Symbol { get; init; } = string.Empty;
-    [JsonConverter(typeof(JsonStringEnumConverter))] public MarketRegime Regime { get; init; }
-    public double NetScore { get; init; }
-    public double Confidence { get; init; }
-    public double ConflictRatio { get; init; }
-    public bool Fresh { get; init; }
-    public bool EntryReady { get; init; }
-    [JsonConverter(typeof(JsonStringEnumConverter))] public DecisionAction RecommendedAction { get; init; } = DecisionAction.Hold;
-    public IReadOnlyList<SignalContribution> Signals { get; init; } = Array.Empty<SignalContribution>();
-    public IReadOnlyList<string> MissingConditions { get; init; } = Array.Empty<string>();
-    public string Summary { get; init; } = string.Empty;
-}
 public sealed class DecisionReview
 {
     public DecisionPlan Decision { get; init; } = new();
@@ -230,31 +220,6 @@ public sealed class IndependentRiskReview
     public IReadOnlyList<string> Checks { get; init; } = Array.Empty<string>();
     public string Summary { get; init; } = string.Empty;
 }
-public sealed class ResearchValidationResult
-{
-    public DateTimeOffset ValidatedAtUtc { get; init; }
-    public string Symbol { get; init; } = string.Empty;
-    public string StrategyVersion { get; init; } = string.Empty;
-    public int SampleSize { get; init; }
-    public int Trades { get; init; }
-    public double WinRate { get; init; }
-    public double ProfitFactor { get; init; }
-    public double Expectancy { get; init; }
-    public double MaxDrawdown { get; init; }
-    public double Sharpe { get; init; }
-    public double OutOfSampleReturn { get; init; }
-    public double WalkForwardScore { get; init; }
-    public double MonteCarloLossProbability { get; init; }
-    public double QualityScore { get; init; }
-    public bool Approved { get; init; }
-    public bool Promoted { get; init; }
-    public int CoverageDays { get; init; }
-    public int OutOfSampleTrades { get; init; }
-    public double StrategyReturn { get; init; }
-    public double BenchmarkReturn { get; init; }
-    public IReadOnlyDictionary<string,double> RegimeReturns { get; init; } = new Dictionary<string,double>();
-    public string Summary { get; init; } = string.Empty;
-}
 public sealed class PortfolioRiskAssessment
 {
     public decimal GrossExposure { get; init; }
@@ -270,7 +235,7 @@ public sealed class PortfolioRiskAssessment
     public bool Approved { get; init; }
     public string Summary { get; init; } = string.Empty;
 }
-public sealed record AgentContext(string BrainName, bool CircuitBreakerActive, string? ActiveSymbol, IReadOnlyList<StructuredOutcomeMemory> OutcomeMemories, IReadOnlyList<MarketDecisionAssessment> MarketAssessments, int ConsecutiveHolds, IReadOnlyList<PlannerMemoryFact>? RelevantMemories=null,AdaptiveStrategyPortfolioPlan? StrategyPortfolio=null,IReadOnlyDictionary<string,TradeHypothesis>? TradeHypotheses=null);
+public sealed record AgentContext(string BrainName,bool CircuitBreakerActive,string? ActiveSymbol,IReadOnlyList<StructuredOutcomeMemory> OutcomeMemories,int ConsecutiveHolds,IReadOnlyList<PlannerMemoryFact>? RelevantMemories=null);
 public sealed record PlannerMemoryFact(string Tier,DateTime OccurredAtUtc,string Result,string Source,string Summary);
 public sealed record StructuredOutcomeMemory(
     DateTime CycleStartedUtc,
@@ -296,6 +261,10 @@ public sealed class BrainCallException : Exception
 }
 public interface IBrainProvider { string Name { get; } Task<BrainHealth> HealthCheckAsync(CancellationToken cancellationToken); Task<BrainDecisionResult> DecideAsync(EvidencePack evidence, AgentContext context, CancellationToken cancellationToken); }
 public interface IAssistantProvider : IBrainProvider { bool IsLocal { get; } }
+public interface IInPlaceProtectionUpdateAdapter
+{
+}
+
 public interface IExchangeAdapter : IAsyncDisposable
 {
     ExchangeEnvironment Environment { get; }
@@ -326,7 +295,6 @@ public sealed class RiskLimits
     public decimal MaxSymbolExposure { get; set; } = .25m;
     public decimal MaxAccountExposure { get; set; } = .50m;
     public decimal MaxDailyLoss { get; set; } = .05m;
-    public int MaxConsecutiveLosses { get; set; } = 3;
     public double MaxAtrPercent { get; set; } = .045;
     public double MinimumLiquidityScore { get; set; } = .55;
     public double MaximumSpreadBps { get; set; } = 8;
@@ -343,13 +311,9 @@ public sealed class RiskLimits
 }
 public sealed class DecisionPolicy
 {
-    public double MinimumConfidence { get; set; } = .62;
-    public double MinimumDirectionalScore { get; set; } = .28;
-    public double MaximumConflictRatio { get; set; } = .65;
     public int MinimumEvidenceCompleteness { get; set; } = 70;
     public int MaximumEvidenceAgeMinutes { get; set; } = 5;
     public int MinimumMarketQuality { get; set; } = 65;
-    public double MinimumResearchScore { get; set; } = .45;
 }
 public static class PositionExitReasonCodes
 {

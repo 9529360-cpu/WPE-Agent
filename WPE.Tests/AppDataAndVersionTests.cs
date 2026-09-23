@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Xml.Linq;
 using WpeAgent.Plugins;
 using 币安量化机器人.Services;
@@ -92,14 +93,22 @@ public sealed class AppDataAndVersionTests : IDisposable
         Assert.Equal("3.6.0", declared);
     }
 
-    private static string FindApplicationProject()
+    private static string FindApplicationProject([CallerFilePath] string sourceFile = "")
     {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        var starts = new[] { AppContext.BaseDirectory, Environment.CurrentDirectory, Path.GetDirectoryName(sourceFile) }
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var start in starts)
         {
-            var projects = directory.GetFiles("*.csproj", SearchOption.TopDirectoryOnly)
-                .Where(x => !x.Name.Equals("WPE.Tests.csproj", StringComparison.OrdinalIgnoreCase)).ToArray();
-            if (projects.Length == 1) return projects[0].FullName;
+            for (var directory = new DirectoryInfo(start!); directory is not null; directory = directory.Parent)
+            {
+                var projects = directory.GetFiles("*.csproj", SearchOption.TopDirectoryOnly)
+                    .Where(x => !x.Name.Equals("WPE.Tests.csproj", StringComparison.OrdinalIgnoreCase)).ToArray();
+                if (projects.Length == 1) return projects[0].FullName;
+            }
         }
+
         throw new InvalidOperationException("Application project file was not found.");
     }
 

@@ -67,6 +67,34 @@ public sealed class SmokeReadinessMutationGateTests
         Assert.True(result.Executed);Assert.Equal(1,provider.OpenStepCount);Assert.Equal(1,provider.MutationCount);
     }
 
+    [Fact]
+    public void ExchangeOverrideRequiresExplicitAuthorization()
+    {
+        var settings=SettingsWithMcpProfile(isTestnet:true);
+        var error=Assert.Throws<InvalidOperationException>(()=>
+            SmokeTestRunner.ResolveSmokeExchangeProfile(new AgentSettingsStore(),settings,"binance-mcp-testnet-default",allowOverride:false));
+        Assert.Equal("smoke.exchange-override-not-authorized",error.Message);
+        Assert.False(settings.Exchanges.Single().ExecutionEnabled);
+    }
+
+    [Fact]
+    public void AuthorizedTestnetOverrideIsEphemeralAndExecutionEnabled()
+    {
+        var settings=SettingsWithMcpProfile(isTestnet:true);var source=settings.Exchanges.Single();
+        var selected=SmokeTestRunner.ResolveSmokeExchangeProfile(new AgentSettingsStore(),settings,source.Id,allowOverride:true);
+        Assert.NotSame(source,selected);Assert.True(selected.ExecutionEnabled);Assert.True(selected.IsTestnet);
+        Assert.Equal("binance-testnet-default",selected.UpstreamConnectionId);Assert.False(source.ExecutionEnabled);
+    }
+
+    [Fact]
+    public void MainnetOverrideIsDenied()
+    {
+        var settings=SettingsWithMcpProfile(isTestnet:false);
+        var error=Assert.Throws<InvalidOperationException>(()=>
+            SmokeTestRunner.ResolveSmokeExchangeProfile(new AgentSettingsStore(),settings,settings.Exchanges.Single().Id,allowOverride:true));
+        Assert.Equal("smoke.exchange-override-mainnet-denied",error.Message);
+    }
+
     [Theory]
     [InlineData("permission")]
     [InlineData("rule")]
@@ -86,6 +114,18 @@ public sealed class SmokeReadinessMutationGateTests
         Assert.Equal(0,provider.OpenStepCount);Assert.Equal(0,provider.MutationCount);
     }
 
+    private static AgentSettings SettingsWithMcpProfile(bool isTestnet)=>new()
+    {
+        Exchanges=
+        [
+            new ExchangeConnectionProfile
+            {
+                Id="binance-mcp-testnet-default",ProviderId="binance-mcp-local",DisplayName="Binance MCP Canary",
+                Enabled=true,ExecutionEnabled=false,IsTestnet=isTestnet,Endpoint=isTestnet?"https://testnet.binancefuture.com":"https://fapi.binance.com",
+                UpstreamConnectionId="binance-testnet-default"
+            }
+        ]
+    };
     private static Task<TradingExecutionGatewayResult> Execute(SmokeMutationReadiness readiness,RecordingProvider provider)=>
         SmokeTestRunner.ExecuteRiskIncreaseAsync(readiness,provider.OpenAsync,CancellationToken.None);
     private static SmokeMutationReadiness Ready()=>new(true,"provider:account",

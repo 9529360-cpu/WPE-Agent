@@ -31,7 +31,7 @@ const PAGE_META: Record<PageId, { title: string; description: string; glyph: str
   agents: { title: '智能体团队', description: '核心角色、协作链路与交接记录', glyph: '协' },
   teacher: { title: '金融导师', description: '市场讲解、研究候选、纪律提醒与结果复盘', glyph: '师' },
   trading: { title: '交易', description: '持仓、订单、待审核事项与历史记录', glyph: '交' },
-  research: { title: '策略与研究', description: '策略注册表、生命周期、回测与研究证据', glyph: '策' },
+  research: { title: '策略与研究', description: '市场分析、回测与只读研究证据', glyph: '策' },
   risk: { title: '风险', description: '风险准备、熔断、暴露与授权状态', glyph: '风' },
   monitoring: { title: '监控', description: '运行时、连接、通知、AI 使用和审计', glyph: '监' },
   settings: { title: '设置', description: '安全存储状态与宿主设置入口', glyph: '设' },
@@ -195,30 +195,11 @@ function runtimeValueLabel(value: unknown): string {
   return labels[key] ?? text(value)
 }
 
-function strategyFamilyLabel(value: unknown): string {
-  const labels: Record<string, string> = {
-    TrendBreakout: '趋势突破', MeanReversion: '均值回归', NewsMomentum: '新闻动量',
-  }
-  return labels[String(value)] ?? text(value)
-}
-
 function lifecycleLabel(value: unknown): string {
   const labels: Record<string, string> = {
     Draft: '草稿', Backtested: '已回测', Shadow: '影子观察', Active: '运行中', Degraded: '已降级', Retired: '已退役',
   }
   return labels[String(value)] ?? runtimeValueLabel(value)
-}
-
-function strategyResultLabel(value: unknown): string {
-  const reason = String(value ?? '')
-  if (!reason) return '未提供结果'
-  if (/passed=False/i.test(reason)) return '回测未通过，已退出候选'
-  if (/degraded/i.test(reason)) return '表现退化，已停止参与'
-  if (/shadow/i.test(reason)) return '已进入影子观察阶段'
-  if (/active|promot/i.test(reason)) return '已通过门禁并进入运行阶段'
-  if (/deterministic.*seed/i.test(reason)) return '本地确定性初始候选'
-  if (/bounded.*child|qualified.*parent/i.test(reason)) return '由合格策略生成的受限参数候选'
-  return '结果已记录，详见审计事件'
 }
 
 function postHostCommand(type: HostCommand): boolean {
@@ -1197,58 +1178,6 @@ function TradingPage({ runtime }: { runtime: WpeRuntimeState }) {
   )
 }
 
-function StrategyRegistry({ runtime }: { runtime: WpeRuntimeState }) {
-  const state = collectionState(runtime, 'strategyRegistry')
-  const items = runtime.strategyRegistry ?? []
-  return (
-    <CollectionGate state={state} message={runtime.collectionMessages?.strategyRegistry} empty={!items.length} emptyMessage="当前没有策略注册记录。">
-      <DenseTable columns={[
-        { key: 'id', label: '策略 ID' },
-        { key: 'version', label: '版本' },
-        { key: 'symbol', label: '品种' },
-        { key: 'family', label: '策略家族' },
-        { key: 'lifecycle', label: '生命周期' },
-        { key: 'quality', label: '质量分', align: 'right' },
-        { key: 'changed', label: '状态时间' },
-        { key: 'reason', label: '最近原因' },
-      ]} rows={items.map(item => ({
-        __key: `${item.id}-${item.version}`,
-        id: <strong>{item.id}</strong>,
-        version: item.version,
-        symbol: item.symbol,
-        family: strategyFamilyLabel(item.family),
-        lifecycle: <Badge>{lifecycleLabel(item.lifecycle)}</Badge>,
-        quality: formatNumber(item.qualityScore),
-        changed: item.stateChangedAtUtc ? <span title={item.stateChangedAtUtc}>{formatUtc(item.stateChangedAtUtc)}</span> : <EmptyCell />,
-        reason: <span className="wpe-cell-wrap" title={item.lastReason}>{strategyResultLabel(item.lastReason)}</span>,
-      }))} />
-    </CollectionGate>
-  )
-}
-
-function LifecycleTable({ runtime }: { runtime: WpeRuntimeState }) {
-  const state = collectionState(runtime, 'strategyLifecycleEvents')
-  const items = runtime.strategyLifecycleEvents ?? []
-  return (
-    <CollectionGate state={state} message={runtime.collectionMessages?.strategyLifecycleEvents} empty={!items.length} emptyMessage="当前没有策略生命周期事件。">
-      <DenseTable columns={[
-        { key: 'id', label: '事件 ID', align: 'right' },
-        { key: 'strategy', label: '策略' },
-        { key: 'transition', label: '状态变化' },
-        { key: 'time', label: '发生时间' },
-        { key: 'reason', label: '原因' },
-      ]} rows={items.map(item => ({
-        __key: item.id,
-        id: item.id,
-        strategy: <strong>{item.strategyId}</strong>,
-        transition: <span>{lifecycleLabel(item.fromState)} → {lifecycleLabel(item.toState)}</span>,
-        time: <span title={item.occurredAtUtc}>{formatUtc(item.occurredAtUtc)}</span>,
-        reason: <span className="wpe-cell-wrap">{item.reason}</span>,
-      }))} />
-    </CollectionGate>
-  )
-}
-
 function BacktestsTable({ runtime }: { runtime: WpeRuntimeState }) {
   const state = collectionState(runtime, 'backtests')
   const items = runtime.backtests ?? []
@@ -1327,24 +1256,19 @@ function ResearchEvidence({ runtime }: { runtime: WpeRuntimeState }) {
 }
 
 function ResearchPage({ runtime }: { runtime: WpeRuntimeState }) {
-  const [tab, setTab] = useState('strategies')
+  const [tab, setTab] = useState('backtests')
   return (
     <div className="wpe-page-stack">
-      <SectionTitle title="策略与研究" description="策略状态、生命周期、回测和可审计研究证据" />
+      <SectionTitle title="研究与验证" description="回测和可审计研究证据；这些结果不拥有自动交易决策权" />
       <Tabs value={tab} onChange={setTab} items={[
-        { id: 'strategies', label: '策略注册表' },
-        { id: 'lifecycle', label: '生命周期' },
         { id: 'backtests', label: '回测' },
         { id: 'research', label: '跨资产研究' },
       ]} />
-      {tab === 'strategies' && <Panel title="策略注册表"><StrategyRegistry runtime={runtime} /></Panel>}
-      {tab === 'lifecycle' && <Panel title="策略生命周期事件"><LifecycleTable runtime={runtime} /></Panel>}
       {tab === 'backtests' && <Panel title="回测结果"><BacktestsTable runtime={runtime} /></Panel>}
       {tab === 'research' && <Panel title="跨资产研究证据"><ResearchEvidence runtime={runtime} /></Panel>}
     </div>
   )
 }
-
 function RiskPage({ runtime }: { runtime: WpeRuntimeState }) {
   const state = collectionState(runtime, 'risk')
   const circuitBreaker = rawBoolean(runtime, 'circuitBreakerActive')

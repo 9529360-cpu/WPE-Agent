@@ -218,21 +218,4 @@ public sealed partial class AgentSqliteStore
         return (opened.Value, closed.Value);
     }
 
-    private static async Task PruneClosedPositionMarkObservationsAsync(
-        SqliteConnection connection,
-        string symbol,
-        PositionSide side,
-        DateTimeOffset closedAtUtc,
-        CancellationToken ct)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            DELETE FROM position_mark_observations
-            WHERE symbol=$symbol AND side=$side AND observed_at <= $closed
-            """;
-        command.Parameters.AddWithValue("$symbol", symbol.Trim().ToUpperInvariant());
-        command.Parameters.AddWithValue("$side", side.ToString());
-        command.Parameters.AddWithValue("$closed", closedAtUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
-        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-    }
 }

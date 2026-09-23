@@ -20,30 +20,6 @@ public sealed class HistoricalDataService(IExchangeAdapter exchange,AgentSqliteS
     }
 }
 
-public sealed class LongHorizonResearchSkill
-{
-    private const double RoundTripCost=.0014;
-    public ResearchValidationResult Evaluate(string symbol,IReadOnlyList<CandleEvidence> candles,RiskLimits limits,string version="wpe-hourly-v3",DateTimeOffset? validatedAtUtc=null)
-    {
-        var validatedAt=(validatedAtUtc??DateTimeOffset.UtcNow).ToUniversalTime();
-        if(candles.Count<500)return new(){ValidatedAtUtc=validatedAt,Symbol=symbol,StrategyVersion=version,SampleSize=candles.Count,CoverageDays=Coverage(candles),Approved=false,Promoted=false,Summary=$"{symbol} historical coverage insufficient: {candles.Count} hourly candles"};
-        var returns=Simulate(candles);var split=Math.Clamp((int)(returns.Count*.65),1,returns.Count);var train=returns.Take(split).ToArray();var test=returns.Skip(split).ToArray();var all=Metrics(returns.Select(x=>x.Return).ToArray());var oos=Metrics(test.Select(x=>x.Return).ToArray());var trades=returns.Count(x=>x.Trade);var oosTrades=test.Count(x=>x.Trade);var coverage=Coverage(candles);var walk=WalkForward(candles);var mc=MonteCarlo(returns.Select(x=>x.Return).ToArray());var benchmark=(double)(candles[^1].Close/candles[0].Close-1);var regimes=returns.GroupBy(x=>x.Regime).ToDictionary(x=>x.Key,x=>x.Aggregate(1d,(v,r)=>v*(1+r.Return))-1);var score=Math.Clamp(.20*Math.Min(1,all.ProfitFactor/1.5)+.20*Math.Max(0,(oos.TotalReturn+.10)/.30)+.20*(1-Math.Min(1,all.MaxDrawdown/.25))+.20*walk+.20*(1-mc),0,1);var promoted=coverage>=limits.MinimumHistoricalDays&&trades>=limits.MinimumBacktestTrades&&oos.Expectancy>0&&all.ProfitFactor>=1.1&&all.MaxDrawdown<=.25&&walk>=.5&&mc<=.45;
-        return new(){ValidatedAtUtc=validatedAt,Symbol=symbol,StrategyVersion=version,SampleSize=candles.Count,Trades=trades,OutOfSampleTrades=oosTrades,CoverageDays=coverage,WinRate=all.WinRate,ProfitFactor=all.ProfitFactor,Expectancy=all.Expectancy,MaxDrawdown=all.MaxDrawdown,Sharpe=all.Sharpe,OutOfSampleReturn=oos.TotalReturn,WalkForwardScore=walk,MonteCarloLossProbability=mc,QualityScore=score,Approved=promoted,Promoted=promoted,StrategyReturn=all.TotalReturn,BenchmarkReturn=benchmark,RegimeReturns=regimes,Summary=$"{symbol} {coverage}d/{candles.Count}h trades={trades} OOS={oos.TotalReturn:P1} PF={all.ProfitFactor:F2} DD={all.MaxDrawdown:P1} Sharpe={all.Sharpe:F2} WF={walk:F2} MC-loss={mc:P0} promoted={promoted}"};
-    }
-    private sealed record BarResult(double Return,bool Trade,string Regime);
-    private static List<BarResult> Simulate(IReadOnlyList<CandleEvidence> c)
-    {
-        var result=new List<BarResult>();var side=0;for(var i=120;i<c.Count;i++)
-        {
-            var fast=c.Skip(i-24).Take(24).Average(x=>x.Close);var slow=c.Skip(i-96).Take(96).Average(x=>x.Close);var high=c.Skip(i-48).Take(48).Max(x=>x.High);var low=c.Skip(i-48).Take(48).Min(x=>x.Low);var atr=(double)c.Skip(i-24).Take(24).Average(x=>x.High-x.Low)/(double)c[i].Close;var next=c[i].Close>=high*.999m&&fast>slow?1:c[i].Close<=low*1.001m&&fast<slow?-1:Math.Abs((double)(fast/slow-1))<.002?0:side;var changed=next!=side;var bar=c[i-1].Close>0?(double)(c[i].Close/c[i-1].Close-1)*side:0;if(changed)bar-=RoundTripCost/2;var regime=atr>.025?"EXTREME":Math.Abs((double)(fast/slow-1))>.01?"TREND":"RANGE";result.Add(new(bar,changed&&next!=0,regime));side=next;
-        }return result;
-    }
-    private static (double WinRate,double ProfitFactor,double Expectancy,double MaxDrawdown,double Sharpe,double TotalReturn) Metrics(IReadOnlyList<double> r){if(r.Count==0)return(0,0,0,0,0,0);var wins=r.Where(x=>x>0).Sum();var losses=-r.Where(x=>x<0).Sum();var equity=1d;var high=1d;var dd=0d;foreach(var x in r){equity*=Math.Max(.01,1+x);high=Math.Max(high,equity);dd=Math.Max(dd,(high-equity)/high);}var avg=r.Average();var sd=Math.Sqrt(r.Select(x=>(x-avg)*(x-avg)).Average());return(r.Count(x=>x>0)/(double)r.Count,losses>0?wins/losses:wins>0?9:0,avg,dd,sd>0?avg/sd*Math.Sqrt(24*365):0,equity-1);}
-    private static double WalkForward(IReadOnlyList<CandleEvidence> c){var scores=new List<double>();for(var n=0;n<4;n++){var start=n*c.Count/8;var length=Math.Min(c.Count-start,c.Count/2);var m=Metrics(Simulate(c.Skip(start).Take(length).ToArray()).Select(x=>x.Return).ToArray());scores.Add(Math.Clamp(.5+m.Expectancy*100-m.MaxDrawdown,0,1));}return scores.Count==0?0:scores.Average();}
-    private static double MonteCarlo(IReadOnlyList<double> r){if(r.Count==0)return 1;var random=new Random(43);var losses=0;for(var n=0;n<500;n++){var equity=1d;for(var i=0;i<Math.Min(r.Count,2000);i++)equity*=Math.Max(.01,1+r[random.Next(r.Count)]);if(equity<1)losses++;}return losses/500d;}
-    private static int Coverage(IReadOnlyList<CandleEvidence> c)=>c.Count<2?0:(int)(c[^1].OpenTime-c[0].OpenTime).TotalDays;
-}
-
 public sealed class PortfolioRiskSkill
 {
     public PortfolioRiskAssessment Evaluate(EvidencePack evidence,IReadOnlyDictionary<string,IReadOnlyList<CandleEvidence>> history,IReadOnlyList<ExecutionIntent> intents,RiskLimits limits)

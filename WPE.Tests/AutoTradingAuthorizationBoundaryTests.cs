@@ -41,6 +41,12 @@ public sealed class AutoTradingAuthorizationBoundaryTests
         Assert.Contains("exchangeProfile.IsTestnet",automaticRun,StringComparison.Ordinal);
         Assert.Contains("TradingAuthorizationMode.Auto",automaticRun,StringComparison.Ordinal);
         Assert.Contains("AssessUnverifiedAutomaticMutation",automaticRun,StringComparison.Ordinal);
+        Assert.Contains("recoveryServices.Recovery.RecoverPendingAsync(ct)",automaticRun,StringComparison.Ordinal);
+        Assert.Contains("safeToIncreaseRisk&&startupWorkflowRecoveryPending&&startupWorkflowMetadataOnly",automaticRun,StringComparison.Ordinal);
+        Assert.Contains("LastNode is not WorkflowNode.Execution and not WorkflowNode.SafetyExecution",automaticRun,StringComparison.Ordinal);
+        Assert.Contains("runtime.RecoverNonExecutionInterruptedAsync(safetyMessage,ct)",automaticRun,StringComparison.Ordinal);
+        Assert.Contains("ExecutePositionProtectionRecoveryAsync(recoveryServices.Recovery",automaticRun,StringComparison.Ordinal);
+        Assert.DoesNotContain("AssessUnverifiedAutomaticMutation(AutomaticMutationPath.PositionManagement",automaticRun,StringComparison.Ordinal);
     }
 
     [Fact]
@@ -71,15 +77,15 @@ public sealed class AutoTradingAuthorizationBoundaryTests
         Assert.DoesNotContain("new DeterministicRiskReceipt",smoke,StringComparison.Ordinal);
         Assert.DoesNotContain("SaveTradingApprovalReceipt",smoke,StringComparison.Ordinal);
         var run=smoke[..smoke.IndexOf("private static async Task Step",StringComparison.Ordinal)];
+        var direct=run.IndexOf("DirectMarketStructureDecisionSkill.Decide",StringComparison.Ordinal);
         var deterministic=run.IndexOf("Model-off deterministic readiness",StringComparison.Ordinal);
-        var hold=run.IndexOf("Action=DecisionAction.Hold",StringComparison.Ordinal);
         var review=run.IndexOf("new DecisionGovernanceSkill().Review",StringComparison.Ordinal);
         var gateway=run.IndexOf("gateway.ExecuteTestnetSmokeAsync",StringComparison.Ordinal);
 
         Assert.DoesNotContain("CreateBrain(",run,StringComparison.Ordinal);
         Assert.DoesNotContain("brain.HealthCheckAsync",run,StringComparison.Ordinal);
         Assert.DoesNotContain("brain.DecideAsync",run,StringComparison.Ordinal);
-        Assert.True(deterministic>=0&&hold>deterministic&&review>hold&&gateway>review);
+        Assert.True(direct>=0&&deterministic>direct&&review>deterministic&&gateway>review);
         Assert.Contains("new ReliableOrderExecutor",smoke,StringComparison.Ordinal);
     }
 }

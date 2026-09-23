@@ -17,7 +17,7 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
     private sealed record TradePoint(DateTime Time,decimal Quantity,bool Buy);
     private sealed class SymbolState
     {
-        public readonly object Gate=new();public readonly Queue<TradePoint> Trades=new();public decimal LastPrice,PreviousMinutePrice,BestBid,BestAsk,BidQuantity,AskQuantity,LastMinuteVolume;public DateTime UpdatedAt;public long Messages;
+        public readonly object Gate=new();public readonly Queue<TradePoint> Trades=new();public readonly Queue<CandleEvidence> ClosedMinutes=new();public decimal LastPrice,PreviousMinutePrice,BestBid,BestAsk,BidQuantity,AskQuantity,LastMinuteVolume;public DateTime UpdatedAt;public long Messages;
     }
     private readonly IReadOnlyList<string> _symbols;private readonly string _apiKey;private readonly AgentSqliteStore _db;private readonly ConcurrentDictionary<string,SymbolState> _states=new(StringComparer.OrdinalIgnoreCase);private readonly Channel<string> _triggers=Channel.CreateBounded<string>(new BoundedChannelOptions(1){FullMode=BoundedChannelFullMode.DropOldest});private CancellationTokenSource? _cts;private Task? _marketTask,_userTask;private volatile bool _marketConnected,_userConnected;private string _status="STOPPED";
     public RealTimeMarketHub(ExchangeEnvironment environment,IEnumerable<string> symbols,string apiKey,AgentSqliteStore db)
@@ -35,13 +35,13 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
     }
     public RealtimeMarketSnapshot? GetSnapshot(string symbol)
     {
-        if(!_states.TryGetValue(symbol,out var state))return null;lock(state.Gate){Prune(state);var buy=state.Trades.Where(x=>x.Buy).Sum(x=>x.Quantity);var sell=state.Trades.Where(x=>!x.Buy).Sum(x=>x.Quantity);return new(symbol,state.LastPrice,state.BestBid,state.BestAsk,state.BidQuantity,state.AskQuantity,buy,sell,state.LastMinuteVolume,state.UpdatedAt,state.Messages,_marketConnected);}
+        if(!_states.TryGetValue(symbol,out var state))return null;lock(state.Gate){Prune(state);var buy=state.Trades.Where(x=>x.Buy).Sum(x=>x.Quantity);var sell=state.Trades.Where(x=>!x.Buy).Sum(x=>x.Quantity);return new(symbol,state.LastPrice,state.BestBid,state.BestAsk,state.BidQuantity,state.AskQuantity,buy,sell,state.LastMinuteVolume,state.UpdatedAt,state.Messages,_marketConnected){ClosedMinuteCandles=state.ClosedMinutes.ToArray()};}
     }
     public MarketEvidence Enrich(MarketEvidence market)
     {
         var live=GetSnapshot(market.Symbol);
         if(live is null||!live.EligibleForEnrichment)return market;
-        return market with{Price=live.LastPrice,CollectedAt=live.UpdatedAt,Quality=MergeQuality(market.Quality,live)};
+        return market with{Price=live.LastPrice,CollectedAt=live.UpdatedAt,Quality=MergeQuality(market.Quality,live),Candles1m=live.ClosedMinuteCandles};
     }
     internal static MarketQualityEvidence MergeQuality(MarketQualityEvidence baseline,RealtimeMarketSnapshot live)
     {
@@ -82,7 +82,7 @@ public sealed class RealTimeMarketHub : IRealtimeMarketFeed
             var accepted=false;
             if(eventType=="bookTicker"){var bid=D(data,"b");var ask=D(data,"a");var bidQuantity=D(data,"B");var askQuantity=D(data,"A");if(bid>0&&ask>=bid&&bidQuantity>=0&&askQuantity>=0){state.BestBid=bid;state.BestAsk=ask;state.BidQuantity=bidQuantity;state.AskQuantity=askQuantity;accepted=true;}}
             else if(eventType=="aggTrade"){var price=D(data,"p");var quantity=D(data,"q");if(price>0&&quantity>0&&data.TryGetProperty("m",out var m)&&m.ValueKind is JsonValueKind.True or JsonValueKind.False){state.LastPrice=price;state.Trades.Enqueue(new(receivedAt,quantity,!m.GetBoolean()));Prune(state);accepted=true;}}
-            else if(eventType=="kline"&&data.TryGetProperty("k",out var k)){var close=D(k,"c");var volume=D(k,"v");if(close>0&&volume>=0&&k.TryGetProperty("x",out var x)&&x.ValueKind is JsonValueKind.True or JsonValueKind.False){var closed=x.GetBoolean();state.LastMinuteVolume=volume;state.LastPrice=close;if(closed){var move=state.PreviousMinutePrice>0?Math.Abs((close-state.PreviousMinutePrice)/state.PreviousMinutePrice):0;state.PreviousMinutePrice=close;_triggers.Writer.TryWrite(move>=.005m?$"volatility:{symbol}":$"minute_close:{symbol}");}accepted=true;}}
+            else if(eventType=="kline"&&data.TryGetProperty("k",out var k)){var close=D(k,"c");var volume=D(k,"v");if(close>0&&volume>=0&&k.TryGetProperty("x",out var x)&&x.ValueKind is JsonValueKind.True or JsonValueKind.False){var closed=x.GetBoolean();state.LastMinuteVolume=volume;state.LastPrice=close;if(closed){var open=D(k,"o");var high=D(k,"h");var low=D(k,"l");var quoteVolume=D(k,"q");var takerBuyVolume=D(k,"V");var trades=k.TryGetProperty("n",out var n)&&n.TryGetInt32(out var tradeCount)?tradeCount:0;var startMs=k.TryGetProperty("t",out var t)&&t.TryGetInt64(out var timestamp)?timestamp:0;var validCandle=startMs>0&&open>0&&high>=Math.Max(open,close)&&low>0&&low<=Math.Min(open,close)&&high>=low&&quoteVolume>=0&&trades>=0&&takerBuyVolume>=0;if(validCandle){var openTime=DateTimeOffset.FromUnixTimeMilliseconds(startMs).UtcDateTime;if(state.ClosedMinutes.Count==0||state.ClosedMinutes.Last().OpenTime<openTime){state.ClosedMinutes.Enqueue(new(openTime,open,high,low,close,volume,quoteVolume,trades,takerBuyVolume));while(state.ClosedMinutes.Count>32)state.ClosedMinutes.Dequeue();}}var move=state.PreviousMinutePrice>0?Math.Abs((close-state.PreviousMinutePrice)/state.PreviousMinutePrice):0;state.PreviousMinutePrice=close;_triggers.Writer.TryWrite(move>=.005m?$"volatility:{symbol}":$"minute_close:{symbol}");}accepted=true;}}
             if(accepted){state.Messages++;state.UpdatedAt=receivedAt;}
         }await Task.CompletedTask;
     }

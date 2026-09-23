@@ -6,7 +6,7 @@ namespace WpeAgent.RuntimeServices;
 public sealed class RuntimeAgentOperationsStateStore
 {
     public static readonly TimeSpan StaleAfter=TimeSpan.FromMinutes(5);
-    private static readonly string[] Roles=["market","research","strategy","risk","execution","recovery","audit"];
+    private static readonly string[] Roles=["market","decision","risk","execution","recovery","audit"];
     private readonly AgentSqliteStore db;private readonly AgentRoleRuntimeRegistry live;private readonly object gate=new();private RuntimeAgentOperationsState current=RuntimeAgentOperationsState.Unsupported("Agent operations persistence is not connected.");
     public RuntimeAgentOperationsStateStore(AgentSqliteStore database,AgentRoleRuntimeRegistry? registry=null){db=database;live=registry??AgentRoleRuntimeRegistry.Shared;RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();}
     public RuntimeAgentOperationsState Read(){lock(gate)return current;}

@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using WpeAgent;
 using 币安量化机器人.Infrastructure.Runtime;
+using 币安量化机器人.Core.Runtime;
 using 币安量化机器人.Services.Agent;
 using 币安量化机器人.Services.Exchange;
 
@@ -193,6 +194,76 @@ public sealed class SecurityBoundaryRegressionTests
         {
             await contender.DisposeAsync();
             await successor.DisposeAsync();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    public async Task TradingKernel_VerifiedNonExecutionInterruptionsCanBeRecoveredWithoutMutation()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "wpe-kernel-metadata-recovery-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var database = new AgentSqliteStore(Path.Combine(directory, "agent.db"));
+        var processLease = Path.Combine(directory, "autonomous-trading-kernel.lock");
+        var supervisor = new AgentRuntimeSupervisor(database, new InProcessAgentEventBus(), processLease);
+
+        try
+        {
+            await database.BeginWorkflowRunAsync("legacy", "cycle-observation", "{}", default);
+            await database.BeginWorkflowRunAsync("old-run", "cycle-risk", "{}", default);
+            await database.SaveWorkflowCheckpointAsync(
+                new("old-run", "cycle-risk", WorkflowNode.Risk, CheckpointPhase.Entered, "{}", DateTime.UtcNow),
+                default);
+
+            await supervisor.StartAsync(default);
+            Assert.Equal("RECOVERY_PENDING:2", supervisor.Health.RecoveryStatus);
+
+            var recovered = await supervisor.RecoverNonExecutionInterruptedAsync(
+                "startup-recovery.current-state-reconciled",
+                default);
+
+            Assert.Equal(2, recovered);
+            Assert.Equal("RECOVERED", supervisor.Health.RecoveryStatus);
+            Assert.Empty(await database.GetInterruptedWorkflowsAsync(default));
+        }
+        finally
+        {
+            await supervisor.DisposeAsync();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    public async Task TradingKernel_MetadataRecoveryRefusesExecutionCapableInterruptions()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "wpe-kernel-execution-recovery-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var database = new AgentSqliteStore(Path.Combine(directory, "agent.db"));
+        var processLease = Path.Combine(directory, "autonomous-trading-kernel.lock");
+        var supervisor = new AgentRuntimeSupervisor(database, new InProcessAgentEventBus(), processLease);
+
+        try
+        {
+            await database.BeginWorkflowRunAsync("old-run", "cycle-execution", "{}", default);
+            await database.SaveWorkflowCheckpointAsync(
+                new("old-run", "cycle-execution", WorkflowNode.SafetyExecution, CheckpointPhase.Entered, "{}", DateTime.UtcNow),
+                default);
+
+            await supervisor.StartAsync(default);
+            Assert.Equal("RECOVERY_PENDING:1", supervisor.Health.RecoveryStatus);
+
+            var blocked = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => supervisor.RecoverNonExecutionInterruptedAsync("verified-current-state", default));
+
+            Assert.Contains("execution-capable", blocked.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("RECOVERY_PENDING:1", supervisor.Health.RecoveryStatus);
+            Assert.Single(await database.GetInterruptedWorkflowsAsync(default));
+        }
+        finally
+        {
+            await supervisor.DisposeAsync();
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(directory)) Directory.Delete(directory, true);
         }

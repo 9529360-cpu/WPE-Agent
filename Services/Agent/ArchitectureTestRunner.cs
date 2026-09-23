@@ -18,16 +18,13 @@ public static class ArchitectureTestRunner
         var database = new AgentSqliteStore(Path.Combine(root, "runtime.db"));
         try
         {
-            Run(cases, "Assistant Adapter catalog remains provider-agnostic", () =>
+            Run(cases, "Assistant catalog is local-only", () =>
             {
-                var ids = AssistantAdapterCatalog.All.Select(x => x.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                Require(ids.Contains("openai") && ids.Contains("claude") && ids.Contains("gemini") && ids.Contains("deepseek") && ids.Contains("ollama") && ids.Contains("custom"), "required assistant adapters missing");
-                var local = AssistantProviderFactory.Create(null, null, false);
-                Require(local.IsLocal && local is DeterministicBrainProvider, "disabled remote assistant did not fall back to local deterministic provider");
-                Require(AssistantProtocolAdapterFactory.Create("OpenAI") is OpenAiCompatibleAdapter, "OpenAI protocol adapter mismatch");
-                Require(AssistantProtocolAdapterFactory.Create("Anthropic Claude") is AnthropicMessagesAdapter, "Anthropic protocol adapter mismatch");
-                Require(AssistantProtocolAdapterFactory.Create("Google Gemini") is GeminiGenerativeAdapter, "Gemini protocol adapter mismatch");
-                return $"{AssistantAdapterCatalog.All.Count} adapters registered; remote disabled fallback is local";
+                var adapters=AssistantAdapterCatalog.All;
+                Require(adapters.Count==1&&adapters[0].Id=="local-deterministic"&&adapters[0].Local, "only the local deterministic assistant may be registered");
+                var local=AssistantProviderFactory.Create(null,null,true);
+                Require(local.IsLocal&&local is DeterministicBrainProvider, "assistant composition must remain local even when legacy remote settings are present");
+                return "local-deterministic is the only registered assistant";
             });
             Run(cases, "状态图拒绝越级执行", () =>
             {

@@ -39,7 +39,12 @@ public sealed class EvidenceCollector
     }
 }
 
-public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableReviewExecutionReconciler
+public interface IPendingExecutionRecovery
+{
+    Task<RecoveryResult> RecoverPendingAsync(CancellationToken ct);
+}
+
+public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableReviewExecutionReconciler,IPendingExecutionRecovery
 {
     private static readonly ConcurrentDictionary<string,SemaphoreSlim> IntentLocks=new(StringComparer.Ordinal);
     private readonly IExchangeAdapter _ex;private readonly AgentSqliteStore _db;private readonly RiskLimits _limits;private readonly IOrderPollScheduler _poll;
@@ -84,7 +89,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         if(!intent.ReduceOnly||intent.OrderType!=ExecutionOrderType.Market)
             throw new InvalidOperationException("Recovery execution requires a reduce-only market intent.");
         EnsureTestnet();
-        EnsureCapability(intent);
+        await EnsureFreshCapabilityAsync(intent,ct);
         var gate=IntentLocks.GetOrAdd(intent.ClientOrderId,_=>new SemaphoreSlim(1,1));
         await gate.WaitAsync(ct);
         try
@@ -109,17 +114,30 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
                 }
             }
             await _db.SaveIntentAsync(cycle,intent,order.Status,order.OrderId,ct);
+            if(order.Status is "NEW" or "PARTIALLY_FILLED")
+            {
+                order=await WaitAndCancelOnTimeoutAsync(intent.Symbol,intent.ClientOrderId,order,ct);
+                await _db.SaveIntentAsync(cycle,intent,order.Status,order.OrderId,ct);
+            }
             if(order.ExecutedQuantity<=0)
             {
-                await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",order.OrderId,ct);
+                await _db.SaveIntentAsync(cycle,intent,IsTerminal(order.Status)?order.Status:"UNKNOWN",order.OrderId,ct);
                 throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));
             }
-            var partial=order.ExecutedQuantity<intent.Quantity;
-            await CaptureFeeEvidenceAsync(order,ct);await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);await _db.RecordExecutionAsync(cycle,intent with{Quantity=order.ExecutedQuantity},
-                partial?order with{Status="PARTIALLY_FILLED"}:order,"wpe-core-v2",ct);
-            await _db.SaveIntentAsync(cycle,intent,partial?"COMPLETED_PARTIAL":"COMPLETED",order.OrderId,ct);
-            await NotifyExecutionAsync(cycle,intent,order,ct);
-            if(partial)throw new InvalidOperationException(L("Execution.PartialClose",order.ExecutedQuantity,intent.Quantity));
+            var tolerance=Math.Max(.00000001m,intent.Quantity*.000001m);
+            if(order.ExecutedQuantity-intent.Quantity>tolerance)
+            {
+                await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",order.OrderId,ct);
+                throw new InvalidOperationException("Recovery execution exceeded the authorized reduce-only quantity.");
+            }
+            var partial=order.ExecutedQuantity+tolerance<intent.Quantity;
+            var recordedOrder=partial?order with{Status="PARTIALLY_FILLED"}:order with{Status="FILLED"};
+            await CaptureFeeEvidenceAsync(recordedOrder,ct);await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,recordedOrder.ExecutedQuantity,ct);await _db.RecordExecutionAsync(cycle,intent with{Quantity=recordedOrder.ExecutedQuantity},
+                recordedOrder,"wpe-core-v2",ct);
+            if(!partial&&IsFullClose(intent.Action)){await CancelProtectionOrdersAsync(intent.Symbol,intent.Side,ct);await _db.ClearLockedSideIfMatchesAsync(intent.Symbol,intent.Side,ct);}
+            await _db.SaveIntentAsync(cycle,intent,partial?"COMPLETED_PARTIAL":"COMPLETED",recordedOrder.OrderId,ct);
+            await NotifyExecutionAsync(cycle,intent,recordedOrder,ct);
+            if(partial)throw new InvalidOperationException(L("Execution.PartialClose",recordedOrder.ExecutedQuantity,intent.Quantity));
             return L("Execution.CloseConfirmed");
         }
         finally
@@ -241,17 +259,67 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     }
     private async Task EnsureFreshCapabilityAsync(ExecutionIntent intent,CancellationToken ct)
     {
-        if(_capabilityRefresh is null){EnsureCapability(intent);return;}
-        var capability=await _capabilityRefresh(intent.Symbol,ct);var instrument=capability is null?new Instrument(intent.Symbol,intent.Symbol,string.Empty,string.Empty):new Instrument(capability.CanonicalSymbol,capability.NativeSymbol,capability.ExchangeId,capability.ProviderId,capability.MarketType);var result=(_capabilityPrecondition??new ProviderCapabilityPrecondition()).Check(instrument,capability,_testnet);if(!result.Allowed)throw new InvalidOperationException($"Execution.CapabilityBlocked: {result.Reason}");
+        if(_capabilityPrecondition is null||_capabilityResolver is null)return;
+        var (cachedInstrument,cachedCapability)=_capabilityResolver(intent);
+        var cachedResult=_capabilityPrecondition.Check(cachedInstrument,cachedCapability,_testnet);
+        if(cachedResult.Allowed)return;
+        if(_capabilityRefresh is null)
+            throw new InvalidOperationException($"Execution.CapabilityBlocked: {cachedResult.Reason}");
+        var capability=await _capabilityRefresh(intent.Symbol,ct);
+        var instrument=capability is null
+            ?new Instrument(intent.Symbol,intent.Symbol,string.Empty,string.Empty)
+            :new Instrument(capability.CanonicalSymbol,capability.NativeSymbol,capability.ExchangeId,capability.ProviderId,capability.MarketType);
+        var result=_capabilityPrecondition.Check(instrument,capability,_testnet);
+        if(!result.Allowed)
+            throw new InvalidOperationException($"Execution.CapabilityBlocked: {result.Reason}");
     }
 
     public async Task<string> ReplaceProtectionAsync(string cycle,ProtectionAdjustment adjustment,CancellationToken ct)
     {
-        EnsureTestnet();EnsureCapability(adjustment.Symbol);
-        await CancelProtectionOrdersAsync(adjustment.Symbol,adjustment.Side,ct);var group=EmergencyId($"WPE-PROT-{DateTime.UtcNow:yyMMddHHmmss}");
+        EnsureTestnet();ArgumentNullException.ThrowIfNull(adjustment);
+        var group=string.IsNullOrWhiteSpace(adjustment.AdjustmentId)
+            ?EmergencyId($"WPE-PROT-{DateTime.UtcNow:yyMMddHHmmss}")
+            :adjustment.AdjustmentId;
+        var stateKey=string.IsNullOrWhiteSpace(adjustment.AdjustmentId)
+            ?null
+            :PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId);
+        var durableGate=stateKey is null?null:IntentLocks.GetOrAdd("protection:"+adjustment.AdjustmentId!,_=>new SemaphoreSlim(1,1));
+        if(durableGate is not null)await durableGate.WaitAsync(ct);
+        try
+        {
+            if(stateKey is not null&&await _db.GetStateAsync(stateKey,ct) is not null)
+                throw new InvalidOperationException("Protection adjustment already has durable state and must be reconciled.");
+            var capabilityIntent=new ExecutionIntent(adjustment.Symbol,adjustment.Side,0,true,0,0,group,"protection adjustment capability refresh");
+            await EnsureFreshCapabilityAsync(capabilityIntent,ct);
+            if(stateKey is not null)await _db.SetStateAsync(stateKey,"PENDING",ct);
+        }
+        finally
+        {
+            durableGate?.Release();
+        }
+        if(_ex is not IInPlaceProtectionUpdateAdapter)
+        {
+            try
+            {
+                await CancelProtectionOrdersAsync(adjustment.Symbol,adjustment.Side,ct);
+            }
+            catch(OperationCanceledException) when(ct.IsCancellationRequested)
+            {
+                if(stateKey is not null)await _db.SetStateAsync(stateKey,"CANCELED",CancellationToken.None);
+                throw;
+            }
+            catch(Exception ex)
+            {
+                if(stateKey is not null)await _db.SetStateAsync(stateKey,"FAILED",CancellationToken.None);
+                await EmergencyCloseAfterProtectionFailureAsync(cycle,adjustment,group,ex,ct);
+                throw;
+            }
+        }
+
         try
         {
             await _ex.PlaceProtectionAsync(adjustment.Symbol,adjustment.Side,adjustment.StopLoss,adjustment.TakeProfit,group,ct);
+            if(stateKey is not null)await _db.SetStateAsync(stateKey,"COMPLETED",ct);
             var value=ConfirmedNotificationTruth.Protection(
                 ConfirmedNotificationTruth.EventKey(cycle,group,NotificationEventKind.ProtectionUpdated),
                 NotificationEventKind.ProtectionUpdated,ProviderName(),_ex.Environment.ToString(),
@@ -260,18 +328,37 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             await ObserveSafelyAsync(value);
             return L("Execution.ProtectionAdjusted",adjustment.StopLoss,adjustment.TakeProfit);
         }
+        catch(OperationCanceledException) when(ct.IsCancellationRequested)
+        {
+            if(stateKey is not null)await _db.SetStateAsync(stateKey,"CANCELED",CancellationToken.None);
+            throw;
+        }
         catch(Exception ex)
         {
+            if(stateKey is not null)await _db.SetStateAsync(stateKey,"FAILED",CancellationToken.None);
             var value=ConfirmedNotificationTruth.Protection(
                 ConfirmedNotificationTruth.EventKey(cycle,group,NotificationEventKind.ProtectionFailed),
                 NotificationEventKind.ProtectionFailed,ProviderName(),_ex.Environment.ToString(),
                 adjustment.Symbol,adjustment.Side,adjustment.StopLoss,adjustment.TakeProfit,
                 DateTime.UtcNow,UiDiagnostic.FromText(ex.ToString(),"Protection update failed").Code);
             await ObserveSafelyAsync(value);
-            var position=(await _ex.GetPositionsAsync(ct)).FirstOrDefault(x=>x.Symbol==adjustment.Symbol&&x.Side==adjustment.Side);
-            if(position is not null&&position.Quantity>0){var intent=new ExecutionIntent(position.Symbol,position.Side,position.Quantity,true,0,0,EmergencyId(group),L("Execution.ProtectionReplaceFailed",SensitiveDataRedactor.ForLog(ex.Message,180)),position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,ExpectedPrice:position.MarkPrice,ReasonCode:PositionExitReasonCodes.ProtectionReplaceFailed);await ExecuteAsync(cycle,intent,Math.Max(1,(int)position.Leverage),true,ct);}
+            await EmergencyCloseAfterProtectionFailureAsync(cycle,adjustment,group,ex,ct);
             throw;
         }
+    }
+
+    private async Task EmergencyCloseAfterProtectionFailureAsync(
+        string cycle,ProtectionAdjustment adjustment,string group,Exception failure,CancellationToken ct)
+    {
+        var position=(await _ex.GetPositionsAsync(ct)).FirstOrDefault(x=>x.Symbol==adjustment.Symbol&&x.Side==adjustment.Side);
+        if(position is null||position.Quantity<=0)return;
+        var intent=new ExecutionIntent(
+            position.Symbol,position.Side,position.Quantity,true,0,0,EmergencyId(group),
+            L("Execution.ProtectionReplaceFailed",SensitiveDataRedactor.ForLog(failure.Message,180)),
+            position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
+            ExpectedPrice:position.MarkPrice,
+            ReasonCode:PositionExitReasonCodes.ProtectionReplaceFailed);
+        await ExecuteAsync(cycle,intent,Math.Max(1,(int)position.Leverage),true,ct);
     }
 
     private async Task NotifyExecutionAsync(
@@ -315,7 +402,31 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             var order=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);if(order is null){await _db.SaveIntentAsync(saved.CycleId,intent,"UNKNOWN",saved.ExchangeOrderId,ct);safe=false;messages.Add(L("Execution.ExchangeUnknown",intent.ClientOrderId));continue;}
             if(order.Status is "NEW" or "PARTIALLY_FILLED"){EnsureTestnet();order=await WaitAndCancelOnTimeoutAsync(intent.Symbol,intent.ClientOrderId,order,ct);}
             await _db.SaveIntentAsync(saved.CycleId,intent,order.Status,order.OrderId,ct);
-            if(order.ExecutedQuantity>0&&!intent.ReduceOnly)try{EnsureTestnet();EnsureCapability(intent);await _ex.PlaceProtectionAsync(intent.Symbol,intent.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);await _db.SaveIntentAsync(saved.CycleId,intent,order.Status=="FILLED"?"PROTECTED":"PROTECTED_PARTIAL",order.OrderId,ct);messages.Add(L("Execution.ProtectionRecovered",intent.Symbol,intent.Side));}catch(Exception ex){await _db.SaveIntentAsync(saved.CycleId,intent,"PROTECTION_FAILED",order.OrderId,ct);safe=false;messages.Add(L("Execution.ProtectionRecoveryFailed",intent.Symbol,intent.Side,SensitiveDataRedactor.ForLog(ex.Message,180)));}
+            if(intent.ReduceOnly&&order.ExecutedQuantity>0)
+            {
+                var tolerance=Math.Max(.00000001m,intent.Quantity*.000001m);
+                if(order.ExecutedQuantity-intent.Quantity>tolerance){await _db.SaveIntentAsync(saved.CycleId,intent,"UNKNOWN",order.OrderId,ct);safe=false;messages.Add("recovery.reduce-only-quantity-conflict");continue;}
+                var partial=order.ExecutedQuantity+tolerance<intent.Quantity||order.Status!="FILLED";
+                var recordedOrder=partial?order with{Status="PARTIALLY_FILLED"}:order with{Status="FILLED"};
+                if(!await _db.HasExecutionEventAsync(intent.ClientOrderId,ct))
+                {
+                    await CaptureFeeEvidenceAsync(recordedOrder,ct);
+                    await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,recordedOrder.ExecutedQuantity,ct);
+                    await _db.RecordExecutionAsync(saved.CycleId,intent with{Quantity=recordedOrder.ExecutedQuantity},recordedOrder,"wpe-core-v2",ct);
+                }
+                if(!partial&&IsFullClose(intent.Action))
+                {
+                    await CancelProtectionOrdersAsync(intent.Symbol,intent.Side,ct);
+                    await _db.ClearLockedSideIfMatchesAsync(intent.Symbol,intent.Side,ct);
+                }
+                await _db.SaveIntentAsync(saved.CycleId,intent,partial?"COMPLETED_PARTIAL":"COMPLETED",recordedOrder.OrderId,ct);
+                await NotifyExecutionAsync(saved.CycleId,intent,recordedOrder,ct);
+                if(partial){safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));}
+                else messages.Add(L("Execution.CloseConfirmed"));
+                continue;
+            }
+            if(order.ExecutedQuantity>0&&!intent.ReduceOnly)try{EnsureTestnet();await EnsureFreshCapabilityAsync(intent,ct);await _ex.PlaceProtectionAsync(intent.Symbol,intent.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);await _db.SaveIntentAsync(saved.CycleId,intent,order.Status=="FILLED"?"PROTECTED":"PROTECTED_PARTIAL",order.OrderId,ct);messages.Add(L("Execution.ProtectionRecovered",intent.Symbol,intent.Side));}catch(Exception ex){await _db.SaveIntentAsync(saved.CycleId,intent,"PROTECTION_FAILED",order.OrderId,ct);safe=false;messages.Add(L("Execution.ProtectionRecoveryFailed",intent.Symbol,intent.Side,SensitiveDataRedactor.ForLog(ex.Message,180)));}
+            else if(intent.ReduceOnly){await _db.SaveIntentAsync(saved.CycleId,intent,"UNKNOWN",order.OrderId,ct);safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));}
             else if(order.Status=="FILLED"){await _db.SaveIntentAsync(saved.CycleId,intent,"COMPLETED",order.OrderId,ct);}
             else if(order.ExecutedQuantity>0){await _db.SaveIntentAsync(saved.CycleId,intent,"COMPLETED_PARTIAL",order.OrderId,ct);safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));}
             else if(!IsTerminal(order.Status)){await _db.SaveIntentAsync(saved.CycleId,intent,"UNKNOWN",order.OrderId,ct);safe=false;messages.Add(L("Execution.Pending",intent.ClientOrderId,order.Status));}
@@ -325,12 +436,37 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     public async Task<RecoveryResult> AuditAndRepairProtectionAsync(IReadOnlyList<ManagedPosition> positions,IReadOnlyList<ExchangeOrder> orders,CancellationToken ct)
     {
         EnsureTestnet();
+        var managedLegs=await _db.GetExecutionPositionLedgerAsync(ct);
         var safe=true;var messages=new List<string>();foreach(var position in positions)
         {
+            if(!HasExactLocalPositionOwnership(position,positions,managedLegs))
+            {
+                safe=false;messages.Add($"recovery.position-ownership-conflict:{position.Symbol}:{position.Side}");
+                continue;
+            }
             var leg=orders.Where(o=>o.Symbol==position.Symbol&&o.PositionSide==position.Side&&o.IsProtection).ToArray();var combined=leg.Any(o=>o.Type.Contains("OCO",StringComparison.OrdinalIgnoreCase)||o.Type.Contains("POSITION_TPSL",StringComparison.OrdinalIgnoreCase));var hasSl=combined||leg.Any(o=>o.Type.Contains("STOP",StringComparison.OrdinalIgnoreCase)||o.Type.Contains("LOSS",StringComparison.OrdinalIgnoreCase));var hasTp=combined||leg.Any(o=>o.Type.Contains("TAKE",StringComparison.OrdinalIgnoreCase)||o.Type.Contains("PROFIT",StringComparison.OrdinalIgnoreCase));if(hasSl&&hasTp)continue;
             var intent=await _db.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);if(intent is null){safe=false;messages.Add(L("Execution.ProtectionMissing",position.Symbol,position.Side,!hasSl,!hasTp));continue;}
+            if(await _db.HasStateAsync(PositionManagementDurableState.OwnershipRevocationKey(intent.ClientOrderId),ct))
+            {
+                safe=false;messages.Add($"recovery.position-ownership-revoked:{position.Symbol}:{position.Side}");continue;
+            }
+            if(await _db.HasStateAsync(PositionManagementDurableState.OwnershipMissingCandidateKey(intent.ClientOrderId),ct))
+            {
+                safe=false;messages.Add($"recovery.position-ownership-uncertain:{position.Symbol}:{position.Side}");continue;
+            }
             try{EnsureCapability(intent);await _ex.PlaceProtectionAsync(position.Symbol,position.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);messages.Add(L("Execution.ProtectionRepaired",position.Symbol,position.Side));}catch(Exception ex){safe=false;messages.Add(L("Execution.ProtectionRepairFailed",position.Symbol,position.Side,SensitiveDataRedactor.ForLog(ex.Message,180)));}
         }return new(safe,messages);
+    }
+
+    private static bool HasExactLocalPositionOwnership(
+        ManagedPosition position,IReadOnlyList<ManagedPosition> positions,IReadOnlyList<ExecutionPositionLegV1> managedLegs)
+    {
+        var exchangeMatches=positions.Count(x=>string.Equals(x.Symbol,position.Symbol,StringComparison.OrdinalIgnoreCase)&&x.Side==position.Side);
+        if(exchangeMatches!=1)return false;
+        var localMatches=managedLegs.Where(x=>string.Equals(x.Symbol,position.Symbol,StringComparison.OrdinalIgnoreCase)&&x.Side==position.Side).ToArray();
+        if(localMatches.Length!=1||localMatches[0].Quantity<=0||position.Quantity<=0)return false;
+        var tolerance=Math.Max(.00000001m,Math.Max(localMatches[0].Quantity,position.Quantity)*.000001m);
+        return Math.Abs(localMatches[0].Quantity-position.Quantity)<=tolerance;
     }
 
     private async Task PreflightAsync(ExecutionIntent intent,CancellationToken ct)
@@ -356,7 +492,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     }
     private void EnsureTestnet(){if(_ex.Environment!=ExchangeEnvironment.Testnet)throw new InvalidOperationException("Exchange mutation is restricted to Testnet.");}
     private static bool IsTerminal(string status)=>status is "FILLED" or "CANCELED" or "REJECTED" or "EXPIRED";
-    private async Task CancelProtectionOrdersAsync(string symbol,PositionSide side,CancellationToken ct){EnsureCapability(symbol);var orders=await _ex.GetOpenOrdersAsync(symbol,ct);foreach(var order in orders.Where(x=>x.IsProtection&&x.PositionSide==side))await _ex.CancelOrderAsync(symbol,order.OrderId,ct);}
+    private async Task CancelProtectionOrdersAsync(string symbol,PositionSide side,CancellationToken ct){var protection= (await _ex.GetOpenOrdersAsync(symbol,ct)).Where(x=>x.IsProtection&&x.PositionSide==side).ToArray();if(protection.Length==0)return;await EnsureFreshCapabilityAsync(new ExecutionIntent(symbol,side,0,true,0,0,"CAPABILITY-CHECK","protection cancellation capability refresh"),ct);foreach(var order in protection)await _ex.CancelOrderAsync(symbol,order.OrderId,ct);}
     private static bool IsFullClose(DecisionAction action)=>action is DecisionAction.CloseLong or DecisionAction.CloseShort or DecisionAction.Unlock or DecisionAction.ReverseToLong or DecisionAction.ReverseToShort;
     private static string EmergencyId(string id){const string suffix="-E";var stem=id.Length>36-suffix.Length?id[..(36-suffix.Length)]:id;return stem+suffix;}
     private static string L(string key,params object?[] args)=>LocalizationService.Current.T(key,args);

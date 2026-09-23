@@ -70,11 +70,8 @@ public class SystemState
     public string MarketSummary { get; set; } = "等待市场证据";
     public string NewsSummary { get; set; } = "等待新闻证据";
     public string RiskSummary { get; set; } = "等待风险检查";
-    public string DecisionDiagnostics { get; set; } = "等待信号聚合与 Reviewer 检查";
-    public double BrainConfidence { get; set; }
-    public double DecisionScore { get; set; }
+    public string DecisionDiagnostics { get; set; } = "等待本地决策与 Reviewer 检查";
     public double RiskLoad { get; set; }
-    public double ConflictRate { get; set; }
     public string MarketRegime { get; set; } = "UNKNOWN";
     public string WorkflowNode { get; set; } = "IDLE";
     public string ReflectionStatus { get; set; } = "MEMORY READY";
@@ -85,11 +82,9 @@ public class SystemState
     public double EthTrend { get; set; }
     public double BtcRsi { get; set; }
     public double EthRsi { get; set; }
-    public IReadOnlyDictionary<string,double> SignalContributions { get; set; } = new Dictionary<string,double>();
     public int DataQualityScore { get; set; }
     public double VolatilityPercent { get; set; }
     public double LiquidityScore { get; set; }
-    public double ResearchScore { get; set; }
     public decimal PlannedEntry { get; set; }
     public decimal PlannedStop { get; set; }
     public decimal PlannedTakeProfit { get; set; }
@@ -120,9 +115,6 @@ public class SystemState
     public DateTime? RuntimeHeartbeatAtUtc { get; set; }
     public string RuntimeRecoveryStatus { get; set; } = "NOT_STARTED";
     public long RuntimeEventSequence { get; set; }
-    public string StrategyStatus { get; set; } = "NOT_STARTED";
-    public string StrategySummary { get; set; } = string.Empty;
-    public int StrategyCandidates { get; set; }
 }
 
 

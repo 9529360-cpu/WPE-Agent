@@ -16,6 +16,7 @@ public sealed class RecoveryProductionWiringTests
         {
             var provider=new RecordingProvider();
             var store=new AgentSqliteStore(Path.Combine(root,"agent.db"));
+            await SeedManagedOpeningAsync(store);
             var executor=new ReliableOrderExecutor(provider,store,new RiskLimits(),SystemOrderPollScheduler.Instance,
                 new Dictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability>(StringComparer.OrdinalIgnoreCase)
                 {
@@ -48,6 +49,7 @@ public sealed class RecoveryProductionWiringTests
         {
             var provider=new RecordingProvider();
             var store=new AgentSqliteStore(Path.Combine(root,"agent.db"));
+            await SeedManagedOpeningAsync(store);
             var executor=new ReliableOrderExecutor(provider,store,new RiskLimits(),SystemOrderPollScheduler.Instance,
                 new Dictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability>(StringComparer.OrdinalIgnoreCase)
                 {
@@ -60,11 +62,99 @@ public sealed class RecoveryProductionWiringTests
                 DecisionAction.CloseLong,ExecutionOrderType.Market,ExpectedPrice:150m);
 
             var completed=await 币安量化机器人.Services.AutoTradingAgent.ExecutePositionManagementRecoveryAsync(
-                services.Recovery,"auto-correlation-1",[intent],[position],CancellationToken.None);
+                services.Recovery,"auto-correlation-1",[intent],[position],Rules(),CancellationToken.None);
 
             Assert.Equal(1,completed);
             Assert.Equal(1,provider.MutationCount);
             Assert.True(provider.LastReduceOnly);
+        }
+        finally{TryDelete(root);}
+    }
+
+    [Fact]
+    public async Task AutoTradingAgent_PartialRecoveryRejectsNonStepAlignedQuantityBeforeMutation()
+    {
+        if(!OperatingSystem.IsWindows())return;
+        var root=Path.Combine(Path.GetTempPath(),"wpe-recovery-partial-step",Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var provider=new RecordingProvider();
+            var store=new AgentSqliteStore(Path.Combine(root,"agent.db"));
+            await SeedManagedOpeningAsync(store);
+            var executor=Executor(provider,store);
+            var services=await ProductionRecoveryComposition.CreateAsync(provider,executor,store,Path.Combine(root,"receipt-key.json"));
+            var position=provider.Positions.Single();
+            var intent=new ExecutionIntent("SOLUSDT",PositionSide.Long,.55m,true,0,0,"partial-invalid-step","position management",
+                DecisionAction.ReduceLong,ExecutionOrderType.Market,ExpectedPrice:151m);
+
+            var error=await Assert.ThrowsAsync<InvalidOperationException>(()=>
+                币安量化机器人.Services.AutoTradingAgent.ExecutePositionManagementRecoveryAsync(
+                    services.Recovery,"partial-step-correlation",[intent],[position],Rules(),CancellationToken.None));
+
+            Assert.Equal("recovery.reduce-quantity-invalid",error.Message);
+            Assert.Equal(0,provider.MutationCount);
+        }
+        finally{TryDelete(root);}
+    }
+
+    [Fact]
+    public async Task AutoTradingAgent_HedgeModeRecoveryBindsExactPositionSide()
+    {
+        if(!OperatingSystem.IsWindows())return;
+        var root=Path.Combine(Path.GetTempPath(),"wpe-recovery-hedge",Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var provider=new RecordingProvider
+            {
+                Positions=
+                [
+                    new("SOLUSDT",PositionSide.Long,1m,150m,151m,1m,5m,true,120m),
+                    new("SOLUSDT",PositionSide.Short,2m,155m,151m,8m,5m,true,180m)
+                ]
+            };
+            var store=new AgentSqliteStore(Path.Combine(root,"agent.db"));
+            await SeedManagedOpeningAsync(store);
+            var executor=Executor(provider,store);
+            var services=await ProductionRecoveryComposition.CreateAsync(provider,executor,store,Path.Combine(root,"receipt-key.json"));
+            var intent=new ExecutionIntent("SOLUSDT",PositionSide.Long,1m,true,0,0,"hedge-long-close","position management",
+                DecisionAction.CloseLong,ExecutionOrderType.Market,ExpectedPrice:151m);
+
+            var completed=await 币安量化机器人.Services.AutoTradingAgent.ExecutePositionManagementRecoveryAsync(
+                services.Recovery,"hedge-correlation",[intent],provider.Positions,Rules(),CancellationToken.None);
+
+            Assert.Equal(1,completed);
+            Assert.Equal(1,provider.MutationCount);
+            Assert.True(provider.LastReduceOnly);
+        }
+        finally{TryDelete(root);}
+    }
+
+    [Fact]
+    public async Task AutoTradingAgent_BreakevenProtectionExecutesThroughTrustedRecoveryAndPersistsState()
+    {
+        if(!OperatingSystem.IsWindows())return;
+        var root=Path.Combine(Path.GetTempPath(),"wpe-recovery-protection",Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var provider=new RecordingProvider();
+            var store=new AgentSqliteStore(Path.Combine(root,"agent.db"));
+            await SeedManagedOpeningAsync(store,"open-protection-1",170m);
+            var executor=Executor(provider,store);
+            var services=await ProductionRecoveryComposition.CreateAsync(provider,executor,store,Path.Combine(root,"receipt-key.json"));
+            var adjustment=new ProtectionAdjustment(
+                "SOLUSDT",PositionSide.Long,150.075m,170m,"breakeven","WPE-PM-BE-recoverytest");
+
+            var completed=await 币安量化机器人.Services.AutoTradingAgent.ExecutePositionProtectionRecoveryAsync(
+                services.Recovery,"protection-correlation",[adjustment],provider.Positions,CancellationToken.None);
+
+            Assert.Equal(1,completed);
+            Assert.Equal(1,provider.ProtectionMutationCount);
+            Assert.Equal(adjustment.AdjustmentId,provider.LastProtectionGroup);
+            Assert.Equal("COMPLETED",await store.GetStateAsync(
+                PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId!),CancellationToken.None));
         }
         finally{TryDelete(root);}
     }
@@ -87,6 +177,41 @@ public sealed class RecoveryProductionWiringTests
         finally{TryDelete(root);}
     }
 
+    private static IReadOnlyDictionary<string,TradingRule> Rules(decimal step=.1m,decimal minQuantity=.1m)=>
+        new Dictionary<string,TradingRule>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["SOLUSDT"]=new("SOLUSDT",step,.1m,minQuantity,5m,20)
+        };
+
+    private static async Task SeedManagedOpeningAsync(
+        AgentSqliteStore store,string clientOrderId="open-recovery",decimal takeProfit=170m)
+    {
+        var intent=new ExecutionIntent(
+            "SOLUSDT",PositionSide.Long,1m,false,140m,takeProfit,clientOrderId,"opening",
+            DecisionAction.OpenLong,ExpectedPrice:150m);
+        var order=new ExchangeOrder(
+            "SOLUSDT","opening-order",clientOrderId,"FILLED",1m,150m,"MARKET",
+            PositionSide.Long,false,DateTime.UtcNow);
+        await store.RecordExecutionAsync("cycle-open",intent,order,"test",CancellationToken.None);
+        await store.SaveIntentAsync("cycle-open",intent,"PROTECTED",order.OrderId,CancellationToken.None);
+    }
+
+    private static ReliableOrderExecutor Executor(RecordingProvider provider,AgentSqliteStore store)
+    {
+        var capability=new WpeAgent.RuntimeContracts.ExchangeCapability(
+            "test","test-provider","SOLUSDT","SOLUSDT",WpeAgent.RuntimeContracts.MarketType.Perpetual,
+            WpeAgent.RuntimeContracts.CapabilityStatus.Available,true,true,true,DateTimeOffset.UtcNow,"ok");
+        return new ReliableOrderExecutor(
+            provider,store,new RiskLimits(),SystemOrderPollScheduler.Instance,
+            new Dictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["SOLUSDT"]=capability
+            },
+            true,
+            capabilityRefresh:(symbol,ct)=>Task.FromResult<WpeAgent.RuntimeContracts.ExchangeCapability?>(
+                string.Equals(symbol,"SOLUSDT",StringComparison.OrdinalIgnoreCase)?capability:null));
+    }
+
     private static void TryDelete(string path)
     {
         try{Directory.Delete(path,true);}catch(IOException){}
@@ -106,7 +231,10 @@ public sealed class RecoveryProductionWiringTests
     {
         public bool CanRead{get;init;}=true;
         public int MutationCount{get;private set;}
+        public int ProtectionMutationCount{get;private set;}
         public bool LastReduceOnly{get;private set;}
+        public string? LastProtectionGroup{get;private set;}
+        public IReadOnlyList<ManagedPosition> Positions{get;init;}=[new("SOLUSDT",PositionSide.Long,1m,150m,151m,1m,5m,true,120m)];
         public ExchangeEnvironment Environment=>ExchangeEnvironment.Testnet;
         public string ConnectionId=>"test-account";
         public string ProviderId=>"test-provider";
@@ -115,7 +243,7 @@ public sealed class RecoveryProductionWiringTests
         public IMarketDataProvider MarketData=>this;
         public IBrokerProvider Broker=>this;
         public Task<ExchangePermissionSnapshot> CheckPermissionsAsync(CancellationToken ct)=>Task.FromResult(new ExchangePermissionSnapshot(CanRead,true,false,ConnectionId,[]));
-        public Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct)=>Task.FromResult<IReadOnlyList<ManagedPosition>>([new("SOLUSDT",PositionSide.Long,1m,150m,151m,1m,5m,true,120m)]);
+        public Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct)=>Task.FromResult(Positions);
         public Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct)=>Task.FromResult<ExchangeOrder?>(null);
         public Task<ExchangeOrder> PlaceMarketAsync(string symbol,PositionSide side,decimal quantity,string clientOrderId,bool reduceOnly,CancellationToken ct){MutationCount++;LastReduceOnly=reduceOnly;return Task.FromResult(new ExchangeOrder(symbol,"order-1",clientOrderId,"FILLED",quantity,150m,"MARKET",side,reduceOnly,DateTime.UtcNow));}
         public Task<bool> PingAsync(CancellationToken ct)=>Task.FromResult(true);
@@ -129,7 +257,11 @@ public sealed class RecoveryProductionWiringTests
         public Task SetMarginModeAsync(string symbol,bool isolated,CancellationToken ct)=>throw new InvalidOperationException();
         public Task SetHedgeModeAsync(bool enabled,CancellationToken ct)=>throw new InvalidOperationException();
         public Task<ExchangeOrder> PlaceLimitAsync(string symbol,PositionSide side,decimal quantity,decimal price,string clientOrderId,bool reduceOnly,CancellationToken ct)=>throw new InvalidOperationException();
-        public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide side,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct)=>throw new InvalidOperationException();
+        public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide side,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct)
+        {
+            ProtectionMutationCount++;LastProtectionGroup=groupId;
+            return Task.FromResult(new ExchangeOrder(symbol,"protection-1",groupId,"NEW",0,0,"STOP_MARKET",side,true,DateTime.UtcNow));
+        }
         public Task CancelOrderAsync(string symbol,string orderId,CancellationToken ct)=>throw new InvalidOperationException();
         public Task<TradingRule> GetRulesAsync(string symbol,CancellationToken ct)=>throw new NotSupportedException();
         public Task<MarketEvidence> GetMarketAsync(string symbol,CancellationToken ct)=>throw new NotSupportedException();

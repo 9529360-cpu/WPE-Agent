@@ -36,7 +36,9 @@ internal static class ProductionRecoveryComposition
         var observations=new AuthenticatedProviderRecoveryObservationSource(provider,permissions.AccountId,utcNow);
         var authority=RecoveryReconciliationComposition.Create(keys,observations,utcNow);
         var gateway=new TradingExecutionGateway(trustedExecutor,store,utcNow,authority.Verifier);
-        return new(gateway,new ProductionRecoveryService(authority.Reconciler,gateway,provider.ProviderId,permissions.AccountId));
+        return new(gateway,new ProductionRecoveryService(
+            authority.Reconciler,gateway,provider.ProviderId,permissions.AccountId,
+            executor as IPendingExecutionRecovery));
     }
 
     internal static string DefaultKeyPath()=>Path.Combine(
@@ -53,14 +55,21 @@ internal sealed class TrustedRecoveryMutationExecutor(ITradingMutationExecutor i
         inner.ExecutePlanAsync(correlationId,intents,leverage,isolated,ct);
     public Task<string> ExecuteReduceOnlyRecoveryAsync(string correlationId,ExecutionIntent intent,CancellationToken ct)=>
         inner.ExecuteReduceOnlyRecoveryAsync(correlationId,intent,ct);
+    public Task<string> ReplaceProtectionAsync(string correlationId,ProtectionAdjustment adjustment,CancellationToken ct)=>
+        inner.ReplaceProtectionAsync(correlationId,adjustment,ct);
 }
 
 internal sealed class ProductionRecoveryService(
     ITrustedRecoveryReconciler reconciler,
     TradingExecutionGateway gateway,
     string providerId,
-    string accountId)
+    string accountId,
+    IPendingExecutionRecovery? pendingRecovery=null)
 {
+    internal Task<RecoveryResult> RecoverPendingAsync(CancellationToken ct)=>
+        pendingRecovery?.RecoverPendingAsync(ct)
+        ?? Task.FromResult(new RecoveryResult(false,["recovery.pending-recovery-unavailable"]));
+
     internal async Task<TradingExecutionGatewayResult> ExecuteAsync(
         string correlationId,ExecutionIntent intent,int leverage,bool isolated,CancellationToken ct)
     {
@@ -71,11 +80,29 @@ internal sealed class ProductionRecoveryService(
         var intentHash=TradingExecutionGateway.ComputeIntentHash([intent],leverage,isolated);
         var request=new RecoveryReconciliationRequest(
             "recovery-receipt-"+Guid.NewGuid().ToString("N"),correlationId,providerId,"Testnet",accountId,
-            intent.Symbol,intentHash,DateTimeOffset.UtcNow);
+            intent.Symbol,intentHash,DateTimeOffset.UtcNow,intent.Side);
         var receipt=await reconciler.ReconcileAsync(request,ct);
         return await gateway.ExecuteReduceOnlyRecoveryAsync(
             new(correlationId,receipt,new(receipt.Symbol,receipt.Side,receipt.Quantity,0,0,0,
                 leverage,isolated,0),intent,leverage,isolated),ct);
+    }
+
+    internal async Task<TradingExecutionGatewayResult> ReplaceProtectionAsync(
+        string correlationId,ProtectionAdjustment adjustment,ManagedPosition observedPosition,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(correlationId)||adjustment is null||observedPosition is null||
+           string.IsNullOrWhiteSpace(adjustment.AdjustmentId)||
+           !string.Equals(adjustment.Symbol,observedPosition.Symbol,StringComparison.Ordinal)||
+           adjustment.Side!=observedPosition.Side||observedPosition.Quantity<=0)
+            return new(false,"recovery.protection-command-invalid","recovery.protection-command-invalid");
+
+        var adjustmentHash=TradingExecutionGateway.ComputeProtectionAdjustmentHash(adjustment);
+        var request=new RecoveryReconciliationRequest(
+            "recovery-protection-"+Guid.NewGuid().ToString("N"),correlationId,providerId,"Testnet",accountId,
+            adjustment.Symbol,adjustmentHash,DateTimeOffset.UtcNow,adjustment.Side);
+        var receipt=await reconciler.ReconcileAsync(request,ct);
+        return await gateway.ExecuteProtectionRecoveryAsync(
+            new(correlationId,receipt,observedPosition,adjustment),ct);
     }
 }
 
@@ -99,7 +126,8 @@ internal sealed class AuthenticatedProviderRecoveryObservationSource(
            !string.Equals(permissions.AccountId,expectedAccountId,StringComparison.Ordinal))
             throw new InvalidOperationException("Recovery provider permissions are unsafe or unavailable.");
         var positions=await provider.GetPositionsAsync(ct);
-        var matches=positions.Where(x=>string.Equals(x.Symbol,request.Symbol,StringComparison.Ordinal)).ToArray();
+        var matches=positions.Where(x=>string.Equals(x.Symbol,request.Symbol,StringComparison.Ordinal)&&
+            (request.Side is null||x.Side==request.Side.Value)).ToArray();
         if(matches.Length!=1||matches[0].Quantity<=0)
             throw new InvalidOperationException("Recovery position observation is missing or conflicting.");
         return new(matches[0],_utcNow().ToUniversalTime(),ReduceOnlyRecoveryResult.Verified);

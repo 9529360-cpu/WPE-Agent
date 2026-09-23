@@ -57,9 +57,283 @@ public sealed class PositionReconciliationTests : IDisposable
     }
 
     [Fact]
+    public async Task PersistentQuantityMismatchQuarantinesOpeningAndCannotRecaptureOnExactQuantity()
+    {
+        var clock=Now.AddMinutes(-1);
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var opening=Intent("open-ownership-mismatch",false,1m);
+        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m,clock),"v1",default);
+        clock=Now;
+        await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
+        var local=new[]{new ExecutionPositionLegV1("BTCUSDT",PositionSide.Long,1m)};
+        var candidateKey=PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId);
+
+        var quarantined=await 币安量化机器人.Services.AutoTradingAgent.QuarantineConflictingManagedPositionOwnershipAsync(
+            store,local,[Position("BTCUSDT",PositionSide.Long,.6m)],Now,Now,default);
+
+        Assert.Equal(1,quarantined);
+        Assert.NotNull(await store.GetStateAsync(candidateKey,default));
+        Assert.True(await 币安量化机器人.Services.AutoTradingAgent.HasUntrustedManagedPositionOwnershipAsync(
+            store,[Position("BTCUSDT",PositionSide.Long,1m)],default));
+    }
+
+    [Fact]
+    public async Task RecentWpeMutationGetsSettlementGraceBeforeQuantityConflictQuarantine()
+    {
+        var clock=Now;
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var opening=Intent("open-ownership-mismatch-grace",false,1m);
+        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m,clock),"v1",default);
+        await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
+        var candidateKey=PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId);
+        var observedAt=Now.AddSeconds(5);
+
+        var quarantined=await 币安量化机器人.Services.AutoTradingAgent.QuarantineConflictingManagedPositionOwnershipAsync(
+            store,[new("BTCUSDT",PositionSide.Long,1m)],[Position("BTCUSDT",PositionSide.Long,.6m)],observedAt,observedAt,default);
+
+        Assert.Equal(0,quarantined);
+        Assert.Null(await store.GetStateAsync(candidateKey,default));
+    }
+
+    [Fact]
+    public async Task MissingManagedLegRequiresRepeatedFreshEvidenceBeforeRevocation()
+    {
+        var clock=Now.AddMinutes(-1);
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var opening=Intent("open-ownership-a",false,1m);
+        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m,clock),"v1",default);
+        clock=Now;
+        await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
+        var local=new[]{new ExecutionPositionLegV1("BTCUSDT",PositionSide.Long,1m)};
+        var candidateKey=PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId);
+        var revocationKey=PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId);
+
+        var first=await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[],Now,Now,default);
+
+        Assert.Equal(0,first);
+        Assert.NotNull(await store.GetStateAsync(candidateKey,default));
+        Assert.Null(await store.GetStateAsync(revocationKey,default));
+
+        var secondAt=Now.AddSeconds(6);
+        var second=await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[],secondAt,secondAt,default);
+
+        Assert.Equal(1,second);
+        Assert.NotNull(await store.GetStateAsync(revocationKey,default));
+        Assert.Empty(await store.GetExecutionPositionLedgerAsync(default));
+        Assert.True(await 币安量化机器人.Services.AutoTradingAgent.HasUntrustedManagedPositionOwnershipAsync(
+            store,[Position("BTCUSDT",PositionSide.Long,1m)],default));
+        Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[],secondAt.AddSeconds(6),secondAt.AddSeconds(6),default));
+    }
+
+    [Fact]
+    public async Task TransientMissingPositionQuarantinesOwnershipWithoutImmediatePermanentRevocation()
+    {
+        var clock=Now.AddMinutes(-1);
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var opening=Intent("open-ownership-transient",false,1m);
+        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m,clock),"v1",default);
+        clock=Now;
+        await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
+        var local=new[]{new ExecutionPositionLegV1("BTCUSDT",PositionSide.Long,1m)};
+        var candidateKey=PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId);
+        var revocationKey=PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId);
+
+        Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[],Now,Now,default));
+        var candidate=await store.GetStateAsync(candidateKey,default);
+        Assert.NotNull(candidate);
+        Assert.Null(await store.GetStateAsync(revocationKey,default));
+
+        var recoveredAt=Now.AddSeconds(2);
+        Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[Position("BTCUSDT",PositionSide.Long,1m)],recoveredAt,recoveredAt,default));
+        Assert.Equal(candidate,await store.GetStateAsync(candidateKey,default));
+        Assert.Null(await store.GetStateAsync(revocationKey,default));
+        Assert.True(await 币安量化机器人.Services.AutoTradingAgent.HasUntrustedManagedPositionOwnershipAsync(
+            store,[Position("BTCUSDT",PositionSide.Long,1m)],default));
+
+        var missingAgainAt=Now.AddSeconds(10);
+        Assert.Equal(1,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[],missingAgainAt,missingAgainAt,default));
+        Assert.NotNull(await store.GetStateAsync(revocationKey,default));
+    }
+
+    [Fact]
+    public async Task RecentOpeningMustSettleBeforeMissingObservationCanQuarantineOwnership()
+    {
+        var clock=Now;
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var opening=Intent("open-ownership-settling",false,1m);
+        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m),"v1",default);
+        await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
+        var local=new[]{new ExecutionPositionLegV1("BTCUSDT",PositionSide.Long,1m)};
+        var candidateKey=PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId);
+
+        var settlingAt=Now.AddSeconds(5);
+        Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[],settlingAt,settlingAt,default));
+        Assert.Null(await store.GetStateAsync(candidateKey,default));
+
+        var settledAt=Now+PositionReconciliationServiceV1.MaximumAge+TimeSpan.FromSeconds(1);
+        Assert.Equal(0,await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,local,[],settledAt,settledAt,default));
+        Assert.NotNull(await store.GetStateAsync(candidateKey,default));
+    }
+
+    [Fact]
+    public async Task StaleMissingPositionObservationCannotRevokeOwnership()
+    {
+        var clock=Now.AddMinutes(-1);
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var opening=Intent("open-ownership-stale",false,1m);
+        await store.RecordExecutionAsync("cycle-open",opening,Order(opening,"FILLED",1m,clock),"v1",default);
+        clock=Now;
+        await store.SaveIntentAsync("cycle-open",opening,"PROTECTED","order-open",default);
+
+        var revoked=await 币安量化机器人.Services.AutoTradingAgent.RevokeMissingManagedPositionOwnershipAsync(
+            store,[new("BTCUSDT",PositionSide.Long,1m)],[],
+            Now-PositionReconciliationServiceV1.MaximumAge-TimeSpan.FromMilliseconds(1),Now,default);
+
+        Assert.Equal(0,revoked);
+        Assert.Null(await store.GetStateAsync(
+            PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId),default));
+        Assert.Null(await store.GetStateAsync(
+            PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId),default));
+    }
+
+    [Fact]
+    public async Task RetiredOwnershipLedgerPreservesHistoryAndStartsFreshGeneration()
+    {
+        var clock=Now;
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var oldOpening=Intent("open-retired-old",false,1m);
+        await store.RecordExecutionAsync("old",oldOpening,Order(oldOpening,"FILLED",1m),"v1",default);
+        Assert.Equal(1m,Assert.Single(await store.GetExecutionPositionLedgerAsync(default)).Quantity);
+
+        Assert.True(await store.RetireExecutionPositionLedgerAsync("BTCUSDT",PositionSide.Long,Now,default));
+        Assert.Empty(await store.GetExecutionPositionLedgerAsync(default));
+
+        clock=Now.AddSeconds(10);
+        var freshOpening=Intent("open-retired-fresh",false,.4m);
+        await store.RecordExecutionAsync("fresh",freshOpening,Order(freshOpening,"FILLED",.4m,clock),"v1",default);
+
+        Assert.Equal(.4m,Assert.Single(await store.GetExecutionPositionLedgerAsync(default)).Quantity);
+        await using var connection=new SqliteConnection($"Data Source={Database}");
+        await connection.OpenAsync();
+        await using var count=connection.CreateCommand();
+        count.CommandText="SELECT COUNT(*) FROM execution_events";
+        Assert.Equal(2,Convert.ToInt32(await count.ExecuteScalarAsync()));
+    }
+
+    [Fact]
+    public async Task DelayedReduceOnlyConfirmationAfterRetirementDoesNotCreateNegativeGeneration()
+    {
+        var clock=Now;
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var opening=Intent("open-retired-delayed-close",false,1m);
+        await store.RecordExecutionAsync("open",opening,Order(opening,"FILLED",1m,clock),"v1",default);
+        Assert.True(await store.RetireExecutionPositionLedgerAsync("BTCUSDT",PositionSide.Long,Now.AddSeconds(1),default));
+        Assert.Empty(await store.GetExecutionPositionLedgerAsync(default));
+
+        clock=Now.AddMinutes(5);
+        var close=Intent("close-retired-delayed",true,1m) with {Action=DecisionAction.CloseLong};
+        await store.RecordExecutionAsync("close",close,Order(close,"FILLED",1m,clock),"v1",default);
+
+        var ledger=await store.GetExecutionPositionLedgerAsync(default);
+        Assert.Empty(ledger);
+        var report=PositionReconciliationServiceV1.Reconcile(ledger,[],clock,clock);
+        Assert.Equal(PositionReconciliationStateV1.Confirmed,report.State);
+        Assert.True(report.AllowsRiskIncrease);
+    }
+
+    [Fact]
+    public async Task OwnershipLedgerAsOfObservationDoesNotRetireConcurrentLaterFill()
+    {
+        var clock=Now;
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var oldOpening=Intent("open-observed-old",false,1m);
+        await store.RecordExecutionAsync("old",oldOpening,Order(oldOpening,"FILLED",1m),"v1",default);
+        var observedAt=Now.AddSeconds(1);
+
+        clock=Now.AddSeconds(2);
+        var concurrentOpening=Intent("open-observed-new",false,.5m);
+        await store.RecordExecutionAsync("new",concurrentOpening,Order(concurrentOpening,"FILLED",.5m,clock),"v1",default);
+
+        Assert.Equal(1m,Assert.Single(await store.GetExecutionPositionLedgerAsync(observedAt,default)).Quantity);
+        Assert.True(await store.RetireExecutionPositionLedgerAsync("BTCUSDT",PositionSide.Long,observedAt,default));
+        Assert.Equal(.5m,Assert.Single(await store.GetExecutionPositionLedgerAsync(default)).Quantity);
+    }
+
+    [Fact]
+    public async Task LatestOpeningIdentityUsesStableExecutionTimeAfterOlderReplay()
+    {
+        var clock=Now.AddMinutes(-2);
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var oldOpening=Intent("open-order-old",false,1m);
+        var oldOrder=Order(oldOpening,"FILLED",1m,clock);
+        await store.RecordExecutionAsync("old",oldOpening,oldOrder,"v1",default);
+        await store.SaveIntentAsync("old",oldOpening,"PROTECTED",oldOrder.OrderId,default);
+
+        clock=Now.AddMinutes(-1);
+        var newOpening=Intent("open-order-new",false,1m);
+        var newOrder=Order(newOpening,"FILLED",1m,clock);
+        await store.RecordExecutionAsync("new",newOpening,newOrder,"v1",default);
+        await store.SaveIntentAsync("new",newOpening,"PROTECTED",newOrder.OrderId,default);
+
+        Assert.Equal(newOpening.ClientOrderId,(await store.GetLatestOpeningIntentAsync("BTCUSDT",PositionSide.Long,default))!.ClientOrderId);
+        Assert.Equal(newOpening.ClientOrderId,(await store.GetLatestOpeningIntentAsync("BTCUSDT",PositionSide.Long,Now,default))!.ClientOrderId);
+
+        clock=Now;
+        await store.RecordExecutionAsync("old-replay",oldOpening,oldOrder,"v1",default);
+        await store.SaveIntentAsync("old-replay",oldOpening,"PROTECTED",oldOrder.OrderId,default);
+
+        Assert.Equal(newOpening.ClientOrderId,(await store.GetLatestOpeningIntentAsync("BTCUSDT",PositionSide.Long,default))!.ClientOrderId);
+        Assert.Equal(newOpening.ClientOrderId,(await store.GetLatestOpeningIntentAsync("BTCUSDT",PositionSide.Long,Now,default))!.ClientOrderId);
+    }
+
+    [Fact]
+    public async Task ReplayedOpeningKeepsExchangeGenerationTimeAndStaysRetired()
+    {
+        var clock=Now;
+        var store=new AgentSqliteStore(Database,()=>clock);
+        var opening=Intent("open-replay-retired",false,1m);
+        var exchangeOrder=Order(opening,"FILLED",1m,Now);
+        await store.RecordExecutionAsync("first",opening,exchangeOrder,"v1",default);
+        Assert.True(await store.RetireExecutionPositionLedgerAsync("BTCUSDT",PositionSide.Long,Now.AddSeconds(1),default));
+        Assert.Empty(await store.GetExecutionPositionLedgerAsync(default));
+
+        clock=Now.AddMinutes(5);
+        await store.RecordExecutionAsync("replay",opening,exchangeOrder,"v1",default);
+
+        Assert.Equal(Now,(await store.GetExecutionEventObservedAtAsync(opening.ClientOrderId,default))!.Value);
+        Assert.Empty(await store.GetExecutionPositionLedgerAsync(default));
+    }
+
+    [Fact]
+    public async Task UntimedLegacyExecutionRemainsLiveAndCannotBeSilentlyRetired()
+    {
+        var store=new AgentSqliteStore(Database);
+        await using(var connection=new SqliteConnection($"Data Source={Database}"))
+        {
+            await connection.OpenAsync();
+            await using var insert=connection.CreateCommand();
+            insert.CommandText="INSERT INTO execution_events(cycle_id,client_order_id,symbol,side,action,reduce_only,quantity,avg_price,expected_price,status,occurred_at,exchange_updated_at) VALUES('legacy','legacy-untimed','BTCUSDT','Long','OpenLong',0,'1','100','100','FILLED',NULL,NULL)";
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        Assert.Equal(1m,Assert.Single(await store.GetExecutionPositionLedgerAsync(default)).Quantity);
+        Assert.Equal(1m,Assert.Single(await store.GetExecutionPositionLedgerAsync(Now,default)).Quantity);
+        Assert.False(await store.RetireExecutionPositionLedgerAsync("BTCUSDT",PositionSide.Long,Now,default));
+        Assert.Equal(1m,Assert.Single(await store.GetExecutionPositionLedgerAsync(default)).Quantity);
+    }
+
+    [Fact]
     public void ProductionRiskIncreaseGateConsumesPositionReconciliation()
     {
-        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("PositionReconciliationServiceV1.Reconcile",source,StringComparison.Ordinal);Assert.Contains("&&positionReconciliation.AllowsRiskIncrease",source,StringComparison.Ordinal);Assert.Contains("ExecutePositionManagementRecoveryAsync",source,StringComparison.Ordinal);Assert.Contains("ApplyPositionMutationInvalidation",source,StringComparison.Ordinal);Assert.Contains("position.reconciliation-invalidated-by-recovery",source,StringComparison.Ordinal);
+        var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));Assert.Contains("PositionReconciliationServiceV1.Reconcile",source,StringComparison.Ordinal);Assert.Contains("&&positionReconciliation.AllowsRiskIncrease",source,StringComparison.Ordinal);Assert.Contains("positionSnapshotAt=DateTimeOffset.UtcNow",source,StringComparison.Ordinal);Assert.Contains("ownershipObservationFresh",source,StringComparison.Ordinal);Assert.Contains("GetExecutionPositionLedgerAsync(positionSnapshotAt",source,StringComparison.Ordinal);Assert.Contains("QuarantineConflictingManagedPositionOwnershipAsync",source,StringComparison.Ordinal);Assert.Contains("ExecutePositionManagementRecoveryAsync",source,StringComparison.Ordinal);Assert.Contains("ApplyPositionMutationInvalidation",source,StringComparison.Ordinal);Assert.Contains("position.reconciliation-invalidated-by-recovery",source,StringComparison.Ordinal);
     }
 
     [Fact]
@@ -120,7 +394,7 @@ public sealed class PositionReconciliationTests : IDisposable
 
     private static ManagedPosition Position(string symbol,PositionSide side,decimal quantity)=>new(symbol,side,quantity,100m,101m,1m,2m,true,50m);
     private static ExecutionIntent Intent(string id,bool reduceOnly,decimal quantity)=>new("BTCUSDT",PositionSide.Long,quantity,reduceOnly,90m,120m,id,"test",reduceOnly?DecisionAction.ReduceLong:DecisionAction.OpenLong,ExpectedPrice:100m);
-    private static ExchangeOrder Order(ExecutionIntent intent,string status,decimal quantity)=>new(intent.Symbol,"order-"+intent.ClientOrderId,intent.ClientOrderId,status,quantity,100m,"MARKET",intent.Side,false,DateTime.UtcNow);
+    private static ExchangeOrder Order(ExecutionIntent intent,string status,decimal quantity,DateTimeOffset? updatedAt=null)=>new(intent.Symbol,"order-"+intent.ClientOrderId,intent.ClientOrderId,status,quantity,100m,"MARKET",intent.Side,false,(updatedAt??Now).UtcDateTime);
     private static string ProjectRoot()=>Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
     public void Dispose(){SqliteConnection.ClearAllPools();if(Directory.Exists(_directory))Directory.Delete(_directory,true);}
 }

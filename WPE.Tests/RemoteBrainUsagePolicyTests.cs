@@ -1,57 +1,59 @@
-namespace WPE.Tests;
-
 public sealed class RemoteBrainUsagePolicyTests
 {
     [Fact]
-    public void AutoTradingAgent_NeverRoutesAutonomousPlannerToRemoteBrain()
+    public void AutoTradingAgentAlwaysUsesLocalDeterministicBrain()
     {
-        var source = File.ReadAllText(SourcePath());
+        var source=File.ReadAllText(SourcePath("Services","AutoTradingAgent.cs"));
 
-        Assert.Contains("IAssistantProvider brain=localBrain;", source, StringComparison.Ordinal);
-        Assert.Contains("state.BrainEffectiveMode=AiRuntimeMode.LocalOnly;", source, StringComparison.Ordinal);
-        Assert.Contains("state.BrainRemoteAllowed=false;", source, StringComparison.Ordinal);
-        Assert.Contains("configured remote Brain remains outside the trading execution path", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("ShouldUseRemotePlanner", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("useRemotePlanner", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("CreateConfiguredBrain", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("plannerBrain=", source, StringComparison.Ordinal);
+        Assert.Contains("IAssistantProvider brain=localBrain;",source,StringComparison.Ordinal);
+        Assert.Contains("state.BrainEffectiveMode=AiRuntimeMode.LocalOnly;",source,StringComparison.Ordinal);
+        Assert.Contains("state.BrainRemoteAllowed=false;",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("HttpBrainProvider",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateConfiguredBrain",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("plannerBrain=",source,StringComparison.Ordinal);
     }
 
     [Fact]
-    public void HypothesisDrivenUi_DoesNotProjectLegacyDirectionalScoresAsDecisionBasis()
+    public void TradingUiNoLongerProjectsLegacyStrategyScores()
     {
-        var source = File.ReadAllText(SourcePath());
+        var source=File.ReadAllText(SourcePath("Services","AutoTradingAgent.cs"));
 
-        Assert.Contains("if(hypothesisDriven)", source, StringComparison.Ordinal);
-        Assert.Contains("state.DecisionScore=0;", source, StringComparison.Ordinal);
-        Assert.Contains("state.ConflictRate=0;", source, StringComparison.Ordinal);
-        Assert.Contains("state.SignalContributions=new Dictionary<string,double>();", source, StringComparison.Ordinal);
-        Assert.Contains("state.RiskLoad=Math.Clamp(decision.RiskBudgetMultiplier,0,1)*100;", source, StringComparison.Ordinal);
+        Assert.Contains("Direct candle-structure decision path active.",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("state.DecisionScore=",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("state.ConflictRate=",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("state.SignalContributions=",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("state.ResearchScore=",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("NetScore",source,StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AutoTradingAgent_RecordsBrainPlannerAsLocalExecution()
+    public void AssistantProviderImplementationContainsOnlyLocalDeterministicProvider()
     {
-        var source = File.ReadAllText(SourcePath());
+        var source=File.ReadAllText(SourcePath("Services","Agent","BrainProviders.cs"));
 
-        Assert.Contains("SkillAsync(\"BrainPlanner\"", source, StringComparison.Ordinal);
-        Assert.Contains("local=true", source, StringComparison.Ordinal);
-        Assert.Contains("ct,false", source, StringComparison.Ordinal);
-        Assert.Contains("bool? remoteLlmUsed=null", source, StringComparison.Ordinal);
-        Assert.Contains("var remote=remoteLlmUsed??(name==\"BrainPlanner\"&&ServiceLocator.SystemState.BrainRemoteAllowed);", source, StringComparison.Ordinal);
+        Assert.Contains("DeterministicBrainProvider",source,StringComparison.Ordinal);
+        Assert.Contains("local-deterministic",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("HttpBrainProvider",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("OpenAiCompatibleAdapter",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("AnthropicMessagesAdapter",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("GeminiGenerativeAdapter",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("BrainPromptComposer",source,StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AutoTradingAgent_ConsumesGovernorUsageForBrainPlannerAudit()
+    public void SkillCatalogDoesNotAdvertiseRemoteTradingBrain()
     {
-        var source = File.ReadAllText(SourcePath());
+        var source=File.ReadAllText(SourcePath("Services","Agent","DecisionIntelligence.cs"));
 
-        Assert.Contains("if(remote)LlmRequestGovernor.ClearCurrentCallUsage();", source, StringComparison.Ordinal);
-        Assert.Contains("var llmUsage=remote?LlmRequestGovernor.ConsumeCurrentCallUsage():null;", source, StringComparison.Ordinal);
-        Assert.Contains("llmUsage?.LoggedTokens", source, StringComparison.Ordinal);
-        Assert.Contains("llmUsage?.LoggedCostUsd", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("OptionalRemoteBrain",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("network:brain",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("ExperienceReplay",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("strategy performance",source,StringComparison.Ordinal);
     }
 
-    private static string SourcePath()
-        => Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Services", "AutoTradingAgent.cs");
+    private static string SourcePath(params string[] path)
+    {
+        var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
+        return Path.Combine([root,..path]);
+    }
 }

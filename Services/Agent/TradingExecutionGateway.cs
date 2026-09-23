@@ -14,6 +14,8 @@ public interface ITradingMutationExecutor
     Task<string> ExecutePlanAsync(string correlationId,IReadOnlyList<ExecutionIntent> intents,int leverage,bool isolated,CancellationToken ct);
     Task<string> ExecuteReduceOnlyRecoveryAsync(string correlationId,ExecutionIntent intent,CancellationToken ct)=>
         throw new NotSupportedException("The executor does not provide the mutation-minimal recovery path.");
+    Task<string> ReplaceProtectionAsync(string correlationId,ProtectionAdjustment adjustment,CancellationToken ct)=>
+        throw new NotSupportedException("The executor does not provide the protection-replacement recovery path.");
 }
 
 public sealed record TradingExecutionCommand(
@@ -82,6 +84,12 @@ public sealed record ReduceOnlyRecoveryCommand(
     ExecutionIntent Intent,
     int Leverage,
     bool Isolated);
+
+public sealed record ProtectionRecoveryCommand(
+    string CorrelationId,
+    ReduceOnlyRecoveryReceipt? Receipt,
+    ManagedPosition ObservedPosition,
+    ProtectionAdjustment Adjustment);
 
 public sealed record TestnetSmokeAuthorization(
     string AuthorizationId,
@@ -437,8 +445,72 @@ public sealed class TradingExecutionGateway
             var status=await _approvals.GetOrderIntentStatusAsync(command.Intent.ClientOrderId,ct);
             if(status is not null||await _approvals.HasExecutionSubmissionJournalAsync(command.Intent.ClientOrderId,ct))
                 return Deny("recovery.reconcile-existing");
+            if(!await HasExactLocalPositionOwnershipAsync(command.ObservedPosition,ct))
+                return Deny("recovery.position-ownership-conflict");
             var result=await _executor.ExecuteReduceOnlyRecoveryAsync(command.CorrelationId,command.Intent,ct);
             return new(true,"recovery.reduce-only-submitted",result);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task<TradingExecutionGatewayResult> ExecuteProtectionRecoveryAsync(ProtectionRecoveryCommand command,CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        if(!_executor.IsTestnet)return Deny("recovery.testnet-required");
+        if(string.IsNullOrWhiteSpace(command.CorrelationId)||command.ObservedPosition is null||command.Adjustment is null)
+            return Deny("recovery.protection-command-invalid");
+
+        var receipt=command.Receipt;var now=_utcNow().ToUniversalTime();
+        if(receipt is null||_recoveryReceiptVerifier is null||!_recoveryReceiptVerifier.Verify(receipt))
+            return Deny("recovery.receipt-invalid");
+        if(receipt.Result!=ReduceOnlyRecoveryResult.Verified)
+            return Deny($"recovery.reconciliation-{receipt.Result.ToString().ToLowerInvariant()}");
+        var observedAt=receipt.ObservedAtUtc.ToUniversalTime();
+        if(observedAt>now||now-observedAt>MaximumRecoveryObservationAge)
+            return Deny("recovery.observation-stale");
+        if(receipt.IssuedAtUtc>now||receipt.ExpiresAtUtc<=now||receipt.ExpiresAtUtc-receipt.IssuedAtUtc>MaximumRecoveryObservationAge)
+            return Deny("recovery.receipt-expired");
+
+        var adjustment=command.Adjustment;
+        if(string.IsNullOrWhiteSpace(adjustment.AdjustmentId)||adjustment.StopLoss<=0||adjustment.TakeProfit<=0)
+            return Deny("recovery.protection-adjustment-invalid");
+        var adjustmentHash=ComputeProtectionAdjustmentHash(adjustment);
+        if(!FixedHash(receipt.IntentHash,adjustmentHash)||
+           !string.Equals(receipt.CorrelationId,command.CorrelationId,StringComparison.Ordinal)||
+           !string.Equals(receipt.ProviderId,_executor.ProviderId,StringComparison.Ordinal)||
+           !string.Equals(receipt.Environment,"Testnet",StringComparison.Ordinal)||
+           !string.Equals(receipt.AccountId,_executor.AccountId,StringComparison.Ordinal)||
+           !string.Equals(receipt.Symbol,command.ObservedPosition.Symbol,StringComparison.Ordinal)||
+           receipt.Side!=command.ObservedPosition.Side||
+           receipt.Quantity!=command.ObservedPosition.Quantity||
+           !string.Equals(adjustment.Symbol,command.ObservedPosition.Symbol,StringComparison.Ordinal)||
+           adjustment.Side!=command.ObservedPosition.Side)
+            return Deny("recovery.protection-receipt-mismatch");
+
+        var opening=await _approvals.GetLatestOpeningIntentAsync(adjustment.Symbol,adjustment.Side,ct);
+        if(opening is null||opening.ReduceOnly||opening.StopLoss<=0||opening.TakeProfit<=0)
+            return Deny("recovery.protection-opening-missing");
+        var entry=opening.ExpectedPrice>0?opening.ExpectedPrice:command.ObservedPosition.EntryPrice;
+        var riskReducing=entry>0&&adjustment.TakeProfit==opening.TakeProfit&&
+            (adjustment.Side==PositionSide.Long
+                ?adjustment.StopLoss>=entry&&adjustment.StopLoss>opening.StopLoss&&adjustment.TakeProfit>entry
+                :adjustment.StopLoss<=entry&&adjustment.StopLoss<opening.StopLoss&&adjustment.TakeProfit<entry);
+        if(!riskReducing)return Deny("recovery.protection-risk-increase");
+
+        var stateKey=PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId);
+        var gate=_recoveryLocks.GetOrAdd("protection:"+adjustment.AdjustmentId,_=>new SemaphoreSlim(1,1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            if(await _approvals.GetStateAsync(stateKey,ct) is not null)
+                return Deny("recovery.protection-existing");
+            if(!await HasExactLocalPositionOwnershipAsync(command.ObservedPosition,ct))
+                return Deny("recovery.position-ownership-conflict");
+            var result=await _executor.ReplaceProtectionAsync(command.CorrelationId,adjustment,ct);
+            return new(true,"recovery.protection-adjusted",result);
         }
         finally
         {
@@ -511,6 +583,14 @@ public sealed class TradingExecutionGateway
             userId,deviceId,sessionId,issued,issued.Add(lifetime));
     }
 
+    public static string ComputeProtectionAdjustmentHash(ProtectionAdjustment adjustment)
+    {
+        ArgumentNullException.ThrowIfNull(adjustment);
+        var payload=JsonSerializer.SerializeToUtf8Bytes(new ProtectionAdjustmentHashPayload(
+            adjustment.Symbol,adjustment.Side,adjustment.StopLoss,adjustment.TakeProfit,adjustment.AdjustmentId??string.Empty));
+        return Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant();
+    }
+
     public static string ComputeIntentHash(IReadOnlyList<ExecutionIntent> intents,int leverage,bool isolated)
     {
         ArgumentNullException.ThrowIfNull(intents);
@@ -531,6 +611,20 @@ public sealed class TradingExecutionGateway
     {
         if(left is null||left.Length!=64||right.Length!=64)return false;try{return CryptographicOperations.FixedTimeEquals(Convert.FromHexString(left),Convert.FromHexString(right));}catch(FormatException){return false;}
     }
+    private async Task<bool> HasExactLocalPositionOwnershipAsync(ManagedPosition position,CancellationToken ct)
+    {
+        var opening=await _approvals.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);
+        if(opening is null)return false;
+        if(await _approvals.HasStateAsync(PositionManagementDurableState.OwnershipRevocationKey(opening.ClientOrderId),ct)||
+           await _approvals.HasStateAsync(PositionManagementDurableState.OwnershipMissingCandidateKey(opening.ClientOrderId),ct))
+            return false;
+        var legs=await _approvals.GetExecutionPositionLedgerAsync(ct);
+        var matches=legs.Where(x=>string.Equals(x.Symbol,position.Symbol,StringComparison.OrdinalIgnoreCase)&&x.Side==position.Side).ToArray();
+        if(matches.Length!=1||matches[0].Quantity<=0||position.Quantity<=0)return false;
+        var tolerance=Math.Max(.00000001m,Math.Max(matches[0].Quantity,position.Quantity)*.000001m);
+        return Math.Abs(matches[0].Quantity-position.Quantity)<=tolerance;
+    }
+
     private static bool IsConfirmedReduction(ManagedPosition position,ExecutionIntent intent)
     {
         if(position is null||intent is null||position.Quantity<=0||intent.Quantity<=0||intent.Quantity>position.Quantity)
@@ -574,5 +668,6 @@ public sealed class TradingExecutionGateway
         var hash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
         return prefix+hash[..24];
     }
+    private sealed record ProtectionAdjustmentHashPayload(string Symbol,PositionSide Side,decimal StopLoss,decimal TakeProfit,string AdjustmentId);
     private sealed record IntentHashPayload(int Leverage,bool Isolated,IReadOnlyList<ExecutionIntent> Intents);
 }

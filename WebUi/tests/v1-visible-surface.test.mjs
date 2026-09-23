@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
-const root = new URL('..', import.meta.url).pathname.replace(/^\/(?:[A-Za-z]:)/, value => value.slice(1))
+const root = fileURLToPath(new URL('..', import.meta.url))
 const navRoutes = [
   '/',
   '/agents',
   '/teacher',
   '/orders',
   '/positions',
-  '/strategies',
   '/backtest',
   '/risk',
   '/history',

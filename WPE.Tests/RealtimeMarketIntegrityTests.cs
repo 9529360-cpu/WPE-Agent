@@ -38,6 +38,22 @@ public sealed class RealtimeMarketIntegrityTests : IDisposable
     }
 
     [Fact]
+    public async Task ClosedMinuteKlineIsCachedOnceForCanonicalConfirmationEvidence()
+    {
+        await using var hub=Hub();
+        var openTime=DateTimeOffset.UtcNow.AddMinutes(-2).ToUnixTimeMilliseconds();
+        var json=$"{{\"data\":{{\"e\":\"kline\",\"s\":\"BTCUSDT\",\"k\":{{\"t\":{openTime},\"o\":\"100\",\"h\":\"102\",\"l\":\"99\",\"c\":\"101.5\",\"v\":\"12\",\"q\":\"1218\",\"n\":24,\"V\":\"7\",\"x\":true}}}}}}";
+
+        await hub.HandleMarketAsync(json,default);
+        await hub.HandleMarketAsync(json,default);
+        var snapshot=Assert.IsType<RealtimeMarketSnapshot>(hub.GetSnapshot("BTCUSDT"));
+
+        var candle=Assert.Single(snapshot.ClosedMinuteCandles);
+        Assert.Equal(100,candle.Open);Assert.Equal(102,candle.High);Assert.Equal(99,candle.Low);Assert.Equal(101.5m,candle.Close);
+        Assert.Equal(12,candle.Volume);Assert.Equal(1218,candle.QuoteVolume);Assert.Equal(24,candle.Trades);Assert.Equal(7,candle.TakerBuyVolume);
+    }
+
+    [Fact]
     public void RealtimeMergeKeepsDepthBookSeparateFromAggTradeFlow()
     {
         var baseline=new MarketQualityEvidence{BestBid=98,BestAsk=102,SpreadBps=4,OrderBookImbalance=.42,QualityScore=90,SourceCount=4,Anomalies=["book_ticker_missing","order_book_missing"]};

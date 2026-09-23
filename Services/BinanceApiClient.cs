@@ -121,8 +121,12 @@ internal sealed class BinanceApiClient : Services.Exchange.Binance.IBinancePubli
     public async Task<IReadOnlyList<PositionSnapshot>> GetPositionsAsync(CancellationToken cancellationToken = default)
     {
         EnsureSigned();
-        var account = await SendSignedAsync<AccountDto>(HttpMethod.Get, "/fapi/v2/account", null, cancellationToken).ConfigureAwait(false);
-        return account.Positions
+        var positions = await SendSignedAsync<List<PositionDto>>(
+            HttpMethod.Get,
+            "/fapi/v2/positionRisk",
+            null,
+            cancellationToken).ConfigureAwait(false);
+        return positions
             .Where(p => decimal.TryParse(p.PositionAmt, NumberStyles.Number, CultureInfo.InvariantCulture, out var qty) && qty != 0)
             .Select(MapPosition)
             .ToArray();
@@ -546,7 +550,7 @@ internal sealed class BinanceApiClient : Services.Exchange.Binance.IBinancePubli
             UnrealizedProfit = pnl,
             Leverage = leverage,
             MaintenanceMargin = maintMargin,
-            IsIsolated = dto.Isolated
+            IsIsolated = dto.Isolated || string.Equals(dto.MarginType, "isolated", StringComparison.OrdinalIgnoreCase)
             ,PositionSide = dto.PositionSide
             ,LiquidationPrice = decimal.TryParse(dto.LiquidationPrice, NumberStyles.Number, CultureInfo.InvariantCulture, out var liq) ? liq : 0
         };
@@ -648,6 +652,7 @@ internal sealed class BinanceApiClient : Services.Exchange.Binance.IBinancePubli
         public string UnrealizedProfit { get; init; } = "0";
         public string Leverage { get; init; } = "0";
         public string MaintMargin { get; init; } = "0";
+        public string MarginType { get; init; } = string.Empty;
         public bool Isolated { get; init; }
         public string PositionSide { get; init; } = string.Empty;
         public string LiquidationPrice { get; init; } = "0";

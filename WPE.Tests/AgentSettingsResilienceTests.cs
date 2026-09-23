@@ -53,6 +53,105 @@ public sealed class AgentSettingsResilienceTests : IDisposable
     }
 
     [Fact]
+    public void LegacyRemoteBrainSettings_NormalizeToLocalOnly()
+    {
+        Directory.CreateDirectory(_directory);
+        var legacy=new AgentSettings
+        {
+            AiMode=global::币安量化机器人.Core.Models.AiRuntimeMode.Hybrid,
+            ActiveBrain="DeepSeek",
+            Brains=new(StringComparer.OrdinalIgnoreCase)
+            {
+                ["DeepSeek"]=new BrainSlot
+                {
+                    Provider="DeepSeek",
+                    Endpoint="https://api.deepseek.com/chat/completions",
+                    Model="deepseek-chat",
+                    EncryptedKey="legacy-encrypted-key",
+                    IsLocal=false
+                }
+            }
+        };
+        File.WriteAllText(SettingsPath,JsonSerializer.Serialize(legacy),Encoding.UTF8);
+
+        var loaded=new AgentSettingsStore(SettingsPath).Load();
+
+        Assert.Equal(global::币安量化机器人.Core.Models.AiRuntimeMode.Hybrid,loaded.AiMode);
+        Assert.Equal(global::币安量化机器人.Core.Models.AiRuntimeMode.LocalOnly,RuntimeModePolicy.Resolve(loaded).EffectiveMode);
+        Assert.Equal("WPE Local Brain",loaded.ActiveBrain);
+        Assert.Single(loaded.Brains);
+        Assert.DoesNotContain("DeepSeek",loaded.Brains.Keys,StringComparer.OrdinalIgnoreCase);
+        var local=Assert.IsType<BrainSlot>(loaded.Brains["WPE Local Brain"]);
+        Assert.True(local.IsLocal);
+        Assert.Empty(local.Endpoint);
+        Assert.Empty(local.EncryptedKey);
+        Assert.Equal("deterministic-local-v1",local.Model);
+    }
+
+    [Fact]
+    public void DefaultBinanceTestnetCreatesInactiveLocalMcpDerivative()
+    {
+        var store=new AgentSettingsStore(SettingsPath);
+        var settings=Settings(ExchangeEnvironment.Testnet);
+
+        store.Save(settings);
+        var loaded=store.Load();
+
+        var native=Assert.Single(
+            loaded.Exchanges,
+            profile=>profile.ProviderId.Equals("binance-futures",StringComparison.OrdinalIgnoreCase));
+        var mcp=Assert.Single(
+            loaded.Exchanges,
+            profile=>profile.ProviderId.Equals("binance-mcp-local",StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal(native.Id,loaded.ActiveExecutionConnectionId);
+        Assert.Equal(native.Id,mcp.UpstreamConnectionId);
+        Assert.True(mcp.Enabled);
+        Assert.False(mcp.ExecutionEnabled);
+        Assert.True(mcp.IsTestnet);
+        Assert.Equal(native.Endpoint,mcp.Endpoint);
+        Assert.Empty(mcp.EncryptedCredentials);
+    }
+
+    [Fact]
+    public void ExistingLocalMcpWithoutUpstreamIsBackfilledFromSingleNativeTestnet()
+    {
+        var store=new AgentSettingsStore(SettingsPath);
+        var settings=Settings(ExchangeEnvironment.Testnet);
+        settings.Exchanges=
+        [
+            new()
+            {
+                Id="native-one",
+                ProviderId="binance-futures",
+                DisplayName="Native",
+                IsTestnet=true,
+                Endpoint="https://testnet.binancefuture.com",
+                ExecutionEnabled=true
+            },
+            new()
+            {
+                Id="mcp-one",
+                ProviderId="binance-mcp-local",
+                DisplayName="MCP",
+                IsTestnet=true,
+                Endpoint="https://testnet.binancefuture.com",
+                ExecutionEnabled=false
+            }
+        ];
+        settings.ActiveExecutionConnectionId="native-one";
+
+        store.Save(settings);
+        var loaded=store.Load();
+
+        var mcp=Assert.Single(
+            loaded.Exchanges,
+            profile=>profile.ProviderId.Equals("binance-mcp-local",StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("native-one",mcp.UpstreamConnectionId);
+        Assert.Equal("native-one",loaded.ActiveExecutionConnectionId);
+    }
+
+    [Fact]
     public void EmptySymbols_DoNotFallBackToDefaultMarkets()
     {
         var store = new AgentSettingsStore(SettingsPath);
@@ -137,7 +236,9 @@ public sealed class AgentSettingsResilienceTests : IDisposable
     }
 
     [Theory]
+    [InlineData("binance-mcp-local","https://testnet.binancefuture.com")]
     [InlineData("okx","https://www.okx.com")]
+    [InlineData("okx-mcp","https://www.okx.com")]
     [InlineData("bybit","https://api-testnet.bybit.com")]
     [InlineData("gate","https://api-testnet.gateapi.io")]
     [InlineData("bitget","https://api.bitget.com")]
@@ -152,7 +253,9 @@ public sealed class AgentSettingsResilienceTests : IDisposable
     }
 
     [Theory]
+    [InlineData("binance-mcp-local")]
     [InlineData("okx")]
+    [InlineData("okx-mcp")]
     [InlineData("bybit")]
     [InlineData("gate")]
     [InlineData("bitget")]

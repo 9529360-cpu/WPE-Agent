@@ -56,6 +56,8 @@ public sealed class TradingReviewProductionWiringTests
         Assert.Contains("ProductionRecoveryComposition.CreateAsync(exchange,executor,Db",run,StringComparison.Ordinal);
         Assert.Contains("var executionGateway=recoveryServices.Gateway",run,StringComparison.Ordinal);
         Assert.Contains("ExecutePositionManagementRecoveryAsync(recoveryServices.Recovery",run,StringComparison.Ordinal);
+        Assert.Contains("ExecutePositionProtectionRecoveryAsync(recoveryServices.Recovery",run,StringComparison.Ordinal);
+        Assert.DoesNotContain("AssessUnverifiedAutomaticMutation(AutomaticMutationPath.PositionManagement",run,StringComparison.Ordinal);
         Assert.Contains("new AutomaticExecutionProcessor(Db,automaticValidator,automaticGateway)",run,StringComparison.Ordinal);
         Assert.Contains("new DurableExecutionArtifactV2",run,StringComparison.Ordinal);
         Assert.Contains("SaveAutomaticExecutionAsync(cycle,artifact,ct)",run,StringComparison.Ordinal);
@@ -74,7 +76,10 @@ public sealed class TradingReviewProductionWiringTests
         Assert.Contains("settings.AuthorizationMode!=TradingAuthorizationMode.Review",source,StringComparison.Ordinal);
         Assert.Contains("!context.IsTestnet",source,StringComparison.Ordinal);
         Assert.Contains("review.context-mismatch",source,StringComparison.Ordinal);
-        Assert.Contains("StrategyLifecycle.Active",source,StringComparison.Ordinal);
+        Assert.Contains("DirectMarketStructureDecisionSkill.Version",source,StringComparison.Ordinal);
+        Assert.Contains("review.decision-context-invalid",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("GetStrategiesAsync",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("StrategyLifecycle.Active",source,StringComparison.Ordinal);
         Assert.Contains("_capabilityGate.Check",source,StringComparison.Ordinal);
         Assert.Contains("_collector.CollectAsync(ct)",source,StringComparison.Ordinal);
         Assert.Contains("_risk.Review",source,StringComparison.Ordinal);

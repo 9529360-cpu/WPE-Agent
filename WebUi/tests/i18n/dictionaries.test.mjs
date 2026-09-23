@@ -24,7 +24,7 @@ test('critical page copy is explicitly localized instead of silently falling bac
 })
 
 test('reachable pages use the typed i18n context and contain no mojibake',()=>{
-  const files=['app/(dashboard)/page.tsx','app/(dashboard)/agents/page.tsx','app/(dashboard)/teacher/page.tsx','app/(dashboard)/settings/page.tsx','app/(dashboard)/orders/page.tsx','app/(dashboard)/backtest/page.tsx','app/(dashboard)/strategies/page.tsx','app/(dashboard)/risk/page.tsx','app/(dashboard)/plugins/page.tsx','app/(dashboard)/monitoring/page.tsx']
+  const files=['app/(dashboard)/page.tsx','app/(dashboard)/agents/page.tsx','app/(dashboard)/teacher/page.tsx','app/(dashboard)/settings/page.tsx','app/(dashboard)/orders/page.tsx','app/(dashboard)/backtest/page.tsx','app/(dashboard)/risk/page.tsx','app/(dashboard)/plugins/page.tsx','app/(dashboard)/monitoring/page.tsx']
   for(const file of files){const text=fs.readFileSync(path.join(root,file),'utf8');assert.match(text,/useI18n/);assert.doesNotMatch(text,/[鍑锵鏈鏇鐨閲]/,`${file} contains mojibake`);assert.doesNotMatch(text,/<PageHeader\s+title=["']/,`${file} hardcodes a page title`)}
 })
 

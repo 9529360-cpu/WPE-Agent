@@ -2,6 +2,41 @@ using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人.Services.Agent;
 
+public sealed record PerformanceRiskThrottle(double Multiplier,string Mode,IReadOnlyList<string> Reasons)
+{
+    public static PerformanceRiskThrottle Evaluate(RiskHistorySnapshot history,decimal equity,decimal dayHigh,RiskLimits limits)
+    {
+        var multiplier=1d;var reasons=new List<string>();
+        if(history.ConsecutiveLosses>0)
+        {
+            var lossMultiplier=history.ConsecutiveLosses switch{1=>.75,2=>.50,_=>.25};
+            multiplier=Math.Min(multiplier,lossMultiplier);
+            reasons.Add($"loss-streak:{history.ConsecutiveLosses}");
+        }
+        if(equity>0&&history.DailyRealizedPnl<0&&limits.MaxDailyLoss>0)
+        {
+            var dailyLossRatio=(double)(-history.DailyRealizedPnl/equity);
+            if(dailyLossRatio>=(double)limits.MaxDailyLoss)
+            {
+                multiplier=Math.Min(multiplier,.50);
+                reasons.Add($"daily-loss:{dailyLossRatio:P2}");
+            }
+        }
+        if(dayHigh>0&&equity>0&&limits.DailyDrawdownLimit>0)
+        {
+            var drawdown=(double)Math.Max(0,(dayHigh-equity)/dayHigh);
+            if(drawdown>=(double)limits.DailyDrawdownLimit)
+            {
+                multiplier=Math.Min(multiplier,.25);
+                reasons.Add($"intraday-drawdown:{drawdown:P2}");
+            }
+        }
+        multiplier=Math.Clamp(multiplier,.25,1);
+        var mode=multiplier>=.999?"NORMAL":multiplier>=.50?"REDUCED":"MINIMUM";
+        return new(multiplier,mode,reasons);
+    }
+}
+
 public sealed class RiskAndPositionPlanner
 {
     public ModelOffStrategyRiskContractV1 EvaluateModelOffIntent(ModelOffStrategyIntentRequestV1 request) =>
@@ -15,7 +50,6 @@ public sealed class RiskAndPositionPlanner
         var riskIncreasing=DeterministicPlanSkill.IsRiskIncreasing(d.Action);
         if(!safeToIncreaseRisk&&riskIncreasing)return(Array.Empty<ExecutionIntent>(),safetyReason??L("Risk.Recovery"));
         if(e.Completeness<70&&riskIncreasing)return(Array.Empty<ExecutionIntent>(),L("Risk.Completeness"));
-        if(dayHigh>0&&(dayHigh-e.Account.Equity)/dayHigh>=limits.DailyDrawdownLimit&&riskIncreasing)return(Array.Empty<ExecutionIntent>(),L("Risk.Drawdown"));
         if(!e.Markets.TryGetValue(d.Instrument,out var m))return(Array.Empty<ExecutionIntent>(),L("Risk.MarketMissing"));
         if(d.Action==DecisionAction.Hold)return(Array.Empty<ExecutionIntent>(),"HOLD");
 

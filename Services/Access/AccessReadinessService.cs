@@ -137,7 +137,6 @@ public sealed class AccessReadinessService
             }
         }
 
-        Add("model_diagnostic", true, false, "Optional model diagnostic omitted from critical readiness; deterministic verdict is authoritative.", 0);
 
         try
         {
