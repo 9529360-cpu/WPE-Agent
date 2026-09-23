@@ -12,13 +12,12 @@
       "minItems": 8,
       "items": {
         "type": "object",
-        "required": ["id", "name", "mode", "runtime", "optionalLlm", "deterministicFallback", "allowedActions", "forbiddenActions", "typedAuthorization", "inputs", "outputs"],
+        "required": ["id", "name", "mode", "runtime", "deterministicFallback", "allowedActions", "forbiddenActions", "typedAuthorization", "inputs", "outputs"],
         "properties": {
           "id": { "type": "string" },
           "name": { "type": "string" },
-          "mode": { "type": "string", "enum": ["deterministic", "optional-llm"] },
+          "mode": { "type": "string", "enum": ["deterministic"] },
           "runtime": { "type": "string", "enum": ["local"] },
-          "optionalLlm": { "type": "boolean" },
           "deterministicFallback": { "type": "string" },
           "allowedActions": { "type": "array", "items": { "type": "string" } },
           "forbiddenActions": { "type": "array", "items": { "type": "string" } },
