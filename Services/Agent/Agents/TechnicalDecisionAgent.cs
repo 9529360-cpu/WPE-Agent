@@ -39,7 +39,7 @@ public sealed class TechnicalDecisionAgent : ITradingDecisionAgent
 
         var decision=DirectMarketStructureDecisionSkill.Decide(
             evidence,
-            context.CircuitBreakerActive,
+            false,
             _marketStructure);
         var market=evidence.Markets.GetValueOrDefault(decision.Instrument);
         var structure=market is null
