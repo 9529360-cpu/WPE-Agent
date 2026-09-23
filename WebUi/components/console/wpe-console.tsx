@@ -1208,40 +1208,6 @@ function ConnectionMonitoring({ runtime }: { runtime: WpeRuntimeState }) {
   )
 }
 
-function AiMonitoring({ runtime }: { runtime: WpeRuntimeState }) {
-  const collection = runtime.llmGovernance
-  const state = collectionState(runtime, 'llmGovernance', collection?.state)
-  const value = collection?.value
-  return (
-    <CollectionGate state={state} message={collection?.message} empty={!value} emptyMessage="当前没有 AI 使用统计。">
-      {value && (
-        <>
-          <div className="wpe-authority-notice"><StatusMark tone="info" /><span>AI 仅参与研究和表达辅助，不拥有交易执行权限。</span></div>
-          <div className="wpe-grid wpe-grid--4">
-            <Metric label="运行模式" value={value.mode} />
-            <Metric label="允许远程模型" value={booleanLabel(value.remoteAllowed)} />
-            <Metric label="调用次数" value={formatInteger(value.calls)} />
-            <Metric label="Token" value={formatInteger(value.tokens)} />
-            <Metric label="成本（USD）" value={formatNumber(value.costUsd, 4)} />
-            <Metric label="缓存命中" value={formatInteger(value.cacheHits)} />
-            <Metric label="预算阻断" value={formatInteger(value.budgetBlocks)} tone={value.budgetBlocks > 0 ? 'warning' : 'neutral'} />
-            <Metric label="隐私阻断" value={formatInteger(value.privacyBlocks)} tone={value.privacyBlocks > 0 ? 'warning' : 'neutral'} />
-          </div>
-          <dl className="wpe-kv-grid">
-            <KeyValue label="主要 Provider" value={text(value.topProvider)} />
-            <KeyValue label="主要用途" value={text(value.topPurpose)} />
-            <KeyValue label="主要 Agent" value={text(value.topAgent)} />
-            <KeyValue label="主要工具" value={text(value.topTool)} />
-            <KeyValue label="离线完成" value={formatInteger(value.offlineCompletions)} />
-            <KeyValue label="回退次数" value={formatInteger(value.fallbacks)} />
-            <KeyValue label="最后调用" value={formatUtc(value.lastCallAtUtc)} title={value.lastCallAtUtc} />
-          </dl>
-        </>
-      )}
-    </CollectionGate>
-  )
-}
-
 function SkillsMonitoring({ runtime }: { runtime: WpeRuntimeState }) {
   const state = collectionState(runtime, 'skillCalls')
   const items = runtime.skillCalls ?? []
@@ -1333,12 +1299,11 @@ function MonitoringPage({ runtime }: { runtime: WpeRuntimeState }) {
   const [tab, setTab] = useState('runtime')
   return (
     <div className="wpe-page-stack">
-      <SectionTitle title="监控" description="运行时、连接、通知、AI 使用、内存和审计" />
+      <SectionTitle title="监控" description="运行时、连接、通知、技能调用和审计" />
       <Tabs value={tab} onChange={setTab} items={[
         { id: 'runtime', label: '运行状态' },
         { id: 'connection', label: '数据连接' },
         { id: 'notifications', label: '通知' },
-        { id: 'ai', label: 'AI 使用' },
         { id: 'skills', label: '技能调用' },
         { id: 'audit', label: '审计事件' },
         { id: 'plugins', label: '插件与能力' },
@@ -1351,7 +1316,6 @@ function MonitoringPage({ runtime }: { runtime: WpeRuntimeState }) {
           <Panel title="通知发件箱"><NotificationOutbox runtime={runtime} /></Panel>
         </div>
       )}
-      {tab === 'ai' && <Panel title="AI 使用与治理"><AiMonitoring runtime={runtime} /></Panel>}
       {tab === 'skills' && <Panel title="技能调用"><SkillsMonitoring runtime={runtime} /></Panel>}
       {tab === 'audit' && <Panel title="审计事件"><AuditMonitoring runtime={runtime} /></Panel>}
       {tab === 'plugins' && <Panel title="插件与能力"><PluginsMonitoring runtime={runtime} /></Panel>}
@@ -1417,7 +1381,6 @@ function SettingsPage({ runtime }: { runtime: WpeRuntimeState }) {
             <KeyValue label="环境" value={connection?.environment ? <Badge tone="info">{connection.environment}</Badge> : '未提供'} />
             <KeyValue label="连接就绪" value={booleanLabel(connection?.ready)} />
             <KeyValue label="交易权限" value={booleanLabel(connection?.tradePermission, '已授予', '未授予')} />
-            <KeyValue label="远程 AI" value={booleanLabel(runtime.llmGovernance?.value?.remoteAllowed, '允许', '不允许')} />
             <KeyValue label="本地运行模式" value={text(runtime.aiRuntimeEffectiveMode ?? runtime.aiRuntimeMode)} />
           </dl>
         </Panel>
