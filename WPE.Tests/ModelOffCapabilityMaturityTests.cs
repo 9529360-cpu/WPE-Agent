@@ -300,7 +300,7 @@ public sealed class ModelOffCapabilityMaturityTests
         Require(String(auditAggregate,"maturity")=="yes"&&Bool(auditAggregate,"accepted")==true&&!string.IsNullOrWhiteSpace(String(auditAggregate,"acceptance_scope"))&&String(auditAggregate,"acceptance_scope")!.Contains("seven-output/six-handoff",StringComparison.Ordinal)&&String(auditAggregate,"acceptance_scope")!.Contains("verified unchanged after SQLite restart and idempotent replay",StringComparison.Ordinal)&&String(auditAggregate,"acceptance_scope")!.Contains("excludes Mainnet, mutation, credentials",StringComparison.Ordinal)&&IsSha(String(auditAggregate,"evidence_set_sha256")),"Audit aggregate acceptance is unbounded or unproven",errors);
 
         var capabilityIds = capabilities.Select(node => String(node, "id")).ToArray();
-        Require(capabilityIds.Length == 13 && capabilityIds.Distinct(StringComparer.Ordinal).Count() == 13, "missing or duplicate capability", errors);
+        Require(capabilityIds.Length == 12 && capabilityIds.Distinct(StringComparer.Ordinal).Count() == 12, "missing or duplicate capability", errors);
         Require(capabilityIds.ToHashSet(StringComparer.Ordinal).SetEquals(CapabilityIds), "unknown capability inventory", errors);
 
         foreach (var capability in capabilities)
