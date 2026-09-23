@@ -205,10 +205,7 @@ public sealed class PositionManagementSkill
             var risk=Math.Abs(position.EntryPrice-opening.StopLoss);
             if(risk<=0)continue;
             var favorable=(position.Side==PositionSide.Long?market.Price-position.EntryPrice:position.EntryPrice-market.Price)/risk;
-            var liquidationBuffer=position.EntryPrice>0&&position.LiquidationPrice>0
-                ?(double)(Math.Abs(market.Price-position.LiquidationPrice)/position.EntryPrice)
-                :1;
-            if(liquidationBuffer<.30)
+            if(LiquidationThreatensPlannedStop(position,opening,risk))
             {
                 var actionId=ActionId("LIQ",opening);
                 if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
@@ -281,6 +278,17 @@ public sealed class PositionManagementSkill
         if(localMatches.Length!=1||localMatches[0].Quantity<=0)return false;
         var tolerance=Math.Max(.00000001m,Math.Max(localMatches[0].Quantity,position.Quantity)*.000001m);
         return position.Quantity>0&&Math.Abs(localMatches[0].Quantity-position.Quantity)<=tolerance;
+    }
+
+    private static bool LiquidationThreatensPlannedStop(ManagedPosition position,ExecutionIntent opening,decimal initialRisk)
+    {
+        if(position.LiquidationPrice<=0||opening.StopLoss<=0||initialRisk<=0)return false;
+        // A trader plans to exit at the stop, not at an arbitrary percentage distance from liquidation.
+        // Require liquidation to remain at least 0.25R beyond the original protective stop.
+        var safetyDistance=initialRisk*.25m;
+        return position.Side==PositionSide.Long
+            ?position.LiquidationPrice>=opening.StopLoss-safetyDistance
+            :position.LiquidationPrice<=opening.StopLoss+safetyDistance;
     }
 
     private static decimal RoundProtectiveStop(decimal value,decimal tickSize,PositionSide side)
