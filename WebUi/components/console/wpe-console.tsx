@@ -32,7 +32,7 @@ const PAGE_META: Record<PageId, { title: string; description: string; glyph: str
   trading: { title: '交易', description: '持仓、订单、待审核事项与历史记录', glyph: '交' },
   research: { title: '策略与研究', description: '市场分析、回测与只读研究证据', glyph: '策' },
   risk: { title: '风险', description: '风险准备、熔断、暴露与授权状态', glyph: '风' },
-  monitoring: { title: '监控', description: '运行时、连接、通知、AI 使用和审计', glyph: '监' },
+  monitoring: { title: '监控', description: '运行时、连接、通知、技能调用和审计', glyph: '监' },
   settings: { title: '设置', description: '安全存储状态与宿主设置入口', glyph: '设' },
 }
 
