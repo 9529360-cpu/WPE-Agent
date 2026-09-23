@@ -1026,7 +1026,7 @@ public sealed partial class AgentSqliteStore
     public async Task RecordExecutionAsync(string cycle,ExecutionIntent intent,ExchangeOrder order,string strategyVersion,CancellationToken ct)
     {
         var price=order.AvgPrice>0?order.AvgPrice:intent.ExpectedPrice;var quantity=order.ExecutedQuantity>0?order.ExecutedQuantity:intent.Quantity;
-        var attribution=await ResolvePostTradeAttributionAsync(cycle,strategyVersion,ct);
+        var attribution=await ResolvePostTradeAttributionAsync(cycle,intent.Symbol,intent.Side.ToString(),intent.ClientOrderId,quantity,strategyVersion,ct);
         if(intent.ReduceOnly&&string.Equals(order.Status,"FILLED",StringComparison.OrdinalIgnoreCase)&&await AcceptIdenticalPostTradeReplayAsync(intent.ClientOrderId,cycle,intent.Symbol,intent.Side.ToString(),price,quantity,intent.ExpectedPrice,attribution.StrategyVersion,ct))return;
         await Exec("INSERT OR REPLACE INTO execution_events(cycle_id,client_order_id,symbol,side,action,reduce_only,quantity,avg_price,expected_price,status,occurred_at,exchange_updated_at) VALUES($c,$id,$s,$side,$a,$r,$q,$p,$expected,$st,$t,$exchange)",ct,("$c",cycle),("$id",intent.ClientOrderId),("$s",intent.Symbol),("$side",intent.Side.ToString()),("$a",intent.Action.ToString()),("$r",intent.ReduceOnly?1:0),("$q",quantity.ToString(CultureInfo.InvariantCulture)),("$p",price.ToString(CultureInfo.InvariantCulture)),("$expected",intent.ExpectedPrice.ToString(CultureInfo.InvariantCulture)),("$st",order.Status),("$t",_utcNow().ToUniversalTime().ToString("O",CultureInfo.InvariantCulture)),("$exchange",new DateTimeOffset(order.UpdatedAt.ToUniversalTime()).ToString("O",CultureInfo.InvariantCulture)));
         if(!intent.ReduceOnly||!string.Equals(order.Status,"FILLED",StringComparison.OrdinalIgnoreCase)||price<=0||quantity<=0)return;
@@ -1149,9 +1149,61 @@ public sealed partial class AgentSqliteStore
     {
         var rows=new List<PostTradeReviewV1>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,fees,fee_basis,fee_rate,entry_slippage_amount,exit_slippage_amount,total_slippage_amount,slippage_basis,funding_amount,funding_basis,net_pnl,return_pct,mae_return_pct,mfe_return_pct,excursion_basis,excursion_samples,exit_reason,closed_at,strategy_id,strategy_version,attribution_basis FROM trade_outcomes WHERE client_order_id IS NOT NULL ORDER BY closed_at DESC,id DESC LIMIT $limit";q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,100));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var net=Decimal(r.GetString(16));rows.Add(new("wpe.post-trade-review/1.5",r.GetString(0),r.GetString(1),r.GetString(2),r.GetString(3),Decimal(r.GetString(4)),Decimal(r.GetString(5)),Decimal(r.GetString(6)),Decimal(r.GetString(7)),r.GetString(8),Decimal(r.GetString(9)),Decimal(r.GetString(10)),Decimal(r.GetString(11)),Decimal(r.GetString(12)),r.GetString(13),Decimal(r.GetString(14)),r.GetString(15),net,Decimal(r.GetString(17)),Decimal(r.GetString(18)),Decimal(r.GetString(19)),r.GetString(20),r.GetInt32(21),r.GetString(22),net>0?"win":net<0?"loss":"flat",DateTimeOffset.Parse(r.GetString(23),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind),r.IsDBNull(24)?null:r.GetString(24),r.GetString(25),r.GetString(26)));}return rows;
     }
-    private async Task<(string? StrategyId,string StrategyVersion,string Basis)> ResolvePostTradeAttributionAsync(string cycle,string fallbackVersion,CancellationToken ct)
+    private async Task<(string? StrategyId,string StrategyVersion,string Basis)> ResolvePostTradeAttributionAsync(
+        string cycle,string symbol,string side,string closeClientOrderId,decimal closingQuantity,string fallbackVersion,CancellationToken ct)
     {
+        var opening=await ResolveOpeningTradeAttributionAsync(symbol,side,closeClientOrderId,closingQuantity,fallbackVersion,ct);
+        if(opening is not null)return opening.Value;
+
         var matches=new List<(string Id,string Version)>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT DISTINCT strategy_id,strategy_version FROM automatic_execution_queue WHERE correlation_id=$cycle";q.Parameters.AddWithValue("$cycle",cycle);await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))matches.Add((r.GetString(0),r.GetString(1)));return matches.Count switch{1=>(matches[0].Id,matches[0].Version,"automatic-artifact"),0=>(null,fallbackVersion,"legacy-version-only"),_=>(null,fallbackVersion,"conflicting-correlation")};
+    }
+
+    private async Task<(string? StrategyId,string StrategyVersion,string Basis)?> ResolveOpeningTradeAttributionAsync(
+        string symbol,string side,string closeClientOrderId,decimal closingQuantity,string fallbackVersion,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(symbol)||string.IsNullOrWhiteSpace(side)||string.IsNullOrWhiteSpace(closeClientOrderId)||closingQuantity<=0)return null;
+        var lots=new Dictionary<string,decimal>(StringComparer.Ordinal);decimal total=0;
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);
+        await using(var q=c.CreateCommand())
+        {
+            q.CommandText="SELECT cycle_id,reduce_only,quantity FROM execution_events WHERE symbol=$symbol AND side=$side AND client_order_id<>$close AND status IN ('FILLED','PARTIALLY_FILLED') ORDER BY id";
+            q.Parameters.AddWithValue("$symbol",symbol);q.Parameters.AddWithValue("$side",side);q.Parameters.AddWithValue("$close",closeClientOrderId);
+            await using var r=await q.ExecuteReaderAsync(ct);
+            while(await r.ReadAsync(ct))
+            {
+                var quantity=Decimal(r.GetString(2));if(quantity<=0)return null;
+                if(r.GetInt32(1)==0)
+                {
+                    var openingCycle=r.GetString(0);lots[openingCycle]=lots.GetValueOrDefault(openingCycle)+quantity;total+=quantity;continue;
+                }
+                if(quantity>total||total<=0)return null;
+                var remaining=total-quantity;
+                if(remaining<=0){lots.Clear();total=0;continue;}
+                var factor=remaining/total;
+                foreach(var key in lots.Keys.ToArray())lots[key]*=factor;
+                total=remaining;
+            }
+        }
+        if(total<closingQuantity||total<=0)return null;
+        var openingCycles=lots.Where(x=>x.Value>0).Select(x=>x.Key).Distinct(StringComparer.Ordinal).ToArray();
+        if(openingCycles.Length==0)return null;
+
+        var attributions=new List<(string Id,string Version)>();var missing=false;
+        foreach(var openingCycle in openingCycles)
+        {
+            var matches=new List<(string Id,string Version)>();
+            await using var q=c.CreateCommand();q.CommandText="SELECT DISTINCT strategy_id,strategy_version FROM automatic_execution_queue WHERE correlation_id=$cycle";q.Parameters.AddWithValue("$cycle",openingCycle);
+            await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))matches.Add((r.GetString(0),r.GetString(1)));
+            if(matches.Count==0){missing=true;continue;}
+            if(matches.Count!=1)return (null,fallbackVersion,"opening-attribution-conflicting");
+            attributions.Add(matches[0]);
+        }
+        if(attributions.Count==0)return null;
+        if(missing)return (null,fallbackVersion,"opening-attribution-incomplete");
+        var distinct=attributions.Distinct().ToArray();
+        return distinct.Length==1
+            ?(distinct[0].Id,distinct[0].Version,"opening-artifact")
+            :(null,fallbackVersion,"mixed-opening-artifacts");
     }
     private static async Task EnsureIdenticalTradeOutcomeAsync(SqliteConnection c,string clientOrderId,string cycle,string symbol,string side,decimal entry,decimal exit,decimal quantity,decimal fees,(decimal Entry,decimal Exit,decimal Total,string Basis) slippage,decimal closeExpectedPrice,(decimal Amount,string Basis) funding,decimal net,decimal returnPct,TradeExcursionSummary excursion,string exitReason,string strategyVersion,CancellationToken ct)
     {
