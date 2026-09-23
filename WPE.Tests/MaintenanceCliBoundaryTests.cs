@@ -21,6 +21,8 @@ public sealed class MaintenanceCliBoundaryTests
         Assert.True(argumentPreflight >= 0 && layoutConstruction > argumentPreflight);
         Assert.Contains("RequireFixedLocalDataRoot(parsed.Options, \"data-root\")", program, StringComparison.Ordinal);
         Assert.Contains("DataRootPathPolicy.TryNormalizeFixedLocalRoot", program, StringComparison.Ordinal);
+        var pathPolicy = File.ReadAllText(Path.Combine(root, "Services", "AppDataPaths.cs"));
+        Assert.Contains("FileAttributes.ReparsePoint", pathPolicy, StringComparison.Ordinal);
         Assert.Contains("RequireAbsolutePath(options, \"destination\")", program, StringComparison.Ordinal);
         Assert.Contains("RequireAbsolutePath(options, \"backup\")", program, StringComparison.Ordinal);
         Assert.Contains("DeleteDirectoryOrFail(staging)", program, StringComparison.Ordinal);

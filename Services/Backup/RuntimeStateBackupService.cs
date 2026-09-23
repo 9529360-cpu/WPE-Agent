@@ -70,13 +70,18 @@ public sealed class RuntimeStateBackupService
     {
         ArgumentNullException.ThrowIfNull(maintenanceLease);
         maintenanceLease.RequireExclusiveFor(_layout.RuntimeFile(DataRootMaintenanceLease.LeaseFileName));
-        // Exclusive maintenance owns the data root, so release any pooled SQLite handles\n        // retained by earlier same-process verification/setup before snapshotting files.\n        SqliteConnection.ClearAllPools();
+        // Exclusive maintenance owns the data root, so release any pooled SQLite handles
+        // retained by earlier same-process verification/setup before snapshotting files.
+        SqliteConnection.ClearAllPools();
         if (string.IsNullOrWhiteSpace(destinationRoot))
             throw new ArgumentException("Backup destination root is required.", nameof(destinationRoot));
         if (!_keyProtector.IsAvailable)
             throw new InvalidOperationException("The platform backup key protector is unavailable.");
 
         var destination = Path.GetFullPath(destinationRoot);
+        if (DataRootPathPolicy.ContainsExistingReparsePoint(destination))
+            throw new InvalidOperationException(
+                "Backup destination must not traverse symbolic links, junctions, or other reparse points.");
         var dataRoot = Path.GetFullPath(_layout.DataDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         var destinationWithSeparator = destination.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         if (destinationWithSeparator.StartsWith(dataRoot, StringComparison.OrdinalIgnoreCase))

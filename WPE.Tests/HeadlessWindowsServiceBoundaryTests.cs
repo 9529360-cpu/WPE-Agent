@@ -29,12 +29,38 @@ public sealed class HeadlessWindowsServiceBoundaryTests
         Assert.Contains("DataRootPathPolicy.TryNormalizeFixedLocalRoot",bootstrap,StringComparison.Ordinal);
         Assert.Contains("Path.IsPathFullyQualified",appDataPaths,StringComparison.Ordinal);
         Assert.Contains("DriveType.Fixed",appDataPaths,StringComparison.Ordinal);
+        Assert.Contains("FileAttributes.ReparsePoint",appDataPaths,StringComparison.Ordinal);
+        Assert.Contains("ContainsExistingReparsePoint",appDataPaths,StringComparison.Ordinal);
         Assert.Contains("candidate.StartsWith(@\"\\\\\"",appDataPaths,StringComparison.Ordinal);
 
         Assert.Contains("WindowsServiceHelpers.IsWindowsService()",worker,StringComparison.Ordinal);
-        Assert.Contains("Environment.ExitCode = exitCode;",worker,StringComparison.Ordinal);
-        Assert.Contains("Environment.Exit(exitCode);",worker,StringComparison.Ordinal);
-        Assert.Contains("applicationLifetime.StopApplication();",worker,StringComparison.Ordinal);
+        var exitCodeProjection=worker.IndexOf("Environment.ExitCode = exitCode;",StringComparison.Ordinal);
+        var stopApplication=worker.IndexOf("applicationLifetime.StopApplication();",StringComparison.Ordinal);
+        Assert.True(exitCodeProjection>=0&&stopApplication>exitCodeProjection);
+        Assert.DoesNotContain("Environment.Exit(",worker,StringComparison.Ordinal);
+        Assert.DoesNotContain("WindowsServiceHelpers",worker,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ServiceDeploymentPreflightRequiresVerifiedImmutablePackageTree()
+    {
+        var preflight=File.ReadAllText(Path.Combine(
+            Root(),"eng","ops","Test-HeadlessServiceDeployment.ps1"));
+
+        Assert.Contains("[string]$PackageVerificationPath",preflight,StringComparison.Ordinal);
+        Assert.Contains("[string]$ExpectedPackageVerificationHash",preflight,StringComparison.Ordinal);
+        Assert.Contains("wpe.headless-service-deployment-preflight/1.1",preflight,StringComparison.Ordinal);
+        Assert.Contains("package.verification-hash-mismatch",preflight,StringComparison.Ordinal);
+        Assert.Contains("candidate.package-tree-mismatch",preflight,StringComparison.Ordinal);
+        Assert.Contains("candidate.tree-reparse-forbidden",preflight,StringComparison.Ordinal);
+        Assert.Contains("packageVerificationSha256 = $verificationHash",preflight,StringComparison.Ordinal);
+        Assert.Contains("candidateTreeSha256 = $candidateTree.TreeSha256",preflight,StringComparison.Ordinal);
+
+        foreach(var forbidden in new[]{
+            "New-Service","Set-Service","Start-Service","Stop-Service","Restart-Service",
+            "sc.exe","Invoke-WebRequest","Invoke-RestMethod"
+        })
+            Assert.DoesNotContain(forbidden,preflight,StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

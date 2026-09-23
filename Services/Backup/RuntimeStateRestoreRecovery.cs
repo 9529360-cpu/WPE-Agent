@@ -62,7 +62,11 @@ public static class RuntimeStateRestoreRecovery
 
         if (Directory.Exists(rollback))
         {
-            if (Directory.Exists(data) && !Directory.Exists(failed))
+            if (Directory.Exists(data) && Directory.Exists(failed))
+                throw new InvalidDataException(
+                    "Interrupted runtime-state restore has ambiguous active, rollback, and failed generations.");
+
+            if (Directory.Exists(data))
                 Directory.Move(data, failed);
 
             if (!Directory.Exists(data))

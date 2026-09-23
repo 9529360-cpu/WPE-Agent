@@ -40,6 +40,7 @@ foreach($required in @(
     'Runtime bundle signature states must be all Valid or all NotSigned.',
     'Runtime bundle signer identity does not match the approved publisher.',
     'Runtime bundle signing attestation is missing.',
+    'Runtime bundle signing attestation must use SHA-256.',
     'SIGNING-RESULT.p7s'
 )){
     if($package.IndexOf($required,[StringComparison]::Ordinal) -lt 0){throw "package.contract-missing:$required"}
@@ -57,6 +58,7 @@ foreach($required in @(
     'Runtime package executable timestamp is missing',
     'Signed runtime bundle verification requires the approved signer subject and thumbprint.',
     'Signing transition signature hash mismatch.',
+    'Runtime bundle signing attestation must use SHA-256.',
     'Unsigned runtime bundle must not contain a signing transition signature.'
 )){
     if($verify.IndexOf($required,[StringComparison]::Ordinal) -lt 0){throw "verify.contract-missing:$required"}
@@ -65,6 +67,7 @@ foreach($required in @(
     'wpe.runtime-bundle-signing/1.1',
     'cms-detached-sha256',
     'Write-AndVerifyDetachedAttestation',
+    'Runtime bundle signing attestation must use SHA-256.',
     'Signing staging does not match release-readiness artifact',
     'Authenticode timestamp is missing',
     'Signing and verification passed for $($executables.Count) runtime executable(s).'

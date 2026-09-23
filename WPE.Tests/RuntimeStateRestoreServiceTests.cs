@@ -67,6 +67,47 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RestoreSourceThroughReparsePointFailsBeforeLeaseOrMutation()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var source = Layout("reparse-source");
+        var target = Layout("reparse-target");
+        await CreateDatabase(source.DataFile("agent.db"), "new");
+        await CreateDatabase(target.DataFile("agent.db"), "old");
+        var backup = await Backup(source).CreateAsync(Path.Combine(_root, "reparse-backups"));
+        var link = Path.Combine(_root, "backup-link");
+
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(link, backup.Directory);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException or
+                IOException or
+                PlatformNotSupportedException)
+            {
+                return;
+            }
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                Restore(target).RestoreAsync(link));
+
+            Assert.Contains("reparse", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("old", await ReadDatabase(target.DataFile("agent.db")));
+            Assert.False(File.Exists(target.RuntimeFile(RuntimeStateRestoreRecovery.JournalFileName)));
+            Assert.Empty(Directory.EnumerateDirectories(target.BackupsDirectory));
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+                Directory.Delete(link);
+        }
+    }
+
+    [Fact]
     public async Task RestoreCommitsSecurityStorageEvidenceBeforeGenerationCommit()
     {
         var source = Layout("security-source");
@@ -192,6 +233,34 @@ public sealed class RuntimeStateRestoreServiceTests : IDisposable
         Assert.Equal("committed-new", await ReadDatabase(target.DataFile("agent.db")));
         Assert.False(Directory.Exists(committedRollback));
         Assert.False(File.Exists(target.RuntimeFile(RuntimeStateRestoreRecovery.JournalFileName)));
+    }
+
+    [Fact]
+    public async Task StartupRecoveryRejectsAmbiguousThreeGenerationStateWithoutDeletingEvidence()
+    {
+        var target = Layout("ambiguous-recovery-target");
+        await CreateDatabase(target.DataFile("agent.db"), "uncommitted-new");
+        var restoreId = "restore" + Guid.NewGuid().ToString("N");
+        var rollback = RuntimeStateRestoreRecovery.RollbackDirectory(target, restoreId);
+        var failed = RuntimeStateRestoreRecovery.FailedDirectory(target, restoreId);
+
+        Directory.CreateDirectory(rollback);
+        await CreateDatabase(Path.Combine(rollback, "agent.db"), "old");
+        Directory.CreateDirectory(failed);
+        await CreateDatabase(Path.Combine(failed, "agent.db"), "failed-other");
+        RuntimeStateRestoreRecovery.WriteJournal(
+            target,
+            Journal(restoreId, RuntimeStateRestorePhase.RestoredActivated),
+            _protector);
+
+        var error = Assert.Throws<InvalidDataException>(() =>
+            RuntimeStateRestoreRecovery.RecoverIfNeeded(target, _protector));
+
+        Assert.Contains("ambiguous", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("uncommitted-new", await ReadDatabase(target.DataFile("agent.db")));
+        Assert.Equal("old", await ReadDatabase(Path.Combine(rollback, "agent.db")));
+        Assert.Equal("failed-other", await ReadDatabase(Path.Combine(failed, "agent.db")));
+        Assert.True(File.Exists(target.RuntimeFile(RuntimeStateRestoreRecovery.JournalFileName)));
     }
 
     [Fact]

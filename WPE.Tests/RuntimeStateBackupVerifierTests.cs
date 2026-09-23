@@ -98,6 +98,77 @@ public sealed class RuntimeStateBackupVerifierTests : IDisposable
     }
 
     [Fact]
+    public async Task BackupRootAndInternalReparsePointsFailBeforeStaging()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var backup = await Backup().CreateAsync(Path.Combine(_root, "backups"));
+        var linkedRoot = Path.Combine(_root, "backup-link");
+        var externalTarget = Path.Combine(_root, "external-link-target");
+        Directory.CreateDirectory(externalTarget);
+
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(linkedRoot, backup.Directory);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException or
+                IOException or
+                PlatformNotSupportedException)
+            {
+                return;
+            }
+
+            var rootStage = Path.Combine(_root, "staging-linked-root");
+            var rootError = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Verifier(_protector).VerifyToStagingAsync(linkedRoot, rootStage));
+            Assert.Contains("reparse", rootError.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(Directory.Exists(rootStage));
+
+            Directory.Delete(linkedRoot);
+            var internalLink = Path.Combine(backup.Directory, "linked-extra");
+            Directory.CreateSymbolicLink(internalLink, externalTarget);
+            try
+            {
+                var internalStage = Path.Combine(_root, "staging-linked-entry");
+                var internalError = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                    Verifier(_protector).VerifyToStagingAsync(backup.Directory, internalStage));
+                Assert.Contains("reparse", internalError.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.False(Directory.Exists(internalStage));
+            }
+            finally
+            {
+                if (Directory.Exists(internalLink))
+                    Directory.Delete(internalLink);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(linkedRoot))
+                Directory.Delete(linkedRoot);
+            if (Directory.Exists(externalTarget))
+                Directory.Delete(externalTarget, true);
+        }
+    }
+
+    [Fact]
+    public async Task ProductVersionMismatchFailsBeforeStaging()
+    {
+        await CreateDatabase(_layout.DataFile("agent.db"));
+        var backup = await Backup().CreateAsync(Path.Combine(_root, "backups"));
+        var staging = Path.Combine(_root, "staging-version");
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            Verifier(_protector, productVersion: "3.7.0-test")
+                .VerifyToStagingAsync(backup.Directory, staging));
+
+        Assert.Contains("product version", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(staging));
+    }
+
+    [Fact]
     public async Task UnmanifestedBackupFileFailsClosed()
     {
         await CreateDatabase(_layout.DataFile("agent.db"));
@@ -117,8 +188,9 @@ public sealed class RuntimeStateBackupVerifierTests : IDisposable
 
     private RuntimeStateBackupVerifier Verifier(
         IPlatformKeyProtector protector,
-        string deviceCode = "DEVICE-TEST") =>
-        new(protector, () => Now.AddMinutes(1), () => deviceCode, "3.6.0-test");
+        string deviceCode = "DEVICE-TEST",
+        string productVersion = "3.6.0-test") =>
+        new(protector, () => Now.AddMinutes(1), () => deviceCode, productVersion);
 
     private static async Task CreateDatabase(string path)
     {

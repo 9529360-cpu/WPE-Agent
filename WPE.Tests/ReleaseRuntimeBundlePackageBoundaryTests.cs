@@ -68,6 +68,7 @@ public sealed class ReleaseRuntimeBundlePackageBoundaryTests
         Assert.Contains("Signed runtime bundle verification requires the approved signer subject and thumbprint.",source,StringComparison.Ordinal);
         Assert.Contains("Unsigned runtime bundle must not contain a signing transition result.",source,StringComparison.Ordinal);
         Assert.Contains("Runtime bundle signing attestation signature is invalid.",source,StringComparison.Ordinal);
+        Assert.Contains("Runtime bundle signing attestation must use SHA-256.",source,StringComparison.Ordinal);
         Assert.Contains("Runtime bundle signing attestation identity does not match the approved publisher.",source,StringComparison.Ordinal);
         Assert.Contains("Signing transition signature hash mismatch.",source,StringComparison.Ordinal);
         Assert.Contains("Unsigned runtime bundle must not contain a signing transition signature.",source,StringComparison.Ordinal);

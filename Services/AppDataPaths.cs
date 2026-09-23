@@ -8,7 +8,7 @@ public sealed class AppDataLayout
     public AppDataLayout(string rootDirectory)
     {
         if (string.IsNullOrWhiteSpace(rootDirectory)) throw new ArgumentException("Application data root is required.", nameof(rootDirectory));
-        RootDirectory = Path.GetFullPath(rootDirectory);
+        RootDirectory = Ensure(rootDirectory);
         DataDirectory = Ensure(Path.Combine(RootDirectory, "Data"));
         LogsDirectory = Ensure(Path.Combine(RootDirectory, "Logs"));
         BackupsDirectory = Ensure(Path.Combine(RootDirectory, "Backups"));
@@ -44,7 +44,15 @@ public sealed class AppDataLayout
         return resolved;
     }
 
-    private static string Ensure(string path) { Directory.CreateDirectory(path); return Path.GetFullPath(path); }
+    private static string Ensure(string path)
+    {
+        Directory.CreateDirectory(path);
+        var full = Path.GetFullPath(path);
+        if (DataRootPathPolicy.ContainsExistingReparsePoint(full))
+            throw new InvalidOperationException(
+                "Application data directories must not traverse symbolic links, junctions, or other reparse points.");
+        return full;
+    }
 }
 
 public static class DataRootPathPolicy
@@ -74,6 +82,8 @@ public static class DataRootPathPolicy
             if (OperatingSystem.IsWindows() &&
                 new DriveInfo(root).DriveType != DriveType.Fixed)
                 return false;
+            if (ContainsExistingReparsePoint(full))
+                return false;
 
             normalized = string.Equals(
                 full,
@@ -94,6 +104,26 @@ public static class DataRootPathPolicy
         {
             return false;
         }
+    }
+
+    internal static bool ContainsExistingReparsePoint(string full)
+    {
+        var current = Path.TrimEndingDirectorySeparator(Path.GetFullPath(full));
+
+        while (!string.IsNullOrWhiteSpace(current))
+        {
+            if ((Directory.Exists(current) || File.Exists(current)) &&
+                (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                return true;
+
+            var parent = Directory.GetParent(current)?.FullName;
+            if (string.IsNullOrWhiteSpace(parent) ||
+                string.Equals(parent, current, StringComparison.OrdinalIgnoreCase))
+                break;
+            current = Path.TrimEndingDirectorySeparator(parent);
+        }
+
+        return false;
     }
 }
 

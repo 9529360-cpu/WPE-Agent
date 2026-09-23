@@ -19,6 +19,8 @@ public sealed class ReleaseRuntimeBundleSigningBoundaryTests
         Assert.Contains("Authenticode timestamp is missing",source,StringComparison.Ordinal);
         Assert.Contains("Signing and verification passed for $($executables.Count) runtime executable(s).",source,StringComparison.Ordinal);
         Assert.Contains("wpe.runtime-bundle-signing/1.1",source,StringComparison.Ordinal);
+        Assert.Contains("Runtime bundle signing attestation must use SHA-256.",source,StringComparison.Ordinal);
+        Assert.Contains("2.16.840.1.101.3.4.2.1",source,StringComparison.Ordinal);
         Assert.Contains("readinessReportSha256 = $readinessHash",source,StringComparison.Ordinal);
         Assert.Contains("inputTreeSha256 = $before.Facts.TreeSha256",source,StringComparison.Ordinal);
         Assert.Contains("outputTreeSha256 = $after.TreeSha256",source,StringComparison.Ordinal);
