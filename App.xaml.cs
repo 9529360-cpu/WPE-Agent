@@ -244,7 +244,6 @@ public partial class App : global::System.Windows.Application
             var bootstrapSettings = store.Load();
             bootstrapSettings.Environment = ExchangeEnvironment.Testnet;
             bootstrapSettings.EnvironmentMode = "FuturesTestnet";
-            bootstrapSettings.AiMode = global::币安量化机器人.Core.Models.AiRuntimeMode.LocalOnly;
             bootstrapSettings.ActiveUser = "LOCAL-" + DeviceLicenseService.GetCurrentDeviceCode();
             bootstrapSettings.Symbols = ["BTCUSDT"];
             bootstrapSettings.MainnetTradingConfirmed = false;

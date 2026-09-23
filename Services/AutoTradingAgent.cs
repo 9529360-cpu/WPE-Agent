@@ -116,8 +116,8 @@ public static class AutoTradingAgent
         var automaticValidator=new ProductionAutomaticExecutionValidator(SettingsStore,exchangeProfile,exchange,capabilitySnapshot,()=>ReferenceEquals(_activeExchange,exchange)&&string.Equals(_activeRuntimeSessionId,runtime.RunId,StringComparison.Ordinal),RefreshCapabilitySnapshot);
         var automaticWorker=new AutomaticExecutionWorker(new AutomaticExecutionProcessor(Db,automaticValidator,automaticGateway));Task? automaticWorkerTask=null;Task? tradingObservationTask=null;string? automaticMaintenanceOwnedMessage=null;
         var interruptedWorkflows=await Db.GetInterruptedWorkflowsAsync(ct);var startupWorkflowRecoveryPending=interruptedWorkflows.Count>0;var startupWorkflowMetadataOnly=interruptedWorkflows.All(x=>x.LastNode is not WorkflowNode.Execution and not WorkflowNode.SafetyExecution);var startupRecovery=executionGateway.AssessUnverifiedAutomaticMutation(AutomaticMutationPath.StartupRecovery,interruptedWorkflows.Count);if(!startupRecovery.SafeToIncreaseRisk)await Db.SetStateAsync("authorization.startup-recovery",startupRecovery.Code,ct);
-        var runtimeMode=RuntimeModePolicy.Resolve(settings);var localBrain=AssistantProviderFactory.CreateLocal();IAssistantProvider brain=localBrain;
-        ServiceLocator.SystemState.Mode=TradingMode.Testnet;var runtimeState=ServiceLocator.SystemState;ApplyRuntimeModeState(runtimeState,runtimeMode,brain);runtimeState.ExchangeConnected=true;runtimeState.ApiTradePermission=exchangeProfile.TradePermission;Set(AgentStatus.Running,L("Agent.Started",exchangeProfile.DisplayName,brain.Name));var startupHealth=await brain.HealthCheckAsync(ct);runtimeState.BrainConnected=startupHealth.Healthy;if(!startupHealth.Healthy)throw new InvalidOperationException(L("Agent.BrainFailure",startupHealth.Message));Stage("Stage.HistoricalSync","OBSERVATION",12);
+        var localBrain=AssistantProviderFactory.CreateLocal();IAssistantProvider brain=localBrain;
+        ServiceLocator.SystemState.Mode=TradingMode.Testnet;var runtimeState=ServiceLocator.SystemState;ApplyLocalBrainState(runtimeState,brain);runtimeState.ExchangeConnected=true;runtimeState.ApiTradePermission=exchangeProfile.TradePermission;Set(AgentStatus.Running,L("Agent.Started",exchangeProfile.DisplayName,brain.Name));var startupHealth=await brain.HealthCheckAsync(ct);runtimeState.BrainConnected=startupHealth.Healthy;if(!startupHealth.Healthy)throw new InvalidOperationException(L("Agent.BrainFailure",startupHealth.Message));Stage("Stage.HistoricalSync","OBSERVATION",12);
         try{var sync=await SkillAsync("HistoricalData",string.Join(',',settings.Symbols),token=>historicalData.SyncAsync(settings.Symbols,"1h",3,token),x=>string.Join(" | ",x.Select(s=>$"{s.Symbol}:{s.Stored}/{s.CoverageDays}d")),ct);ServiceLocator.SystemState.HistoricalCoverageDays=sync.Count==0?0:sync.Min(x=>x.CoverageDays);}
         catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
         catch(Exception ex){await Db.RecordErrorAsync("HistoricalData",ex,CancellationToken.None);ServiceLocator.SystemState.HistoricalCoverageDays=0;ServiceLocator.SystemState.LastMessage=L("Agent.CycleDegraded",ex.Message);}
@@ -486,14 +486,12 @@ private static void UpdatePortfolioRiskUi(PortfolioRiskAssessment risk,IRealtime
     private static void ApplyRuntimeHealth(RuntimeHealth health){var state=ServiceLocator.SystemState;state.RuntimeRunId=health.RunId;state.RuntimeHeartbeatAtUtc=health.HeartbeatAtUtc;state.RuntimeRecoveryStatus=health.RecoveryStatus;state.RuntimeEventSequence=health.EventSequence;state.LastUpdated=health.HeartbeatAtUtc;AgentRoleRuntimeRegistry.Shared.Publish("audit",health.RecoveryStatus=="LEASE_LOST"?"degraded":"monitoring",health.RecoveryStatus=="LEASE_LOST"?"Runtime audit lease was lost; persisted health is no longer authoritative.":"Runtime lease and append-only audit heartbeat are active.",health.HeartbeatAtUtc);StateChanged?.Invoke();}
 
     private static void Stage(string key,string node,int progress){var state=ServiceLocator.SystemState;state.SkillStageKey=key;state.SkillStage=L(key);state.WorkflowNode=node;state.ThinkingProgress=progress;state.LastUpdated=DateTime.UtcNow;StateChanged?.Invoke();}
-    private static void ApplyRuntimeModeState(SystemState state,RuntimeModeResolution runtimeMode,IAssistantProvider brain)
+    private static void ApplyLocalBrainState(SystemState state,IAssistantProvider brain)
     {
-        state.BrainMode=runtimeMode.RequestedMode;
+        state.BrainMode=AiRuntimeMode.LocalOnly;
         state.BrainEffectiveMode=AiRuntimeMode.LocalOnly;
         state.BrainRemoteAllowed=false;
-        state.BrainFallbackReason=runtimeMode.AllowRemoteBrain
-            ?"Automatic trading planner is local-only; configured remote Brain remains outside the trading execution path."
-            :runtimeMode.FallbackReason;
+        state.BrainFallbackReason="Local deterministic trading brain";
         state.BrainName=brain.Name;
         state.ActiveBrainProvider=brain.Name;
         state.ActiveBrainModel="local-deterministic";

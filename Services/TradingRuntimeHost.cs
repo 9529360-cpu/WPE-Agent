@@ -177,15 +177,8 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
         settings.ActiveUser = userName;
         _settingsStore.Save(settings);
 
-        var runtimeMode = RuntimeModePolicy.Resolve(settings);
         var state = ServiceLocator.SystemState;
-        state.BrainMode = runtimeMode.RequestedMode;
-        state.BrainEffectiveMode = runtimeMode.EffectiveMode;
-        state.BrainRemoteAllowed = runtimeMode.AllowRemoteBrain;
-        state.BrainFallbackReason = runtimeMode.FallbackReason;
-        state.ActiveBrainProvider = runtimeMode.ProviderName;
-        state.ActiveBrainModel = runtimeMode.ModelName;
-        state.BrainName = runtimeMode.EffectiveMode == AiRuntimeMode.LocalOnly ? "WPE Local Brain" : runtimeMode.ProviderName;
+        ApplyLocalBrainState(state);
         state.LoggedInUser = userName;
         state.LastUpdated = DateTime.UtcNow;
     }
@@ -288,20 +281,24 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
     {
         ServiceLocator.RuntimeConnection.Publish(report, settings);
         var state = ServiceLocator.SystemState;
-        var runtimeMode = RuntimeModePolicy.Resolve(settings);
         state.ExchangeConnected = report.Checks.Any(x => x.Key == "exchange" && x.Passed);
         state.BrainConnected = report.Checks.Any(x => x.Key == "brain" && x.Passed);
         state.ApiTradePermission = report.Checks.Any(x => x.Key == "trade_permission" && x.Passed);
         state.RiskReady = report.Checks.Any(x => x.Key == "risk" && x.Passed);
-        state.BrainMode = runtimeMode.RequestedMode;
-        state.BrainEffectiveMode = runtimeMode.EffectiveMode;
-        state.BrainRemoteAllowed = runtimeMode.AllowRemoteBrain;
-        state.BrainFallbackReason = runtimeMode.FallbackReason;
-        state.ActiveBrainProvider = runtimeMode.ProviderName;
-        state.ActiveBrainModel = runtimeMode.ModelName;
-        state.BrainName = runtimeMode.EffectiveMode == AiRuntimeMode.LocalOnly ? "WPE Local Brain" : runtimeMode.ProviderName;
+        ApplyLocalBrainState(state);
         state.LastAccessCheckAtUtc = report.CheckedAtUtc;
         state.LoggedInUser = settings.ActiveUser;
+    }
+
+    private static void ApplyLocalBrainState(SystemState state)
+    {
+        state.BrainMode=AiRuntimeMode.LocalOnly;
+        state.BrainEffectiveMode=AiRuntimeMode.LocalOnly;
+        state.BrainRemoteAllowed=false;
+        state.BrainFallbackReason="Local deterministic trading brain";
+        state.ActiveBrainProvider="WPE Local Brain";
+        state.ActiveBrainModel="local-deterministic";
+        state.BrainName="WPE Local Brain";
     }
 
     private void ThrowIfDisposed()

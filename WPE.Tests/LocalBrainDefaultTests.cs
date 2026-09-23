@@ -1,4 +1,3 @@
-using 币安量化机器人.Core.Models;
 using 币安量化机器人.Services.Agent;
 
 namespace WPE.Tests;
@@ -6,12 +5,15 @@ namespace WPE.Tests;
 public sealed class LocalBrainDefaultTests
 {
     [Fact]
-    public void NewAgentSettingsDefaultToLocalDeterministicBrain()
+    public void LocalDeterministicBrainIsTheOnlyAssistantFactory()
     {
-        var settings=new AgentSettings();
+        var brain=AssistantProviderFactory.CreateLocal();
 
-        Assert.Equal(AiRuntimeMode.LocalOnly,settings.AiMode);
-        Assert.Equal("WPE Local Brain",settings.ActiveBrain);
+        Assert.IsType<DeterministicBrainProvider>(brain);
+        Assert.True(brain.IsLocal);
+        Assert.Equal("WPE Local Brain",brain.Name);
+        Assert.Single(AssistantAdapterCatalog.All);
+        Assert.Equal("local-deterministic",AssistantAdapterCatalog.All[0].Id);
     }
 
     [Fact]
