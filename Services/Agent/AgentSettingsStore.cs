@@ -172,6 +172,7 @@ public sealed class AgentSettingsStore
             ?profile.ProviderId.ToLowerInvariant() switch
             {
                 "binance-futures"=>"testnet.binancefuture.com",
+                "binance-mcp-local"=>"testnet.binancefuture.com",
                 "okx"=>"www.okx.com",
                 "okx-mcp"=>"www.okx.com",
                 "bybit"=>"api-testnet.bybit.com",
@@ -262,9 +263,88 @@ public sealed class AgentSettingsStore
     private static string SafeEndpoint(string? value,string fallback)=>Uri.TryCreate(value,UriKind.Absolute,out var uri)&&uri.Scheme==Uri.UriSchemeHttps?uri.ToString().TrimEnd('/'):fallback;
     private static void EnsureExchangeProfiles(AgentSettings settings)
     {
-        settings.Exchanges??=[];foreach(var profile in settings.Exchanges){profile.EncryptedCredentials??=new(StringComparer.OrdinalIgnoreCase);profile.SymbolMappings??=new(StringComparer.OrdinalIgnoreCase);profile.TimeoutSeconds=Math.Clamp(profile.TimeoutSeconds,5,120);profile.ReceiveWindow=Math.Clamp(profile.ReceiveWindow,1000,60000);}
-        if(settings.Exchanges.Count==0){var profile=new ExchangeConnectionProfile{Id="binance-testnet-default",ProviderId="binance-futures",DisplayName="Binance Futures Testnet",IsTestnet=true,Endpoint=settings.Testnet.ApiBaseUrl,UseProxy=settings.Testnet.UseProxy,ProxyUrl=settings.Testnet.ProxyUrl,ReceiveWindow=settings.Testnet.ReceiveWindow,TimeoutSeconds=settings.Testnet.TimeoutSeconds,LastVerifiedAtUtc=settings.Testnet.LastVerifiedAtUtc,ReadPermission=settings.Testnet.ReadPermission,TradePermission=settings.Testnet.TradePermission,WithdrawPermission=settings.Testnet.WithdrawPermission,AccountId=settings.Testnet.AccountId,EncryptedCredentials=new(StringComparer.OrdinalIgnoreCase){{"apiKey",settings.Testnet.EncryptedApiKey},{"secret",settings.Testnet.EncryptedApiSecret}}};settings.Exchanges.Add(profile);settings.ActiveExecutionConnectionId=profile.Id;}
-        if(string.IsNullOrWhiteSpace(settings.ActiveExecutionConnectionId)||settings.Exchanges.All(x=>!x.Id.Equals(settings.ActiveExecutionConnectionId,StringComparison.OrdinalIgnoreCase)))settings.ActiveExecutionConnectionId=settings.Exchanges.First().Id;
+        settings.Exchanges??=[];
+        foreach(var profile in settings.Exchanges)
+        {
+            profile.EncryptedCredentials??=new(StringComparer.OrdinalIgnoreCase);
+            profile.SymbolMappings??=new(StringComparer.OrdinalIgnoreCase);
+            profile.TimeoutSeconds=Math.Clamp(profile.TimeoutSeconds,5,120);
+            profile.ReceiveWindow=Math.Clamp(profile.ReceiveWindow,1000,60000);
+        }
+
+        if(settings.Exchanges.Count==0)
+        {
+            var profile=new ExchangeConnectionProfile
+            {
+                Id="binance-testnet-default",
+                ProviderId="binance-futures",
+                DisplayName="Binance Futures Testnet",
+                IsTestnet=true,
+                Endpoint=settings.Testnet.ApiBaseUrl,
+                UseProxy=settings.Testnet.UseProxy,
+                ProxyUrl=settings.Testnet.ProxyUrl,
+                ReceiveWindow=settings.Testnet.ReceiveWindow,
+                TimeoutSeconds=settings.Testnet.TimeoutSeconds,
+                LastVerifiedAtUtc=settings.Testnet.LastVerifiedAtUtc,
+                ReadPermission=settings.Testnet.ReadPermission,
+                TradePermission=settings.Testnet.TradePermission,
+                WithdrawPermission=settings.Testnet.WithdrawPermission,
+                AccountId=settings.Testnet.AccountId,
+                EncryptedCredentials=new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["apiKey"]=settings.Testnet.EncryptedApiKey,
+                    ["secret"]=settings.Testnet.EncryptedApiSecret
+                }
+            };
+            settings.Exchanges.Add(profile);
+            settings.ActiveExecutionConnectionId=profile.Id;
+        }
+
+        var nativeCandidates=settings.Exchanges
+            .Where(profile=>
+                profile.Enabled&&
+                profile.IsTestnet&&
+                profile.ProviderId.Equals("binance-futures",StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var upstream=nativeCandidates.FirstOrDefault(profile=>
+            profile.Id.Equals(settings.ActiveExecutionConnectionId,StringComparison.OrdinalIgnoreCase));
+        if(upstream is null&&nativeCandidates.Length==1)upstream=nativeCandidates[0];
+
+        var localMcp=settings.Exchanges.FirstOrDefault(profile=>
+            profile.ProviderId.Equals("binance-mcp-local",StringComparison.OrdinalIgnoreCase));
+        if(localMcp is null&&upstream is not null)
+        {
+            localMcp=new ExchangeConnectionProfile
+            {
+                Id="binance-mcp-testnet-default",
+                ProviderId="binance-mcp-local",
+                DisplayName="Binance Futures Testnet MCP",
+                Enabled=true,
+                ExecutionEnabled=false,
+                IsTestnet=true,
+                Endpoint=upstream.Endpoint,
+                UseProxy=upstream.UseProxy,
+                ProxyUrl=upstream.ProxyUrl,
+                ReceiveWindow=upstream.ReceiveWindow,
+                TimeoutSeconds=upstream.TimeoutSeconds,
+                UpstreamConnectionId=upstream.Id,
+                EncryptedCredentials=new(StringComparer.OrdinalIgnoreCase),
+                SymbolMappings=new(StringComparer.OrdinalIgnoreCase)
+            };
+            settings.Exchanges.Add(localMcp);
+        }
+        else if(localMcp is not null&&
+                string.IsNullOrWhiteSpace(localMcp.UpstreamConnectionId)&&
+                upstream is not null&&
+                !localMcp.Id.Equals(upstream.Id,StringComparison.OrdinalIgnoreCase))
+        {
+            localMcp.UpstreamConnectionId=upstream.Id;
+        }
+
+        if(string.IsNullOrWhiteSpace(settings.ActiveExecutionConnectionId)||
+           settings.Exchanges.All(profile=>
+               !profile.Id.Equals(settings.ActiveExecutionConnectionId,StringComparison.OrdinalIgnoreCase)))
+            settings.ActiveExecutionConnectionId=settings.Exchanges.First().Id;
     }
     private static AgentSettings Defaults() => new() { Brains = new(StringComparer.OrdinalIgnoreCase) { ["WPE Local Brain"] = new BrainSlot() } };
 }

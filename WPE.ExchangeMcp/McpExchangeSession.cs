@@ -94,6 +94,7 @@ public sealed class McpExchangeSession : IAsyncDisposable
         Forward(environment,"WPE_OKX_PASSPHRASE","OKX_PASSPHRASE");
         Forward(environment,"WPE_OKX_API_BASE_URL","OKX_API_BASE_URL");
         Forward(environment,"WPE_BINANCE_MCP_ALLOW_WRITE","WPE_BINANCE_MCP_ALLOW_WRITE");
+        Forward(environment,"WPE_BINANCE_MCP_PROFILE_ID","WPE_BINANCE_MCP_PROFILE_ID");
         Forward(environment,"HTTP_PROXY","HTTP_PROXY");
         Forward(environment,"HTTPS_PROXY","HTTPS_PROXY");
         Forward(environment,"NO_PROXY","NO_PROXY");

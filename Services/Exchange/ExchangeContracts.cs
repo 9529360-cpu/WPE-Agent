@@ -29,6 +29,7 @@ public sealed class ExchangeConnectionProfile
     public int ReceiveWindow { get; set; }=5000;
     public int TimeoutSeconds { get; set; }=20;
     public string SubAccount { get; set; }=string.Empty;
+    public string UpstreamConnectionId { get; set; }=string.Empty;
     public Dictionary<string,string> EncryptedCredentials { get; set; }=new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string,string> SymbolMappings { get; set; }=new(StringComparer.OrdinalIgnoreCase);
     public DateTime? LastVerifiedAtUtc { get; set; }

@@ -1,3 +1,4 @@
+using 币安量化机器人.Services.Exchange;
 using 币安量化机器人.Services.Exchange.Mcp;
 
 namespace WPE.Tests;
@@ -43,7 +44,7 @@ public sealed class OfficialExchangeMcpBridgeSmokeTests
             StringComparison.Ordinal))
             return;
 
-        await using var client=OfficialExchangeMcpClientFactory.CreateBinanceLocalTestnet();
+        await using var client=OfficialExchangeMcpClientFactory.CreateBinanceLocalTestnet("binance-testnet-default");
 
         var tools=await client.ListToolsAsync(CancellationToken.None);
 
@@ -63,5 +64,40 @@ public sealed class OfficialExchangeMcpBridgeSmokeTests
         Assert.Equal("Testnet",document.RootElement.GetProperty("environment").GetString());
         Assert.True(document.RootElement.GetProperty("readOnly").GetBoolean());
         Assert.True(document.RootElement.GetProperty("health").GetProperty("healthy").GetBoolean());
+    }
+
+    [Fact]
+    public async Task BinanceLocalProviderCatalogTraversesMcpToNativeTestnet()
+    {
+        if(!string.Equals(
+            Environment.GetEnvironmentVariable("WPE_RUN_BINANCE_LOCAL_MCP_SMOKE"),
+            "1",
+            StringComparison.Ordinal))
+            return;
+
+        var profile=new ExchangeConnectionProfile
+        {
+            Id="binance-mcp-smoke",
+            ProviderId="binance-mcp-local",
+            DisplayName="Binance Futures Testnet MCP Smoke",
+            IsTestnet=true,
+            Enabled=true,
+            ExecutionEnabled=false,
+            Endpoint="https://testnet.binancefuture.com",
+            UpstreamConnectionId="binance-testnet-default"
+        };
+
+        await using var provider=new ExchangeProviderCatalog().Create(
+            profile,
+            new Dictionary<string,string>());
+
+        var health=await provider.HealthCheckAsync(CancellationToken.None);
+        var rules=await provider.GetRulesAsync("BTCUSDT",CancellationToken.None);
+
+        Assert.Equal("binance-mcp-local",provider.ProviderId);
+        Assert.True(health.Healthy);
+        Assert.Equal("BTCUSDT",rules.Symbol);
+        Assert.True(rules.StepSize>0);
+        Assert.True(rules.TickSize>0);
     }
 }

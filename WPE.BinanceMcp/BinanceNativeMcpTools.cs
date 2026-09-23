@@ -103,6 +103,99 @@ public sealed class BinanceNativeReadMcpTools
             await recent.GetRecentOrdersAsync(
                 symbol,Math.Clamp(limit,1,500),cancellationToken));
     }
+
+    [McpServerTool(Name="exchange_get_derivative_history",ReadOnly=true,Destructive=false)]
+    [Description("Read Binance Futures Testnet derivatives history through the existing WPE adapter.")]
+    public async Task<string> GetDerivativeHistoryAsync(
+        [Description("Canonical symbol such as BTCUSDT.")] string symbol,
+        CancellationToken cancellationToken)
+        =>BinanceNativeMcpJson.Serialize(
+            await _runtime.Provider.GetDerivativeHistoryAsync(symbol,cancellationToken));
+
+    [McpServerTool(Name="exchange_get_candles_range",ReadOnly=true,Destructive=false)]
+    [Description("Read confirmed Binance Futures Testnet candles for an explicit UTC range.")]
+    public async Task<string> GetCandlesRangeAsync(
+        [Description("Canonical symbol such as BTCUSDT.")] string symbol,
+        [Description("Interval such as 1m, 15m, 1h, or 4h.")] string interval,
+        [Description("UTC range start in ISO-8601 format.")] string startUtc,
+        [Description("UTC range end in ISO-8601 format.")] string endUtc,
+        [Description("Maximum candle count.")] int limit,
+        CancellationToken cancellationToken)
+        =>BinanceNativeMcpJson.Serialize(
+            await _runtime.Provider.GetCandlesRangeAsync(
+                symbol,
+                interval,
+                BinanceNativeMcpJson.ParseUtc(startUtc,nameof(startUtc)),
+                BinanceNativeMcpJson.ParseUtc(endUtc,nameof(endUtc)),
+                Math.Clamp(limit,1,1500),
+                cancellationToken));
+
+    [McpServerTool(Name="exchange_get_margin",ReadOnly=true,Destructive=false)]
+    [Description("Read the Binance Futures Testnet margin snapshot.")]
+    public async Task<string> GetMarginAsync(CancellationToken cancellationToken)
+        =>BinanceNativeMcpJson.Serialize(
+            await _runtime.Provider.Broker.GetMarginAsync(cancellationToken));
+
+    [McpServerTool(Name="exchange_get_server_time",ReadOnly=true,Destructive=false)]
+    [Description("Read Binance Futures Testnet server time in UTC.")]
+    public async Task<string> GetServerTimeAsync(CancellationToken cancellationToken)
+        =>BinanceNativeMcpJson.Serialize(
+            await _runtime.Provider.GetServerTimeAsync(cancellationToken));
+
+    [McpServerTool(Name="exchange_get_permissions",ReadOnly=true,Destructive=false)]
+    [Description("Read Binance Futures Testnet account permissions.")]
+    public async Task<string> GetPermissionsAsync(CancellationToken cancellationToken)
+        =>BinanceNativeMcpJson.Serialize(
+            await _runtime.Provider.CheckPermissionsAsync(cancellationToken));
+
+    [McpServerTool(Name="exchange_read_order_fee_evidence",ReadOnly=true,Destructive=false)]
+    [Description("Read canonical fill and fee evidence for an existing Binance Futures Testnet order.")]
+    public async Task<string> ReadOrderFeeEvidenceAsync(
+        string symbol,
+        string orderId,
+        string clientOrderId,
+        string status,
+        decimal executedQuantity,
+        decimal avgPrice,
+        string type,
+        string positionSide="",
+        bool isProtection=false,
+        string updatedAtUtc="",
+        CancellationToken cancellationToken=default)
+    {
+        if(_runtime.Provider is not IExchangeOrderFeeEvidenceReader reader)
+            throw new NotSupportedException("The selected Binance provider does not expose fee evidence.");
+
+        PositionSide? parsedSide=string.IsNullOrWhiteSpace(positionSide)
+            ?null
+            :BinanceNativeMcpJson.ParseSide(positionSide);
+        var updated=string.IsNullOrWhiteSpace(updatedAtUtc)
+            ?DateTime.UtcNow
+            :BinanceNativeMcpJson.ParseUtc(updatedAtUtc,nameof(updatedAtUtc));
+        var order=new ExchangeOrder(
+            symbol,orderId,clientOrderId,status,executedQuantity,avgPrice,type,parsedSide,isProtection,updated);
+        return BinanceNativeMcpJson.Serialize(
+            await reader.ReadOrderFeeEvidenceAsync(order,cancellationToken));
+    }
+
+    [McpServerTool(Name="exchange_read_funding_income",ReadOnly=true,Destructive=false)]
+    [Description("Read canonical Binance Futures Testnet funding-income evidence for a UTC range.")]
+    public async Task<string> ReadFundingIncomeAsync(
+        string symbol,
+        string startUtc,
+        string endUtc,
+        CancellationToken cancellationToken)
+    {
+        if(_runtime.Provider is not IExchangeFundingIncomeReader reader)
+            throw new NotSupportedException("The selected Binance provider does not expose funding income.");
+        return BinanceNativeMcpJson.Serialize(
+            await reader.ReadFundingIncomeAsync(
+                symbol,
+                new DateTimeOffset(BinanceNativeMcpJson.ParseUtc(startUtc,nameof(startUtc)),TimeSpan.Zero),
+                new DateTimeOffset(BinanceNativeMcpJson.ParseUtc(endUtc,nameof(endUtc)),TimeSpan.Zero),
+                cancellationToken));
+    }
+
 }
 
 [McpServerToolType]
@@ -187,6 +280,29 @@ public sealed class BinanceNativeWriteMcpTools
         await _runtime.Provider.SetLeverageAsync(symbol,leverage,cancellationToken);
         return BinanceNativeMcpJson.Serialize(new{ok=true,symbol,leverage});
     }
+
+    [McpServerTool(Name="exchange_set_margin_mode",ReadOnly=false,Destructive=true,Idempotent=true)]
+    [Description("Set isolated or cross margin mode for a Binance Futures Testnet symbol.")]
+    public async Task<string> SetMarginModeAsync(
+        string symbol,
+        bool isolated,
+        CancellationToken cancellationToken)
+    {
+        _runtime.RequireWrite("exchange_set_margin_mode");
+        await _runtime.Provider.SetMarginModeAsync(symbol,isolated,cancellationToken);
+        return BinanceNativeMcpJson.Serialize(new{ok=true,symbol,isolated});
+    }
+
+    [McpServerTool(Name="exchange_set_hedge_mode",ReadOnly=false,Destructive=true,Idempotent=true)]
+    [Description("Enable or disable Binance Futures Testnet hedge mode.")]
+    public async Task<string> SetHedgeModeAsync(
+        bool enabled,
+        CancellationToken cancellationToken)
+    {
+        _runtime.RequireWrite("exchange_set_hedge_mode");
+        await _runtime.Provider.SetHedgeModeAsync(enabled,cancellationToken);
+        return BinanceNativeMcpJson.Serialize(new{ok=true,enabled});
+    }
 }
 
 internal static class BinanceNativeMcpJson
@@ -201,6 +317,18 @@ internal static class BinanceNativeMcpJson
         Enum.TryParse<PositionSide>(value,true,out var side)
             ?side
             :throw new ArgumentException("side must be Long or Short.",nameof(value));
+
+    public static DateTime ParseUtc(string value,string parameterName)
+    {
+        if(!DateTimeOffset.TryParse(
+               value,
+               System.Globalization.CultureInfo.InvariantCulture,
+               System.Globalization.DateTimeStyles.AssumeUniversal|
+               System.Globalization.DateTimeStyles.AdjustToUniversal,
+               out var parsed))
+            throw new ArgumentException("Value must be a valid ISO-8601 UTC timestamp.",parameterName);
+        return parsed.UtcDateTime;
+    }
 
     public static string Serialize<T>(T value)=>JsonSerializer.Serialize(value,JsonOptions);
 }

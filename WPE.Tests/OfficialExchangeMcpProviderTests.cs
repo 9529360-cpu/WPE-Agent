@@ -352,6 +352,152 @@ public sealed class OfficialExchangeMcpProviderTests
     }
 
     [Fact]
+    public void BinanceLocalMcpPluginRequiresDistinctUpstreamConnection()
+    {
+        var plugin=new BinanceLocalMcpProviderPlugin();
+        var profile=new ExchangeConnectionProfile
+        {
+            Id="binance-mcp-test",
+            ProviderId="binance-mcp-local",
+            Endpoint="https://testnet.binancefuture.com",
+            IsTestnet=true,
+            ExecutionEnabled=false
+        };
+
+        var missing=Assert.Throws<InvalidOperationException>(()=>
+            plugin.Create(profile,new Dictionary<string,string>()));
+        Assert.Contains("UpstreamConnectionId",missing.Message,StringComparison.Ordinal);
+
+        profile.UpstreamConnectionId=profile.Id;
+        var recursive=Assert.Throws<InvalidOperationException>(()=>
+            plugin.Create(profile,new Dictionary<string,string>()));
+        Assert.Contains("cannot delegate to itself",recursive.Message,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task BinanceLocalMcpProviderReportsReadOnlyExecutionGate()
+    {
+        var profile=new ExchangeConnectionProfile
+        {
+            Id="binance-mcp-test",
+            ProviderId="binance-mcp-local",
+            Endpoint="https://testnet.binancefuture.com",
+            IsTestnet=true,
+            ExecutionEnabled=true,
+            UpstreamConnectionId="binance-testnet-default"
+        };
+        var client=new FakeMcpClient(
+            readOnly:true,
+            (_,_)=>new ExchangeMcpToolResult(false,"{}",null));
+
+        await using var provider=new BinanceLocalMcpProvider(profile,client);
+        var validation=provider.ValidateEnvironment(requireTestnet:true);
+
+        Assert.True(validation.CanRead);
+        Assert.False(validation.CanTrade);
+        Assert.True(validation.TestnetAvailable);
+        Assert.Contains("write gate",validation.Failure??string.Empty,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CatalogExposesBinanceLocalMcpProviderAsTestnetOnly()
+    {
+        var descriptor=Assert.Single(
+            new ExchangeProviderCatalog().Installed,
+            value=>value.Id=="binance-mcp-local");
+
+        Assert.Equal("Binance Futures Testnet MCP",descriptor.DisplayName);
+        Assert.True(descriptor.SupportsTestnet);
+        Assert.False(descriptor.SupportsMainnet);
+        Assert.Empty(descriptor.CredentialFields);
+        Assert.Contains("mcp",descriptor.Capabilities);
+    }
+
+    [Fact]
+    public async Task BinanceLocalMcpProviderMapsReadContractToMcpTools()
+    {
+        await using var client=new FakeMcpClient(
+            readOnly:true,
+            (tool,args)=>tool switch
+            {
+                "exchange_get_rules"=>LocalSuccess(
+                    new TradingRule("BTCUSDT",.001m,.1m,.001m,5m,20)),
+                _=>throw new InvalidOperationException($"Unexpected MCP tool {tool}")
+            });
+        await using var provider=BinanceLocalProvider(client,executionEnabled:true);
+
+        var environment=provider.ValidateEnvironment(requireTestnet:true);
+        var rules=await provider.GetRulesAsync("BTCUSDT",CancellationToken.None);
+
+        Assert.True(environment.CanRead);
+        Assert.False(environment.CanTrade);
+        Assert.Equal("BTCUSDT",rules.Symbol);
+        var call=Assert.Single(client.Calls);
+        Assert.Equal("exchange_get_rules",call.Tool);
+        Assert.Equal("BTCUSDT",call.Arguments["symbol"]);
+    }
+
+    [Fact]
+    public async Task BinanceLocalMcpProviderMapsApprovedWriteToMcpTool()
+    {
+        var expected=new ExchangeOrder(
+            "BTCUSDT",
+            "order-1",
+            "WPE-DIRECT-0002",
+            "NEW",
+            .01m,
+            86000m,
+            "MARKET",
+            PositionSide.Long,
+            false,
+            DateTime.UtcNow);
+        await using var client=new FakeMcpClient(
+            readOnly:false,
+            (tool,args)=>tool switch
+            {
+                "exchange_place_market"=>LocalSuccess(expected),
+                _=>throw new InvalidOperationException($"Unexpected MCP tool {tool}")
+            });
+        await using var provider=BinanceLocalProvider(client,executionEnabled:true);
+
+        var environment=provider.ValidateEnvironment(requireTestnet:true);
+        var order=await provider.PlaceMarketAsync(
+            "BTCUSDT",
+            PositionSide.Long,
+            .01m,
+            "WPE-DIRECT-0002",
+            reduceOnly:false,
+            CancellationToken.None);
+
+        Assert.True(environment.CanTrade);
+        Assert.Equal(expected.OrderId,order.OrderId);
+        var call=Assert.Single(client.Calls);
+        Assert.Equal("exchange_place_market",call.Tool);
+        Assert.Equal("BTCUSDT",call.Arguments["symbol"]);
+        Assert.Equal("Long",call.Arguments["side"]);
+        Assert.Equal(.01m,call.Arguments["quantity"]);
+        Assert.Equal("WPE-DIRECT-0002",call.Arguments["clientOrderId"]);
+        Assert.Equal(false,call.Arguments["reduceOnly"]);
+    }
+
+    [Fact]
+    public void BinanceLocalMcpProviderContainsNoBinanceRestProtocolImplementation()
+    {
+        var source=File.ReadAllText(Path.Combine(
+            ProjectRoot(),
+            "Services",
+            "Exchange",
+            "Mcp",
+            "BinanceLocalMcpProvider.cs"));
+
+        Assert.DoesNotContain("/fapi/",source,StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("HMACSHA256",source,StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("X-MBX-APIKEY",source,StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("HttpRequestMessage",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("Binance.Net.Clients",source,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MainProductDoesNotReferenceMcpSdkPackage()
     {
         var project=File.ReadAllText(Path.Combine(ProjectRoot(),"币安量化机器人.csproj"));
@@ -397,6 +543,24 @@ public sealed class OfficialExchangeMcpProviderTests
                 },
                 timestamp=DateTime.UtcNow.ToString("O")
             }));
+
+    private static ExchangeMcpToolResult LocalSuccess(object value)=>
+        new(false,JsonSerializer.Serialize(value),null);
+
+    private static BinanceLocalMcpProvider BinanceLocalProvider(
+        FakeMcpClient client,
+        bool executionEnabled)=>new(
+            new ExchangeConnectionProfile
+            {
+                Id="binance-mcp-test",
+                ProviderId="binance-mcp-local",
+                DisplayName="Binance Futures Testnet MCP",
+                Endpoint="https://testnet.binancefuture.com",
+                IsTestnet=true,
+                ExecutionEnabled=executionEnabled,
+                UpstreamConnectionId="binance-testnet-default"
+            },
+            client);
 
     private static string ProjectRoot([CallerFilePath] string sourceFile="")=>
         Path.GetFullPath(Path.Combine(Path.GetDirectoryName(sourceFile)!,".."));

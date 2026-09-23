@@ -86,6 +86,12 @@ public static class OfficialExchangeMcpProfiles
         var isDll=server.EndsWith(".dll",StringComparison.OrdinalIgnoreCase);
         var arguments=new List<string>();
         if(isDll)arguments.Add(server);
+        var profileId=Environment.GetEnvironmentVariable("WPE_BINANCE_MCP_PROFILE_ID");
+        if(!string.IsNullOrWhiteSpace(profileId))
+        {
+            arguments.Add("--profile-id");
+            arguments.Add(profileId.Trim());
+        }
         if(allowWrite)arguments.Add("--allow-write");
 
         return new(

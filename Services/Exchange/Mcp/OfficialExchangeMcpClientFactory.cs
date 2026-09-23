@@ -49,9 +49,24 @@ public static class OfficialExchangeMcpClientFactory
         new("binance","agentic",allowWrite,authorize,sidecarPath);
 
     public static ExchangeMcpBridgeClient CreateBinanceLocalTestnet(
+        string upstreamConnectionId,
         bool allowWrite=false,
         string? sidecarPath=null)=>
-        new("binance-local","testnet",allowWrite,authorize:false,sidecarPath);
+        new(
+            "binance-local",
+            "testnet",
+            allowWrite,
+            authorize:false,
+            sidecarPath,
+            new Dictionary<string,string?>
+            {
+                ["WPE_BINANCE_MCP_PROFILE_ID"]=RequiredValue(upstreamConnectionId,nameof(upstreamConnectionId))
+            });
+
+    private static string RequiredValue(string value,string name)=>
+        !string.IsNullOrWhiteSpace(value)
+            ?value.Trim()
+            :throw new InvalidOperationException($"{name} is required.");
 
     private static string Required(IReadOnlyDictionary<string,string> values,string key)=>
         values.TryGetValue(key,out var value)&&!string.IsNullOrWhiteSpace(value)
