@@ -36,16 +36,4 @@ public static class AssistantAdapterCatalog
 public static class AssistantProviderFactory
 {
     public static IAssistantProvider CreateLocal()=>new DeterministicBrainProvider();
-
-    public static IAssistantProvider Create(BrainSlot? slot,string? secret,global::币安量化机器人.Core.Models.AiRuntimeMode mode)
-    {
-        _=slot;_=secret;_=mode;
-        return CreateLocal();
-    }
-
-    public static IAssistantProvider Create(BrainSlot? slot,string? secret,bool allowRemote)
-    {
-        _=slot;_=secret;_=allowRemote;
-        return CreateLocal();
-    }
 }

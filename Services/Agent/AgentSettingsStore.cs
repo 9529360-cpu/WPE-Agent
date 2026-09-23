@@ -8,7 +8,6 @@ using WpeAgent.TradingAuthorization;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed class BrainSlot { public string Provider { get; set; } = "WPE Local Brain"; public string Endpoint { get; set; } = string.Empty; public string Model { get; set; } = "deterministic-local-v1"; public string EncryptedKey { get; set; } = string.Empty; public int MaxTokens { get; set; }=1200; public double Temperature { get; set; }=.1; public int TimeoutSeconds { get; set; }=75; public int RetryCount { get; set; }=2; public bool EnableFallback { get; set; } public string FallbackBrain { get; set; }=string.Empty; public bool IsLocal { get; set; }=true; public string PromptVersion { get; set; }="wpe-local-deterministic-v1"; public int ContextLimit { get; set; }=32000; }
 public sealed class EnvironmentSlot { public string EncryptedApiKey { get; set; } = string.Empty; public string EncryptedApiSecret { get; set; } = string.Empty; public bool UseProxy { get; set; } public string ProxyUrl { get; set; }=string.Empty; public string ApiBaseUrl { get; set; }="https://testnet.binancefuture.com"; public int ReceiveWindow { get; set; }=5000; public int TimeoutSeconds { get; set; }=20; public DateTime? LastVerifiedAtUtc { get; set; } public bool ReadPermission { get; set; } public bool TradePermission { get; set; } public bool WithdrawPermission { get; set; } public string AccountId { get; set; }=string.Empty; }
 public sealed class TelegramNotificationSlot
 {
@@ -44,7 +43,7 @@ public sealed class NotificationSlot
     public WhatsAppNotificationSlot WhatsApp{get;set;}=new();
 }
 public sealed class DataSourceSlot { public bool BinanceRealtimeEnabled { get; set; }=true; public bool NewsEnabled { get; set; }=true; }
-public sealed class AgentSettings { public ExchangeEnvironment Environment { get; set; } = ExchangeEnvironment.Testnet; public string EnvironmentMode { get; set; }="FuturesTestnet"; public string ActiveBrain { get; set; } = "WPE Local Brain"; public global::币安量化机器人.Core.Models.AiRuntimeMode AiMode { get; set; } = global::币安量化机器人.Core.Models.AiRuntimeMode.LocalOnly; [System.Text.Json.Serialization.JsonConverter(typeof(TradingAuthorizationModeJsonConverter))] public TradingAuthorizationMode AuthorizationMode { get; set; } = TradingAuthorizationMode.Review; public string ActiveUser { get; set; }=string.Empty; public bool SetupCompleted { get; set; } public DateTime? SetupCompletedAtUtc { get; set; } public DateTime? LastAccessCheckAtUtc { get; set; } public List<string> Symbols { get; set; } = []; public Dictionary<string, BrainSlot> Brains { get; set; } = new(StringComparer.OrdinalIgnoreCase); public List<ExchangeConnectionProfile> Exchanges { get; set; }=[]; public string ActiveExecutionConnectionId { get; set; }=string.Empty; public EnvironmentSlot Testnet { get; set; } = new(); public EnvironmentSlot Mainnet { get; set; } = new(){ApiBaseUrl="https://fapi.binance.com"}; public bool MainnetTradingConfirmed { get; set; } public DateTime? MainnetConfirmedAtUtc { get; set; } public RiskLimits Risk { get; set; } = new(); public DecisionPolicy Decision { get; set; } = new(); public NotificationSlot Notification { get; set; }=new(); public DataSourceSlot DataSources { get; set; }=new(); }
+public sealed class AgentSettings { public ExchangeEnvironment Environment { get; set; } = ExchangeEnvironment.Testnet; public string EnvironmentMode { get; set; }="FuturesTestnet"; [System.Text.Json.Serialization.JsonConverter(typeof(TradingAuthorizationModeJsonConverter))] public TradingAuthorizationMode AuthorizationMode { get; set; } = TradingAuthorizationMode.Review; public string ActiveUser { get; set; }=string.Empty; public bool SetupCompleted { get; set; } public DateTime? SetupCompletedAtUtc { get; set; } public DateTime? LastAccessCheckAtUtc { get; set; } public List<string> Symbols { get; set; } = []; public List<ExchangeConnectionProfile> Exchanges { get; set; }=[]; public string ActiveExecutionConnectionId { get; set; }=string.Empty; public EnvironmentSlot Testnet { get; set; } = new(); public EnvironmentSlot Mainnet { get; set; } = new(){ApiBaseUrl="https://fapi.binance.com"}; public bool MainnetTradingConfirmed { get; set; } public DateTime? MainnetConfirmedAtUtc { get; set; } public RiskLimits Risk { get; set; } = new(); public DecisionPolicy Decision { get; set; } = new(); public NotificationSlot Notification { get; set; }=new(); public DataSourceSlot DataSources { get; set; }=new(); }
 public sealed record AgentSettingsLoadDiagnostic(string ErrorType,string ConfigurationPath);
 public sealed class AgentSettingsStore
 {
@@ -186,16 +185,6 @@ public sealed class AgentSettingsStore
                 ?$"{profile.ProviderId} Testnet endpoint is not an official allowlisted host."
                 :$"{profile.ProviderId} Mainnet endpoint is not enabled.");
     }
-    public static void ValidateBrainEndpoint(BrainSlot slot)
-    {
-        ArgumentNullException.ThrowIfNull(slot);
-        if(!string.Equals(slot.Provider,"WPE Local Brain",StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Remote Brain providers are retired; trading uses WPE Local Brain only.");
-        if(!slot.IsLocal||!string.IsNullOrWhiteSpace(slot.Endpoint)||!string.IsNullOrWhiteSpace(slot.EncryptedKey))
-            throw new InvalidOperationException("WPE Local Brain is built in and does not accept an endpoint or API key.");
-        if(!string.Equals(slot.Model,"deterministic-local-v1",StringComparison.Ordinal))
-            throw new InvalidOperationException("WPE Local Brain must use deterministic-local-v1.");
-    }
     public void ConfirmMainnet(AgentSettings settings,string confirmation)
     {
         if(!string.Equals(confirmation,"ENABLE MAINNET",StringComparison.Ordinal))throw new InvalidOperationException("主网确认短语不匹配");settings.MainnetTradingConfirmed=true;settings.MainnetConfirmedAtUtc=DateTime.UtcNow;Save(settings);
@@ -203,9 +192,7 @@ public sealed class AgentSettingsStore
     public void RevokeMainnet(AgentSettings settings){settings.MainnetTradingConfirmed=false;settings.MainnetConfirmedAtUtc=null;if(settings.Environment==ExchangeEnvironment.Mainnet)settings.Environment=ExchangeEnvironment.Testnet;Save(settings);}
     private static AgentSettings Normalize(AgentSettings settings)
     {
-        settings.Risk??=new();settings.Decision??=new();settings.Notification??=new();settings.DataSources??=new();settings.Brains??=new(StringComparer.OrdinalIgnoreCase);settings.Testnet??=new();settings.Mainnet??=new(){ApiBaseUrl="https://fapi.binance.com"};settings.AiMode=Enum.IsDefined(typeof(global::币安量化机器人.Core.Models.AiRuntimeMode),settings.AiMode)?settings.AiMode:global::币安量化机器人.Core.Models.AiRuntimeMode.LocalOnly;settings.AuthorizationMode=Enum.IsDefined(settings.AuthorizationMode)?settings.AuthorizationMode:TradingAuthorizationMode.Review;settings.Testnet.ApiBaseUrl=SafeEndpoint(settings.Testnet.ApiBaseUrl,"https://testnet.binancefuture.com");settings.Mainnet.ApiBaseUrl=SafeEndpoint(settings.Mainnet.ApiBaseUrl,"https://fapi.binance.com");settings.Testnet.ReceiveWindow=Math.Clamp(settings.Testnet.ReceiveWindow,1000,60000);settings.Mainnet.ReceiveWindow=Math.Clamp(settings.Mainnet.ReceiveWindow,1000,60000);settings.Testnet.TimeoutSeconds=Math.Clamp(settings.Testnet.TimeoutSeconds,5,120);settings.Mainnet.TimeoutSeconds=Math.Clamp(settings.Mainnet.TimeoutSeconds,5,120);settings.Symbols=settings.Symbols?.Select(x=>x.Trim().ToUpperInvariant()).Where(x=>x.EndsWith("USDT",StringComparison.Ordinal)&&x.Length is >=7 and <=20).Distinct().Take(8).ToList()??[];EnsureExchangeProfiles(settings);
-        foreach(var brain in settings.Brains.Values){brain.MaxTokens=Math.Clamp(brain.MaxTokens,128,32768);brain.Temperature=Math.Clamp(brain.Temperature,0,2);brain.TimeoutSeconds=Math.Clamp(brain.TimeoutSeconds,5,300);brain.RetryCount=Math.Clamp(brain.RetryCount,0,5);brain.ContextLimit=Math.Clamp(brain.ContextLimit,2048,1000000);}
-        EnsureLocalBrain(settings);
+        settings.Risk??=new();settings.Decision??=new();settings.Notification??=new();settings.DataSources??=new();settings.Testnet??=new();settings.Mainnet??=new(){ApiBaseUrl="https://fapi.binance.com"};settings.AuthorizationMode=Enum.IsDefined(settings.AuthorizationMode)?settings.AuthorizationMode:TradingAuthorizationMode.Review;settings.Testnet.ApiBaseUrl=SafeEndpoint(settings.Testnet.ApiBaseUrl,"https://testnet.binancefuture.com");settings.Mainnet.ApiBaseUrl=SafeEndpoint(settings.Mainnet.ApiBaseUrl,"https://fapi.binance.com");settings.Testnet.ReceiveWindow=Math.Clamp(settings.Testnet.ReceiveWindow,1000,60000);settings.Mainnet.ReceiveWindow=Math.Clamp(settings.Mainnet.ReceiveWindow,1000,60000);settings.Testnet.TimeoutSeconds=Math.Clamp(settings.Testnet.TimeoutSeconds,5,120);settings.Mainnet.TimeoutSeconds=Math.Clamp(settings.Mainnet.TimeoutSeconds,5,120);settings.Symbols=settings.Symbols?.Select(x=>x.Trim().ToUpperInvariant()).Where(x=>x.EndsWith("USDT",StringComparison.Ordinal)&&x.Length is >=7 and <=20).Distinct().Take(8).ToList()??[];EnsureExchangeProfiles(settings);
         settings.Notification.Telegram??=new();settings.Notification.WhatsApp??=new();settings.Notification.EventKinds??=[];
         settings.Notification.Telegram.TimeoutSeconds=Math.Clamp(settings.Notification.Telegram.TimeoutSeconds,1,60);
         settings.Notification.Telegram.MaxRequestsPerMinute=Math.Clamp(settings.Notification.Telegram.MaxRequestsPerMinute,1,600);
@@ -236,28 +223,6 @@ public sealed class AgentSettingsStore
         settings.Risk.MinimumBacktestTrades=Math.Clamp(settings.Risk.MinimumBacktestTrades,10,200);
         settings.Risk.MarginTiers=settings.Risk.MarginTiers?.Where(x=>x>0).Select(x=>Math.Min(x,settings.Risk.MaxMargin)).Distinct().OrderBy(x=>x).Take(3).ToArray()??[];if(settings.Risk.MarginTiers.Length==0)settings.Risk.MarginTiers=[.10m,.20m,.35m];
         return settings;
-    }
-    private static void EnsureLocalBrain(AgentSettings settings)
-    {
-        const string name="WPE Local Brain";
-        var local=settings.Brains.TryGetValue(name,out var existing)
-            ?existing
-            :new BrainSlot();
-
-        local.Provider=name;
-        local.Endpoint=string.Empty;
-        local.Model="deterministic-local-v1";
-        local.EncryptedKey=string.Empty;
-        local.IsLocal=true;
-        local.EnableFallback=false;
-        local.FallbackBrain=string.Empty;
-        local.PromptVersion="wpe-local-deterministic-v1";
-
-        settings.Brains=new Dictionary<string,BrainSlot>(StringComparer.OrdinalIgnoreCase)
-        {
-            [name]=local
-        };
-        settings.ActiveBrain=name;
     }
     private static string SafeEndpoint(string? value,string fallback)=>Uri.TryCreate(value,UriKind.Absolute,out var uri)&&uri.Scheme==Uri.UriSchemeHttps?uri.ToString().TrimEnd('/'):fallback;
     private static void EnsureExchangeProfiles(AgentSettings settings)
@@ -345,7 +310,7 @@ public sealed class AgentSettingsStore
                !profile.Id.Equals(settings.ActiveExecutionConnectionId,StringComparison.OrdinalIgnoreCase)))
             settings.ActiveExecutionConnectionId=settings.Exchanges.First().Id;
     }
-    private static AgentSettings Defaults() => new() { Brains = new(StringComparer.OrdinalIgnoreCase) { ["WPE Local Brain"] = new BrainSlot() } };
+    private static AgentSettings Defaults() => new();
 }
 
 public enum ThemeMode { Dark, Light, Auto }

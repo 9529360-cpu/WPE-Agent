@@ -22,7 +22,7 @@ public static class ArchitectureTestRunner
             {
                 var adapters=AssistantAdapterCatalog.All;
                 Require(adapters.Count==1&&adapters[0].Id=="local-deterministic"&&adapters[0].Local, "only the local deterministic assistant may be registered");
-                var local=AssistantProviderFactory.Create(null,null,true);
+                var local=AssistantProviderFactory.CreateLocal();
                 Require(local.IsLocal&&local is DeterministicBrainProvider, "assistant composition must remain local even when legacy remote settings are present");
                 return "local-deterministic is the only registered assistant";
             });
