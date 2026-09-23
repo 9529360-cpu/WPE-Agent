@@ -388,6 +388,7 @@
     "Position.LiquidationBuffer":  "清算安全余裕を下回りました",
     "Position.PartialTake":  "2R 自動部分利確",
     "Position.Breakeven":  "自動建値保護",
+    "Position.StructureProfitLock":  "部分利確後、残りのポジション保護を新しい15分足構造の後方へ進める",
     "Position.ManagementCycle":  "ポジション管理を実行したため新規リスクを一時停止",
     "Execution.NoFill":  "指値注文は未約定で期限切れ。ポジションなし",
     "Execution.PartialClose":  "部分決済を確認：{0}/{1}",
