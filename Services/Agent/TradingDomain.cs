@@ -236,20 +236,6 @@ public sealed class PortfolioRiskAssessment
     public string Summary { get; init; } = string.Empty;
 }
 public sealed record AgentContext(string BrainName);
-public sealed record StructuredOutcomeMemory(
-    DateTime CycleStartedUtc,
-    string Mode,
-    string Exchange,
-    string Symbol,
-    string Timeframe,
-    string DecisionAction,
-    string DecisionSummary,
-    string RiskResult,
-    string RiskReasonCode,
-    bool ExecutionAttempted,
-    string ExecutionResult,
-    bool StateChanged,
-    string RecoveryHint);
 public sealed record BrainHealth(bool Healthy, string Message);
 public sealed record BrainDecisionResult(DecisionPlan Decision, string Request, string Response);
 public sealed class BrainCallException : Exception

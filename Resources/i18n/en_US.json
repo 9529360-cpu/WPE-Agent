@@ -194,7 +194,7 @@
     "Stage.Review":  "Critic / Reviewer: reviewing direction, conflicts and confidence",
     "Stage.Risk":  "Risk Manager: validating decision, position and risk",
     "Stage.Execution":  "Execution: placing orders and verifying protection",
-    "Stage.Reflection":  "Reflection: recording experience and awaiting the next cycle",
+    "Stage.Completed":  "Cycle complete: audit recorded; waiting for fresh market evidence",
     "Stage.Paused":  "PAUSED",
     "Agent.Started":  "{0} · {1} · taking control of account state",
     "Agent.Paused":  "Paused; no new cycle will start",

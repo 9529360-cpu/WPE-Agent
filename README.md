@@ -11,7 +11,7 @@ WPE Agent is a local-first, auditable trading Agent platform for Windows. The cu
 - Remote or local LLM: optional advisory layer only
 - User state: `%LOCALAPPDATA%\WPE Agent\`
 
-Accepted capabilities are deliberately bounded. Current accepted components include the seven-role orchestrator, Market Data, Technical, Backtest, Risk Gate, execution contract boundary, Position safety gates, post-trade review, and the opt-in Teacher market brief. The seven aggregate Agents remain partially accepted until their full production and live Testnet evidence gates are complete. The machine-readable authority is [`Docs/product/model-off-capability-maturity.json`](Docs/product/model-off-capability-maturity.json).
+Accepted capabilities are deliberately bounded. Current accepted components include the seven-role orchestrator, Market Data, Technical, Backtest, Risk Gate, execution contract boundary, Position safety gates, and post-trade review. The retired Teacher/mentor surface is not part of the trading runtime. The seven aggregate Agents remain partially accepted until their full production and live Testnet evidence gates are complete. The machine-readable authority is [`Docs/product/model-off-capability-maturity.json`](Docs/product/model-off-capability-maturity.json).
 
 ## Safety Boundary
 

@@ -194,7 +194,7 @@
     "Stage.Review":  "Critic / Reviewer：复核方向、冲突与置信度",
     "Stage.Risk":  "Risk Manager：校验决策、仓位与风险",
     "Stage.Execution":  "Execution：下单、成交核对与保护单",
-    "Stage.Reflection":  "Reflection：记录经验并等待下一周期",
+    "Stage.Completed":  "周期完成：审计已记录，等待新的市场证据",
     "Stage.Paused":  "已暂停",
     "Agent.Started":  "{0} · {1} · 正在接管账户状态",
     "Agent.Paused":  "已暂停，不发起新周期",

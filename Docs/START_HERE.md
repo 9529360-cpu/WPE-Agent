@@ -22,7 +22,7 @@ Do not use chat history as project authority. Do not load every document or hist
 - Market, Research, Strategy, Risk, Execution, Recovery, and Audit form the target runtime aggregates.
 - Unknown, stale, incomplete, or unsafe state fails closed.
 - Mainnet remains disabled.
-- Teacher is a frozen future/non-core capability for the current milestone.
+- Teacher/mentor functionality is retired from the current product and trading runtime.
 - Local Only remains useful without a local or online language model. Model output is optional and cannot bypass deterministic risk, execution, recovery, or audit.
 
 Machine-readable model-off authority is `product/model-off-capability-maturity.json`. The detailed private autonomous contract is `product/private-autonomous-deployment.md`.

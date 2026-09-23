@@ -7,11 +7,10 @@
     "source": "QAA-0028",
     "target": "private_autonomous_testnet",
     "human_per_cycle_approval": false,
-    "mainnet": "disabled",
-    "teacher": "bounded_current"
+    "mainnet": "disabled"
   },
   "rules": {
-    "retained_capability_count": 13,
+    "retained_capability_count": 12,
     "aggregate_count": 7,
     "aggregation_upgrades_maturity": false,
     "core_no_or_partial_is_implemented": false,
@@ -39,7 +38,6 @@
     { "id": "risk", "name": "Risk", "core": true, "lifecycle": "current", "aggregate_ids": ["risk"], "maturity": "yes", "implemented": true, "accepted": true, "acceptance_scope": "covered crypto Risk Gate only" },
     { "id": "execution", "name": "Execution", "core": true, "lifecycle": "current", "aggregate_ids": ["execution"], "maturity": "yes", "implemented": true, "accepted": true, "acceptance_scope": "deterministic execution contract boundary only; no Testnet claim" },
     { "id": "position", "name": "Position", "core": true, "lifecycle": "current", "aggregate_ids": ["execution", "recovery"], "maturity": "yes", "implemented": true, "accepted": true, "acceptance_scope": "deterministic position quantity, protection and external-isolation gates with same-cycle mutation invalidation; no live Testnet provider certification" },
-    { "id": "review-post-trade", "name": "Review/post-trade", "core": true, "lifecycle": "current", "aggregate_ids": ["audit"], "maturity": "yes", "implemented": true, "accepted": true, "acceptance_scope": "deterministic confirmed-close accounting with idempotent PnL, fee, funding, slippage and bounded strategy identity; no broad causal-performance claim" },
-    { "id": "teacher", "name": "Teacher", "core": false, "lifecycle": "current", "aggregate_ids": ["research"], "maturity": "yes", "implemented": true, "accepted": true, "acceptance_scope": "deterministic daily market brief from eligible canonical Research; opt-in notification only" }
+    { "id": "review-post-trade", "name": "Review/post-trade", "core": true, "lifecycle": "current", "aggregate_ids": ["audit"], "maturity": "yes", "implemented": true, "accepted": true, "acceptance_scope": "deterministic confirmed-close accounting with idempotent PnL, fee, funding, slippage and bounded strategy identity; no broad causal-performance claim" }
   ]
 }

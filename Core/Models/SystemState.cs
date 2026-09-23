@@ -74,7 +74,6 @@ public class SystemState
     public double RiskLoad { get; set; }
     public string MarketRegime { get; set; } = "UNKNOWN";
     public string WorkflowNode { get; set; } = "IDLE";
-    public string ReflectionStatus { get; set; } = "MEMORY READY";
     public int ThinkingProgress { get; set; }
     public decimal BtcPrice { get; set; }
     public decimal EthPrice { get; set; }

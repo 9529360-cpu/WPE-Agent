@@ -5,14 +5,14 @@
 >
 > 当前产品权威是私人使用、全自动、fail-closed 的 Testnet 闭环，且不设置逐周期人工 `approve`、`reject`、`revoke` 或 L2/L3 审批。Mainnet 保持 `disabled`。本文后续关于默认 `Review`、审批队列、人工审核、商业销售或公开分发的内容均为历史规划，仅为兼容追踪而保留，不得用于当前实现或验收。
 >
-> [`model-off-capability-maturity.json`](model-off-capability-maturity.json) 是当前 `model_off` 成熟度机器权威：13 个保留能力逐项核算并映射到 7 个运行时聚合。聚合不构成成熟度升级；核心能力为 `no` 或 `partial` 时必须同时为未实现、未验收。Teacher 是冻结的未来非核心能力，不得进入当前实现或验收。
+> [`model-off-capability-maturity.json`](model-off-capability-maturity.json) 是当前 `model_off` 成熟度机器权威：12 个保留能力逐项核算并映射到 7 个运行时聚合。聚合不构成成熟度升级；核心能力为 `no` 或 `partial` 时必须同时为未实现、未验收。Teacher/导师能力已退役，不属于当前产品。
 
 ## MO-01 权威模型与历史边界
 
 - **当前目标：** 自动化 Testnet，在安全、能力、数据、配置或执行状态无法证明时自动拒绝、隔离或暂停，并记录事实审计；不把人工审批作为继续执行条件。
-- **核算层级：** Orchestrator、Market Data、News、Macro、Technical、Fundamental、Strategy、Backtest、Risk、Execution、Position、Review/post-trade、Teacher 共 13 项；Market、Research、Strategy、Risk、Execution、Recovery、Audit 共 7 个聚合仅用于组织运行时拓扑。
+- **核算层级：** Orchestrator、Market Data、News、Macro、Technical、Fundamental、Strategy、Backtest、Risk、Execution、Position、Review/post-trade 共 12 项；Market、Research、Strategy、Risk、Execution、Recovery、Audit 共 7 个聚合仅用于组织运行时拓扑。
 - **有限接受：** Backtest、Risk、Execution 的 `yes` 仅分别代表基础回测、覆盖的加密 Risk Gate、执行合同边界；不接受完整 Agent 或端到端闭环。
-- **冻结项：** Teacher 保留在清单中以防范围丢失，但状态固定为未来、非核心、未实现、未验收。Mainnet 固定禁用。
+- **退役项：** Teacher/导师不再保留在能力清单、产品表面或交易运行时。Mainnet 固定禁用。
 - **历史解释：** 下文维持原始商业计划和缺口记录。凡与本节冲突，以本节及机器权威为准；历史文本不得反向覆盖当前 authority。
 
 ## 文档目的
@@ -134,10 +134,6 @@
 | Execution | 仅执行已批准且能力可用的订单 | ReliableOrderExecutor、provider adapters | **Testnet 基础已验证；商业认证部分实现** |
 | Position | 跟踪持仓、保护、减仓和重新风险评估 | PositionManagement、保护单审计 | **有限验收**：本地确定性数量、保护与外部仓位隔离门禁已通过；尚无实盘 Testnet provider 认证 |
 | Review | 交易前审批；交易后事实归因和改进 | DecisionReviewer、audit、memory | **部分实现，需拆分 pre-trade / post-trade** |
-| Teacher | 只把可追踪交易事实解释成课程和客户内容 | 无独立实现 | **未实现** |
-
-Teacher 不能成为新的研究真源。任何课程或客户答复必须引用 Market Data、News/Macro、Decision、Risk、Execution、Position 或 Review artifact；来源过期、冲突或缺失时只允许说明未知。
-
 ## 通知和内容风险分级
 
 | 等级 | 示例 | 默认策略 |
@@ -196,10 +192,8 @@ P1 验收标准：
 依赖顺序：
 
 1. 建立事实引用图和内容 artifact schema。
-2. 实现 Teacher 的只读生成与人工审核，不授予研究、风险或执行写权限。
-3. 实现早/中/晚课程模板、时区/市场日历、多语言和版本记录。
-4. 在法律与数据保护评审后实现 CRM、客户同意/分类/适当性和保留策略。
-5. 将 Telegram/WhatsApp 路由到已批准内容，按 L0-L3 风险分级发送。
+2. 在法律与数据保护评审后实现 CRM、客户同意/分类/适当性和保留策略。
+3. 将 Telegram/WhatsApp 路由到已批准内容，按 L0-L3 风险分级发送。
 
 P2 验收标准：
 
@@ -232,7 +226,7 @@ P2 验收标准：
 - 不得以 crypto Testnet 成功替代股票执行认证。
 - 每个市场的交易时段、公司行动、币种、税务和监管边界通过评审。
 
-### Teacher / CRM / Messaging
+### CRM / Messaging
 
 - P2 事实引用、人工审核、内容留痕、客户同意和数据保护门禁通过。
 - WhatsApp 模板、Telegram 权限及真实送达只能作为外部验证结果声明。
@@ -245,7 +239,7 @@ Mainnet 不属于当前 P0/P1/P2 的默认授权结果。未来只有在独立�
 ## 不做 / 不虚报
 
 - 不做无 Risk Gate、无审计或默认 Auto 的交易机器人。
-- 不让 Web UI、LLM、Teacher、CRM 或通知渠道持有执行权威。
+- 不让 Web UI、LLM、CRM 或通知渠道持有执行权威。
 - 不把静态 UI、preview、fixture、mock 或 catalog entry 宣称为实时数据或交易支持。
 - 不把五个 provider 的离线 conformance 测试宣称为五家交易所都已完成真实 Testnet 或 Mainnet 认证。
 - 不宣称股票实时、券商、公司基本面、链上、ETF 流、客户管理或课程系统已经完成。

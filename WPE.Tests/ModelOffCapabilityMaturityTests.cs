@@ -7,7 +7,7 @@ public sealed class ModelOffCapabilityMaturityTests
     private static readonly string[] CapabilityIds =
     [
         "orchestrator", "market-data", "news", "macro", "technical", "fundamental", "strategy",
-        "backtest", "risk", "execution", "position", "review-post-trade", "teacher"
+        "backtest", "risk", "execution", "position", "review-post-trade"
     ];
 
     private static readonly string[] AggregateIds =
@@ -29,8 +29,7 @@ public sealed class ModelOffCapabilityMaturityTests
             ["risk"] = ["risk"],
             ["execution"] = ["execution"],
             ["position"] = ["execution", "recovery"],
-            ["review-post-trade"] = ["audit"],
-            ["teacher"] = ["research"]
+            ["review-post-trade"] = ["audit"]
         };
 
     [Fact]
@@ -269,8 +268,8 @@ public sealed class ModelOffCapabilityMaturityTests
         Require(root["schema_version"]?.GetValue<string>() == "wpe.model-off-capability-maturity/1.0", "unknown schema", errors);
         Require(String(authority, "id") == "MO-01" && String(authority, "status") == "current" && String(authority, "as_of") == "2026-07-27", "stale authority", errors);
         Require(String(authority, "target") == "private_autonomous_testnet" && Bool(authority, "human_per_cycle_approval") == false, "wrong Testnet authority", errors);
-        Require(String(authority, "mainnet") == "disabled" && String(authority, "teacher") == "bounded_current", "unsafe authority", errors);
-        Require(Int(rules, "retained_capability_count") == 13 && Int(rules, "aggregate_count") == 7, "wrong declared counts", errors);
+        Require(String(authority, "mainnet") == "disabled", "unsafe authority", errors);
+        Require(Int(rules, "retained_capability_count") == 12 && Int(rules, "aggregate_count") == 7, "wrong declared counts", errors);
         Require(Bool(rules, "aggregation_upgrades_maturity") == false, "aggregation upgrade enabled", errors);
         Require(Bool(rules, "core_no_or_partial_is_implemented") == false, "core no/partial implementation refusal weakened", errors);
         Require(Bool(rules, "core_no_or_partial_is_accepted") == false, "core no/partial acceptance refusal weakened", errors);
@@ -331,8 +330,6 @@ public sealed class ModelOffCapabilityMaturityTests
             }
         }
 
-        var teacher = capabilities.Single(Capability("teacher"));
-        Require(Bool(teacher,"core")==false&&String(teacher,"lifecycle")=="current"&&String(teacher,"maturity")=="yes"&&Bool(teacher,"implemented")==true&&Bool(teacher,"accepted")==true&&!string.IsNullOrWhiteSpace(String(teacher,"acceptance_scope")),"Teacher bounded acceptance is invalid",errors);
         return errors;
     }
 

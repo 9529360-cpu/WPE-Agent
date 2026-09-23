@@ -31,7 +31,7 @@ public sealed partial class AgentSqliteStore
     private readonly string _cs;
     private readonly Func<DateTimeOffset> _utcNow;
     public AgentSqliteStore(string? path=null):this(path,null){}
-    internal AgentSqliteStore(string? path,Func<DateTimeOffset>? utcNow) { path??=AppDataPaths.File("agent.db");Directory.CreateDirectory(Path.GetDirectoryName(path)!);_cs=$"Data Source={path}";_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);Initialize();InitializeTeacherV2();EnsureMacroReleaseColumns();EnsureExecutionQualityColumns();EnsurePostTradeIntelligenceSchema(); }
+    internal AgentSqliteStore(string? path,Func<DateTimeOffset>? utcNow) { path??=AppDataPaths.File("agent.db");Directory.CreateDirectory(Path.GetDirectoryName(path)!);_cs=$"Data Source={path}";_utcNow=utcNow??(()=>DateTimeOffset.UtcNow);Initialize();EnsureMacroReleaseColumns();EnsureExecutionQualityColumns();EnsurePostTradeIntelligenceSchema(); }
     private void EnsureMacroReleaseColumns(){using var c=new SqliteConnection(_cs);c.Open();EnsureColumn(c,"macro_observation_revisions","released_at","TEXT");EnsureColumn(c,"macro_observation_revisions","release_time_basis","TEXT NOT NULL DEFAULT 'official-endpoint-first-observed'");EnsureColumn(c,"macro_observation_revisions","release_calendar_hash","TEXT");EnsureColumn(c,"macro_observation_revisions","release_calendar_event_id","TEXT");}
     private void EnsureExecutionQualityColumns(){using var c=new SqliteConnection(_cs);c.Open();EnsureColumn(c,"execution_events","expected_price","TEXT NOT NULL DEFAULT '0'");EnsureColumn(c,"execution_events","exchange_updated_at","TEXT");EnsureColumn(c,"trade_outcomes","entry_slippage_amount","TEXT NOT NULL DEFAULT '0'");EnsureColumn(c,"trade_outcomes","exit_slippage_amount","TEXT NOT NULL DEFAULT '0'");EnsureColumn(c,"trade_outcomes","total_slippage_amount","TEXT NOT NULL DEFAULT '0'");EnsureColumn(c,"trade_outcomes","slippage_basis","TEXT NOT NULL DEFAULT 'unavailable'");EnsureColumn(c,"trade_outcomes","close_expected_price","TEXT NOT NULL DEFAULT '0'");EnsureColumn(c,"trade_outcomes","funding_amount","TEXT NOT NULL DEFAULT '0'");EnsureColumn(c,"trade_outcomes","funding_basis","TEXT NOT NULL DEFAULT 'unavailable'");}
     private void Initialize(){using var c=new SqliteConnection(_cs);c.Open();using var q=c.CreateCommand();q.CommandText="""
@@ -96,10 +96,6 @@ public sealed partial class AgentSqliteStore
     CREATE TABLE IF NOT EXISTS skill_calls(id INTEGER PRIMARY KEY AUTOINCREMENT,occurred_at TEXT,skill TEXT,status TEXT,duration_ms INTEGER,input_summary TEXT,output_summary TEXT,error TEXT);
     CREATE TABLE IF NOT EXISTS runtime_skill_calls(id INTEGER PRIMARY KEY AUTOINCREMENT,source_skill_call_id INTEGER UNIQUE,occurred_at TEXT NOT NULL,skill TEXT NOT NULL,status TEXT NOT NULL,duration_ms INTEGER NOT NULL,mode TEXT,remote_llm INTEGER,tokens INTEGER,cost_usd TEXT,context_chars INTEGER,input_tokens INTEGER,output_tokens INTEGER,cache_hit INTEGER,llm_outcome TEXT,token_source TEXT);
     CREATE INDEX IF NOT EXISTS ix_runtime_skill_calls_occurred ON runtime_skill_calls(occurred_at DESC);
-    CREATE TABLE IF NOT EXISTS agent_memories(id TEXT PRIMARY KEY,tier TEXT NOT NULL,occurred_at TEXT NOT NULL,expires_at TEXT NOT NULL,symbol TEXT,provider_id TEXT,strategy_id TEXT,result TEXT NOT NULL,source TEXT NOT NULL,summary TEXT NOT NULL,content_hash TEXT NOT NULL,UNIQUE(tier,source,content_hash));
-    CREATE INDEX IF NOT EXISTS ix_agent_memories_lookup ON agent_memories(tier,symbol,provider_id,strategy_id,occurred_at DESC);
-    CREATE TABLE IF NOT EXISTS memory_retrievals(id INTEGER PRIMARY KEY AUTOINCREMENT,retrieved_at TEXT NOT NULL,tier TEXT,symbol TEXT,provider_id TEXT,strategy_id TEXT,result TEXT,since_utc TEXT,result_count INTEGER NOT NULL);
-    CREATE INDEX IF NOT EXISTS ix_memory_retrievals_time ON memory_retrievals(retrieved_at DESC);
     CREATE TABLE IF NOT EXISTS realtime_events(id INTEGER PRIMARY KEY AUTOINCREMENT,occurred_at TEXT,event_type TEXT,symbol TEXT,status TEXT,summary TEXT,payload_hash TEXT);
     CREATE INDEX IF NOT EXISTS ix_realtime_events_time ON realtime_events(occurred_at);
     CREATE TABLE IF NOT EXISTS news_documents(id INTEGER PRIMARY KEY AUTOINCREMENT,duplicate_group TEXT UNIQUE,source TEXT,title TEXT,url TEXT,published_at TEXT,collected_at TEXT,reliability TEXT,assets TEXT,body_summary TEXT,confidence REAL,corroborating_sources INTEGER,event_type TEXT,is_breaking INTEGER,sentiment REAL);
@@ -280,7 +276,7 @@ public sealed partial class AgentSqliteStore
         await using var q=c.CreateCommand();q.CommandText="SELECT 1 FROM model_off_canonical_audits WHERE output_id=$id LIMIT 1";q.Parameters.AddWithValue("$id",outputId);
         return await q.ExecuteScalarAsync(ct) is not null;
     }
-    public async Task CompleteCycleAsync(string id,DecisionPlan d,string risk,string? request,string? response,CancellationToken ct){await Exec("UPDATE cycles SET completed_at=$t,status='COMPLETED',decision_json=$d,risk_result=$r,brain_request=$q,brain_response=$b WHERE id=$i",ct,("$i",id),("$t",DateTime.UtcNow.ToString("O")),("$d",JsonSerializer.Serialize(d)),("$r",risk),("$q",request??""),("$b",response??""));await SaveMemoryAsync(new("episodic",DateTime.UtcNow,null,null,null,d.Action.ToString(),"cycle",$"cycle={id}; action={d.Action}; instrument={d.Instrument}; result={risk}"),ct);}
+    public Task CompleteCycleAsync(string id,DecisionPlan d,string risk,string? request,string? response,CancellationToken ct)=>Exec("UPDATE cycles SET completed_at=$t,status='COMPLETED',decision_json=$d,risk_result=$r,brain_request=$q,brain_response=$b WHERE id=$i",ct,("$i",id),("$t",DateTime.UtcNow.ToString("O")),("$d",JsonSerializer.Serialize(d)),("$r",risk),("$q",request??""),("$b",response??""));
     public async Task FailCycleAsync(string id,string stage,Exception ex,CancellationToken ct)=>await Exec("UPDATE cycles SET completed_at=$t,status='FAILED',risk_result=$s,error=$e WHERE id=$i",ct,("$i",id),("$t",DateTime.UtcNow.ToString("O")),("$s",SensitiveDataRedactor.ForLog(stage,120)),("$e",SensitiveDataRedactor.Redact(ex.ToString())));
     public async Task SaveSnapshotAsync(AccountSnapshot a,IReadOnlyList<ManagedPosition> p,IReadOnlyList<ExchangeOrder> o,CancellationToken ct)=>await Exec("INSERT INTO snapshots(collected_at,account_json,positions_json,orders_json) VALUES($t,$a,$p,$o)",ct,("$t",DateTime.UtcNow.ToString("O")),("$a",JsonSerializer.Serialize(a)),("$p",JsonSerializer.Serialize(p)),("$o",JsonSerializer.Serialize(o)));
     public async Task SaveIntentAsync(string cycle,ExecutionIntent i,string status,string? orderId,CancellationToken ct)=>await Exec("INSERT OR REPLACE INTO order_intents(client_order_id,cycle_id,symbol,side,quantity,status,exchange_order_id,updated_at,details) VALUES($id,$c,$s,$side,$q,$st,$oid,$t,$d)",ct,("$id",i.ClientOrderId),("$c",cycle),("$s",i.Symbol),("$side",i.Side.ToString()),("$q",i.Quantity.ToString(CultureInfo.InvariantCulture)),("$st",status),("$oid",orderId),("$t",DateTime.UtcNow.ToString("O")),("$d",JsonSerializer.Serialize(i)));
@@ -911,7 +907,7 @@ public sealed partial class AgentSqliteStore
     {
         var occurred=DateTime.UtcNow;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);long sourceId;
         await using(var q=c.CreateCommand()){q.Transaction=(SqliteTransaction)tx;q.CommandText="INSERT INTO skill_calls(occurred_at,skill,status,duration_ms,input_summary,output_summary,error) VALUES($t,$s,$st,$d,$i,$o,$e); SELECT last_insert_rowid();";q.Parameters.AddWithValue("$t",occurred.ToString("O"));q.Parameters.AddWithValue("$s",SensitiveDataRedactor.ForLog(skill,120));q.Parameters.AddWithValue("$st",SensitiveDataRedactor.ForLog(status,40));q.Parameters.AddWithValue("$d",Math.Max(0,duration));q.Parameters.AddWithValue("$i",SensitiveDataRedactor.ForLog(input));q.Parameters.AddWithValue("$o",SensitiveDataRedactor.ForLog(output));q.Parameters.AddWithValue("$e",error is null?DBNull.Value:SensitiveDataRedactor.ForLog(error));sourceId=Convert.ToInt64(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture);}
-        await using(var q=c.CreateCommand()){q.Transaction=(SqliteTransaction)tx;q.CommandText="INSERT INTO runtime_skill_calls(source_skill_call_id,occurred_at,skill,status,duration_ms,mode,remote_llm,tokens,cost_usd,context_chars,input_tokens,output_tokens,cache_hit,llm_outcome,token_source) VALUES($i,$t,$s,$st,$d,$m,$r,$n,$c,$chars,$input,$output,$cache,$outcome,$source)";q.Parameters.AddWithValue("$i",sourceId);q.Parameters.AddWithValue("$t",occurred.ToString("O"));q.Parameters.AddWithValue("$s",SensitiveDataRedactor.ForLog(skill,120));q.Parameters.AddWithValue("$st",SensitiveDataRedactor.ForLog(status,40));q.Parameters.AddWithValue("$d",Math.Max(0,duration));q.Parameters.AddWithValue("$m",mode is null?DBNull.Value:SensitiveDataRedactor.ForLog(mode,40));q.Parameters.AddWithValue("$r",remoteLlmUsed is null?DBNull.Value:remoteLlmUsed.Value?1:0);q.Parameters.AddWithValue("$n",(object?)tokens??DBNull.Value);q.Parameters.AddWithValue("$c",costUsd is null?DBNull.Value:costUsd.Value.ToString(CultureInfo.InvariantCulture));q.Parameters.AddWithValue("$chars",contextChars is null?DBNull.Value:Math.Max(0,contextChars.Value));q.Parameters.AddWithValue("$input",inputTokens is null?DBNull.Value:Math.Max(0,inputTokens.Value));q.Parameters.AddWithValue("$output",outputTokens is null?DBNull.Value:Math.Max(0,outputTokens.Value));q.Parameters.AddWithValue("$cache",cacheHit is null?DBNull.Value:cacheHit.Value?1:0);q.Parameters.AddWithValue("$outcome",llmOutcome is null?DBNull.Value:SensitiveDataRedactor.ForLog(llmOutcome,40));q.Parameters.AddWithValue("$source",tokenSource is null?DBNull.Value:SensitiveDataRedactor.ForLog(tokenSource,20));await q.ExecuteNonQueryAsync(ct);}await tx.CommitAsync(ct);await SaveMemoryAsync(new("working",occurred,null,null,null,status,"skill", $"skill={skill}; status={status}; durationMs={Math.Max(0,duration)}; mode={mode??"unknown"}"),ct);
+        await using(var q=c.CreateCommand()){q.Transaction=(SqliteTransaction)tx;q.CommandText="INSERT INTO runtime_skill_calls(source_skill_call_id,occurred_at,skill,status,duration_ms,mode,remote_llm,tokens,cost_usd,context_chars,input_tokens,output_tokens,cache_hit,llm_outcome,token_source) VALUES($i,$t,$s,$st,$d,$m,$r,$n,$c,$chars,$input,$output,$cache,$outcome,$source)";q.Parameters.AddWithValue("$i",sourceId);q.Parameters.AddWithValue("$t",occurred.ToString("O"));q.Parameters.AddWithValue("$s",SensitiveDataRedactor.ForLog(skill,120));q.Parameters.AddWithValue("$st",SensitiveDataRedactor.ForLog(status,40));q.Parameters.AddWithValue("$d",Math.Max(0,duration));q.Parameters.AddWithValue("$m",mode is null?DBNull.Value:SensitiveDataRedactor.ForLog(mode,40));q.Parameters.AddWithValue("$r",remoteLlmUsed is null?DBNull.Value:remoteLlmUsed.Value?1:0);q.Parameters.AddWithValue("$n",(object?)tokens??DBNull.Value);q.Parameters.AddWithValue("$c",costUsd is null?DBNull.Value:costUsd.Value.ToString(CultureInfo.InvariantCulture));q.Parameters.AddWithValue("$chars",contextChars is null?DBNull.Value:Math.Max(0,contextChars.Value));q.Parameters.AddWithValue("$input",inputTokens is null?DBNull.Value:Math.Max(0,inputTokens.Value));q.Parameters.AddWithValue("$output",outputTokens is null?DBNull.Value:Math.Max(0,outputTokens.Value));q.Parameters.AddWithValue("$cache",cacheHit is null?DBNull.Value:cacheHit.Value?1:0);q.Parameters.AddWithValue("$outcome",llmOutcome is null?DBNull.Value:SensitiveDataRedactor.ForLog(llmOutcome,40));q.Parameters.AddWithValue("$source",tokenSource is null?DBNull.Value:SensitiveDataRedactor.ForLog(tokenSource,20));await q.ExecuteNonQueryAsync(ct);}await tx.CommitAsync(ct);
     }
     public async Task<IReadOnlyList<PersistedRuntimeSkillCall>> GetRecentRuntimeSkillCallsAsync(int limit,CancellationToken ct)
     {
@@ -1034,7 +1030,7 @@ public sealed partial class AgentSqliteStore
         const decimal estimatedFeeRate=.0004m;var reported=await ReportedFeesForCloseAsync(c,intent.Symbol,intent.Side.ToString(),intent.ClientOrderId,quantity,ct);var feeBasis=reported is null?"estimated-static-rate":"exchange-reported-usdt";var feeRate=reported is null?estimatedFeeRate:0m;var slippage=await SlippageForCloseAsync(c,intent.Symbol,intent.Side.ToString(),intent.ClientOrderId,quantity,price,intent.ExpectedPrice,ct);var closedAt=_utcNow().ToUniversalTime();var funding=await FundingForCloseAsync(c,intent.Symbol,intent.Side.ToString(),intent.ClientOrderId,quantity,closedAt,ct);var excursion=await GetTradeExcursionAsync(c,intent.Symbol,intent.Side,intent.ClientOrderId,quantity,entry.Value,ct);var exitReason=ResolveExitReason(intent,order);var gross=(intent.Side==PositionSide.Long?price-entry.Value:entry.Value-price)*quantity;var fees=reported??(entry.Value+price)*quantity*estimatedFeeRate;var net=gross-fees+funding.Amount;var ret=entry.Value*quantity>0?net/(entry.Value*quantity):0;
         await using var insert=c.CreateCommand();insert.CommandText="INSERT OR IGNORE INTO trade_outcomes(client_order_id,cycle_id,symbol,side,entry_price,exit_price,quantity,gross_pnl,fees,fee_basis,fee_rate,entry_slippage_amount,exit_slippage_amount,total_slippage_amount,slippage_basis,close_expected_price,funding_amount,funding_basis,net_pnl,return_pct,mae_return_pct,mfe_return_pct,excursion_basis,excursion_samples,exit_reason,closed_at,strategy_id,strategy_version,attribution_basis) VALUES($id,$c,$s,$side,$e,$x,$q,$g,$f,$fb,$fr,$es,$xs,$ts,$sb,$expected,$funding,$fundingBasis,$n,$r,$mae,$mfe,$excursionBasis,$excursionSamples,$exitReason,$t,$sid,$v,$ab); SELECT changes();";insert.Parameters.AddWithValue("$id",intent.ClientOrderId);insert.Parameters.AddWithValue("$c",cycle);insert.Parameters.AddWithValue("$s",intent.Symbol);insert.Parameters.AddWithValue("$side",intent.Side.ToString());insert.Parameters.AddWithValue("$e",entry.Value.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$x",price.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$q",quantity.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$g",gross.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$f",fees.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$fb",feeBasis);insert.Parameters.AddWithValue("$fr",feeRate.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$es",slippage.Entry.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$xs",slippage.Exit.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$ts",slippage.Total.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$sb",slippage.Basis);insert.Parameters.AddWithValue("$expected",intent.ExpectedPrice.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$funding",funding.Amount.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$fundingBasis",funding.Basis);insert.Parameters.AddWithValue("$n",net.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$r",ret.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$mae",excursion.MaeReturnPct.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$mfe",excursion.MfeReturnPct.ToString(CultureInfo.InvariantCulture));insert.Parameters.AddWithValue("$excursionBasis",excursion.Basis);insert.Parameters.AddWithValue("$excursionSamples",excursion.SampleCount);insert.Parameters.AddWithValue("$exitReason",exitReason);insert.Parameters.AddWithValue("$t",closedAt.ToString("O"));insert.Parameters.AddWithValue("$sid",(object?)attribution.StrategyId??DBNull.Value);insert.Parameters.AddWithValue("$v",attribution.StrategyVersion);insert.Parameters.AddWithValue("$ab",attribution.Basis);var inserted=Convert.ToInt32(await insert.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)==1;
         if(!inserted){await EnsureIdenticalTradeOutcomeAsync(c,intent.ClientOrderId,cycle,intent.Symbol,intent.Side.ToString(),entry.Value,price,quantity,fees,slippage,intent.ExpectedPrice,funding,net,ret,excursion,exitReason,attribution.StrategyVersion,ct);return;}
-        var outcome=net>0?"win":net<0?"loss":"flat";await SaveMemoryAsync(new("long-term",closedAt.UtcDateTime,intent.Symbol,null,attribution.StrategyId??attribution.StrategyVersion,outcome,"post-trade",$"schema=wpe.post-trade-review/1.5; symbol={intent.Symbol}; side={intent.Side}; outcome={outcome}; strategyId={attribution.StrategyId??"unknown"}; strategyVersion={attribution.StrategyVersion}; attributionBasis={attribution.Basis}; netPnl={net.ToString(CultureInfo.InvariantCulture)}; returnPct={ret.ToString(CultureInfo.InvariantCulture)}; mae={excursion.MaeReturnPct.ToString(CultureInfo.InvariantCulture)}; mfe={excursion.MfeReturnPct.ToString(CultureInfo.InvariantCulture)}; excursionBasis={excursion.Basis}; excursionSamples={excursion.SampleCount}; exitReason={exitReason}; fees={fees.ToString(CultureInfo.InvariantCulture)}; feeBasis={feeBasis}; funding={funding.Amount.ToString(CultureInfo.InvariantCulture)}; fundingBasis={funding.Basis}; slippageBasis={slippage.Basis}; totalSlippage={slippage.Total.ToString(CultureInfo.InvariantCulture)}"),ct);
+
     }
     private static DateTimeOffset? ExecutionEventTime(SqliteDataReader reader,int exchangeUpdatedIndex,int occurredIndex)
     {
@@ -1228,48 +1224,6 @@ public sealed partial class AgentSqliteStore
     {
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT value FROM agent_state WHERE key=$k";q.Parameters.AddWithValue("$k",key);var value=await q.ExecuteScalarAsync(ct);return value is null||value is DBNull?null:Convert.ToString(value);
     }
-    public async Task<IReadOnlyList<string>> RecentOutcomesAsync(CancellationToken ct)
-    {
-        var recent=await RecentOutcomeMemoriesAsync(ct);
-        if(recent.Count>0)
-        {
-            var structuredGroups=new Dictionary<string,(StructuredOutcomeMemory Memory,int Count)>(StringComparer.OrdinalIgnoreCase);
-            foreach(var memory in recent)
-            {
-                var key=$"{memory.Mode}|{memory.Symbol}|{memory.DecisionAction}|{memory.RiskResult}|{memory.RiskReasonCode}|{memory.ExecutionResult}|{memory.StateChanged}|{memory.RecoveryHint}";
-                if(structuredGroups.TryGetValue(key,out var existing))structuredGroups[key]=(existing.Memory,existing.Count+1);else structuredGroups[key]=(memory,1);
-            }
-            return structuredGroups.Values.Take(6).Select(x=>FormatPlannerOutcome(x.Memory,x.Count)).ToArray();
-        }
-        var groups=new Dictionary<string,(DecisionPlan Decision,string Risk,int Count)>(StringComparer.OrdinalIgnoreCase);await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT decision_json,risk_result FROM cycles WHERE status='COMPLETED' ORDER BY completed_at DESC LIMIT 20";await using var r=await q.ExecuteReaderAsync(ct);
-        while(await r.ReadAsync(ct))
-        {
-            try{var d=JsonSerializer.Deserialize<DecisionPlan>(r.GetString(0));if(d is null)continue;var risk=r.GetString(1);var key=$"{d.Action}|{d.Instrument}|{Math.Round(d.Confidence,1):F1}|{risk}";if(groups.TryGetValue(key,out var old))groups[key]=(old.Decision,old.Risk,old.Count+1);else groups[key]=(d,risk,1);}catch(JsonException){}
-        }
-        return groups.Values.Take(6).Select(x=>FormatLegacyPlannerOutcome(x.Decision,x.Risk,x.Count)).ToArray();
-    }
-    public async Task<IReadOnlyList<StructuredOutcomeMemory>> RecentOutcomeMemoriesAsync(CancellationToken ct)
-    {
-        var cycles=new List<(string CycleId,DateTime StartedAt,string? Brain,string DecisionJson,string Risk,string? EvidenceJson)>();
-        await using(var c=new SqliteConnection(_cs))
-        {
-            await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT id,started_at,brain,decision_json,risk_result,evidence_json FROM cycles WHERE status='COMPLETED' AND decision_json IS NOT NULL AND decision_json<>'' ORDER BY completed_at DESC LIMIT 20";await using var r=await q.ExecuteReaderAsync(ct);
-            while(await r.ReadAsync(ct))
-            {
-                if(!DateTime.TryParse(r.GetString(1),null,DateTimeStyles.RoundtripKind,out var startedAt))continue;
-                cycles.Add((r.GetString(0),startedAt.ToUniversalTime(),r.IsDBNull(2)?null:r.GetString(2),r.GetString(3),r.IsDBNull(4)?string.Empty:r.GetString(4),r.IsDBNull(5)?null:r.GetString(5)));
-            }
-        }
-        var executionByCycle=await LoadExecutionOutcomesAsync(cycles.Select(x=>x.CycleId).ToArray(),ct);var list=new List<StructuredOutcomeMemory>();
-        foreach(var cycle in cycles)
-        {
-            DecisionPlan? decision=null;try{decision=JsonSerializer.Deserialize<DecisionPlan>(cycle.DecisionJson);}catch(JsonException){}
-            if(decision is null)continue;var execution=executionByCycle.GetValueOrDefault(cycle.CycleId);var executionAttempted=execution is not null;var executionResult=NormalizeExecutionResult(execution?.Status);var riskResult=NormalizeRiskResult(cycle.Risk);var riskReasonCode=NormalizeRiskReasonCode(cycle.Risk);
-            list.Add(new(cycle.StartedAt,NormalizeMode(cycle.Brain),"unknown",NormalizeSymbol(decision.Instrument,cycle.EvidenceJson),string.Empty,decision.Action.ToString(),NormalizeDecisionSummary(decision.Reason),riskResult,riskReasonCode,executionAttempted,executionResult,executionAttempted&&(executionResult=="filled"||executionResult=="partial"),NormalizeRecoveryHint(riskReasonCode,executionAttempted,executionResult)));
-            if(list.Count>=6)break;
-        }
-        return list;
-    }
     public Task BeginWorkflowRunAsync(string runId,string cycleId,string stateJson,CancellationToken ct)=>Exec("INSERT INTO workflow_runs(run_id,cycle_id,status,current_node,state_json,started_at,updated_at) VALUES($r,$c,'RUNNING',$n,$s,$t,$t)",ct,("$r",runId),("$c",cycleId),("$n",WorkflowNode.Observation.ToString()),("$s",stateJson),("$t",DateTime.UtcNow.ToString("O")));
     public async Task SaveWorkflowCheckpointAsync(WorkflowCheckpoint checkpoint,CancellationToken ct)
     {
@@ -1446,95 +1400,6 @@ public sealed partial class AgentSqliteStore
         }
         list.Reverse();return list;
     }
-    public async Task<bool> SaveMemoryAsync(MemoryEvidence value,CancellationToken ct)
-    {
-        var tier=NormalizeTier(value.Tier);var now=value.OccurredAtUtc.ToUniversalTime();var ttl=tier=="working"?TimeSpan.FromHours(24):tier=="episodic"?TimeSpan.FromDays(30):TimeSpan.FromDays(365);var summary=UiDiagnostic.SafeText(value.Summary,320);if(string.IsNullOrWhiteSpace(summary)||summary=="[REDACTED DIAGNOSTIC TEXT]")return false;var source=SensitiveDataRedactor.ForLog(value.Source,80);var result=SensitiveDataRedactor.ForLog(value.Result,80);var symbol=Token(value.Symbol);var provider=Token(value.ProviderId);var strategy=Token(value.StrategyId);var hash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{tier}|{source}|{symbol}|{provider}|{strategy}|{result}|{summary}")));
-        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="DELETE FROM agent_memories WHERE expires_at<$now; INSERT OR IGNORE INTO agent_memories(id,tier,occurred_at,expires_at,symbol,provider_id,strategy_id,result,source,summary,content_hash) VALUES($id,$tier,$at,$exp,$symbol,$provider,$strategy,$result,$source,$summary,$hash); SELECT changes();";q.Parameters.AddWithValue("$now",DateTime.UtcNow.ToString("O"));q.Parameters.AddWithValue("$id",Guid.NewGuid().ToString("N"));q.Parameters.AddWithValue("$tier",tier);q.Parameters.AddWithValue("$at",now.ToString("O"));q.Parameters.AddWithValue("$exp",now.Add(ttl).ToString("O"));q.Parameters.AddWithValue("$symbol",(object?)symbol??DBNull.Value);q.Parameters.AddWithValue("$provider",(object?)provider??DBNull.Value);q.Parameters.AddWithValue("$strategy",(object?)strategy??DBNull.Value);q.Parameters.AddWithValue("$result",result);q.Parameters.AddWithValue("$source",source);q.Parameters.AddWithValue("$summary",summary);q.Parameters.AddWithValue("$hash",hash);var inserted=Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)>0;if(inserted)await Exec("DELETE FROM agent_memories WHERE id IN (SELECT id FROM agent_memories WHERE tier=$tier ORDER BY occurred_at DESC,id DESC LIMIT -1 OFFSET 5000)",ct,("$tier",tier));return inserted;
-    }
-    public async Task<IReadOnlyList<PersistedMemory>> SearchMemoriesAsync(MemoryQuery filter,CancellationToken ct)
-    {
-        var tier=string.IsNullOrWhiteSpace(filter.Tier)?null:NormalizeTier(filter.Tier);var symbol=Token(filter.Symbol);var provider=Token(filter.ProviderId);var strategy=Token(filter.StrategyId);var result=string.IsNullOrWhiteSpace(filter.Result)?null:SensitiveDataRedactor.ForLog(filter.Result,80);var since=filter.SinceUtc?.ToUniversalTime();var list=new List<PersistedMemory>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using(var q=c.CreateCommand()){q.CommandText="DELETE FROM agent_memories WHERE expires_at<$now; SELECT id,tier,occurred_at,expires_at,symbol,provider_id,strategy_id,result,source,summary FROM agent_memories WHERE ($tier IS NULL OR tier=$tier) AND ($symbol IS NULL OR symbol=$symbol) AND ($provider IS NULL OR provider_id=$provider) AND ($strategy IS NULL OR strategy_id=$strategy) AND ($result IS NULL OR result=$result) AND ($since IS NULL OR occurred_at>=$since) ORDER BY occurred_at DESC LIMIT $limit";q.Parameters.AddWithValue("$now",DateTime.UtcNow.ToString("O"));q.Parameters.AddWithValue("$tier",(object?)tier??DBNull.Value);q.Parameters.AddWithValue("$symbol",(object?)symbol??DBNull.Value);q.Parameters.AddWithValue("$provider",(object?)provider??DBNull.Value);q.Parameters.AddWithValue("$strategy",(object?)strategy??DBNull.Value);q.Parameters.AddWithValue("$result",(object?)result??DBNull.Value);q.Parameters.AddWithValue("$since",since is null?DBNull.Value:since.Value.ToString("O"));q.Parameters.AddWithValue("$limit",Math.Clamp(filter.Limit,1,100));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))list.Add(new(r.GetString(0),r.GetString(1),DateTime.Parse(r.GetString(2),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),DateTime.Parse(r.GetString(3),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),r.IsDBNull(4)?null:r.GetString(4),r.IsDBNull(5)?null:r.GetString(5),r.IsDBNull(6)?null:r.GetString(6),r.GetString(7),r.GetString(8),r.GetString(9)));}await Exec("INSERT INTO memory_retrievals(retrieved_at,tier,symbol,provider_id,strategy_id,result,since_utc,result_count) VALUES($t,$tier,$symbol,$provider,$strategy,$result,$since,$count)",ct,("$t",DateTime.UtcNow.ToString("O")),("$tier",tier),("$symbol",symbol),("$provider",provider),("$strategy",strategy),("$result",result),("$since",since?.ToString("O")),("$count",list.Count));return list;
-    }
-    public async Task<MemoryRuntimeSnapshot> GetMemoryRuntimeSnapshotAsync(CancellationToken ct)
-    {
-        var counts=new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase){{"working",0},{"episodic",0},{"long-term",0}};var recent=new List<PersistedMemoryRetrieval>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using(var q=c.CreateCommand()){q.CommandText="DELETE FROM agent_memories WHERE expires_at<$now; SELECT tier,COUNT(*) FROM agent_memories GROUP BY tier";q.Parameters.AddWithValue("$now",DateTime.UtcNow.ToString("O"));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))counts[r.GetString(0)]=r.GetInt32(1);}await using(var q=c.CreateCommand()){q.CommandText="SELECT id,retrieved_at,tier,symbol,provider_id,strategy_id,result,result_count FROM memory_retrievals ORDER BY retrieved_at DESC,id DESC LIMIT 20";await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))recent.Add(new(r.GetInt64(0),DateTime.Parse(r.GetString(1),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),r.IsDBNull(2)?null:r.GetString(2),r.IsDBNull(3)?null:r.GetString(3),r.IsDBNull(4)?null:r.GetString(4),r.IsDBNull(5)?null:r.GetString(5),r.IsDBNull(6)?null:r.GetString(6),r.GetInt32(7)));}return new(counts["working"],counts["episodic"],counts["long-term"],recent);
-    }
-    private sealed record ExecutionOutcomeRow(string Status);
-    private async Task<IReadOnlyDictionary<string,ExecutionOutcomeRow>> LoadExecutionOutcomesAsync(IReadOnlyCollection<string> cycleIds,CancellationToken ct)
-    {
-        var targets=cycleIds.Where(x=>!string.IsNullOrWhiteSpace(x)).ToHashSet(StringComparer.OrdinalIgnoreCase);var result=new Dictionary<string,ExecutionOutcomeRow>(StringComparer.OrdinalIgnoreCase);if(targets.Count==0)return result;
-        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT cycle_id,status FROM execution_events WHERE cycle_id IS NOT NULL AND cycle_id<>'' ORDER BY occurred_at DESC,id DESC LIMIT 200";await using var r=await q.ExecuteReaderAsync(ct);
-        while(await r.ReadAsync(ct))
-        {
-            var cycleId=r.GetString(0);if(!targets.Contains(cycleId)||result.ContainsKey(cycleId))continue;result[cycleId]=new(r.IsDBNull(1)?string.Empty:r.GetString(1));if(result.Count>=targets.Count)break;
-        }
-        return result;
-    }
-    private static string NormalizeMode(string? brain)=>string.IsNullOrWhiteSpace(brain)?"unknown":brain.Contains("Local",StringComparison.OrdinalIgnoreCase)?"local-only":"unknown";
-    private static string NormalizeSymbol(string? instrument,string? evidenceJson)
-    {
-        var symbol=Token(instrument);if(symbol is not null)return symbol;if(string.IsNullOrWhiteSpace(evidenceJson))return "unknown";
-        try{using var doc=JsonDocument.Parse(evidenceJson);if(doc.RootElement.TryGetProperty("Markets",out var markets))foreach(var item in markets.EnumerateObject())return Token(item.Name)??"unknown";}catch(JsonException) { }
-        return "unknown";
-    }
-    private static string NormalizeDecisionSummary(string? reason)=>SensitiveDataRedactor.ForLog(reason,120);
-    private static string NormalizeRiskResult(string? risk)
-    {
-        var value=(risk??string.Empty).Trim();if(value.Length==0)return "unknown";var lower=value.ToLowerInvariant();
-        if(lower.Contains("skip",StringComparison.Ordinal))return "skipped";
-        if(lower.Contains("block",StringComparison.Ordinal)||lower.Contains("reject",StringComparison.Ordinal))return "blocked";
-        if(lower.Contains("allow",StringComparison.Ordinal)||lower.Contains("approve",StringComparison.Ordinal)||lower.Contains("ok",StringComparison.Ordinal)||lower.Contains("execut",StringComparison.Ordinal)||lower.Contains("complet",StringComparison.Ordinal))return "allowed";
-        if(lower.Contains("fail",StringComparison.Ordinal)||lower.Contains("error",StringComparison.Ordinal)||lower.Contains("degrad",StringComparison.Ordinal)||lower.Contains("unknown",StringComparison.Ordinal)||lower.Contains("unavailable",StringComparison.Ordinal)||lower.Contains("provider",StringComparison.Ordinal)||lower.Contains("exchange",StringComparison.Ordinal)||lower.Contains("api",StringComparison.Ordinal))return "degraded";
-        return "unknown";
-    }
-    private static string NormalizeRiskReasonCode(string? risk)
-    {
-        var lower=(risk??string.Empty).Trim().ToLowerInvariant();if(lower.Length==0)return "unknown";
-        if(lower.Contains("capab",StringComparison.Ordinal))return "capability_stale";
-        if(lower.Contains("provider",StringComparison.Ordinal)||lower.Contains("exchange",StringComparison.Ordinal)||lower.Contains("api",StringComparison.Ordinal))return "provider_unavailable";
-        if(lower.Contains("valid",StringComparison.Ordinal))return "validation_rejected";
-        if(lower.Contains("block",StringComparison.Ordinal)||lower.Contains("reject",StringComparison.Ordinal))return "risk_gate_rejected";
-        return "unknown";
-    }
-    private static string NormalizeExecutionResult(string? status)
-    {
-        var value=(status??string.Empty).Trim().ToUpperInvariant();
-        return value switch
-        {
-            "" => "not_attempted",
-            "FILLED" => "filled",
-            "PARTIALLY_FILLED" => "partial",
-            "REJECTED" or "EXPIRED" or "CANCELED" or "CANCELLED" => "rejected",
-            "NEW" or "SUBMITTED" or "PENDING" or "UNKNOWN" or "EMERGENCY_UNKNOWN" => "unknown",
-            _ => "failed"
-        };
-    }
-    private static string NormalizeRecoveryHint(string riskReasonCode,bool executionAttempted,string executionResult)
-    {
-        if(riskReasonCode=="capability_stale")return "refresh_capabilities";
-        if(executionAttempted&&(executionResult=="unknown"||executionResult=="failed"))return "reconcile_open_orders";
-        if(riskReasonCode=="provider_unavailable")return "retry_later";
-        return "none";
-    }
-    private static string FormatPlannerOutcome(StructuredOutcomeMemory memory,int repeats)
-    {
-        var parts=new List<string>{memory.DecisionAction,memory.Symbol,$"mode={memory.Mode}",$"risk={memory.RiskResult}/{memory.RiskReasonCode}",$"exec={memory.ExecutionResult}",$"state={(memory.StateChanged?"yes":"no")}"};
-        if(memory.RecoveryHint!="none")parts.Add($"next={memory.RecoveryHint}");
-        if(repeats>1)parts.Add($"repeats={repeats}");
-        if(!string.IsNullOrWhiteSpace(memory.DecisionSummary))parts.Add($"note={memory.DecisionSummary}");
-        var line=string.Join(' ',parts);
-        return line.Length<=200?line:line[..200];
-    }
-    private static string FormatLegacyPlannerOutcome(DecisionPlan decision,string risk,int repeats)
-    {
-        var parts=new List<string>{$"{decision.Action} {Token(decision.Instrument)??"unknown"}",$"conf={decision.Confidence:F2}",$"result={SensitiveDataRedactor.ForLog(risk,40)}"};
-        if(repeats>1)parts.Add($"repeats={repeats}");
-        var note=SensitiveDataRedactor.ForLog(decision.Reason,100);
-        if(!string.IsNullOrWhiteSpace(note))parts.Add($"note={note}");
-        var line=string.Join(' ',parts);
-        return line.Length<=200?line:line[..200];
-    }
-    private static string NormalizeTier(string value)=>value.Trim().ToLowerInvariant() switch{"working"=>"working","episodic"=>"episodic","long-term"=>"long-term",_=>throw new ArgumentOutOfRangeException(nameof(value),"Unknown memory tier.")};
     private static string? Token(string? value){if(string.IsNullOrWhiteSpace(value))return null;var safe=new string(value.Where(ch=>char.IsLetterOrDigit(ch)||ch is '-' or '_' or '.' or ':').Take(80).ToArray());return string.IsNullOrWhiteSpace(safe)?null:safe;}
     private async Task<TradingReviewQueueMutationResult> TryTradingReviewTransitionAsync(
         string requestId,
@@ -1751,8 +1616,3 @@ public sealed record PersistedLegacyIntentIsolation(string ClientOrderId,string 
 public sealed record PersistedLegacyIntentIsolationEvent(string ClientOrderId,int Sequence,DateTimeOffset OccurredAtUtc,string FromStatus,string ToStatus,string EventCode);
 public sealed record PersistedAgentHandoff(string Id,DateTime OccurredAtUtc,string SourceRoleId,string TargetRoleId,string Result);
 public sealed record AgentOperationsEvidence(IReadOnlyList<PersistedAgentActivity> Activities,IReadOnlyList<PersistedAgentHandoff> Handoffs,DateTime UpdatedAtUtc);
-public sealed record MemoryEvidence(string Tier,DateTime OccurredAtUtc,string? Symbol,string? ProviderId,string? StrategyId,string Result,string Source,string Summary);
-public sealed record MemoryQuery(string? Tier=null,string? Symbol=null,string? ProviderId=null,string? StrategyId=null,string? Result=null,DateTime? SinceUtc=null,int Limit=50);
-public sealed record PersistedMemory(string Id,string Tier,DateTime OccurredAtUtc,DateTime ExpiresAtUtc,string? Symbol,string? ProviderId,string? StrategyId,string Result,string Source,string Summary);
-public sealed record PersistedMemoryRetrieval(long Id,DateTime RetrievedAtUtc,string? Tier,string? Symbol,string? ProviderId,string? StrategyId,string? Result,int ResultCount);
-public sealed record MemoryRuntimeSnapshot(int WorkingCount,int EpisodicCount,int LongTermCount,IReadOnlyList<PersistedMemoryRetrieval> RecentRetrievals);
