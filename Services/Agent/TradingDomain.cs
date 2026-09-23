@@ -295,7 +295,6 @@ public sealed class RiskLimits
     public decimal MaxSymbolExposure { get; set; } = .25m;
     public decimal MaxAccountExposure { get; set; } = .50m;
     public decimal MaxDailyLoss { get; set; } = .05m;
-    public int MaxConsecutiveLosses { get; set; } = 3;
     public double MaxAtrPercent { get; set; } = .045;
     public double MinimumLiquidityScore { get; set; } = .55;
     public double MaximumSpreadBps { get; set; } = 8;
