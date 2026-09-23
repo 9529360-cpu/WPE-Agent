@@ -1523,7 +1523,7 @@ public sealed partial class AgentSqliteStore
           WHERE ($symbol IS NULL OR symbol IS NULL OR symbol=$symbol)
         )
         SELECT tier,occurred_at,result,source,summary,strategy_id FROM ranked
-        WHERE tier_rank<=2
+        WHERE (tier='long-term' AND tier_rank<=8) OR (tier<>'long-term' AND tier_rank<=2)
         ORDER BY CASE tier WHEN 'working' THEN 0 WHEN 'episodic' THEN 1 ELSE 2 END,tier_rank;
         """;q.Parameters.AddWithValue("$now",now.ToString("O"));q.Parameters.AddWithValue("$symbol",(object?)normalized??DBNull.Value);await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))list.Add(new(r.GetString(0),DateTime.Parse(r.GetString(1),null,DateTimeStyles.RoundtripKind).ToUniversalTime(),r.GetString(2),r.GetString(3),UiDiagnostic.SafeText(r.GetString(4),100),r.IsDBNull(5)?null:r.GetString(5)));}await Exec("INSERT INTO memory_retrievals(retrieved_at,tier,symbol,result_count) VALUES($t,'planner-balanced',$symbol,$count)",ct,("$t",now.ToString("O")),("$symbol",normalized),("$count",list.Count));return list;
     }
