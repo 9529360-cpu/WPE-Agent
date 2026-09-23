@@ -10,7 +10,6 @@ namespace 币安量化机器人.Core.Risk;
 public class RiskManager : IRiskManager
 {
     private readonly List<IRiskRule> _rules = new();
-    private readonly BlacklistManager _blacklist = new();
     private readonly KellyAllocator _allocator = new();
     private readonly ValueAtRiskCalculator _varCalculator = new();
     private RiskProfile _profile = new(0, 0, 0, Array.Empty<string>(), 0, 0);
@@ -23,7 +22,6 @@ public class RiskManager : IRiskManager
         _rules.Add(new MaxPositionRule());
         _rules.Add(new DynamicStopLossRule());
         _rules.Add(new MaxDrawdownRule());
-        _rules.Add(new ConsecutiveLossBlacklistRule(_blacklist));
     }
 
     public event EventHandler<RiskEvent>? RiskTriggered;
@@ -52,10 +50,9 @@ public class RiskManager : IRiskManager
         }
 
         _lastSymbol = position.Symbol;
-        _blacklist.Update(position.Symbol, position.ConsecutiveLosingTrades);
         var kelly = _allocator.Calculate(position);
         var var = _varCalculator.Calculate(position, _configuration);
-        _profile = new RiskProfile(position.Quantity * position.CurrentPrice, position.MaxDrawdown, position.DailyPnl < 0 ? Math.Abs(position.DailyPnl) : 0, _blacklist.Symbols, kelly, var);
+        _profile = new RiskProfile(position.Quantity * position.CurrentPrice, position.MaxDrawdown, position.DailyPnl < 0 ? Math.Abs(position.DailyPnl) : 0, Array.Empty<string>(), kelly, var);
         _lastUpdate = DateTime.UtcNow;
         return ValueTask.CompletedTask;
     }
@@ -67,17 +64,12 @@ public class RiskManager : IRiskManager
             return false;
         }
 
-        if (_lastSymbol is not null && _blacklist.IsBlacklisted(_lastSymbol))
-        {
-            return false;
-        }
-
         return action.ActionType == TradeActionType.Hold || action.Quantity <= _configuration.MaxPositionSize;
     }
 
     public ValueTask RecordFillAsync(TradeFill fill, CancellationToken cancellationToken = default)
     {
-        _blacklist.RecordFill(fill.Symbol, fill.ActionType);
+        cancellationToken.ThrowIfCancellationRequested();
         return ValueTask.CompletedTask;
     }
 }
