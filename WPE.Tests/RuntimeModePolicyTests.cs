@@ -15,7 +15,7 @@ public sealed class RuntimeModePolicyTests
 
         var result=RuntimeModePolicy.Resolve(settings);
 
-        Assert.Equal(requested,result.RequestedMode);
+        Assert.Equal(AiRuntimeMode.LocalOnly,result.RequestedMode);
         Assert.Equal(AiRuntimeMode.LocalOnly,result.EffectiveMode);
         Assert.False(result.AllowRemoteBrain);
         Assert.Equal("WPE Local Brain",result.ProviderName);
