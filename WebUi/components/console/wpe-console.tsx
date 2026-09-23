@@ -10,7 +10,7 @@ import {
 import { useI18n } from '@/lib/i18n/context'
 import { localeMeta, locales, type Locale } from '@/lib/i18n/dictionaries'
 
-type PageId = 'home' | 'agents' | 'teacher' | 'trading' | 'research' | 'risk' | 'monitoring' | 'settings'
+type PageId = 'home' | 'agents' | 'trading' | 'research' | 'risk' | 'monitoring' | 'settings'
 type HostCommand = 'open-settings' | 'open-notification-settings' | 'agent-start' | 'agent-stop'
 type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
 
@@ -29,7 +29,6 @@ const AGENT_LABELS: Record<string, string> = {
 const PAGE_META: Record<PageId, { title: string; description: string; glyph: string }> = {
   home: { title: '运行总览', description: '系统可信度、账户、风险与工作流状态', glyph: '总' },
   agents: { title: '智能体团队', description: '核心角色、协作链路与交接记录', glyph: '协' },
-  teacher: { title: '金融导师', description: '市场讲解、研究候选、纪律提醒与结果复盘', glyph: '师' },
   trading: { title: '交易', description: '持仓、订单、待审核事项与历史记录', glyph: '交' },
   research: { title: '策略与研究', description: '市场分析、回测与只读研究证据', glyph: '策' },
   risk: { title: '风险', description: '风险准备、熔断、暴露与授权状态', glyph: '风' },
@@ -38,7 +37,7 @@ const PAGE_META: Record<PageId, { title: string; description: string; glyph: str
 }
 
 const NAV_GROUPS: Array<{ label?: string; items: PageId[] }> = [
-  { items: ['home', 'agents', 'teacher'] },
+  { items: ['home', 'agents'] },
   { label: '交易与研究', items: ['trading', 'research', 'risk'] },
   { label: '系统', items: ['monitoring', 'settings'] },
 ]
@@ -148,31 +147,6 @@ function agentStatusTone(status: unknown): Tone {
   if (status === 'degraded') return 'warning'
   if (status === 'stopped') return 'neutral'
   return 'neutral'
-}
-
-function recommendationLabel(value: unknown): string {
-  const labels: Record<string, string> = {
-    research_candidate: '研究候选',
-    priority_watch: '优先观察',
-    wait_for_confirmation: '等待确认',
-    avoid_high_risk: '高风险回避',
-    expired: '已过期',
-    unavailable: '当前不可用',
-  }
-  return labels[String(value)] ?? text(value)
-}
-
-function lessonKindLabel(value: unknown): string {
-  const labels: Record<string, string> = {
-    morning: '早间课程',
-    afternoon: '午间课程',
-    evening: '晚间课程',
-    event: '事件课程',
-    material_event: '重大事件课程',
-    weekly: '周度课程',
-    post_trade: '交易后复盘',
-  }
-  return labels[String(value).toLowerCase()] ?? text(value, '课程')
 }
 
 function modeLabel(value: unknown): string {
@@ -868,183 +842,6 @@ function AgentsPage({ runtime }: { runtime: WpeRuntimeState }) {
   )
 }
 
-function TeacherLessonView({ lesson }: { lesson: NonNullable<WpeRuntimeState['teacherLessons']>[number] }) {
-  return (
-    <div className="wpe-teacher-document">
-      <div className="wpe-teacher-document__meta">
-        <Badge tone="info">{lessonKindLabel(lesson.kind)}</Badge>
-        <span>教学等级：{lesson.teachingLevel}</span>
-        <span>语言：{lesson.language}</span>
-        <span>时区：{lesson.timeZoneId}</span>
-      </div>
-      <dl className="wpe-kv-grid wpe-kv-grid--compact">
-        <KeyValue label="计划时间" value={formatUtc(lesson.scheduledForUtc)} title={lesson.scheduledForUtc} />
-        <KeyValue label="生成时间" value={formatUtc(lesson.generatedAtUtc)} title={lesson.generatedAtUtc} />
-        <KeyValue label="人设版本" value={lesson.personaVersion} mono />
-        <KeyValue label="执行权限" value={<Badge tone="neutral">无</Badge>} />
-      </dl>
-      <div className="wpe-teacher-blocks">
-        {lesson.blocks.map(block => (
-          <article className="wpe-teacher-block" key={block.blockId}>
-            <div className="wpe-teacher-block__header">
-              <div><Badge>{block.kind}</Badge><h3>{block.heading}</h3></div>
-            </div>
-            <div className="wpe-prose">{block.content}</div>
-            {(block.evidenceHashes.length > 0 || block.sha256) && (
-              <details>
-                <summary>证据与内容哈希</summary>
-                <div className="wpe-hash-list">
-                  {block.evidenceHashes.map(hash => <HashValue key={hash} value={hash} />)}
-                  <HashValue value={block.sha256} />
-                </div>
-              </details>
-            )}
-          </article>
-        ))}
-      </div>
-      <div className="wpe-authority-notice"><StatusMark tone="info" /><span>本内容仅用于研究和教学，不构成订单、批准或交易指令。</span></div>
-    </div>
-  )
-}
-
-function TeacherPage({ runtime }: { runtime: WpeRuntimeState }) {
-  const [tab, setTab] = useState('current')
-  const lessonState = collectionState(runtime, 'teacherLessons')
-  const recommendationState = collectionState(runtime, 'teacherRecommendations')
-  const correctionState = collectionState(runtime, 'teacherCorrections')
-  const outcomeState = collectionState(runtime, 'teacherOutcomes')
-  const notificationState = collectionState(runtime, 'notificationStatus', runtime.notificationStatus?.state)
-  const lessons = [...(runtime.teacherLessons ?? [])].sort((a, b) => b.generatedAtUtc.localeCompare(a.generatedAtUtc))
-  const recommendations = [...(runtime.teacherRecommendations ?? [])].sort((a, b) => b.issuedAtUtc.localeCompare(a.issuedAtUtc))
-  const corrections = [...(runtime.teacherCorrections ?? [])].sort((a, b) => b.issuedAtUtc.localeCompare(a.issuedAtUtc))
-  const outcomes = [...(runtime.teacherOutcomes ?? [])].sort((a, b) => b.evaluatedAtUtc.localeCompare(a.evaluatedAtUtc))
-
-  return (
-    <div className="wpe-page-stack">
-      <SectionTitle title="金融教师" description="证据驱动的市场讲解、研究候选与历史复盘" side={<Badge tone="neutral">executionAuthority = false</Badge>} />
-      <div className="wpe-authority-banner"><div><strong>金融教师没有交易权限</strong><p>教师可以解释事实、提出条件性研究候选和修正旧课程，但不能下单、审批、修改策略或绕过风险链。</p></div></div>
-      <Tabs value={tab} onChange={setTab} items={[
-        { id: 'current', label: '最近课程' },
-        { id: 'archive', label: '课程档案' },
-        { id: 'recommendations', label: '研究候选' },
-        { id: 'corrections', label: '修正记录' },
-        { id: 'outcomes', label: '结果复盘' },
-        { id: 'notifications', label: '通知状态' },
-      ]} />
-
-      {tab === 'current' && (
-        <Panel title="最近生成课程" description="按 generatedAtUtc 排序，仅展示宿主返回的完整课程">
-          <CollectionGate state={lessonState} empty={!lessons.length} emptyMessage="当前没有可用课程。">
-            {lessons[0] && <TeacherLessonView lesson={lessons[0]} />}
-          </CollectionGate>
-        </Panel>
-      )}
-
-      {tab === 'archive' && (
-        <Panel title="课程档案">
-          <CollectionGate state={lessonState} empty={!lessons.length} emptyMessage="当前没有课程档案。">
-            <div className="wpe-archive-list">
-              {lessons.map(lesson => (
-                <details key={lesson.lessonId} className="wpe-archive-item">
-                  <summary><span><strong>{lessonKindLabel(lesson.kind)}</strong><small>{formatUtc(lesson.generatedAtUtc)} · {lesson.teachingLevel}</small></span><Badge tone="neutral">无执行权限</Badge></summary>
-                  <TeacherLessonView lesson={lesson} />
-                </details>
-              ))}
-            </div>
-          </CollectionGate>
-        </Panel>
-      )}
-
-      {tab === 'recommendations' && (
-        <Panel title="条件性研究候选" description="候选不是订单、买入信号或已批准交易">
-          <CollectionGate state={recommendationState} empty={!recommendations.length} emptyMessage="当前没有研究候选。">
-            <div className="wpe-recommendation-list">
-              {recommendations.map(item => (
-                <article className="wpe-recommendation" key={`${item.recommendationId}-${item.version}`}>
-                  <header>
-                    <div><h3>{item.instrument}</h3><span>{item.assetClass} · {item.horizon}</span></div>
-                    <Badge tone={item.state === 'avoid_high_risk' ? 'danger' : item.state === 'expired' ? 'neutral' : 'info'}>{recommendationLabel(item.state)}</Badge>
-                  </header>
-                  <p className="wpe-thesis">{item.thesis}</p>
-                  <dl className="wpe-kv-grid wpe-kv-grid--compact">
-                    <KeyValue label="发布" value={formatUtc(item.issuedAtUtc)} title={item.issuedAtUtc} />
-                    <KeyValue label="到期" value={formatUtc(item.expiresAtUtc)} title={item.expiresAtUtc} />
-                    <KeyValue label="版本" value={item.version} />
-                    <KeyValue label="执行权限" value={<Badge tone="neutral">无</Badge>} />
-                  </dl>
-                  <div className="wpe-condition-grid">
-                    <div><h4>确认条件</h4>{item.confirmationConditions.length ? <ol>{item.confirmationConditions.map(value => <li key={value}>{value}</li>)}</ol> : <p className="wpe-muted">未提供</p>}</div>
-                    <div><h4>失效条件</h4>{item.invalidationConditions.length ? <ol>{item.invalidationConditions.map(value => <li key={value}>{value}</li>)}</ol> : <p className="wpe-muted">未提供</p>}</div>
-                    <div><h4>主要风险</h4>{item.materialRisks.length ? <ol>{item.materialRisks.map(value => <li key={value}>{value}</li>)}</ol> : <p className="wpe-muted">未提供</p>}</div>
-                  </div>
-                  {item.evidenceHashes.length > 0 && <details><summary>证据哈希</summary><div className="wpe-hash-list">{item.evidenceHashes.map(hash => <HashValue key={hash} value={hash} />)}</div></details>}
-                </article>
-              ))}
-            </div>
-          </CollectionGate>
-        </Panel>
-      )}
-
-      {tab === 'corrections' && (
-        <Panel title="追加式修正记录" description="修正会关联被替代课程，不覆盖历史记录">
-          <CollectionGate state={correctionState} empty={!corrections.length} emptyMessage="当前没有课程修正。">
-            <div className="wpe-correction-list">
-              {corrections.map(item => (
-                <article className="wpe-correction" key={item.correctionId}>
-                  <header><div><h3>修正 {item.correctionId}</h3><span>替代课程：{item.supersededLessonId}</span></div><Badge tone="warning">{item.reasonCode}</Badge></header>
-                  <SourceTime value={item.issuedAtUtc} label="发布时间" />
-                  <div className="wpe-teacher-blocks">
-                    {item.replacementBlocks.map(block => <div className="wpe-teacher-block" key={block.blockId}><h4>{block.heading}</h4><div className="wpe-prose">{block.content}</div></div>)}
-                  </div>
-                  <HashValue value={item.sha256} />
-                </article>
-              ))}
-            </div>
-          </CollectionGate>
-        </Panel>
-      )}
-
-      {tab === 'outcomes' && (
-        <Panel title="结果复盘" description="相对基准的点时评价，不把幸运结果等同于正确流程">
-          <CollectionGate state={outcomeState} empty={!outcomes.length} emptyMessage="当前没有结果复盘记录。">
-            <DenseTable
-              columns={[
-                { key: 'instrument', label: '标的' },
-                { key: 'benchmark', label: '基准' },
-                { key: 'horizon', label: '周期' },
-                { key: 'instrumentReturn', label: '标的收益（%）', align: 'right' },
-                { key: 'relativeReturn', label: '相对收益（%）', align: 'right' },
-                { key: 'mae', label: '最大不利波动（%）', align: 'right' },
-                { key: 'state', label: '流程状态' },
-                { key: 'time', label: '评价时间' },
-              ]}
-              rows={outcomes.map(item => ({
-                __key: item.outcomeId,
-                instrument: <strong>{item.instrument}</strong>,
-                benchmark: item.benchmark,
-                horizon: item.horizon,
-                instrumentReturn: formatPercent(item.instrumentReturnPct),
-                relativeReturn: <span className={item.relativeReturnPct > 0 ? 'wpe-positive' : item.relativeReturnPct < 0 ? 'wpe-negative' : undefined}>{formatPercent(item.relativeReturnPct)}</span>,
-                mae: formatPercent(item.maximumAdverseExcursionPct),
-                state: <Badge>{item.processState}</Badge>,
-                time: <span title={item.evaluatedAtUtc}>{formatUtc(item.evaluatedAtUtc)}</span>,
-              }))}
-            />
-          </CollectionGate>
-        </Panel>
-      )}
-
-      {tab === 'notifications' && (
-        <Panel title="教师通知状态" description="偏好只能在 WPF 安全设置窗口中修改">
-          <CollectionGate state={notificationState} message={runtime.notificationStatus?.message} empty={!runtime.notificationStatus?.value} emptyMessage="当前没有通知状态。">
-            {runtime.notificationStatus?.value && <NotificationStatusView runtime={runtime} />}
-          </CollectionGate>
-        </Panel>
-      )}
-    </div>
-  )
-}
-
 function PositionsTable({ runtime }: { runtime: WpeRuntimeState }) {
   const state = collectionState(runtime, 'positions')
   const items = runtime.positions ?? []
@@ -1696,7 +1493,6 @@ export function WpeConsole() {
   const mainContent = useMemo(() => {
     switch (page) {
       case 'agents': return <AgentsPage runtime={runtime} />
-      case 'teacher': return <TeacherPage runtime={runtime} />
       case 'trading': return <TradingPage runtime={runtime} />
       case 'research': return <ResearchPage runtime={runtime} />
       case 'risk': return <RiskPage runtime={runtime} />
