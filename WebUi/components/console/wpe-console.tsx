@@ -1474,40 +1474,6 @@ function SkillsMonitoring({ runtime }: { runtime: WpeRuntimeState }) {
   )
 }
 
-function MemoryMonitoring({ runtime }: { runtime: WpeRuntimeState }) {
-  const state = collectionState(runtime, 'memoryStatus', runtime.memoryStatus?.state)
-  const value = runtime.memoryStatus?.value
-  const retrievalState = collectionState(runtime, 'recentMemoryRetrievals')
-  const retrievals = runtime.recentMemoryRetrievals ?? []
-  return (
-    <div className="wpe-page-stack wpe-page-stack--tight">
-      <CollectionGate state={state} message={runtime.memoryStatus?.message} empty={!value} emptyMessage="当前没有内存状态。">
-        {value && <div className="wpe-grid wpe-grid--4"><Metric label="工作记忆" value={formatInteger(value.workingCount)} /><Metric label="情景记忆" value={formatInteger(value.episodicCount)} /><Metric label="长期记忆" value={formatInteger(value.longTermCount)} /><Metric label="最后检索" value={formatUtc(value.lastRetrievedAtUtc)} /></div>}
-      </CollectionGate>
-      <CollectionGate state={retrievalState} empty={!retrievals.length} emptyMessage="当前没有最近记忆检索。">
-        <DenseTable columns={[
-          { key: 'time', label: '时间' },
-          { key: 'tier', label: '层级' },
-          { key: 'symbol', label: '品种' },
-          { key: 'strategy', label: '策略' },
-          { key: 'source', label: '来源' },
-          { key: 'result', label: '结果' },
-          { key: 'count', label: '数量', align: 'right' },
-        ]} rows={retrievals.map(item => ({
-          __key: item.id,
-          time: <span title={item.occurredAtUtc}>{formatUtc(item.occurredAtUtc)}</span>,
-          tier: item.tier,
-          symbol: item.symbol ?? <EmptyCell />,
-          strategy: item.strategyId ?? <EmptyCell />,
-          source: item.source,
-          result: <span className="wpe-cell-wrap">{item.result}</span>,
-          count: formatInteger(item.resultCount),
-        }))} />
-      </CollectionGate>
-    </div>
-  )
-}
-
 function AuditMonitoring({ runtime }: { runtime: WpeRuntimeState }) {
   const collection = runtime.auditEvents
   const state = collectionState(runtime, 'auditEvents', collection?.state)
@@ -1577,7 +1543,6 @@ function MonitoringPage({ runtime }: { runtime: WpeRuntimeState }) {
         { id: 'notifications', label: '通知' },
         { id: 'ai', label: 'AI 使用' },
         { id: 'skills', label: '技能调用' },
-        { id: 'memory', label: '内存' },
         { id: 'audit', label: '审计事件' },
         { id: 'plugins', label: '插件与能力' },
       ]} />
@@ -1591,7 +1556,6 @@ function MonitoringPage({ runtime }: { runtime: WpeRuntimeState }) {
       )}
       {tab === 'ai' && <Panel title="AI 使用与治理"><AiMonitoring runtime={runtime} /></Panel>}
       {tab === 'skills' && <Panel title="技能调用"><SkillsMonitoring runtime={runtime} /></Panel>}
-      {tab === 'memory' && <Panel title="本地记忆状态"><MemoryMonitoring runtime={runtime} /></Panel>}
       {tab === 'audit' && <Panel title="审计事件"><AuditMonitoring runtime={runtime} /></Panel>}
       {tab === 'plugins' && <Panel title="插件与能力"><PluginsMonitoring runtime={runtime} /></Panel>}
     </div>

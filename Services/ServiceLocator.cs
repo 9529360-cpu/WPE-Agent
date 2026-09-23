@@ -53,7 +53,6 @@ public static class ServiceLocator
     private static readonly Lazy<RuntimeHistoricalCollectionsSnapshotStore> RuntimeHistoricalCollectionsFactory = new(() => new RuntimeHistoricalCollectionsSnapshotStore(AppDataPaths.File("agent.db")));
     private static readonly Lazy<RuntimeConnectionStateStore> RuntimeConnectionFactory = new(() => new RuntimeConnectionStateStore());
     private static readonly Lazy<RuntimeSkillCallStateStore> RuntimeSkillCallFactory = new(() => new RuntimeSkillCallStateStore(new AgentSqliteStore()));
-    private static readonly Lazy<RuntimeMemoryStateStore> RuntimeMemoryFactory = new(() => new RuntimeMemoryStateStore(new AgentSqliteStore()));
     private static readonly Lazy<RuntimeAgentOperationsStateStore> RuntimeAgentOperationsFactory = new(() => new RuntimeAgentOperationsStateStore(new AgentSqliteStore()));
     private static readonly Lazy<RuntimeTeacherStateStore> RuntimeTeacherFactory = new(() => new RuntimeTeacherStateStore(new AgentSqliteStore()));
     private static readonly Lazy<RuntimeAuditStateStore> RuntimeAuditFactory = new(() => new RuntimeAuditStateStore(new AgentSqliteStore()));
@@ -83,7 +82,6 @@ public static class ServiceLocator
     public static RuntimeHistoricalCollectionsSnapshotStore RuntimeHistoricalCollections => RuntimeHistoricalCollectionsFactory.Value;
     public static RuntimeConnectionStateStore RuntimeConnection => RuntimeConnectionFactory.Value;
     public static RuntimeSkillCallStateStore RuntimeSkillCalls => RuntimeSkillCallFactory.Value;
-    public static RuntimeMemoryStateStore RuntimeMemory => RuntimeMemoryFactory.Value;
     public static RuntimeAgentOperationsStateStore RuntimeAgentOperations => RuntimeAgentOperationsFactory.Value;
     public static RuntimeTeacherStateStore RuntimeTeacher => RuntimeTeacherFactory.Value;
     public static RuntimeAuditStateStore RuntimeAudit => RuntimeAuditFactory.Value;

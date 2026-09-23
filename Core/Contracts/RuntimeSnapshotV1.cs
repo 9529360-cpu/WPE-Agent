@@ -45,8 +45,6 @@ public sealed record RuntimeRiskV1(
 
 public sealed record RuntimeSkillCallV1(string Id,DateTime OccurredAtUtc,string Skill,string Status,long DurationMs,string? Mode,bool? RemoteLlmUsed,int? Tokens,decimal? CostUsd,int? ContextCharacters=null,int? InputTokens=null,int? OutputTokens=null,bool? CacheHit=null,string? LlmOutcome=null,string? TokenSource=null);
 public sealed record RuntimeDiagnosticV1(string Code,DateTime TimeUtc,string Summary);
-public sealed record RuntimeMemoryStatusV1(int WorkingCount,int EpisodicCount,int LongTermCount,DateTime? LastRetrievedAtUtc);
-public sealed record RuntimeMemoryRetrievalV1(long Id,string Tier,string? Symbol,string? ProviderId,string? StrategyId,DateTime OccurredAtUtc,string Result,string Source,int ResultCount);
 public sealed record RuntimeAgentOperationV1(string RoleId,string Status,DateTime? LastActivityAtUtc,string? Activity,string Mode);
 public sealed record RuntimeAgentHandoffV1(string Id,DateTime OccurredAtUtc,string SourceRoleId,string TargetRoleId,string Result);
 public sealed record RuntimeTeacherBlockV1(string BlockId,string Kind,string Heading,string Content,IReadOnlyList<string> EvidenceHashes,string Sha256);
@@ -305,8 +303,6 @@ public sealed class RuntimeSnapshotV1
     public RuntimeValueV1<RuntimeRiskV1> Risk { get; init; } = new(RuntimeCollectionState.Unsupported, null);
     public RuntimeCollectionV1<RuntimeSkillCallV1> SkillCalls { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Skill-call persistence is not connected.");
     public RuntimeValueV1<RuntimeDiagnosticV1> Diagnostic { get; init; } = new(RuntimeCollectionState.Available, null);
-    public RuntimeValueV1<RuntimeMemoryStatusV1> MemoryStatus { get; init; } = new(RuntimeCollectionState.Unsupported, null, "Memory persistence is not connected.");
-    public RuntimeCollectionV1<RuntimeMemoryRetrievalV1> RecentMemoryRetrievals { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Memory retrieval history is not connected.");
     public RuntimeCollectionV1<RuntimeAgentOperationV1> AgentOperations { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Agent operations persistence is not connected.");
     public RuntimeCollectionV1<RuntimeAgentHandoffV1> AgentHandoffs { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Agent handoff persistence is not connected.");
     public RuntimeCollectionV1<RuntimeTeacherLessonV1> TeacherLessons { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Teacher persistence is not connected.");
