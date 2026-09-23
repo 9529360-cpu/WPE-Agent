@@ -272,7 +272,7 @@
     "Stage.Review":  "Critic / Reviewer：方向、競合、信頼度を審査",
     "Stage.Risk":  "Risk Manager：意思決定、ポジション、リスクを検証",
     "Stage.Execution":  "Execution：注文、約定、保護注文を検証",
-    "Stage.Reflection":  "Reflection：経験を記録し次のサイクルを待機",
+    "Stage.Completed":  "サイクル完了：監査を記録し、新しい市場証拠を待機",
     "Stage.Paused":  "一時停止",
     "Agent.Started":  "{0} · {1} · 口座状態を管理中",
     "Agent.Paused":  "一時停止中。新しいサイクルは開始しません",
