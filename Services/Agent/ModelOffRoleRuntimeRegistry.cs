@@ -52,8 +52,7 @@ public static class ModelOffRoleRuntimeRegistryBuilderV1
         Capability("risk", [ModelOffRuntimeRoleV1.Risk], "yes", true, true, "current", "covered crypto Risk Gate only"),
         Capability("execution", [ModelOffRuntimeRoleV1.Execution], "yes", true, true, "current", "deterministic execution contract boundary only; no Testnet claim"),
         Capability("position", [ModelOffRuntimeRoleV1.Execution, ModelOffRuntimeRoleV1.Recovery], "yes", true, true, "current", "deterministic position quantity, protection and external-isolation gates with same-cycle mutation invalidation; no live Testnet provider certification"),
-        Capability("review-post-trade", [ModelOffRuntimeRoleV1.Audit], "yes", true, true, "current", "deterministic confirmed-close accounting with idempotent PnL, fee, funding, slippage and bounded strategy identity; no broad causal-performance claim"),
-        Capability("teacher", [ModelOffRuntimeRoleV1.Research], "yes", true, true, "current", "deterministic daily market brief from eligible canonical Research; opt-in notification only")
+        Capability("review-post-trade", [ModelOffRuntimeRoleV1.Audit], "yes", true, true, "current", "deterministic confirmed-close accounting with idempotent PnL, fee, funding, slippage and bounded strategy identity; no broad causal-performance claim")
     ];
 
     public static ModelOffRoleRuntimeRegistryResultV1 CreateDefault() =>
