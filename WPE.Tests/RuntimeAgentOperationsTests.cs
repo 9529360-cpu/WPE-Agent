@@ -39,7 +39,7 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
         var db=new AgentSqliteStore(DatabasePath);
         await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("run-roles","runtime.heartbeat","AgentRuntimeSupervisor",new{RunId="run-roles",LeaseRenewed=true}),default);
         await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-roles","workflow.node.entered","AgentRuntimeSupervisor",new{RunId="run-roles",Previous=WorkflowNode.Research,Node=WorkflowNode.PositionManagement}),default);
-        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-roles","workflow.node.entered","AgentRuntimeSupervisor",new{RunId="run-roles",Previous=WorkflowNode.Risk,Node=WorkflowNode.Reflection}),default);
+        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-roles","workflow.node.entered","AgentRuntimeSupervisor",new{RunId="run-roles",Previous=WorkflowNode.Risk,Node=WorkflowNode.Audit}),default);
 
         var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath),new AgentRoleRuntimeRegistry()).Read();
 
