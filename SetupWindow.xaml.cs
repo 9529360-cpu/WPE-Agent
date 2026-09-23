@@ -18,13 +18,6 @@ namespace 币安量化机器人;
 
 public partial class SetupWindow:Window
 {
-    private readonly CheckBox _notifyMarketBrief=new(){Tag=NotificationEventKind.MarketBrief.ToString(),Margin=new(0,4,18,4)};
-    private readonly CheckBox _notifyTeacherMorning=new(){Tag=NotificationEventKind.TeacherMorningLesson.ToString(),Margin=new(0,4,18,4)};
-    private readonly CheckBox _notifyTeacherAfternoon=new(){Tag=NotificationEventKind.TeacherAfternoonLesson.ToString(),Margin=new(0,4,18,4)};
-    private readonly CheckBox _notifyTeacherEvening=new(){Tag=NotificationEventKind.TeacherEveningLesson.ToString(),Margin=new(0,4,18,4)};
-    private readonly CheckBox _notifyTeacherEvent=new(){Tag=NotificationEventKind.TeacherEventLesson.ToString(),Margin=new(0,4,18,4)};
-    private readonly CheckBox _notifyTeacherRecommendation=new(){Tag=NotificationEventKind.TeacherRecommendation.ToString(),Margin=new(0,4,18,4)};
-    private readonly CheckBox _notifyTeacherCorrection=new(){Tag=NotificationEventKind.TeacherCorrection.ToString(),Margin=new(0,4,18,4)};
     private readonly ListView _telegramSubscriberList=new(){Height=180,Margin=new(0,8,0,8)};
     private readonly Button _approveTelegramSubscriber=new(){Content="批准所选订阅者",Margin=new(0,0,8,0)};
     private readonly Button _disableTelegramSubscriber=new(){Content="停用所选订阅者",Margin=new(0,0,8,0)};
@@ -130,12 +123,7 @@ public partial class SetupWindow:Window
     }
     private sealed record TelegramSubscriberRow(string SubscriberKey,string Display);
     private CheckBox[] NotificationEventBoxes()
-    {
-        _notifyMarketBrief.Content=I18n.CurrentCode switch{"zh_CN"=>"每日市场简报","zh_TW"=>"每日市場簡報","ja_JP"=>"毎日のマーケットレポート","ko_KR"=>"일일 시장 브리핑","it_IT"=>"Briefing giornaliero di mercato",_=>"Daily market brief"};
-        var chinese=I18n.CurrentCode.StartsWith("zh",StringComparison.OrdinalIgnoreCase);_notifyTeacherMorning.Content=chinese?"老师早课":"Teacher morning lesson";_notifyTeacherAfternoon.Content=chinese?"老师午课":"Teacher afternoon lesson";_notifyTeacherEvening.Content=chinese?"老师晚课":"Teacher evening lesson";_notifyTeacherEvent.Content=chinese?"老师市场异动课":"Teacher market event lesson";_notifyTeacherRecommendation.Content=chinese?"老师研究候选":"Teacher research candidate";_notifyTeacherCorrection.Content=chinese?"老师更正":"Teacher correction";
-        if(NotifyTest.Parent is Panel panel)foreach(var box in new[]{_notifyMarketBrief,_notifyTeacherMorning,_notifyTeacherAfternoon,_notifyTeacherEvening,_notifyTeacherEvent,_notifyTeacherRecommendation,_notifyTeacherCorrection})if(box.Parent is null)panel.Children.Insert(Math.Max(0,panel.Children.IndexOf(NotifyTest)),box);
-        return[NotifyOrderFilled,NotifyPositionOpened,NotifyPositionClosed,NotifyProtection,NotifyProtectionFailed,NotifyRiskBlocked,NotifyAgentDegraded,_notifyMarketBrief,_notifyTeacherMorning,_notifyTeacherAfternoon,_notifyTeacherEvening,_notifyTeacherEvent,_notifyTeacherRecommendation,_notifyTeacherCorrection,NotifyTest];
-    }
+        =>[NotifyOrderFilled,NotifyPositionOpened,NotifyPositionClosed,NotifyProtection,NotifyProtectionFailed,NotifyRiskBlocked,NotifyAgentDegraded,NotifyTest];
     private void LoadNotificationSettings()
     {
         var n=_settings.Notification;NotificationsEnabledBox.IsChecked=n.Enabled;TelegramEnabledBox.IsChecked=n.Telegram.Enabled;WhatsAppEnabledBox.IsChecked=n.WhatsApp.Enabled;QuietHoursBox.IsChecked=n.QuietHoursEnabled;QuietStartBox.Text=n.QuietHoursStart;QuietEndBox.Text=n.QuietHoursEnd;
