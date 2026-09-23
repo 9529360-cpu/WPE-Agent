@@ -236,7 +236,7 @@ public sealed class PortfolioRiskAssessment
     public string Summary { get; init; } = string.Empty;
 }
 public sealed record AgentContext(string BrainName,bool CircuitBreakerActive,string? ActiveSymbol,IReadOnlyList<StructuredOutcomeMemory> OutcomeMemories,int ConsecutiveHolds,IReadOnlyList<PlannerMemoryFact>? RelevantMemories=null);
-public sealed record PlannerMemoryFact(string Tier,DateTime OccurredAtUtc,string Result,string Source,string Summary);
+public sealed record PlannerMemoryFact(string Tier,DateTime OccurredAtUtc,string Result,string Source,string Summary,string? StrategyId=null);
 public sealed record StructuredOutcomeMemory(
     DateTime CycleStartedUtc,
     string Mode,
