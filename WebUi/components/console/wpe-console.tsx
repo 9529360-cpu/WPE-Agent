@@ -554,7 +554,7 @@ function Sidebar({ page, onChange, runtime }: { page: PageId; onChange: (page: P
 }
 
 function MobileNav({ page, onChange, onMore }: { page: PageId; onChange: (page: PageId) => void; onMore: () => void }) {
-  const primary: PageId[] = ['home', 'agents', 'teacher', 'trading']
+  const primary: PageId[] = ['home', 'agents', 'trading']
   const moreActive = ['research', 'risk', 'monitoring', 'settings'].includes(page)
   return (
     <nav className="wpe-mobile-nav" aria-label="移动端导航">
