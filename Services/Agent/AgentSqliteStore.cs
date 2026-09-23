@@ -981,7 +981,7 @@ public sealed partial class AgentSqliteStore
     };
     private static string? RoleForNode(string node)=>node.ToUpperInvariant() switch{"BOOT" or "OBSERVATION"=>"market","RESEARCH" or "PLANNER" or "AGGREGATION" or "CRITIC" or "REVIEWER"=>"decision","POSITIONMANAGEMENT" or "RISK"=>"risk","EXECUTION"=>"execution","RECOVERY" or "SAFETYEXECUTION"=>"recovery","REFLECTION" or "WAITING" or "PAUSED"=>"audit",_=>null};
     private static string NodeName(JsonElement value)=>value.ValueKind==JsonValueKind.Number&&value.TryGetInt32(out var number)&&Enum.IsDefined(typeof(WorkflowNode),number)?((WorkflowNode)number).ToString():value.ValueKind==JsonValueKind.String?value.GetString()??string.Empty:string.Empty;
-    private static string NormalizeAgentMode(string? mode)=>mode?.Replace("-",string.Empty,StringComparison.Ordinal).Replace(" ",string.Empty,StringComparison.Ordinal).ToUpperInvariant() switch{"HYBRID"=>"Hybrid","AIRESEARCH"=>"AI Research",_=>"Local Only"};
+    private static string NormalizeAgentMode(string? mode)=>"Local Only";
     public Task RecordRealtimeEventAsync(RealtimeAgentEvent value,CancellationToken ct)=>Exec("INSERT INTO realtime_events(occurred_at,event_type,symbol,status,summary,payload_hash) VALUES($t,$e,$s,$st,$m,$h)",ct,("$t",value.OccurredAt.ToString("O")),("$e",value.EventType),("$s",value.Symbol),("$st",value.Status),("$m",value.Summary),("$h",value.PayloadHash));
     public async Task<bool> SaveExchangeOrderFeeEvidenceAsync(ExchangeOrderFeeEvidenceV1 evidence,CancellationToken ct)
     {
