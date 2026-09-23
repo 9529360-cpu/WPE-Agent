@@ -1,7 +1,7 @@
 'use client'
 
 import {useState} from 'react'
-import { AlertTriangle, BellRing, BrainCircuit, Cable, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, BellRing, Cable, ShieldCheck } from 'lucide-react'
 import { PageHeader } from '@/components/shell/page-header'
 import { Panel, PanelBody, PanelHeader } from '@/components/ui/panel'
 import { RuntimeMetric, RuntimeUnavailable } from '@/components/runtime-state'
@@ -36,7 +36,6 @@ export default function SettingsPage() {
   const runtime = useWpeRuntime()
   const { t, formatDate } = useI18n()
   const [hostActionUnavailable,setHostActionUnavailable]=useState(false)
-  const governance = runtime.runtimeFresh && runtime.llmGovernance?.state === 'available' ? runtime.llmGovernance.value : undefined
   const connection = runtime.connectionStatus?.state === 'available' ? runtime.connectionStatus.value : undefined
   const connectionState = runtime.connectionStatus?.state ?? 'unsupported'
   const notification = runtime.notificationStatus?.state === 'available' ? runtime.notificationStatus.value : undefined
@@ -150,14 +149,5 @@ export default function SettingsPage() {
       <RuntimeMetric label="Brain" value={runtime.brainConnected ? t('common.connected') : t('common.notConnected')} />
     </PanelBody></Panel> : <RuntimeUnavailable stale={Boolean(runtime.lastUpdated)} subject={t('settings.connection')} />}
 
-    <Panel>
-      <PanelHeader icon={<BrainCircuit className="size-4" />} title={t('settings.governance')} />
-      {governance ? <PanelBody className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <RuntimeMetric label={t('settings.governanceMode')} value={governance.mode} />
-        <RuntimeMetric label={t('settings.remoteCalls')} value={governance.remoteAllowed ? t('settings.enabled') : t('settings.disabled')} />
-        <RuntimeMetric label={t('settings.budgetBlocks')} value={governance.budgetBlocks} />
-        <RuntimeMetric label={t('settings.privacyBlocks')} value={governance.privacyBlocks} />
-      </PanelBody> : <PanelBody className="p-5 text-sm text-muted-foreground">{runtime.llmGovernance?.state === 'stale' ? t('settings.governanceStale') : runtime.llmGovernance?.state === 'error' ? runtime.llmGovernance.message || t('settings.governanceUnavailable') : t('settings.governanceMissing')}</PanelBody>}
-    </Panel>
   </div>
 }

@@ -5,7 +5,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 export type WpeRuntimeState = {
   contractVersion?: string
   freshness?: { fresh: boolean; ageSeconds: number; staleAfterSeconds: number }
-  collectionStates?: { account?: RuntimeCollectionState; positions?: RuntimeCollectionState; orders?: RuntimeCollectionState; risk?: RuntimeCollectionState; backtests?: RuntimeCollectionState; crossAssetResearch?:RuntimeCollectionState; distribution?:RuntimeCollectionState; telemetry?: RuntimeCollectionState; markets?: RuntimeCollectionState; publicMarkets?: RuntimeCollectionState; publicKlines?: RuntimeCollectionState; capabilities?: RuntimeCollectionState; llmGovernance?: RuntimeCollectionState; plugins?: RuntimeCollectionState; auditEvents?: RuntimeCollectionState; equityHistory?: RuntimeCollectionState; equityMarkets?: RuntimeCollectionState; equityBroker?: RuntimeCollectionState; historicalOrders?:RuntimeCollectionState; historicalEquity?:RuntimeCollectionState; historicalBacktests?:RuntimeCollectionState; historicalSkillCalls?:RuntimeCollectionState; historicalAuditEvents?:RuntimeCollectionState; connectionStatus?: RuntimeCollectionState; skillCalls?: RuntimeCollectionState; agentOperations?:RuntimeCollectionState; agentHandoffs?:RuntimeCollectionState; notificationStatus?:RuntimeCollectionState; notificationOutbox?:RuntimeCollectionState; telegramSubscribers?:RuntimeCollectionState; authorizationMode?: RuntimeCollectionState; automaticExecutions?:RuntimeCollectionState; pendingApprovals?: RuntimeCollectionState; securityStorage?:RuntimeCollectionState }
+  collectionStates?: { account?: RuntimeCollectionState; positions?: RuntimeCollectionState; orders?: RuntimeCollectionState; risk?: RuntimeCollectionState; backtests?: RuntimeCollectionState; crossAssetResearch?:RuntimeCollectionState; distribution?:RuntimeCollectionState; telemetry?: RuntimeCollectionState; markets?: RuntimeCollectionState; publicMarkets?: RuntimeCollectionState; publicKlines?: RuntimeCollectionState; capabilities?: RuntimeCollectionState; plugins?: RuntimeCollectionState; auditEvents?: RuntimeCollectionState; equityHistory?: RuntimeCollectionState; equityMarkets?: RuntimeCollectionState; equityBroker?: RuntimeCollectionState; historicalOrders?:RuntimeCollectionState; historicalEquity?:RuntimeCollectionState; historicalBacktests?:RuntimeCollectionState; historicalSkillCalls?:RuntimeCollectionState; historicalAuditEvents?:RuntimeCollectionState; connectionStatus?: RuntimeCollectionState; skillCalls?: RuntimeCollectionState; agentOperations?:RuntimeCollectionState; agentHandoffs?:RuntimeCollectionState; notificationStatus?:RuntimeCollectionState; notificationOutbox?:RuntimeCollectionState; telegramSubscribers?:RuntimeCollectionState; authorizationMode?: RuntimeCollectionState; automaticExecutions?:RuntimeCollectionState; pendingApprovals?: RuntimeCollectionState; securityStorage?:RuntimeCollectionState }
   collectionMessages?: { positions?: string; orders?: string; backtests?: string; equityHistory?: string; equityMarkets?: string; equityBroker?: string; connectionStatus?: string }
   positions?: RuntimePosition[]
   orders?: RuntimeOrder[]
@@ -81,8 +81,6 @@ export type WpeRuntimeState = {
   publicKlines?: RuntimePublicKlineCollection
   /** Optional host-provided exchange/provider capability catalog. */
   capabilities?: RuntimeCapability[]
-  /** Host-authoritative LLM usage and policy counters. Missing means unsupported. */
-  llmGovernance?: RuntimeLlmGovernanceCollection
   /** Host-authoritative, read-only plugin registry. Missing means unsupported. */
   plugins?: RuntimePluginCollection
   /** Host-authoritative, read-only audit timeline. Missing means unsupported. */
@@ -233,30 +231,6 @@ export type RuntimeCapability = {
   status: string
   canTrade: boolean
   testnetAvailable: boolean
-}
-
-export type RuntimeLlmGovernanceValue = {
-  mode: string
-  remoteAllowed: boolean
-  calls: number
-  tokens: number
-  costUsd: number
-  cacheHits: number
-  budgetBlocks: number
-  fallbacks: number
-  privacyBlocks: number
-  offlineCompletions: number
-  topProvider?: string
-  topPurpose?: string
-  topAgent?: string
-  topTool?: string
-  lastCallAtUtc?: string
-}
-
-export type RuntimeLlmGovernanceCollection = {
-  state: RuntimeCollectionState
-  message?: string
-  value?: RuntimeLlmGovernanceValue
 }
 
 export type RuntimePluginType = 'exchange-adapter' | 'data-source' | 'notification'
@@ -449,54 +423,6 @@ function normalizeCrossAssetResearch(input:unknown):RuntimeCrossAssetResearch|nu
 function normalizeCrossAssetResearchCollection(input:unknown):RuntimeCrossAssetResearchCollection{const normalized=normalizeItems(input,normalizeCrossAssetResearch);const source=input&&typeof input==='object'?nonEmptyString((input as Record<string,unknown>).sourceUpdatedAtUtc)??undefined:undefined;return{...normalized,sourceUpdatedAtUtc:source}}
 function normalizeDistribution(input:unknown):RuntimeDistributionCollection{if(!input||typeof input!=='object')return{state:'unsupported',message:'The host runtime does not expose professional distribution status.'};const c=input as Record<string,unknown>,state=normalizeCollectionState(c.state),message=nonEmptyString(c.message)??undefined;if(state!=='available')return{state,message};if(!c.value||typeof c.value!=='object')return{state:'error',message:'Distribution status is marked available without a value.'};const v=c.value as Record<string,unknown>,forbidden=['recipient','destination','reviewerId','primaryReviewerId','secondaryReviewerId','reviewText','opinion','body','content','message','send','retry','approve','approvalId','configuration','config'];if(forbidden.some(k=>Object.hasOwn(v,k)))return{state:'error',message:'Distribution status contains a forbidden field.'};const status=nonEmptyString(v.status),asOfUtc=nonEmptyString(v.asOfUtc);if(!status||!['Denied','Authorized','Error'].includes(status)||typeof v.allowed!=='boolean'||typeof v.withdrawn!=='boolean'||!asOfUtc||Number.isNaN(Date.parse(asOfUtc))||!Array.isArray(v.approvalRoles)||!v.approvalRoles.every(role=>role==='PrimaryReviewer'||role==='SecondaryReviewer')||!Array.isArray(v.reasonCodes)||!v.reasonCodes.every(reason=>typeof reason==='string'))return{state:'error',message:'Distribution status contains invalid fields.'};if(status==='Error')return{state:'error',message:'Distribution status could not be validated.'};if(v.allowed!== (status==='Authorized'))return{state:'error',message:'Distribution status violates fail-closed semantics.'};const nullable=(key:string)=>v[key]===null?null:nonEmptyString(v[key]),validUntilUtc=nullable('validUntilUtc');if(validUntilUtc!==null&&Number.isNaN(Date.parse(validUntilUtc)))return{state:'error',message:'Distribution validity is invalid.'};const hashes=['receiptHash','policyHash','contentFactsHash','consentScopeHash','auditCorrelationHash'] as const,hashValues=Object.fromEntries(hashes.map(key=>[key,nullable(key)])) as Record<(typeof hashes)[number],string|null>;if(hashes.some(key=>hashValues[key]!==null&&!/^[A-F0-9]{64}$/.test(hashValues[key]!)))return{state:'error',message:'Distribution hash metadata is invalid.'};const consentVersion=nullable('consentVersion'),suitabilityVersion=nullable('suitabilityVersion');if(consentVersion===undefined||suitabilityVersion===undefined)return{state:'error',message:'Distribution version metadata is invalid.'};return{state:'available',message,value:{status:status as RuntimeDistribution['status'],allowed:v.allowed,approvalRoles:v.approvalRoles as RuntimeDistribution['approvalRoles'],validUntilUtc,withdrawn:v.withdrawn,receiptHash:hashValues.receiptHash,policyHash:hashValues.policyHash,contentFactsHash:hashValues.contentFactsHash,consentScopeHash:hashValues.consentScopeHash,consentVersion,suitabilityVersion,auditCorrelationHash:hashValues.auditCorrelationHash,reasonCodes:v.reasonCodes as string[],asOfUtc}}}
 function normalizeDiagnostic(input:unknown):RuntimeDiagnosticCollection{if(!input||typeof input!=='object')return{state:'unsupported'};const c=input as Record<string,unknown>,state=normalizeCollectionState(c.state);if(state!=='available'||c.value===null)return{state};if(!c.value||typeof c.value!=='object')return{state:'error'};const v=c.value as Record<string,unknown>,code=nonEmptyString(v.code),timeUtc=nonEmptyString(v.timeUtc),summary=nonEmptyString(v.summary);if(!code||!timeUtc||Number.isNaN(Date.parse(timeUtc))||!summary)return{state:'error'};return{state:'available',value:{code,timeUtc,summary}}}
-function normalizeLlmGovernance(input: unknown): RuntimeLlmGovernanceCollection {
-  if (!input || typeof input !== 'object') {
-    return { state: 'unsupported', message: 'The host runtime does not expose LLM governance metrics.' }
-  }
-
-  const collection = input as Record<string, unknown>
-  const state = normalizeCollectionState(collection.state)
-  const message = nonEmptyString(collection.message) ?? undefined
-  if (state !== 'available') return { state, message }
-  if (!collection.value || typeof collection.value !== 'object') {
-    return { state: 'error', message: 'LLM governance is marked available without a value.' }
-  }
-
-  const value = collection.value as Record<string, unknown>
-  const mode = nonEmptyString(value.mode)
-  const remoteAllowed = typeof value.remoteAllowed === 'boolean' ? value.remoteAllowed : null
-  const countKeys = ['calls', 'tokens', 'cacheHits', 'budgetBlocks', 'fallbacks', 'privacyBlocks', 'offlineCompletions'] as const
-  const counts = Object.fromEntries(countKeys.map((key) => [key, finiteNumber(value[key])])) as Record<(typeof countKeys)[number], number | null>
-  const costUsd = finiteNumber(value.costUsd)
-  const invalidCount = countKeys.some((key) => counts[key] === null || counts[key]! < 0 || !Number.isInteger(counts[key]!))
-  if (!mode || remoteAllowed === null || costUsd === null || costUsd < 0 || invalidCount) {
-    return { state: 'error', message: 'LLM governance contains invalid or incomplete metrics.' }
-  }
-
-  const optionalString = (key: string) => nonEmptyString(value[key]) ?? undefined
-  return {
-    state: 'available',
-    message,
-    value: {
-      mode,
-      remoteAllowed,
-      calls: counts.calls!,
-      tokens: counts.tokens!,
-      costUsd,
-      cacheHits: counts.cacheHits!,
-      budgetBlocks: counts.budgetBlocks!,
-      fallbacks: counts.fallbacks!,
-      privacyBlocks: counts.privacyBlocks!,
-      offlineCompletions: counts.offlineCompletions!,
-      topProvider: optionalString('topProvider'),
-      topPurpose: optionalString('topPurpose'),
-      topAgent: optionalString('topAgent'),
-      topTool: optionalString('topTool'),
-      lastCallAtUtc: optionalString('lastCallAtUtc'),
-    },
-  }
-}
-
 const pluginTypes = new Set<RuntimePluginType>(['exchange-adapter', 'data-source', 'notification'])
 const pluginRiskLevels = new Set<RuntimePlugin['riskLevel']>(['low', 'medium', 'high'])
 const pluginPermissions: Record<RuntimePluginType, Set<string>> = {
@@ -613,7 +539,7 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
   const freshness = value.freshness && typeof value.freshness === 'object' ? value.freshness as { fresh: boolean; ageSeconds: number; staleAfterSeconds: number } : undefined
   const generatedAtUtc=nonEmptyString(value.generatedAtUtc),sourceUpdatedAtUtc=nonEmptyString(value.sourceUpdatedAtUtc),environment=nonEmptyString(value.environment)
   if(!freshness||typeof freshness.fresh!=='boolean'||finiteNumber(freshness.ageSeconds)===null||freshness.ageSeconds<0||finiteNumber(freshness.staleAfterSeconds)===null||freshness.staleAfterSeconds<=0||!generatedAtUtc||!sourceUpdatedAtUtc||Number.isNaN(Date.parse(generatedAtUtc))||Number.isNaN(Date.parse(sourceUpdatedAtUtc))||environment!=='Testnet')return null
-  const collections = ['account', 'positions', 'orders', 'risk', 'backtests', 'crossAssetResearch', 'distribution', 'telemetry', 'markets', 'publicMarkets', 'publicKlines', 'capabilities', 'llmGovernance', 'plugins', 'auditEvents', 'equityHistory', 'equityMarkets', 'equityBroker','historicalOrders','historicalEquity','historicalBacktests','historicalSkillCalls','historicalAuditEvents', 'connectionStatus','skillCalls','agentOperations','agentHandoffs','notificationStatus','notificationOutbox','telegramSubscribers','authorizationMode','automaticExecutions','pendingApprovals','securityStorage']
+  const collections = ['account', 'positions', 'orders', 'risk', 'backtests', 'crossAssetResearch', 'distribution', 'telemetry', 'markets', 'publicMarkets', 'publicKlines', 'capabilities', 'plugins', 'auditEvents', 'equityHistory', 'equityMarkets', 'equityBroker','historicalOrders','historicalEquity','historicalBacktests','historicalSkillCalls','historicalAuditEvents', 'connectionStatus','skillCalls','agentOperations','agentHandoffs','notificationStatus','notificationOutbox','telegramSubscribers','authorizationMode','automaticExecutions','pendingApprovals','securityStorage']
   const collectionStates = Object.fromEntries(collections.map((key) => [key, normalizeCollectionState((value[key] as { state?: unknown } | undefined)?.state)])) as NonNullable<WpeRuntimeState['collectionStates']>
   const positions = normalizeItems(value.positions, normalizePosition)
   const orders = normalizeItems(value.orders, normalizeOrder)
@@ -647,7 +573,6 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
   const pendingApprovals=normalizePendingApprovals(value.pendingApprovals)
   const research=normalizeCrossAssetResearchCollection(value.crossAssetResearch)
   const distribution=normalizeDistribution(value.distribution)
-  const llmGovernance = normalizeLlmGovernance(value.llmGovernance)
   const plugins = normalizePlugins(value.plugins)
   const auditEvents = normalizeAuditEvents(value.auditEvents, freshness?.fresh)
   collectionStates.positions = positions.state
@@ -672,7 +597,6 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
   collectionStates.pendingApprovals=pendingApprovals.state
   collectionStates.crossAssetResearch=research.state
   collectionStates.distribution=distribution.state
-  collectionStates.llmGovernance = llmGovernance.state
   collectionStates.plugins = plugins.state
   collectionStates.auditEvents = auditEvents.state
   const legacy = (value.legacyFields && typeof value.legacyFields === 'object' ? value.legacyFields : value) as Record<string, unknown>
@@ -683,7 +607,6 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
     collectionStates,
     positions: positions.items,
     orders: orders.items,
-    llmGovernance,
     plugins,
     auditEvents,
     equityHistory: equityHistory.items,

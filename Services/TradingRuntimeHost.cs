@@ -260,8 +260,6 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
             ServiceLocator.RuntimeAgentOperations.Read(),
             ServiceLocator.RuntimeBacktests.Read(),
             ServiceLocator.RuntimeAudit.Read(),
-            LlmRequestGovernor.Shared.GetTodaySnapshot(),
-            LlmRequestGovernor.Shared.GetTodayBreakdown(),
             ServiceLocator.PluginRegistry.List(),
             ServiceLocator.RuntimeNotifications.Read(),
             ServiceLocator.RuntimeAuthorization.Read(),
