@@ -7,8 +7,6 @@ export const previewState: WpeRuntimeState = {
   runtimeAgeSeconds: 0,
   environment: 'PREVIEW - TESTNET',
   status: 'Running',
-  aiRuntimeMode: 'LocalOnly',
-  aiRuntimeEffectiveMode: 'LocalOnly',
   activeBrainProvider: 'WPE Local Brain',
   activeBrainModel: 'local-deterministic',
   loggedInUser: 'Preview',
