@@ -166,23 +166,6 @@ public sealed record RuntimeTelemetryV1(
     string WorkflowNode,
     int ThinkingProgress);
 
-public sealed record RuntimeLlmGovernanceV1(
-    string Mode,
-    bool RemoteAllowed,
-    int Calls,
-    int Tokens,
-    decimal CostUsd,
-    int CacheHits,
-    int BudgetBlocks,
-    int Fallbacks,
-    int PrivacyBlocks,
-    int OfflineCompletions,
-    string TopProvider,
-    string TopPurpose,
-    string TopAgent,
-    string TopTool,
-    DateTime? LastCallAtUtc);
-
 public sealed record RuntimePluginV1(
     string Id,
     string Name,
@@ -308,7 +291,6 @@ public sealed class RuntimeSnapshotV1
     public RuntimeValueV1<RuntimeConnectionStatusV1> ConnectionStatus { get; init; } = new(RuntimeCollectionState.Unsupported, null, "Access readiness has not been checked.");
     public RuntimeCollectionV1<RuntimeAuditEventV1> AuditEvents { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Audit persistence is not connected.");
     public RuntimeValueV1<RuntimeTelemetryV1> Telemetry { get; init; } = new(RuntimeCollectionState.Unsupported, null);
-    public RuntimeValueV1<RuntimeLlmGovernanceV1> LlmGovernance { get; init; } = new(RuntimeCollectionState.Unsupported, null, "LLM governance metrics are not connected.");
     public RuntimeCollectionV1<RuntimeMarketV1> Markets { get; init; } = new(RuntimeCollectionState.Unsupported, []);
     public RuntimeCollectionV1<RuntimePublicMarketTickerV1> PublicMarkets { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Public market runtime is not connected.");
     public RuntimeCollectionV1<RuntimePublicMarketKlineV1> PublicKlines { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Public market kline runtime is not connected.");
