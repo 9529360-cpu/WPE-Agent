@@ -58,10 +58,6 @@ public class SystemState
     public string LastMessage { get; set; } = "就绪";
     public int EvidenceCompleteness { get; set; }
     public string BrainName { get; set; } = string.Empty;
-    public AiRuntimeMode BrainMode { get; set; } = AiRuntimeMode.LocalOnly;
-    public AiRuntimeMode BrainEffectiveMode { get; set; } = AiRuntimeMode.LocalOnly;
-    public bool BrainRemoteAllowed { get; set; }
-    public string BrainFallbackReason { get; set; } = "Local-only runtime";
     public string ActiveBrainProvider { get; set; } = "WPE Local Brain";
     public string ActiveBrainModel { get; set; } = string.Empty;
     public DateTime? NextCycleAtUtc { get; set; }

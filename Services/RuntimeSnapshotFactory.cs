@@ -202,7 +202,6 @@ public static class RuntimeSnapshotFactory
                 ["dailyPnl"] = state.DailyPnl, ["maxDrawdown"] = state.MaxDrawdown,
                 ["runtimeEventSequence"] = state.RuntimeEventSequence, ["runtimeHeartbeatAtUtc"] = state.RuntimeHeartbeatAtUtc,
                 ["exchangeConnected"] = state.ExchangeConnected, ["brainConnected"] = state.BrainConnected,
-                ["aiRuntimeMode"] = state.BrainMode.ToString(), ["aiRuntimeEffectiveMode"] = state.BrainEffectiveMode.ToString(),
                 ["activeBrainProvider"] = state.ActiveBrainProvider, ["activeBrainModel"] = state.ActiveBrainModel,
                 ["apiTradePermission"] = state.ApiTradePermission, ["riskReady"] = state.RiskReady,
                 ["realtimeStatus"] = state.RealtimeStatus, ["positionsSummary"] = state.PositionsSummary,

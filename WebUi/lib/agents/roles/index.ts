@@ -1,6 +1,6 @@
 import roleRegistry from './role-registry.json'
 
-export type RoleMode = 'deterministic' | 'optional-llm'
+export type RoleMode = 'deterministic'
 export type RoleRuntime = 'local'
 
 export type TypedAuthorization = {
@@ -17,7 +17,6 @@ export type RegistryRoleDefinition = {
   name: string
   mode: RoleMode
   runtime: RoleRuntime
-  optionalLlm: boolean
   deterministicFallback: string
   allowedActions: string[]
   forbiddenActions: string[]

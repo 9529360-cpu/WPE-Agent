@@ -290,10 +290,6 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
 
     private static void ApplyLocalBrainState(SystemState state)
     {
-        state.BrainMode=AiRuntimeMode.LocalOnly;
-        state.BrainEffectiveMode=AiRuntimeMode.LocalOnly;
-        state.BrainRemoteAllowed=false;
-        state.BrainFallbackReason="Local deterministic trading brain";
         state.ActiveBrainProvider="WPE Local Brain";
         state.ActiveBrainModel="local-deterministic";
         state.BrainName="WPE Local Brain";

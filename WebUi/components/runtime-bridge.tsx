@@ -11,8 +11,6 @@ export type WpeRuntimeState = {
   orders?: RuntimeOrder[]
   backtests?: RuntimeBacktest[]
   previewMode?: boolean
-  aiRuntimeMode?: string
-  aiRuntimeEffectiveMode?: string
   activeBrainProvider?: string
   activeBrainModel?: string
   btcPrice?: number
@@ -169,7 +167,7 @@ export type RuntimeConnectionStatusCollection = {
 }
 export type RuntimeSkillCall = { id:string; occurredAtUtc:string; skill:string; status:string; durationMs:number; mode:string|null; remoteLlmUsed:boolean|null; tokens:number|null; costUsd:number|null }
 export type RuntimeDiagnosticCollection={state:RuntimeCollectionState;value?:{code:string;timeUtc:string;summary:string}}
-export type RuntimeAgentOperation={roleId:string;status:'running'|'monitoring'|'waiting'|'degraded'|'stopped';lastActivityAtUtc:string|null;activity:string|null;mode:'Local Only'|'Hybrid'|'AI Research'}
+export type RuntimeAgentOperation={roleId:string;status:'running'|'monitoring'|'waiting'|'degraded'|'stopped';lastActivityAtUtc:string|null;activity:string|null;mode:'Local Only'}
 export type RuntimeAgentHandoff={id:string;occurredAtUtc:string;sourceRoleId:string;targetRoleId:string;result:string}
 export type RuntimeNotificationStatus={enabled:boolean;telegramStored:boolean;telegramReady:boolean;whatsAppStored:boolean;whatsAppReady:boolean;legacyMigrationPending:boolean;legacyMigrationDiagnosticCode:string|null;eventKinds:string[];quietHoursEnabled:boolean;quietHoursStart:string;quietHoursEnd:string;quietHoursTimeZone:string;pendingCount:number;retryingCount:number;sentCount:number;deadLetterCount:number}
 export type RuntimeNotificationStatusCollection={state:RuntimeCollectionState;message?:string;value?:RuntimeNotificationStatus}
@@ -370,7 +368,7 @@ function normalizeBacktest(input: unknown): RuntimeBacktest | null {
   return { backtestId, strategyId, strategyVersion, symbol, completedAtUtc, status, coverageDays, trades, outOfSampleReturn, maxDrawdown, sharpe }
 }
 function normalizeSkillCall(input:unknown):RuntimeSkillCall|null{if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>,id=nonEmptyString(x.id),occurredAtUtc=nonEmptyString(x.occurredAtUtc),skill=nonEmptyString(x.skill),status=nonEmptyString(x.status),durationMs=finiteNumber(x.durationMs);const mode=x.mode===null?null:nonEmptyString(x.mode);const remoteLlmUsed=x.remoteLlmUsed===null?null:typeof x.remoteLlmUsed==='boolean'?x.remoteLlmUsed:undefined;const tokens=x.tokens===null?null:finiteNumber(x.tokens);const costUsd=x.costUsd===null?null:finiteNumber(x.costUsd);if(!id||!occurredAtUtc||Number.isNaN(Date.parse(occurredAtUtc))||!skill||!status||durationMs===null||durationMs<0||remoteLlmUsed===undefined||(tokens!==null&&(tokens<0||!Number.isInteger(tokens)))||(costUsd!==null&&costUsd<0))return null;return{id,occurredAtUtc,skill,status,durationMs,mode,remoteLlmUsed,tokens,costUsd}}
-function normalizeAgentOperation(input:unknown):RuntimeAgentOperation|null{if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>,roleId=nonEmptyString(x.roleId),status=nonEmptyString(x.status),activity=x.activity===null?null:nonEmptyString(x.activity),mode=nonEmptyString(x.mode),last=x.lastActivityAtUtc===null?null:nonEmptyString(x.lastActivityAtUtc);if(!roleId||!status||!['running','monitoring','waiting','degraded','stopped'].includes(status)||!mode||!['Local Only','Hybrid','AI Research'].includes(mode)||(last!==null&&Number.isNaN(Date.parse(last))))return null;return{roleId,status:status as RuntimeAgentOperation['status'],lastActivityAtUtc:last,activity,mode:mode as RuntimeAgentOperation['mode']}}
+function normalizeAgentOperation(input:unknown):RuntimeAgentOperation|null{if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>,roleId=nonEmptyString(x.roleId),status=nonEmptyString(x.status),activity=x.activity===null?null:nonEmptyString(x.activity),last=x.lastActivityAtUtc===null?null:nonEmptyString(x.lastActivityAtUtc);if(!roleId||!status||!['running','monitoring','waiting','degraded','stopped'].includes(status)||(last!==null&&Number.isNaN(Date.parse(last))))return null;return{roleId,status:status as RuntimeAgentOperation['status'],lastActivityAtUtc:last,activity,mode:'Local Only'}}
 function normalizeAgentHandoff(input:unknown):RuntimeAgentHandoff|null{if(!input||typeof input!=='object')return null;const x=input as Record<string,unknown>,id=nonEmptyString(x.id),occurredAtUtc=nonEmptyString(x.occurredAtUtc),sourceRoleId=nonEmptyString(x.sourceRoleId),targetRoleId=nonEmptyString(x.targetRoleId),result=nonEmptyString(x.result);if(!id||!occurredAtUtc||Number.isNaN(Date.parse(occurredAtUtc))||!sourceRoleId||!targetRoleId||sourceRoleId===targetRoleId||!result)return null;return{id,occurredAtUtc,sourceRoleId,targetRoleId,result}}
 
 function normalizeItems<T>(collection: unknown, normalize: (item: unknown) => T | null) {

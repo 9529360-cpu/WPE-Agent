@@ -144,7 +144,7 @@ export default function SettingsPage() {
 
     {runtime.runtimeFresh ? <Panel><PanelBody className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
       <RuntimeMetric label={t('settings.environment')} value={runtime.environment} />
-      <RuntimeMetric label={t('settings.configMode')} value={runtime.aiRuntimeMode} />
+      <RuntimeMetric label={t('settings.configMode')} value="Local deterministic" />
       <RuntimeMetric label={t('dashboard.exchange')} value={runtime.exchangeConnected ? t('common.connected') : t('common.notConnected')} />
       <RuntimeMetric label="Brain" value={runtime.brainConnected ? t('common.connected') : t('common.notConnected')} />
     </PanelBody></Panel> : <RuntimeUnavailable stale={Boolean(runtime.lastUpdated)} subject={t('settings.connection')} />}
