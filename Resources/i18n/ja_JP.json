@@ -376,8 +376,6 @@
     "RiskReview.Spread":  "スプレッド過大（{0:F2} bps）",
     "RiskReview.Volatility":  "極端な変動（{0:P2}）",
     "RiskReview.RiskReward":  "リスクリワード {0:F2} は {1:F2} 未満",
-    "RiskReview.LossStreak":  "連続損失ブレーカー（{0}）",
-    "RiskReview.DailyLoss":  "日次損失ブレーカー（{0:N2}）",
     "RiskReview.ApiFailures":  "取引所/API 障害超過（{0}）",
     "RiskReview.OrderUncertain":  "状態不明の注文があります",
     "RiskReview.Research":  "研究検証に失敗（{0:P0}）",
