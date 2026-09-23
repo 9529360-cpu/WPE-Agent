@@ -30,7 +30,6 @@ export type WpeRuntimeState = {
   nextCycleAtUtc?: string
   environment?: string
   thinkingProgress?: number
-  reflectionStatus?: string
   reviewerStatus?: string
   riskApprovalStatus?: string
   executionApprovalStatus?: string
