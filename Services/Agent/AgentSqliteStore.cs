@@ -1188,16 +1188,18 @@ public sealed partial class AgentSqliteStore
         var openingCycles=lots.Where(x=>x.Value>0).Select(x=>x.Key).Distinct(StringComparer.Ordinal).ToArray();
         if(openingCycles.Length==0)return null;
 
-        var attributions=new List<(string Id,string Version)>();
+        var attributions=new List<(string Id,string Version)>();var missing=false;
         foreach(var openingCycle in openingCycles)
         {
             var matches=new List<(string Id,string Version)>();
             await using var q=c.CreateCommand();q.CommandText="SELECT DISTINCT strategy_id,strategy_version FROM automatic_execution_queue WHERE correlation_id=$cycle";q.Parameters.AddWithValue("$cycle",openingCycle);
             await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))matches.Add((r.GetString(0),r.GetString(1)));
-            if(matches.Count==0)return (null,fallbackVersion,"opening-attribution-incomplete");
+            if(matches.Count==0){missing=true;continue;}
             if(matches.Count!=1)return (null,fallbackVersion,"opening-attribution-conflicting");
             attributions.Add(matches[0]);
         }
+        if(attributions.Count==0)return null;
+        if(missing)return (null,fallbackVersion,"opening-attribution-incomplete");
         var distinct=attributions.Distinct().ToArray();
         return distinct.Length==1
             ?(distinct[0].Id,distinct[0].Version,"opening-artifact")
