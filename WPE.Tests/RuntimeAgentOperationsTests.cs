@@ -39,13 +39,30 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
         var db=new AgentSqliteStore(DatabasePath);
         await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("run-roles","runtime.heartbeat","AgentRuntimeSupervisor",new{RunId="run-roles",LeaseRenewed=true}),default);
         await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-roles","workflow.node.entered","AgentRuntimeSupervisor",new{RunId="run-roles",Previous=WorkflowNode.Research,Node=WorkflowNode.PositionManagement}),default);
-        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-roles","workflow.node.entered","AgentRuntimeSupervisor",new{RunId="run-roles",Previous=WorkflowNode.Risk,Node=WorkflowNode.Reflection}),default);
+        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-roles","workflow.node.entered","AgentRuntimeSupervisor",new{RunId="run-roles",Previous=WorkflowNode.Risk,Node=WorkflowNode.Audit}),default);
 
         var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath),new AgentRoleRuntimeRegistry()).Read();
 
         Assert.Contains(state.Handoffs,x=>x.SourceRoleId=="decision"&&x.TargetRoleId=="risk");
         Assert.Contains(state.Handoffs,x=>x.SourceRoleId=="risk"&&x.TargetRoleId=="audit");
         Assert.DoesNotContain(state.Handoffs,x=>x.SourceRoleId=="decision"&&x.TargetRoleId=="execution");
+    }
+
+    [Fact]
+    public async Task LegacyReflectionCheckpointRecoversAsAudit()
+    {
+        _=new AgentSqliteStore(DatabasePath);
+        await using(var connection=new SqliteConnection($"Data Source={DatabasePath}"))
+        {
+            await connection.OpenAsync();
+            await using var command=connection.CreateCommand();
+            command.CommandText="INSERT INTO workflow_runs(run_id,cycle_id,status,current_node,state_json,started_at,updated_at) VALUES('legacy-run','legacy-cycle','RUNNING','Reflection','{}',$t,$t)";
+            command.Parameters.AddWithValue("$t",DateTime.UtcNow.ToString("O"));
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var recovery=Assert.Single(await new AgentSqliteStore(DatabasePath).GetInterruptedWorkflowsAsync(default));
+        Assert.Equal(WorkflowNode.Audit,recovery.LastNode);
     }
 
     [Fact]
