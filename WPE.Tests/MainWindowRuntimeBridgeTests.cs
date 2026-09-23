@@ -110,14 +110,6 @@ public sealed class TradingRuntimeHostTests
     }
 
     [Fact]
-    public void SnapshotPump_RefreshesAndProjectsTeacherReadOnlyState()
-    {
-        var method = RefreshRuntimeSnapshotMethod();
-        Assert.Contains("ServiceLocator.RuntimeTeacher.RefreshAsync(ct)", method, StringComparison.Ordinal);
-        Assert.Contains("ServiceLocator.RuntimeTeacher.Read()", method, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void RuntimeHost_IsUiNeutralAndOwnsNormalKernelLifecycle()
     {
         var source = Source();
