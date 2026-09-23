@@ -113,7 +113,7 @@ public sealed class TradingAuthorizationSettingsTests : IDisposable
     [InlineData("Unknown")]
     [InlineData("999")]
     [InlineData("{}")]
-    public void InvalidMode_FallsBackToReviewWithoutChangingAiMode(string value)
+    public void InvalidMode_FallsBackToReviewAndNormalizesAiMode(string value)
     {
         Directory.CreateDirectory(_directory);
         File.WriteAllText(SettingsPath, $$"""
@@ -123,14 +123,14 @@ public sealed class TradingAuthorizationSettingsTests : IDisposable
         var settings = new AgentSettingsStore(SettingsPath).Load();
 
         Assert.Equal(TradingAuthorizationMode.Review, settings.AuthorizationMode);
-        Assert.Equal(AiRuntimeMode.AIResearch, settings.AiMode);
+        Assert.Equal(AiRuntimeMode.LocalOnly, settings.AiMode);
     }
 
     [Theory]
     [InlineData("999")]
     [InlineData("null")]
     [InlineData("[]")]
-    public void InvalidJsonValue_FallsBackToReviewWithoutResettingOtherSettings(string rawValue)
+    public void InvalidJsonValue_FallsBackToReviewAndNormalizesAiMode(string rawValue)
     {
         Directory.CreateDirectory(_directory);
         File.WriteAllText(SettingsPath, $"{{\"AuthorizationMode\":{rawValue},\"AiMode\":1}}", Encoding.UTF8);
@@ -138,11 +138,11 @@ public sealed class TradingAuthorizationSettingsTests : IDisposable
         var settings = new AgentSettingsStore(SettingsPath).Load();
 
         Assert.Equal(TradingAuthorizationMode.Review, settings.AuthorizationMode);
-        Assert.Equal(AiRuntimeMode.Hybrid, settings.AiMode);
+        Assert.Equal(AiRuntimeMode.LocalOnly, settings.AiMode);
     }
 
     [Fact]
-    public void LegacySettingsWithoutAuthorizationMode_DefaultsToReviewAndPreservesAiMode()
+    public void LegacySettingsWithoutAuthorizationMode_DefaultsToReviewAndLocalOnly()
     {
         Directory.CreateDirectory(_directory);
         File.WriteAllText(SettingsPath, "{\"AiMode\":1}", Encoding.UTF8);
@@ -150,7 +150,7 @@ public sealed class TradingAuthorizationSettingsTests : IDisposable
         var settings = new AgentSettingsStore(SettingsPath).Load();
 
         Assert.Equal(TradingAuthorizationMode.Review, settings.AuthorizationMode);
-        Assert.Equal(AiRuntimeMode.Hybrid, settings.AiMode);
+        Assert.Equal(AiRuntimeMode.LocalOnly, settings.AiMode);
     }
 
     [Fact]
@@ -187,14 +187,14 @@ public sealed class TradingAuthorizationSettingsTests : IDisposable
     [InlineData(AiRuntimeMode.LocalOnly)]
     [InlineData(AiRuntimeMode.Hybrid)]
     [InlineData(AiRuntimeMode.AIResearch)]
-    public void AiMode_IsIndependentFromAuthorizationMode(AiRuntimeMode aiMode)
+    public void LegacyAiMode_IsNormalizedWithoutChangingAuthorizationMode(AiRuntimeMode aiMode)
     {
         var store = new AgentSettingsStore(SettingsPath);
         store.Save(new AgentSettings { AiMode = aiMode, AuthorizationMode = TradingAuthorizationMode.Review });
 
         var settings = store.Load();
 
-        Assert.Equal(aiMode, settings.AiMode);
+        Assert.Equal(AiRuntimeMode.LocalOnly, settings.AiMode);
         Assert.Equal(TradingAuthorizationMode.Review, settings.AuthorizationMode);
     }
 
