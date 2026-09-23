@@ -165,17 +165,23 @@ public sealed class PositionManagementSkill
             var protectionId=ActionId("BE",opening);
             var protectionStateKey=PositionManagementDurableState.ProtectionAdjustmentKey(protectionId);
             var protectionState=await db.GetStateAsync(protectionStateKey,ct);
-            if(protectionState is "PENDING" or "FAILED")
+            var profitLockId=ActionId("LOCK2R",opening);
+            var profitLockStateKey=PositionManagementDurableState.ProtectionAdjustmentKey(profitLockId);
+            var profitLockState=await db.GetStateAsync(profitLockStateKey,ct);
+            var unresolvedProtectionState=protectionState is "PENDING" or "FAILED"
+                ?protectionState
+                :profitLockState is "PENDING" or "FAILED"?profitLockState:null;
+            if(unresolvedProtectionState is not null)
             {
                 var actionId=ActionId("PROTFAIL",opening);
                 if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
                     intents.Add(new(
                         position.Symbol,position.Side,position.Quantity,true,0,0,actionId,
-                        LocalizationService.Current.T("Execution.ProtectionReplaceFailed",protectionState),
+                        LocalizationService.Current.T("Execution.ProtectionReplaceFailed",unresolvedProtectionState),
                         position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
                         ExpectedPrice:position.MarkPrice>0?position.MarkPrice:position.EntryPrice,
                         ReasonCode:PositionExitReasonCodes.ProtectionReplaceFailed));
-                notes.Add($"protection-recovery-close:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:{protectionState}");
+                notes.Add($"protection-recovery-close:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:{unresolvedProtectionState}");
                 continue;
             }
 
@@ -238,7 +244,8 @@ public sealed class PositionManagementSkill
             }
 
             var partialId=ActionId("TP2",opening);
-            if(favorable>=2&&await db.GetOrderIntentStatusAsync(partialId,ct) is null)
+            var partialState=await db.GetOrderIntentStatusAsync(partialId,ct);
+            if(favorable>=2&&partialState is null)
             {
                 if(tradingRules is not null&&tradingRules.TryGetValue(position.Symbol,out var rule)&&
                    rule.StepSize>0&&rule.MinQuantity>0)
@@ -283,6 +290,35 @@ public sealed class PositionManagementSkill
                 }
                 protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.Breakeven"),protectionId));
                 notes.Add($"breakeven:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
+            }
+
+            var partialCompleted=partialState is "COMPLETED" or "COMPLETED_PARTIAL";
+            if(favorable>=2&&partialCompleted&&protectionState=="COMPLETED"&&profitLockState is null)
+            {
+                if(tradingRules is null||!tradingRules.TryGetValue(position.Symbol,out var rule)||rule.TickSize<=0)
+                {
+                    notes.Add($"structure-profit-lock-rule-unavailable:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
+                    continue;
+                }
+                var openingEntry=opening.ExpectedPrice>0?opening.ExpectedPrice:position.EntryPrice;
+                var breakevenAnchor=position.Side==PositionSide.Long
+                    ?Math.Max(position.EntryPrice,openingEntry)
+                    :Math.Min(position.EntryPrice,openingEntry);
+                var structureLevel=position.Side==PositionSide.Long?market.Support:market.Resistance;
+                var structureBuffer=Math.Max(risk*.10m,market.Price*.0003m);
+                var rawStop=position.Side==PositionSide.Long
+                    ?structureLevel-structureBuffer
+                    :structureLevel+structureBuffer;
+                var stop=RoundProtectiveStop(rawStop,rule.TickSize,position.Side);
+                var validStop=structureLevel>0&&stop>0&&opening.TakeProfit>0&&(position.Side==PositionSide.Long
+                    ?stop>breakevenAnchor&&stop<market.Price&&stop<opening.TakeProfit
+                    :stop<breakevenAnchor&&stop>market.Price&&stop>opening.TakeProfit);
+                if(validStop)
+                {
+                    protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.StructureProfitLock"),profitLockId));
+                    notes.Add($"structure-profit-lock:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}");
+                }
+                else notes.Add($"structure-profit-lock-waiting:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}");
             }
         }
         return new(intents,protections,notes);
