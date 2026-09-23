@@ -120,6 +120,56 @@ public sealed class RiskGateTests
         Assert.Empty(manager.CurrentProfile.BlacklistedSymbols);
     }
 
+    [Fact]
+    public void DeterministicPlan_DoesNotPushLongTargetThroughKnownResistanceToManufactureReward()
+    {
+        var market=new MarketEvidence(
+            "BTCUSDT",100m,95m,103m,50,0,0,0,
+            new DerivativesSnapshot(0,0,0,0,0,0,0),
+            DateTime.UtcNow);
+        var decision=new DecisionPlan
+        {
+            Action=DecisionAction.OpenLong,
+            Instrument="BTCUSDT",
+            EntryPrice=100m,
+            StopLossPrice=98m,
+            TakeProfitPrice=0
+        };
+
+        var planned=new DeterministicPlanSkill().Complete(
+            decision,
+            market,
+            new RiskLimits { MinimumRiskReward=2 });
+
+        Assert.Equal(103m*.998m,planned.TakeProfitPrice);
+        Assert.True(planned.RiskRewardRatio<2);
+    }
+
+    [Fact]
+    public void DeterministicPlan_DoesNotPushShortTargetThroughKnownSupportToManufactureReward()
+    {
+        var market=new MarketEvidence(
+            "BTCUSDT",100m,97m,105m,50,0,0,0,
+            new DerivativesSnapshot(0,0,0,0,0,0,0),
+            DateTime.UtcNow);
+        var decision=new DecisionPlan
+        {
+            Action=DecisionAction.OpenShort,
+            Instrument="BTCUSDT",
+            EntryPrice=100m,
+            StopLossPrice=102m,
+            TakeProfitPrice=0
+        };
+
+        var planned=new DeterministicPlanSkill().Complete(
+            decision,
+            market,
+            new RiskLimits { MinimumRiskReward=2 });
+
+        Assert.Equal(97m*1.002m,planned.TakeProfitPrice);
+        Assert.True(planned.RiskRewardRatio<2);
+    }
+
     private static PositionSnapshot Snapshot() => new(
         "BTCUSDT", 0.01, 50_000, 50_000, 0, 0, 1_000, 0, 0, 0);
 }
