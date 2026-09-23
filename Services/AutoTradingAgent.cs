@@ -248,7 +248,7 @@ public static class AutoTradingAgent
         var roles=AgentRoleRuntimeRegistry.Shared;roles.Publish("market","monitoring","Public market and Testnet streams are being monitored.");roles.Publish("decision","monitoring","Direct local candle structure is the trading decision authority.");roles.Publish("risk","monitoring","Risk limits and execution authority are being monitored.");roles.Publish("execution","waiting","Execution queue is ready; no approved order is pending.");roles.Publish("recovery","monitoring","Order state and reconciliation queue are being monitored.");roles.Publish("audit","monitoring","Append-only runtime and decision audit is active.");
         var newsResearch=new NewsResearchService();var collector=new EvidenceCollector(exchange,settings.Symbols,realtime,newsResearch);
         var executor=new ReliableOrderExecutor(exchange,Db,settings.Risk,SystemOrderPollScheduler.Instance,capabilitySnapshot,true,capabilityRefresh:async(symbol,token)=>{var refreshed=await new ProviderCapabilityProbe().ProbeAsync(exchange,[symbol],true,token);if(refreshed.TryGetValue(symbol,out var value)){capabilitySnapshot[symbol]=value;return value;}return null;});
-        var recoveryServices=await ProductionRecoveryComposition.CreateAsync(exchange,executor,Db,ProductionRecoveryComposition.DefaultKeyPath(),ct:ct);var executionGateway=recoveryServices.Gateway;var planner=new RiskAndPositionPlanner();var governance=new DecisionGovernanceSkill();var deterministic=new DeterministicPlanSkill();var independentRisk=new IndependentRiskManagerSkill();var portfolioRiskSkill=new PortfolioRiskSkill();var historicalData=new HistoricalDataService(exchange,Db);var positionManager=new PositionManagementSkill();bool TeacherNotificationAllowed(NotificationEventKind kind){var current=SettingsStore.Load();return current.Notification.Enabled&&current.Notification.EventKinds.Contains(kind.ToString(),StringComparer.OrdinalIgnoreCase);}using var teacherCryptoScheduler=new TeacherCryptoEvidenceSchedulerV2(Db,notifications.Observer,TeacherNotificationAllowed);var teacherCryptoSchedulerTask=teacherCryptoScheduler.StartAsync(settings.Symbols,ct);var teacherLessonPublisher=new TeacherLessonNotificationPublisherV2(Db,notifications.Observer,TeacherNotificationAllowed);var macroHttp=new HttpClient{Timeout=TimeSpan.FromSeconds(20)};macroHttp.DefaultRequestHeaders.UserAgent.ParseAdd("WPE-Agent/3.6 (local macro research)");var macroScheduler=new WpeAgent.AgentServices.MacroResearchScheduler(new(new WpeAgent.AgentServices.HttpBlsMacroDataTransport(macroHttp)),Db,calendar:new(new WpeAgent.AgentServices.HttpBlsReleaseCalendarTransport(macroHttp)));var macroSchedulerTask=macroScheduler.StartAsync(ct);
+        var recoveryServices=await ProductionRecoveryComposition.CreateAsync(exchange,executor,Db,ProductionRecoveryComposition.DefaultKeyPath(),ct:ct);var executionGateway=recoveryServices.Gateway;var planner=new RiskAndPositionPlanner();var governance=new DecisionGovernanceSkill();var deterministic=new DeterministicPlanSkill();var independentRisk=new IndependentRiskManagerSkill();var portfolioRiskSkill=new PortfolioRiskSkill();var historicalData=new HistoricalDataService(exchange,Db);var positionManager=new PositionManagementSkill();
         _activeExecutionGateway=executionGateway;_activeRuntimeSessionId=runtime.RunId;
         var automaticGateway=new TradingAutomaticExecutionGateway(executionGateway,exchange,Db);
         var automaticValidator=new ProductionAutomaticExecutionValidator(SettingsStore,exchangeProfile,exchange,capabilitySnapshot,()=>ReferenceEquals(_activeExchange,exchange)&&string.Equals(_activeRuntimeSessionId,runtime.RunId,StringComparison.Ordinal),RefreshCapabilitySnapshot);
@@ -297,7 +297,7 @@ public static class AutoTradingAgent
 
                 Stage("Stage.Aggregation","OBSERVATION",43);await runtime.TransitionAsync(cycle,WorkflowNode.Aggregation,new{ManagementIntents=management.Intents.Count,managementActivity,DecisionPath=DirectMarketStructureDecisionSkill.DecisionContextKind},ct);UpdateEvidence(evidence);
                 Stage("Stage.Planner","PLANNER",52);await runtime.TransitionAsync(cycle,WorkflowNode.Planner,new{DecisionPath=DirectMarketStructureDecisionSkill.DecisionContextKind,Markets=evidence.Markets.Count},ct);DecisionPlan proposed;string? brainRequest=null,brainResponse=null;
-                try{var activeSymbols=positions.Select(x=>x.Symbol).Distinct().ToArray();var outcomes=await Db.RecentOutcomeMemoriesAsync(ct);var holdCount=await Db.ConsecutiveHoldCountAsync(ct);var memorySymbol=activeSymbols.Length==1?activeSymbols[0]:evidence.Markets.Keys.OrderBy(x=>x,StringComparer.Ordinal).FirstOrDefault();var relevantMemories=await Db.RetrievePlannerMemoriesAsync(memorySymbol,ct);var brainContext=new AgentContext(brain.Name,false,activeSymbols.Length==1?activeSymbols[0]:null,outcomes,holdCount,relevantMemories);var brainResult=await SkillAsync("BrainPlanner",$"markets={evidence.Markets.Count} direct=true",token=>brain.DecideAsync(evidence,brainContext,token),x=>$"{x.Decision.Action} {x.Decision.Instrument} direct={DirectMarketStructureDecisionSkill.IsDirect(x.Decision)}",ct,false);proposed=brainResult.Decision;brainRequest=brainResult.Request;brainResponse=brainResult.Response;}
+                try{var brainContext=new AgentContext(brain.Name);var brainResult=await SkillAsync("BrainPlanner",$"markets={evidence.Markets.Count} direct=true",token=>brain.DecideAsync(evidence,brainContext,token),x=>$"{x.Decision.Action} {x.Decision.Instrument} direct={DirectMarketStructureDecisionSkill.IsDirect(x.Decision)}",ct,false);proposed=brainResult.Decision;brainRequest=brainResult.Request;brainResponse=brainResult.Response;}
                 catch(BrainCallException ex){brainRequest=ex.Request;brainResponse=ex.Response;await Db.RecordErrorAsync("Brain",ex,ct);proposed=new(){Action=DecisionAction.Hold,Reason=L("Agent.BrainFailure",ex.Message)};}
                 catch(Exception ex){await Db.RecordErrorAsync("Brain",ex,ct);proposed=new(){Action=DecisionAction.Hold,Reason=L("Agent.BrainFailureShort")};}
 
@@ -315,14 +315,6 @@ public static class AutoTradingAgent
                 if(!riskReview.Approved){intents=Array.Empty<ExecutionIntent>();result=riskReview.Summary;state.ExecutionApprovalStatus="BLOCKED";}
                 else if(intents.Count==0)state.ExecutionApprovalStatus="NO_ORDER";
                 else state.ExecutionApprovalStatus="READY";
-
-                var modelOffCycle=await RunModelOffProductionShadowAsync(Db,cycle,DateTimeOffset.UtcNow,evidence,review,riskReview,
-                    positionReconciliation,protectionReconciliation,externalPositionIsolation,ct);
-                if(settings.Notification.Enabled&&settings.Notification.EventKinds.Contains(WpeAgent.Notifications.NotificationEventKind.MarketBrief.ToString(),StringComparer.OrdinalIgnoreCase)&&modelOffCycle is not null&&modelOffCycle.Outputs.TryGetValue(WpeAgent.ModelOff.ModelOffAgentV1.Research,out var canonicalResearch)&&WpeAgent.ModelOff.ModelOffEligibilityV1.IsEligibleForDownstream(canonicalResearch))
-                    try{await MarketTeacherBriefPublisherV1.PublishDailyAsync(Db,notifications.Observer,canonicalResearch,exchange.ProviderId,exchange.Environment.ToString(),ct,LocalizationService.Current.CurrentCode);}catch(Exception ex){await Db.RecordErrorAsync("MARKET_TEACHER_BRIEF",ex,CancellationToken.None);}
-                if(modelOffCycle is not null)
-                    try{var teacherLesson=await MarketTeacherRuntimeV2.GenerateDueLocalLessonAsync(Db,cycle,DateTimeOffset.UtcNow,ct,LocalizationService.Current.CurrentCode);if(teacherLesson is not null)await teacherLessonPublisher.PublishIfAllowedAsync(teacherLesson,exchange.ProviderId,exchange.Environment.ToString(),ct);}catch(Exception ex){await Db.RecordErrorAsync("MARKET_TEACHER_V2",ex,CancellationToken.None);}
-                // Model-off remains an audit/teacher shadow only. It never overrides direct local execution authority.
 
                 if(intents.Count>0&&tradingRule is not null)
                 {
@@ -360,8 +352,6 @@ public static class AutoTradingAgent
         {
             if(automaticWorkerTask is not null)try{await automaticWorkerTask;}catch(OperationCanceledException)when(ct.IsCancellationRequested){}
             if(tradingObservationTask is not null)try{await tradingObservationTask;}catch(OperationCanceledException)when(ct.IsCancellationRequested){}
-            try{await teacherCryptoSchedulerTask;}catch(OperationCanceledException)when(ct.IsCancellationRequested){}
-            try{await macroSchedulerTask;}catch(OperationCanceledException)when(ct.IsCancellationRequested){}finally{macroHttp.Dispose();}
         }
     }
 
@@ -583,29 +573,6 @@ public static class AutoTradingAgent
         return !string.IsNullOrWhiteSpace(ownedMessage)&&string.Equals(currentLastMessage,ownedMessage,StringComparison.Ordinal)
             ?(healthyMessage,null)
             :(currentLastMessage,null);
-    }
-
-    internal static async Task<ModelOffProductionCycleResultV1?> RunModelOffProductionShadowAsync(
-        AgentSqliteStore auditStore,string cycleId,DateTimeOffset evaluationTimeUtc,EvidencePack evidence,
-        DecisionReview decisionReview,IndependentRiskReview riskReview,PositionReconciliationReportV1 positionReconciliation,
-        ProtectionReconciliationReportV1 protectionReconciliation,ExternalPositionIsolationReportV1 externalPositionIsolation,CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(auditStore);
-        try
-        {
-            var macroObservations=await auditStore.GetLatestMacroObservationsAsync(8,ct);
-            var inputs=ModelOffLiveCycleInputComposerV1.Compose(new(
-                cycleId,evaluationTimeUtc,evidence,decisionReview,riskReview,macroObservations,
-                positionReconciliation,protectionReconciliation,externalPositionIsolation));
-            return await new ModelOffProductionCycleOrchestratorV1(auditStore).RunAsync(
-                new(cycleId,evaluationTimeUtc,inputs),ct);
-        }
-        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
-        catch(Exception ex)
-        {
-            try{await auditStore.RecordErrorAsync("ModelOffProductionShadow",ex,CancellationToken.None);}catch{/* Shadow audit must not alter execution. */}
-            return null;
-        }
     }
 
     internal static bool ModelOffProductionGateAllowsRiskIncrease(ModelOffProductionCycleResultV1? result) =>

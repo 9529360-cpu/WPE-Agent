@@ -91,12 +91,12 @@ END:VCALENDAR
     }
 
     [Fact]
-    public void ProductionAgentStartsMacroScheduler()
+    public void ProductionTradingLoopDoesNotStartMacroResearchScheduler()
     {
         var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));
-        Assert.Contains("MacroResearchScheduler",source,StringComparison.Ordinal);
-        Assert.Contains("macroScheduler.StartAsync(ct)",source,StringComparison.Ordinal);
-        Assert.Contains("HttpBlsReleaseCalendarTransport",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("MacroResearchScheduler",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("macroScheduler.StartAsync(ct)",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("HttpBlsReleaseCalendarTransport",source,StringComparison.Ordinal);
     }
 
     private static BlsMacroObservationV1 Observation(decimal value,string hash)=>new(JsonSerializer.SerializeToElement(new

@@ -59,13 +59,11 @@ public sealed class MarketTeacherBriefTests : IDisposable
     }
 
     [Fact]
-    public void ProductionPublishingRequiresExplicitMarketBriefAllowlist()
+    public void ProductionTradingLoopDoesNotPublishMarketTeacherBriefs()
     {
         var source=File.ReadAllText(Path.Combine(ProjectRoot(),"Services","AutoTradingAgent.cs"));
-        var publish=source.IndexOf("MarketTeacherBriefPublisherV1.PublishDailyAsync",StringComparison.Ordinal);
-        Assert.True(publish>0);var guard=source[Math.Max(0,publish-700)..publish];
-        Assert.Contains("settings.Notification.Enabled",guard,StringComparison.Ordinal);
-        Assert.Contains("NotificationEventKind.MarketBrief",guard,StringComparison.Ordinal);
+        Assert.DoesNotContain("MarketTeacherBriefPublisherV1.PublishDailyAsync",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("NotificationEventKind.MarketBrief",source,StringComparison.Ordinal);
     }
 
     [Fact]

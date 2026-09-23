@@ -218,7 +218,7 @@ public sealed class MarketStructureIntelligenceTests
             Trend(48,90m,.55m,TimeSpan.FromHours(1)),
             Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
             Now.AddMinutes(30));
-        var context=new AgentContext("WPE Local Brain",false,null,[],0);
+        var context=new AgentContext("WPE Local Brain");
 
         var result=await new DeterministicBrainProvider().DecideAsync(Evidence(market),context,CancellationToken.None);
 
@@ -250,7 +250,7 @@ public sealed class MarketStructureIntelligenceTests
         var tool=new CountingMarketStructureTool();
 
         var result=await new TechnicalDecisionAgent(marketStructure:tool)
-            .DecideAsync(Evidence(market),new AgentContext("WPE Local Brain",false,null,[],0),CancellationToken.None);
+            .DecideAsync(Evidence(market),new AgentContext("WPE Local Brain"),CancellationToken.None);
 
         Assert.Equal(DecisionAction.OpenLong,result.Decision.Action);
         Assert.True(tool.Calls>=2);
@@ -283,7 +283,7 @@ public sealed class MarketStructureIntelligenceTests
             Trend(48,90m,.55m,TimeSpan.FromHours(1)),
             Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
             Now.AddMinutes(30));
-        var context=new AgentContext("WPE Local Brain",true,null,[],0);
+        var context=new AgentContext("WPE Local Brain");
 
         var result=await new DeterministicBrainProvider().DecideAsync(Evidence(market),context,CancellationToken.None);
 
