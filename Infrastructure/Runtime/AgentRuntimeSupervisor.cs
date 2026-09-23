@@ -166,11 +166,11 @@ public sealed class AgentRuntimeSupervisor : IAsyncDisposable
     public async Task CompleteCycleAsync(string cycleId, object state, CancellationToken cancellationToken)
     {
         if (!_nodes.TryGetValue(cycleId, out var current)) return;
-        if (current is not WorkflowNode.Reflection)
+        if (current is not WorkflowNode.Audit)
         {
-            TradingWorkflowGraph.EnsureTransition(current, WorkflowNode.Reflection);
-            await TransitionAsync(cycleId, WorkflowNode.Reflection, state, cancellationToken);
-            current = WorkflowNode.Reflection;
+            TradingWorkflowGraph.EnsureTransition(current, WorkflowNode.Audit);
+            await TransitionAsync(cycleId, WorkflowNode.Audit, state, cancellationToken);
+            current = WorkflowNode.Audit;
         }
         var json = JsonSerializer.Serialize(state);
         await _database.SaveWorkflowCheckpointAsync(new(RunId, cycleId, current, CheckpointPhase.Completed, json, DateTime.UtcNow), cancellationToken);
