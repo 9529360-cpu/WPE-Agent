@@ -252,6 +252,121 @@ public sealed class StructurePositionManagementTests
         }
     }
 
+    [Fact]
+    public async Task CompletedPartialAndBreakevenCanLockRunnerBehindFreshFifteenMinuteSupport()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            var opening=OpeningIntent("open-runner-lock") with{TakeProfit=140m};
+            await db.SaveIntentAsync("cycle-open",opening,"PROTECTED","1008-lock",CancellationToken.None);
+
+            var first=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["BTCUSDT"]=Market(121m,95m,140m)
+                },
+                db,
+                CancellationToken.None,
+                ManagedLedger(),
+                tradingRules:Rules());
+            var partial=Assert.Single(first.Intents);
+            Assert.Equal(PositionExitReasonCodes.PartialTakeProfit2R,partial.ReasonCode);
+            await db.SaveIntentAsync("cycle-partial",partial,"COMPLETED","2008-lock",CancellationToken.None);
+
+            var breakevenId=PositionManagementActionId("BE",opening.ClientOrderId);
+            await db.SetStateAsync(
+                PositionManagementDurableState.ProtectionAdjustmentKey(breakevenId),
+                "COMPLETED",
+                CancellationToken.None);
+
+            var runner=await new PositionManagementSkill().EvaluateAsync(
+                [Position() with{Quantity=.5m,MarkPrice=125m}],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["BTCUSDT"]=Market(125m,112m,140m)
+                },
+                db,
+                CancellationToken.None,
+                ManagedLedger(.5m),
+                tradingRules:Rules());
+
+            Assert.Empty(runner.Intents);
+            var adjustment=Assert.Single(runner.ProtectionAdjustments);
+            Assert.StartsWith("WPE-PM-LOCK2R-",adjustment.AdjustmentId,StringComparison.Ordinal);
+            Assert.Equal(111m,adjustment.StopLoss);
+            Assert.Equal(140m,adjustment.TakeProfit);
+            Assert.Contains(runner.Notes,x=>x.StartsWith("structure-profit-lock:",StringComparison.Ordinal));
+
+            await db.SetStateAsync(
+                PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId!),
+                "COMPLETED",
+                CancellationToken.None);
+            var replay=await new PositionManagementSkill().EvaluateAsync(
+                [Position() with{Quantity=.5m,MarkPrice=126m}],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["BTCUSDT"]=Market(126m,105m,140m)
+                },
+                db,
+                CancellationToken.None,
+                ManagedLedger(.5m),
+                tradingRules:Rules());
+            Assert.Empty(replay.ProtectionAdjustments);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public async Task UnresolvedRunnerProfitLockFailsSafeInsteadOfReplayingProtection()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            var opening=OpeningIntent("open-runner-pending") with{TakeProfit=140m};
+            await db.SaveIntentAsync("cycle-open",opening,"PROTECTED","1008-pending",CancellationToken.None);
+            var partialId=PositionManagementActionId("TP2",opening.ClientOrderId);
+            var partial=new ExecutionIntent(
+                "BTCUSDT",PositionSide.Long,.5m,true,0,0,partialId,"partial",
+                DecisionAction.ReduceLong,ExpectedPrice:120m,
+                ReasonCode:PositionExitReasonCodes.PartialTakeProfit2R);
+            await db.SaveIntentAsync("cycle-partial",partial,"COMPLETED","2008-pending",CancellationToken.None);
+            await db.SetStateAsync(
+                PositionManagementDurableState.ProtectionAdjustmentKey(PositionManagementActionId("BE",opening.ClientOrderId)),
+                "COMPLETED",
+                CancellationToken.None);
+            await db.SetStateAsync(
+                PositionManagementDurableState.ProtectionAdjustmentKey(PositionManagementActionId("LOCK2R",opening.ClientOrderId)),
+                "PENDING",
+                CancellationToken.None);
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position() with{Quantity=.5m,MarkPrice=125m}],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["BTCUSDT"]=Market(125m,112m,140m)
+                },
+                db,
+                CancellationToken.None,
+                ManagedLedger(.5m),
+                tradingRules:Rules());
+
+            var close=Assert.Single(result.Intents);
+            Assert.Equal(PositionExitReasonCodes.ProtectionReplaceFailed,close.ReasonCode);
+            Assert.Empty(result.ProtectionAdjustments);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
     [Theory]
     [InlineData("PENDING")]
     [InlineData("FAILED")]
@@ -581,8 +696,8 @@ public sealed class StructurePositionManagementTests
     private static ManagedPosition Position()=>new(
         "BTCUSDT",PositionSide.Long,1m,100m,100m,0m,2m,true,50m);
 
-    private static MarketEvidence Market(decimal price)=>new(
-        "BTCUSDT",price,95m,110m,50,0,0,0,
+    private static MarketEvidence Market(decimal price,decimal support=95m,decimal resistance=110m)=>new(
+        "BTCUSDT",price,support,resistance,50,0,0,0,
         new DerivativesSnapshot(.0001m,1_000_000m,1m,1m,1m,1m,0m),
         Now.UtcDateTime);
 
