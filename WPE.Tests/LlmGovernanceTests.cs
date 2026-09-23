@@ -57,7 +57,7 @@ public sealed class LlmGovernanceTests : IDisposable
 
         var local = new DeterministicBrainProvider();
         var result = await local.DecideAsync(new EvidencePack { Markets = new Dictionary<string, MarketEvidence>() },
-            new AgentContext(local.Name,false,null,[],0),default);
+            new AgentContext(local.Name),default);
 
         Assert.Equal(DecisionAction.Hold, result.Decision.Action);
         Assert.Equal(1, governor.GetTodaySnapshot().Fallbacks);
