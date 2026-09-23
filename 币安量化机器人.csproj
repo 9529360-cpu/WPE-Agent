@@ -77,9 +77,13 @@
       <Compile Remove="WPE.Tests\**\*.cs" />
       <Compile Remove="WPE.Maintenance\**\*.cs" />
       <Compile Remove="WPE.Headless\**\*.cs" />
+      <Compile Remove="WPE.ExchangeMcp\**\*.cs" />
+      <Compile Remove="WPE.BinanceMcp\**\*.cs" />
       <None Remove="WPE.Tests\**\*" />
       <None Remove="WPE.Maintenance\**\*" />
       <None Remove="WPE.Headless\**\*" />
+      <None Remove="WPE.ExchangeMcp\**\*" />
+      <None Remove="WPE.BinanceMcp\**\*" />
       <Compile Remove="Tools\WpeLicenseGenerator\**\*.cs" />
       <Compile Remove="Services\BinanceReadFacade.cs" />
       <Compile Remove="Services\AiForecastService.cs" />

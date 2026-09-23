@@ -174,6 +174,7 @@ public sealed class AgentSettingsResilienceTests : IDisposable
 
     [Theory]
     [InlineData("okx","https://www.okx.com")]
+    [InlineData("okx-mcp","https://www.okx.com")]
     [InlineData("bybit","https://api-testnet.bybit.com")]
     [InlineData("gate","https://api-testnet.gateapi.io")]
     [InlineData("bitget","https://api.bitget.com")]
@@ -189,6 +190,7 @@ public sealed class AgentSettingsResilienceTests : IDisposable
 
     [Theory]
     [InlineData("okx")]
+    [InlineData("okx-mcp")]
     [InlineData("bybit")]
     [InlineData("gate")]
     [InlineData("bitget")]

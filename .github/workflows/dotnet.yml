@@ -175,6 +175,68 @@ jobs:
         }
         if ($forbidden) { throw "Forbidden runtime or secret files entered headless output: $($forbidden.FullName -join ', ')" }
 
+    - name: Publish exchange MCP sidecar
+      run: dotnet publish "WPE.ExchangeMcp/WPE.ExchangeMcp.csproj" --configuration Release --no-restore --output artifacts/exchange-mcp
+
+    - name: Verify exchange MCP sidecar boundary
+      shell: pwsh
+      run: |
+        if (-not (Test-Path -LiteralPath "artifacts/exchange-mcp/WPE.ExchangeMcp.dll" -PathType Leaf)) {
+          throw "Exchange MCP sidecar assembly is missing."
+        }
+        $sidecarDeps = Get-Content -Raw -LiteralPath "artifacts/exchange-mcp/WPE.ExchangeMcp.deps.json"
+        foreach ($requiredDependency in @("ModelContextProtocol", "System.Security.Cryptography.ProtectedData")) {
+          if (-not $sidecarDeps.Contains($requiredDependency, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Exchange MCP sidecar is missing required dependency: $requiredDependency"
+          }
+        }
+        $headlessDeps = Get-Content -Raw -LiteralPath "artifacts/headless/WPE-Headless.deps.json"
+        if ($headlessDeps.Contains("ModelContextProtocol", [System.StringComparison]::OrdinalIgnoreCase)) {
+          throw "MCP SDK leaked into the headless trading kernel."
+        }
+        if (Test-Path -LiteralPath "artifacts/exchange-mcp/WebUi") {
+          throw "Desktop Web UI entered the Exchange MCP sidecar."
+        }
+        $forbidden = Get-ChildItem artifacts/exchange-mcp -Recurse -File | Where-Object {
+          $name = $_.Name.ToLowerInvariant()
+          $extension = $_.Extension.ToLowerInvariant()
+          $knownState = $name -match '^(agent-settings|appsettings|order-state|local-accounts|local-session|device-license|llm-calls|llm-cache)'
+          $secretData = ($name.Contains("secrets") -or $name.Contains("credentials") -or $name.Contains("token")) -and
+            @(".json", ".dat", ".txt", ".xml", ".yaml", ".yml", ".bin") -contains $extension
+          $knownState -or $secretData -or
+          @(".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12", ".pfx") -contains $extension
+        }
+        if ($forbidden) { throw "Forbidden runtime or secret files entered Exchange MCP sidecar: $($forbidden.FullName -join ', ')" }
+
+    - name: Publish Binance Testnet MCP server
+      run: dotnet publish "WPE.BinanceMcp/WPE.BinanceMcp.csproj" --configuration Release --no-restore --output artifacts/binance-mcp
+
+    - name: Verify Binance Testnet MCP server boundary
+      shell: pwsh
+      run: |
+        if (-not (Test-Path -LiteralPath "artifacts/binance-mcp/WPE.BinanceMcp.dll" -PathType Leaf)) {
+          throw "Binance MCP server assembly is missing."
+        }
+        $deps = Get-Content -Raw -LiteralPath "artifacts/binance-mcp/WPE.BinanceMcp.deps.json"
+        foreach ($requiredDependency in @("ModelContextProtocol", "WPE-Agent")) {
+          if (-not $deps.Contains($requiredDependency, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Binance MCP server is missing required dependency: $requiredDependency"
+          }
+        }
+        if (Test-Path -LiteralPath "artifacts/binance-mcp/WebUi") {
+          throw "Desktop Web UI entered the Binance MCP server."
+        }
+        $forbidden = Get-ChildItem artifacts/binance-mcp -Recurse -File | Where-Object {
+          $name = $_.Name.ToLowerInvariant()
+          $extension = $_.Extension.ToLowerInvariant()
+          $knownState = $name -match '^(agent-settings|appsettings|order-state|local-accounts|local-session|device-license|llm-calls|llm-cache)'
+          $secretData = ($name.Contains("secrets") -or $name.Contains("credentials") -or $name.Contains("token")) -and
+            @(".json", ".dat", ".txt", ".xml", ".yaml", ".yml", ".bin") -contains $extension
+          $knownState -or $secretData -or
+          @(".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12", ".pfx") -contains $extension
+        }
+        if ($forbidden) { throw "Forbidden runtime or secret files entered Binance MCP server: $($forbidden.FullName -join ', ')" }
+
     - name: Test .NET
       shell: pwsh
       run: ./eng/test.ps1 -Configuration Release

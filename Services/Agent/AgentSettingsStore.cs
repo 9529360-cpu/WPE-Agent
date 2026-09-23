@@ -173,6 +173,7 @@ public sealed class AgentSettingsStore
             {
                 "binance-futures"=>"testnet.binancefuture.com",
                 "okx"=>"www.okx.com",
+                "okx-mcp"=>"www.okx.com",
                 "bybit"=>"api-testnet.bybit.com",
                 "gate"=>"api-testnet.gateapi.io",
                 "bitget"=>"api.bitget.com",

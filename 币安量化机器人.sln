@@ -11,6 +11,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WPE.Maintenance", "WPE.Main
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WPE.Headless", "WPE.Headless\WPE.Headless.csproj", "{C9E35D77-3C8D-47C0-A31D-9E5A6BDF4F27}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WPE.ExchangeMcp", "WPE.ExchangeMcp\WPE.ExchangeMcp.csproj", "{23D297F7-8DC4-4C7E-8FD3-336F4382C2FD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WPE.BinanceMcp", "WPE.BinanceMcp\WPE.BinanceMcp.csproj", "{5A856071-BF7F-4C03-9C7C-CEF228739CF9}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -33,6 +37,14 @@ Global
 		{C9E35D77-3C8D-47C0-A31D-9E5A6BDF4F27}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C9E35D77-3C8D-47C0-A31D-9E5A6BDF4F27}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C9E35D77-3C8D-47C0-A31D-9E5A6BDF4F27}.Release|Any CPU.Build.0 = Release|Any CPU
+		{23D297F7-8DC4-4C7E-8FD3-336F4382C2FD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{23D297F7-8DC4-4C7E-8FD3-336F4382C2FD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{23D297F7-8DC4-4C7E-8FD3-336F4382C2FD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{23D297F7-8DC4-4C7E-8FD3-336F4382C2FD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5A856071-BF7F-4C03-9C7C-CEF228739CF9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5A856071-BF7F-4C03-9C7C-CEF228739CF9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5A856071-BF7F-4C03-9C7C-CEF228739CF9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5A856071-BF7F-4C03-9C7C-CEF228739CF9}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

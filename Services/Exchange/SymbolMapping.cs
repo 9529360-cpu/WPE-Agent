@@ -13,7 +13,7 @@ public sealed class ConventionSymbolMapper(string providerId,IReadOnlyDictionary
     public string ToNative(string canonicalSymbol)
     {
         var canonical=Canonicalize(canonicalSymbol);if(_toNative.TryGetValue(canonical,out var mapped))return mapped;
-        return _provider switch{"okx" or "okx-swap"=>canonical.EndsWith("USDT")?$"{canonical[..^4]}-USDT-SWAP":canonical,"gate"=>canonical.EndsWith("USDT")?$"{canonical[..^4]}_USDT":canonical,"coinbase"=>canonical.EndsWith("USDT")?$"{canonical[..^4]}-USDT":canonical,_=>canonical};
+        return _provider switch{"okx" or "okx-swap" or "okx-mcp"=>canonical.EndsWith("USDT")?$"{canonical[..^4]}-USDT-SWAP":canonical,"gate"=>canonical.EndsWith("USDT")?$"{canonical[..^4]}_USDT":canonical,"coinbase"=>canonical.EndsWith("USDT")?$"{canonical[..^4]}-USDT":canonical,_=>canonical};
     }
     public string ToCanonical(string nativeSymbol)
     {
