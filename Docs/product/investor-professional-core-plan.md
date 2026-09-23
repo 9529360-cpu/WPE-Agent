@@ -30,17 +30,15 @@
 
 1. **交易闭环是核心产品。** 市场数据、研究、信号、策略、回测、风险、审批、执行、持仓、复盘和审计必须形成可追踪闭环。
 2. **目标市场是加密资产与全球股票。** 当前工程事实以加密资产 Testnet 为主；全球股票仍是路线图，不是已交付能力。
-3. **交易授权模式固定为 `Research / Signal / Review / Auto`，默认 `Review`。** 这与现有 `Local Only / Hybrid / AI Research` 智能能力模式是两个独立维度，禁止混用。
+3. **交易授权模式固定为 `Research / Signal / Review / Auto`，默认 `Review`。** 交易脑本身没有第二套 AI 模式轴，只使用本地 deterministic technical brain。
 4. **Mainnet 继续禁用。** `Auto` 在实现后也只能先用于通过认证的 Testnet；任何 Mainnet 开放必须经过独立安全、法律、运营和发布授权。
 5. **股票与券商先做 provider-neutral contract，再接具体券商。** 不允许复制加密交易所直连代码形成第二条执行链。
-6. **风险与执行必须确定性、本地化、fail closed。** LLM 只可辅助研究、解释和草拟，不能批准风险、修改事实或直接执行。
+6. **风险、决策与执行必须确定性、本地化、fail closed。** 远程/在线 LLM 已退出产品运行时，不参与研究权威、方向判断、风险批准、执行或持仓管理。
 7. **老师、课程、CRM、Telegram 和 WhatsApp 只能消费可追踪事实。** 所有输出必须引用研究、策略、风险、订单、成交或复盘 artifact，不得凭空生成市场结论。
 8. **高风险通知必须分级并人工审核。** 交易信号、加仓、止损调整、自动执行结果和个性化客户内容不得与普通市场课程使用同一自动发布策略。
 9. **本地秘密边界必须如实描述。** API 与通知凭据已有 Windows DPAPI CurrentUser 保护；SQLite 全库加密尚未实现，不能宣称“本地数据库已加密”或“数据库文件不可直接读取”。
 
-## 两个独立模式轴
-
-### 交易授权模式
+## 交易授权模式
 
 | 模式 | 允许行为 | 禁止行为 | 当前状态 |
 | --- | --- | --- | --- |
@@ -50,16 +48,6 @@
 | Auto | 经策略、数据质量、风险、能力和执行门禁后自动提交 | Mainnet；未知/过期/不支持能力下执行 | **现有自动 Testnet 引擎是基础，但尚未按四模式重构和商业认证** |
 
 每次模式变化必须记录用户、设备、旧值、新值、时间、原因和授权证据。启动时缺失或损坏的模式配置必须回落到 `Review`，不能回落到 `Auto`。
-
-### 智能能力模式
-
-| 模式 | 作用 | 当前状态 |
-| --- | --- | --- |
-| Local Only | 规则、指标、本地 provider 和确定性模板完成核心工作 | **已实现且验证**；默认模式 |
-| Hybrid | 本地为主，受预算、隐私和治理门禁约束地使用远端 Brain | **已实现且验证其治理/降级边界** |
-| AI Research | 远端能力可增强探索与综合，本地风险和执行仍为权威 | **已实现基础模式；不拥有执行权限** |
-
-任意智能能力模式都不能扩大交易授权。例如 `AI Research + Review` 仍需用户确认，`Local Only + Auto` 仍需全部确定性门禁。
 
 ## 当前事实地图
 
@@ -77,7 +65,6 @@
 | 审计与运行恢复 | 决策、技能、执行和运行事件有 SQLite 记录及安全投影，工作流有检查点/恢复基础 | 审计不可篡改签名和长期合规归档仍未完成 |
 | 本地记忆 | 工作、情景和长期记忆的确定性过滤、去重、隔离、过期和安全投影已有测试 | SQLite 文件本身未全库加密 |
 | 通知后端 | Telegram/WhatsApp 配置加密、事实事件、outbox、重试、dead letter、限速、传输脱敏和运行时安全投影已有实现与测试 | 外部真实送达、模板审批、完整 UI 和高风险人工审核仍不是已验证交付 |
-| LLM 治理 | Local Only 零远端调用、预算/隐私门禁、脱敏审计和本地降级已有测试 | LLM 输出始终只是建议 |
 
 ### 部分实现
 
@@ -239,11 +226,10 @@ Mainnet 不属于当前 P0/P1/P2 的默认授权结果。未来只有在独立�
 ## 不做 / 不虚报
 
 - 不做无 Risk Gate、无审计或默认 Auto 的交易机器人。
-- 不让 Web UI、LLM、CRM 或通知渠道持有执行权威。
+- 不让 Web UI、CRM 或通知渠道持有执行权威；远程/在线 LLM 不属于当前运行时能力。
 - 不把静态 UI、preview、fixture、mock 或 catalog entry 宣称为实时数据或交易支持。
 - 不把五个 provider 的离线 conformance 测试宣称为五家交易所都已完成真实 Testnet 或 Mainnet 认证。
 - 不宣称股票实时、券商、公司基本面、链上、ETF 流、客户管理或课程系统已经完成。
-- 不把 `Local Only / Hybrid / AI Research` 当成 `Research / Signal / Review / Auto`。
 - 不把 DPAPI 凭据保护宣称为 SQLite 全库加密、数据库不可读或多用户强隔离。
 - 不生成不存在的行情、持仓、订单、回测、绩效、客户或渠道送达记录。
 - 不承诺收益、胜率、回撤或策略表现；指标只能来自可复现的特定数据和版本。
@@ -254,7 +240,6 @@ Mainnet 不属于当前 P0/P1/P2 的默认授权结果。未来只有在独立�
 - 商业 Beta 边界：`Docs/product/beta-release-readiness.md`
 - 商业评估：`Docs/product/wpe-commercial-assessment.md`
 - 本地优先架构：`Docs/architecture/wpe_multi_agent_local_first_design.md`
-- LLM 可选 PRD：`Docs/architecture/prd-local-first-llm-optional.md`
 - 运行时契约：`Core/Contracts/RuntimeSnapshotV1.cs`
 - 权威闭环：`Services/AutoTradingAgent.cs`
 - 风险与执行：`Services/Agent/EvidenceAndExecution.cs`
