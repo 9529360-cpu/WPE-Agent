@@ -53,39 +53,38 @@ public sealed class AgentSettingsResilienceTests : IDisposable
     }
 
     [Fact]
-    public void LegacyRemoteBrainSettings_NormalizeToLocalOnly()
+    public void LegacyRemoteBrainFields_AreIgnoredAndNotRePersisted()
     {
         Directory.CreateDirectory(_directory);
-        var legacy=new AgentSettings
-        {
-            AiMode=global::币安量化机器人.Core.Models.AiRuntimeMode.Hybrid,
-            ActiveBrain="DeepSeek",
-            Brains=new(StringComparer.OrdinalIgnoreCase)
+        File.WriteAllText(SettingsPath,
+            """
             {
-                ["DeepSeek"]=new BrainSlot
-                {
-                    Provider="DeepSeek",
-                    Endpoint="https://api.deepseek.com/chat/completions",
-                    Model="deepseek-chat",
-                    EncryptedKey="legacy-encrypted-key",
-                    IsLocal=false
+              "AiMode": 1,
+              "ActiveBrain": "DeepSeek",
+              "Brains": {
+                "DeepSeek": {
+                  "Provider": "DeepSeek",
+                  "Endpoint": "https://api.deepseek.com/chat/completions",
+                  "Model": "deepseek-chat",
+                  "EncryptedKey": "legacy-encrypted-key",
+                  "IsLocal": false
                 }
+              }
             }
-        };
-        File.WriteAllText(SettingsPath,JsonSerializer.Serialize(legacy),Encoding.UTF8);
+            """,
+            Encoding.UTF8);
 
-        var loaded=new AgentSettingsStore(SettingsPath).Load();
+        var store=new AgentSettingsStore(SettingsPath);
+        var loaded=store.Load();
+        store.Save(loaded);
+        var saved=File.ReadAllText(SettingsPath);
 
-        Assert.Equal(global::币安量化机器人.Core.Models.AiRuntimeMode.Hybrid,loaded.AiMode);
-        Assert.Equal(global::币安量化机器人.Core.Models.AiRuntimeMode.LocalOnly,RuntimeModePolicy.Resolve(loaded).EffectiveMode);
-        Assert.Equal("WPE Local Brain",loaded.ActiveBrain);
-        Assert.Single(loaded.Brains);
-        Assert.DoesNotContain("DeepSeek",loaded.Brains.Keys,StringComparer.OrdinalIgnoreCase);
-        var local=Assert.IsType<BrainSlot>(loaded.Brains["WPE Local Brain"]);
-        Assert.True(local.IsLocal);
-        Assert.Empty(local.Endpoint);
-        Assert.Empty(local.EncryptedKey);
-        Assert.Equal("deterministic-local-v1",local.Model);
+        Assert.Null(store.LastLoadDiagnostic);
+        Assert.DoesNotContain("\"AiMode\"",saved,StringComparison.Ordinal);
+        Assert.DoesNotContain("\"ActiveBrain\"",saved,StringComparison.Ordinal);
+        Assert.DoesNotContain("\"Brains\"",saved,StringComparison.Ordinal);
+        Assert.DoesNotContain("DeepSeek",saved,StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("legacy-encrypted-key",saved,StringComparison.Ordinal);
     }
 
     [Fact]
@@ -311,8 +310,7 @@ public sealed class AgentSettingsResilienceTests : IDisposable
 
     private static AgentSettings Settings(ExchangeEnvironment environment) => new()
     {
-        Environment = environment,
-        Brains = new(StringComparer.OrdinalIgnoreCase) { ["DeepSeek"] = new BrainSlot() }
+        Environment = environment
     };
 
     private static ExchangeConnectionProfile Profile(string endpoint, bool isTestnet) => new()
