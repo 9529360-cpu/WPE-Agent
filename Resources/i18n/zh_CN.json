@@ -311,8 +311,6 @@
     "RiskReview.Spread":  "点差过宽（{0:F2} bps）",
     "RiskReview.Volatility":  "极端波动（{0:P2}）",
     "RiskReview.RiskReward":  "风险收益比 {0:F2} 低于 {1:F2}",
-    "RiskReview.LossStreak":  "连续亏损熔断（{0}）",
-    "RiskReview.DailyLoss":  "当日亏损熔断（{0:N2}）",
     "RiskReview.ApiFailures":  "交易所/API 连续异常（{0}）",
     "RiskReview.OrderUncertain":  "存在状态不确定的订单",
     "RiskReview.Research":  "研究验证未通过（{0:P0}）",
