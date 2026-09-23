@@ -1381,7 +1381,7 @@ function SettingsPage({ runtime }: { runtime: WpeRuntimeState }) {
             <KeyValue label="环境" value={connection?.environment ? <Badge tone="info">{connection.environment}</Badge> : '未提供'} />
             <KeyValue label="连接就绪" value={booleanLabel(connection?.ready)} />
             <KeyValue label="交易权限" value={booleanLabel(connection?.tradePermission, '已授予', '未授予')} />
-            <KeyValue label="本地运行模式" value={text(runtime.aiRuntimeEffectiveMode ?? runtime.aiRuntimeMode)} />
+            <KeyValue label="本地运行模式" value="Local deterministic" />
           </dl>
         </Panel>
       </div>
