@@ -162,7 +162,7 @@ public sealed class RecoveryProductionWiringTests
             Assert.Equal(170m,effective.TakeProfit);
 
             var repaired=await executor.AuditAndRepairProtectionAsync(provider.Positions,[],CancellationToken.None);
-            Assert.True(repaired.Safe);
+            Assert.True(repaired.SafeToIncreaseRisk);
             Assert.Equal(2,provider.ProtectionMutationCount);
             Assert.Equal(150.075m,provider.LastProtectionStopLoss);
             Assert.Equal(170m,provider.LastProtectionTakeProfit);
