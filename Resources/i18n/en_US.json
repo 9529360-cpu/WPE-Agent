@@ -323,6 +323,7 @@
     "Position.LiquidationBuffer":  "Liquidation buffer breached",
     "Position.PartialTake":  "Automatic 2R partial take-profit",
     "Position.Breakeven":  "Automatic break-even protection",
+    "Position.StructureProfitLock":  "Lock remaining profit behind fresh 15-minute structure after the partial take-profit",
     "Position.ManagementCycle":  "Position management acted; new risk is paused for this cycle",
     "Execution.NoFill":  "Limit order expired without a fill; no position opened",
     "Execution.PartialClose":  "Partial close confirmed: {0}/{1}",
