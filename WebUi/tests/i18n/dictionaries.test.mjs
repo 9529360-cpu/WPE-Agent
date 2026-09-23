@@ -53,11 +53,11 @@ test('converged route tree preserves notification, settings and Agent controls w
   assert.match(settings,/notificationOutbox/)
   assert.match(settings,/telegramSubscribers/)
   assert.match(agents,/requestAgentControl/)
-  for(const command of ['open-settings','open-notification-settings','agent-start','agent-stop'])assert.ok(hostCommand.includes(\`'\${command}'\`),\`host bridge is missing allowed command: \${command}\`)
+  for(const command of ['open-settings','open-notification-settings','agent-start','agent-stop'])assert.ok(hostCommand.includes(`'${command}'`),`host bridge is missing allowed command: ${command}`)
   assert.doesNotMatch(hostCommand,/place-order|approve|confirm|submitOrder|direct-exchange-submit/)
-  for(const route of ['/backtest','/plugins','/security'])assert.ok(nav.includes(\`href:'\${route}'\`),\`missing converged route \${route}\`)
+  for(const route of ['/backtest','/plugins','/security'])assert.ok(nav.includes(`href:'${route}'`),`missing converged route ${route}`)
   assert.ok(!nav.includes("href:'/teacher'"),'retired Teacher route is still exposed in primary navigation')
-  for(const unaccepted of ['/equities','/distribution','/research'])assert.ok(!nav.includes(\`href:'\${unaccepted}'\`),\`unaccepted route exposed in primary navigation: \${unaccepted}\`)
+  for(const unaccepted of ['/equities','/distribution','/research'])assert.ok(!nav.includes(`href:'${unaccepted}'`),`unaccepted route exposed in primary navigation: ${unaccepted}`)
 })
 test('authorization copy and read-only approval projection stay complete',()=>{
   const keys=['settings.authorizationHelp','settings.authorizationStale','settings.authorizationError','settings.authorizationUnsupported','settings.modeResearch','settings.modeSignal','settings.modeReview','settings.modeAutoTestnet','settings.approvalId','settings.created','settings.reasonCode','settings.statusPending','settings.statusRevoked','settings.statusExpired','settings.statusArtifactUnavailable']
