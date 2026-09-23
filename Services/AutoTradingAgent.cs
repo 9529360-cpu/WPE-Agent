@@ -488,10 +488,6 @@ private static void UpdatePortfolioRiskUi(PortfolioRiskAssessment risk,IRealtime
     private static void Stage(string key,string node,int progress){var state=ServiceLocator.SystemState;state.SkillStageKey=key;state.SkillStage=L(key);state.WorkflowNode=node;state.ThinkingProgress=progress;state.LastUpdated=DateTime.UtcNow;StateChanged?.Invoke();}
     private static void ApplyLocalBrainState(SystemState state,IAssistantProvider brain)
     {
-        state.BrainMode=AiRuntimeMode.LocalOnly;
-        state.BrainEffectiveMode=AiRuntimeMode.LocalOnly;
-        state.BrainRemoteAllowed=false;
-        state.BrainFallbackReason="Local deterministic trading brain";
         state.BrainName=brain.Name;
         state.ActiveBrainProvider=brain.Name;
         state.ActiveBrainModel="local-deterministic";
