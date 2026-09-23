@@ -4,7 +4,7 @@
   "privateTestnetPerOrderHumanApproval": false,
   "roles": [
     {
-      "id": "market", "name": "Market", "mode": "deterministic", "runtime": "local", "optionalLlm": false,
+      "id": "market", "name": "Market", "mode": "deterministic", "runtime": "local",
       "deterministicFallback": "provider-facts-and-quality-gates",
       "allowedActions": ["collect", "validate", "publish-market"],
       "forbiddenActions": ["trade", "submitOrder", "bypassRiskGate"],
@@ -12,7 +12,7 @@
       "inputs": ["provider-market-data", "account-snapshot"], "outputs": ["canonical-market-evidence"]
     },
     {
-      "id": "research", "name": "Research", "mode": "deterministic", "runtime": "local", "optionalLlm": true,
+      "id": "research", "name": "Research", "mode": "deterministic", "runtime": "local",
       "deterministicFallback": "canonical-evidence-research",
       "allowedActions": ["analyze", "validate", "publish-research"],
       "forbiddenActions": ["trade", "submitOrder", "bypassRiskGate"],
@@ -20,7 +20,7 @@
       "inputs": ["canonical-market-evidence", "news", "macro", "fundamental", "backtest"], "outputs": ["canonical-research-evidence"]
     },
     {
-      "id": "strategy", "name": "Strategy", "mode": "deterministic", "runtime": "local", "optionalLlm": false,
+      "id": "strategy", "name": "Strategy", "mode": "deterministic", "runtime": "local",
       "deterministicFallback": "validated-strategy-lifecycle",
       "allowedActions": ["propose", "score", "publish-strategy"],
       "forbiddenActions": ["trade", "submitOrder", "bypassRiskGate"],
@@ -28,7 +28,7 @@
       "inputs": ["canonical-research-evidence", "strategy-registry"], "outputs": ["canonical-strategy-intent"]
     },
     {
-      "id": "risk", "name": "Risk", "mode": "deterministic", "runtime": "local", "optionalLlm": false,
+      "id": "risk", "name": "Risk", "mode": "deterministic", "runtime": "local",
       "deterministicFallback": "fail-closed-risk-gate",
       "allowedActions": ["allow", "block", "limit", "halt"],
       "forbiddenActions": ["trade", "submitOrder", "bypassReliableOrderExecutor"],
@@ -36,7 +36,7 @@
       "inputs": ["canonical-strategy-intent", "positions", "protections", "limits"], "outputs": ["canonical-risk-decision"]
     },
     {
-      "id": "execution", "name": "Execution", "mode": "deterministic", "runtime": "local", "optionalLlm": false,
+      "id": "execution", "name": "Execution", "mode": "deterministic", "runtime": "local",
       "deterministicFallback": "reliable-order-executor-only",
       "allowedActions": ["prepare", "submit-via-executor", "cancel", "replace"],
       "forbiddenActions": ["direct-exchange-submit", "bypassRiskGate"],
@@ -45,7 +45,7 @@
       "mustRouteThrough": ["Risk Gate", "ReliableOrderExecutor"]
     },
     {
-      "id": "recovery", "name": "Recovery", "mode": "deterministic", "runtime": "local", "optionalLlm": false,
+      "id": "recovery", "name": "Recovery", "mode": "deterministic", "runtime": "local",
       "deterministicFallback": "ledger-reconcile-no-resubmit",
       "allowedActions": ["reconcile", "quarantine", "repair", "escalate"],
       "forbiddenActions": ["trade", "submitOrder", "bypassRiskGate"],
@@ -53,7 +53,7 @@
       "inputs": ["canonical-execution-result", "order-ledger", "exchange-observations"], "outputs": ["canonical-recovery-result"]
     },
     {
-      "id": "audit", "name": "Audit", "mode": "deterministic", "runtime": "local", "optionalLlm": false,
+      "id": "audit", "name": "Audit", "mode": "deterministic", "runtime": "local",
       "deterministicFallback": "append-only-canonical-audit",
       "allowedActions": ["verify", "record", "block", "degrade", "report"],
       "forbiddenActions": ["trade", "submitOrder", "bypassRiskGate"],
