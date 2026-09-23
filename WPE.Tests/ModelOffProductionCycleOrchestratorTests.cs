@@ -135,7 +135,7 @@ public sealed class ModelOffProductionCycleOrchestratorTests : IDisposable
     {
         var fixtureCycle = "fixture-" + name;
         var request = ModelOffAutonomousLoopTests.Request(fixtureCycle) with { EvaluationTimeUtc = Now };
-        var fixture = await AutoTradingAgent.RunModelOffFixtureCycleAsync(request, Store("fixture-" + name), null, CancellationToken.None);
+        var fixture = await ModelOffFixtureCycleTestHarness.RunAsync(request, Store("fixture-" + name), null, CancellationToken.None);
         return new[] { ModelOffAgentV1.Market, ModelOffAgentV1.Research, ModelOffAgentV1.Strategy, ModelOffAgentV1.Risk }
             .Select(role => new ModelOffProductionInputV1(fixture.Outputs[role], fixture.Documents[role])).ToArray();
     }
