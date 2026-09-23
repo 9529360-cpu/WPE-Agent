@@ -257,6 +257,78 @@ public sealed class MarketStructureIntelligenceTests
     }
 
     [Fact]
+    public async Task RecentSameSetupLossRequiresClosedFifteenMinuteConfirmation()
+    {
+        var market=RealtimeSweepConfirmationMarket();
+        var structure=MarketStructureIntelligence.Analyze(market);
+        Assert.Equal("1m-realtime-closed",structure.ConfirmationSource);
+        var memory=new PlannerMemoryFact(
+            "long-term",
+            Now.AddMinutes(10).UtcDateTime,
+            "loss",
+            "post-trade",
+            "recent stopped trade",
+            $"DIRECT-BTCUSDT-202609200800-{structure.Scenario}-BullishConfirmation");
+        var context=new AgentContext("WPE Local Brain",false,null,[],0,[memory]);
+
+        var result=await new DeterministicBrainProvider().DecideAsync(Evidence(market),context,CancellationToken.None);
+
+        Assert.Equal(DecisionAction.Hold,result.Decision.Action);
+        Assert.Equal("market-observation",result.Decision.DecisionContextKind);
+        Assert.Contains("closed 15m confirmation",result.Decision.Reason,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("memory_confirmation=15m-closed-required",result.Decision.EvidenceReferences);
+        Assert.Contains("same-setup-loss-requires-15m-confirmation",result.Response,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ClosedFifteenMinuteConfirmationRemainsTradableAfterSameSetupLoss()
+    {
+        var market=Market(
+            SweepLowReclaimThenConfirm15m(),
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(30));
+        var structure=MarketStructureIntelligence.Analyze(market);
+        Assert.Equal("15m-closed",structure.ConfirmationSource);
+        var memory=new PlannerMemoryFact(
+            "long-term",
+            Now.AddMinutes(10).UtcDateTime,
+            "loss",
+            "post-trade",
+            "recent stopped trade",
+            $"DIRECT-BTCUSDT-202609200800-{structure.Scenario}-BullishConfirmation");
+
+        var result=await new DeterministicBrainProvider().DecideAsync(
+            Evidence(market),
+            new AgentContext("WPE Local Brain",false,null,[],0,[memory]),
+            CancellationToken.None);
+
+        Assert.Equal(DecisionAction.OpenLong,result.Decision.Action);
+        Assert.True(DirectMarketStructureDecisionSkill.IsDirect(result.Decision));
+    }
+
+    [Fact]
+    public async Task LatestSameSetupWinRestoresRealtimeConfirmationEligibility()
+    {
+        var market=RealtimeSweepConfirmationMarket();
+        var scenario=MarketStructureIntelligence.Analyze(market).Scenario;
+        var strategyId=$"DIRECT-BTCUSDT-202609200800-{scenario}-BullishConfirmation";
+        PlannerMemoryFact[] memories=
+        [
+            new("long-term",Now.AddMinutes(5).UtcDateTime,"loss","post-trade","older loss",strategyId),
+            new("long-term",Now.AddMinutes(10).UtcDateTime,"win","post-trade","newer win",strategyId)
+        ];
+
+        var result=await new DeterministicBrainProvider().DecideAsync(
+            Evidence(market),
+            new AgentContext("WPE Local Brain",false,null,[],0,memories),
+            CancellationToken.None);
+
+        Assert.Equal(DecisionAction.OpenLong,result.Decision.Action);
+        Assert.True(DirectMarketStructureDecisionSkill.IsDirect(result.Decision));
+    }
+
+    [Fact]
     public void DirectReviewerNeedsNoScoreOrResearchGate()
     {
         var market=Market(
@@ -355,6 +427,30 @@ public sealed class MarketStructureIntelligenceTests
                 Anomalies=[]
             }
         };
+    }
+
+    private static MarketEvidence RealtimeSweepConfirmationMarket()
+    {
+        var candles=SweepLowReclaimNext15m();
+        var candidate=candles[^1];
+        var minuteOpen=candidate.Close+.10m;
+        var minuteClose=candidate.High+.80m;
+        var minute=new CandleEvidence(
+            Now.AddMinutes(15).UtcDateTime,
+            minuteOpen,
+            minuteClose+.10m,
+            minuteOpen-.10m,
+            minuteClose,
+            80m,
+            8_000m,
+            120,
+            55m);
+        var baseline=Market(
+            candles,
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(16));
+        return baseline with{Price=minute.Close,Candles1m=[minute]};
     }
 
     private static IReadOnlyList<CandleEvidence> Pullback15m() =>
