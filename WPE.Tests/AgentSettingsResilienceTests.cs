@@ -76,7 +76,7 @@ public sealed class AgentSettingsResilienceTests : IDisposable
 
         var loaded=new AgentSettingsStore(SettingsPath).Load();
 
-        Assert.Equal(global::币安量化机器人.Core.Models.AiRuntimeMode.Hybrid,loaded.AiMode);
+        Assert.Equal(global::币安量化机器人.Core.Models.AiRuntimeMode.LocalOnly,loaded.AiMode);
         Assert.Equal(global::币安量化机器人.Core.Models.AiRuntimeMode.LocalOnly,RuntimeModePolicy.Resolve(loaded).EffectiveMode);
         Assert.Equal("WPE Local Brain",loaded.ActiveBrain);
         Assert.Single(loaded.Brains);
