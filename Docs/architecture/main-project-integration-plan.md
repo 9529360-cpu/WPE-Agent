@@ -5,8 +5,8 @@
 ## 1. 集成目标
 
 - 把 `Master Backlog`、`RuntimeSnapshotV1`、真实六角色本地 Agent、LocalOnly direct-decision 架构、动态市场选择器 handoff、插件 `Phase0 manifest`、品牌方案，统一纳入主项目主线。
-- 保证本地 Agent 在无 LLM 时可完整运行。
-- 保证 Brain 只是可选增强，不是单点依赖。
+- 保证本地 Agent 在无在线/远程 LLM 时可完整运行。
+- 交易 Brain 固定为本地 deterministic technical brain；不再规划 Hybrid / AI Research / Remote Brain 产品模式。
 
 ## 2. 核心原则
 
@@ -45,7 +45,7 @@
 ## 4. 本地决策单权威设计
 
 - `AssistantProviderFactory` 的交易运行时只创建 `local-deterministic` provider。
-- 旧 `Hybrid / AI Research / Remote Brain` 配置可以被读取用于兼容展示，但不能改变交易决策 provider。
+- 旧 `Hybrid / AI Research / Remote Brain` 仅属于历史配置兼容；当前运行时和 UI 不再展示或切换这些模式。
 - 决策链只有一个执行权威：fresh canonical market evidence -> direct local decision -> deterministic plan -> independent risk -> execution/recovery。
 - 外部研究、回测和 Model-off Research/Strategy 输出只能作为旁路审计证据，不能覆盖、提升或批准订单。
 
@@ -76,13 +76,13 @@
 - `/orders`：展示 direct decision 上下文、handoff 来源与执行门禁。
 - `/risk`：展示风控门禁、降级原因、拒单原因。
 - `/plugins`：展示 manifest、插件状态、权限、可用性。
-- `/settings`：展示模式切换、本地 only 开关、Brain 接入开关。
+- `/settings`：展示本地 deterministic brain 的事实状态；不提供远程 Brain/Hybrid/AI Research 开关。
 
 ## 8. 测试策略
 
 - 单元测试：本地 provider、快照映射、市场选择器、风控门禁、插件 manifest 解析。
-- 集成测试：无 Brain、Brain 失败、Exchange 失败、Handoff 切换、快照回放。
-- 端到端测试：本地 only 跑完整闭环；Hybrid 跑本地+远端；AI Research 只增强不阻断。
+- 集成测试：本地 Brain 初始化/故障、Exchange 失败、Handoff 切换、快照回放。
+- 端到端测试：本地 deterministic brain 跑完整闭环；验证浏览器零网络旁路和远程 Brain 不存在。
 - 回归测试：现有安全门禁、SQLite、配置、权限验证。
 
 ## 9. 发布顺序
@@ -92,14 +92,13 @@
 3. 动态市场选择器 handoff
 4. 插件 Phase0 manifest
 5. UI 品牌重构
-6. Hybrid/Brain 接入
-7. AI Research 增强
+6. 继续收敛本地技术分析与执行可靠性
 
 ## 10. 回滚点
 
 - `R0`: 仅保留现有 runtime bridge 与静态 UI。
 - `R1`: 回滚 `RuntimeSnapshotV1`，继续用旧 runtime 字段。
-- `R2`: 回滚 Brain 接入，强制 `allowRemote=false`。
+- `R2`: 回滚本地 Brain 表面改动，不引入远程 provider。
 - `R3`: 回滚 market handoff，锁定单一主市场。
 - `R4`: 回滚插件 manifest，保留内置注册表。
 
@@ -111,10 +110,10 @@
 - Web UI 构建：`pnpm --dir "C:\Users\bz977\Documents\Codex\2026-07-18\new-chat\work\wpe-agent-clean\WPE-\WebUi" build`
 - Web UI lint：`pnpm --dir "C:\Users\bz977\Documents\Codex\2026-07-18\new-chat\work\wpe-agent-clean\WPE-\WebUi" lint`
 - 本地 only 验收：禁用远端 Brain 后启动并检查 `/`、`/agents`、`/risk`、`/orders`、`/backtest`
-- Hybrid 验收：开启 Brain 后检查 fallback 仍可执行
+- 本地 Brain 验收：确认交易决策 provider 始终为 local-deterministic，且无远程调用入口
 
 ## 12. 建议落地顺序
 
 - 先做 `RuntimeSnapshotV1` 和本地降级链。
 - 再做市场 handoff 和插件 manifest。
-- 最后做品牌和 Brain 增强。
+- 最后做品牌与本地交易可观测性增强；不恢复远程 Brain。
