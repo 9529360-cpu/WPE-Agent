@@ -62,7 +62,6 @@ export const previewState: WpeRuntimeState = {
   diagnostic:{state:'available',value:{code:'PREVIEW-0001',timeUtc:new Date().toISOString(),summary:'PREVIEW DATA - illustrative diagnostic only.'}},
   contractVersion: '1.0',
   freshness: { fresh: true, ageSeconds: 0, staleAfterSeconds: 15 },
-  collectionStates: { account: 'available', positions: 'available', orders: 'available', risk: 'available', backtests: 'available', telemetry: 'available', markets: 'available', capabilities: 'available', llmGovernance: 'available', plugins: 'available', auditEvents: 'available', equityHistory: 'available', connectionStatus: 'available', skillCalls:'available',memoryStatus:'available',recentMemoryRetrievals:'available',agentOperations:'available',agentHandoffs:'available',notificationStatus:'available',notificationOutbox:'available',authorizationMode:'available',pendingApprovals:'available' },
   authorizationMode:{state:'available',message:'PREVIEW DATA - illustrative authorization state only.',value:{mode:'Review'}},
   pendingApprovals:{state:'available',message:'PREVIEW DATA - illustrative approval queue only.',items:[{approvalId:'approval#A1B2C3D4E5F6',symbol:'BTCUSDT',side:'Long',orderType:'Limit',quantity:.04,entryPrice:118900,stopLoss:116700,takeProfit:123300,createdAtUtc:new Date(Date.now()-60_000).toISOString(),expiresAtUtc:new Date(Date.now()+240_000).toISOString(),status:'Pending',reasonCode:'approval.awaiting-user'}]},
   notificationStatus:{
@@ -101,8 +100,6 @@ export const previewState: WpeRuntimeState = {
     {roleId:'audit',status:'monitoring',lastActivityAtUtc:new Date().toISOString(),activity:'PREVIEW DATA - append-only audit monitored',mode:'Local Only'},
   ],
   agentHandoffs:[{id:'preview-handoff-1',occurredAtUtc:new Date(Date.now()-20000).toISOString(),sourceRoleId:'market',targetRoleId:'decision',result:'PREVIEW DATA - fresh market evidence accepted'}],
-  memoryStatus:{state:'available',message:'PREVIEW DATA - illustrative local memory counts only.',value:{workingCount:12,episodicCount:48,longTermCount:7,lastRetrievedAtUtc:new Date().toISOString()}},
-  recentMemoryRetrievals:[{id:1,tier:'episodic',symbol:'SOLUSDT',providerId:'preview-provider',strategyId:null,occurredAtUtc:new Date().toISOString(),result:'SUCCESS',source:'PREVIEW DATA - deterministic-sqlite-query',resultCount:3}],
   skillCalls:[
     {id:'preview:2',occurredAtUtc:new Date().toISOString(),skill:'BrainPlanner',status:'SUCCESS',durationMs:184,mode:'LocalOnly',remoteLlmUsed:false,tokens:null,costUsd:null},
     {id:'preview:1',occurredAtUtc:new Date(Date.now()-60000).toISOString(),skill:'RiskAndPositionPlanner',status:'SUCCESS',durationMs:7,mode:'LocalOnly',remoteLlmUsed:false,tokens:null,costUsd:null},
