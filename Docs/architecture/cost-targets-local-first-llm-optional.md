@@ -1,25 +1,7 @@
-# Cost Targets
+# Retired: Remote LLM Cost Targets
 
-## Targets
-- Local Only: $0 variable LLM cost.
-- Hybrid: target average cost <= $0.03 per task.
-- AI Research: target average cost <= $0.15 per task.
+Remote LLM cost targets are no longer part of the WPE-Agent trading product.
 
-## Guardrails
-- Per-task hard cap on tokens and USD.
-- Per-session soft warning before 80% budget usage.
-- Per-period hard stop at 100% budget.
-- Cache hit rate target >= 35% in Hybrid, >= 20% in AI Research.
+The trading runtime does not make online/remote LLM calls, so token budgets, provider spend, prompt-cache targets, Hybrid cost targets, and AI Research cost targets are not product KPIs.
 
-## Operational Goals
-- LLM call rate reduced by routing and caching.
-- Fallback rate under 5% in normal operation.
-- Provider failure should not increase core completion failure rate above 1%.
-
-## Metrics to Track
-- tokens/task
-- USD/task
-- cache hit rate
-- fallback rate
-- offline completion rate
-- privacy-block rate
+Relevant operational metrics are now execution latency, order/recovery reliability, protection-order integrity, data freshness, risk exposure, and local runtime resource health.
