@@ -17,18 +17,13 @@ public static class RuntimeModePolicy
     public static RuntimeModeResolution Resolve(AgentSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        var requested=settings.AiMode;
-        var reason=requested==AiRuntimeMode.LocalOnly
-            ?"Local Only mode keeps the trading brain fully local."
-            :"Automatic trading is local-only; legacy remote Brain settings are ignored.";
-
         return new(
-            requested,
+            AiRuntimeMode.LocalOnly,
             AiRuntimeMode.LocalOnly,
             false,
             "WPE Local Brain",
             "local-deterministic",
-            reason);
+            "Trading brain is local deterministic only.");
     }
 
     public static BrainSlot GetActiveBrain(AgentSettings settings)
