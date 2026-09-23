@@ -493,6 +493,9 @@ public sealed class TradingExecutionGateway
         var opening=await _approvals.GetLatestOpeningIntentAsync(adjustment.Symbol,adjustment.Side,ct);
         if(opening is null||opening.ReduceOnly||opening.StopLoss<=0||opening.TakeProfit<=0)
             return Deny("recovery.protection-opening-missing");
+        if(!string.IsNullOrWhiteSpace(adjustment.OpeningClientOrderId)&&
+           !string.Equals(adjustment.OpeningClientOrderId,opening.ClientOrderId,StringComparison.Ordinal))
+            return Deny("recovery.protection-opening-mismatch");
         var entry=opening.ExpectedPrice>0?opening.ExpectedPrice:command.ObservedPosition.EntryPrice;
         var riskReducing=entry>0&&adjustment.TakeProfit==opening.TakeProfit&&
             (adjustment.Side==PositionSide.Long
@@ -587,7 +590,8 @@ public sealed class TradingExecutionGateway
     {
         ArgumentNullException.ThrowIfNull(adjustment);
         var payload=JsonSerializer.SerializeToUtf8Bytes(new ProtectionAdjustmentHashPayload(
-            adjustment.Symbol,adjustment.Side,adjustment.StopLoss,adjustment.TakeProfit,adjustment.AdjustmentId??string.Empty));
+            adjustment.Symbol,adjustment.Side,adjustment.StopLoss,adjustment.TakeProfit,
+            adjustment.AdjustmentId??string.Empty,adjustment.OpeningClientOrderId??string.Empty));
         return Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant();
     }
 
@@ -668,6 +672,6 @@ public sealed class TradingExecutionGateway
         var hash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
         return prefix+hash[..24];
     }
-    private sealed record ProtectionAdjustmentHashPayload(string Symbol,PositionSide Side,decimal StopLoss,decimal TakeProfit,string AdjustmentId);
+    private sealed record ProtectionAdjustmentHashPayload(string Symbol,PositionSide Side,decimal StopLoss,decimal TakeProfit,string AdjustmentId,string OpeningClientOrderId);
     private sealed record IntentHashPayload(int Leverage,bool Isolated,IReadOnlyList<ExecutionIntent> Intents);
 }

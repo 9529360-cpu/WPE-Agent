@@ -388,6 +388,7 @@
     "Position.LiquidationBuffer":  "청산 안전 여유 부족",
     "Position.PartialTake":  "2R 자동 분할 익절",
     "Position.Breakeven":  "자동 본전 보호",
+    "Position.StructureProfitLock":  "부분 익절 후 남은 포지션 보호를 새로운 15분 구조 뒤로 이동",
     "Position.ManagementCycle":  "포지션 관리가 실행되어 이번 주기 신규 리스크 중지",
     "Execution.NoFill":  "지정가 주문 미체결 만료, 포지션 없음",
     "Execution.PartialClose":  "부분 청산 확인: {0}/{1}",

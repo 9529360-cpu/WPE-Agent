@@ -319,6 +319,18 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         try
         {
             await _ex.PlaceProtectionAsync(adjustment.Symbol,adjustment.Side,adjustment.StopLoss,adjustment.TakeProfit,group,ct);
+            if(!string.IsNullOrWhiteSpace(adjustment.OpeningClientOrderId))
+            {
+                if(string.IsNullOrWhiteSpace(adjustment.AdjustmentId))
+                    throw new InvalidOperationException("Opening-scoped protection adjustment requires a durable adjustment id.");
+                var effective=new EffectiveProtectionStateV1(
+                    1,adjustment.OpeningClientOrderId,adjustment.StopLoss,adjustment.TakeProfit,
+                    adjustment.AdjustmentId,DateTimeOffset.UtcNow);
+                await _db.SetStateAsync(
+                    PositionManagementDurableState.EffectiveProtectionKey(adjustment.OpeningClientOrderId),
+                    PositionManagementDurableState.SerializeEffectiveProtection(effective),
+                    ct);
+            }
             if(stateKey is not null)await _db.SetStateAsync(stateKey,"COMPLETED",ct);
             var value=ConfirmedNotificationTruth.Protection(
                 ConfirmedNotificationTruth.EventKey(cycle,group,NotificationEventKind.ProtectionUpdated),
@@ -454,7 +466,27 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             {
                 safe=false;messages.Add($"recovery.position-ownership-uncertain:{position.Symbol}:{position.Side}");continue;
             }
-            try{EnsureCapability(intent);await _ex.PlaceProtectionAsync(position.Symbol,position.Side,intent.StopLoss,intent.TakeProfit,intent.ClientOrderId,ct);messages.Add(L("Execution.ProtectionRepaired",position.Symbol,position.Side));}catch(Exception ex){safe=false;messages.Add(L("Execution.ProtectionRepairFailed",position.Symbol,position.Side,SensitiveDataRedactor.ForLog(ex.Message,180)));}
+            var repairStop=intent.StopLoss;var repairTake=intent.TakeProfit;
+            var effectiveRaw=await _db.GetStateAsync(PositionManagementDurableState.EffectiveProtectionKey(intent.ClientOrderId),ct);
+            if(effectiveRaw is not null)
+            {
+                if(!PositionManagementDurableState.TryParseEffectiveProtection(effectiveRaw,out var effective)||
+                   !string.Equals(effective.OpeningClientOrderId,intent.ClientOrderId,StringComparison.Ordinal)||
+                   effective.TakeProfit!=intent.TakeProfit)
+                {
+                    safe=false;messages.Add($"recovery.effective-protection-invalid:{position.Symbol}:{position.Side}");continue;
+                }
+                var entry=intent.ExpectedPrice>0?intent.ExpectedPrice:position.EntryPrice;
+                var riskReducing=entry>0&&(position.Side==PositionSide.Long
+                    ?effective.StopLoss>=entry&&effective.StopLoss>intent.StopLoss&&effective.TakeProfit>entry
+                    :effective.StopLoss<=entry&&effective.StopLoss<intent.StopLoss&&effective.TakeProfit<entry);
+                if(!riskReducing)
+                {
+                    safe=false;messages.Add($"recovery.effective-protection-risk-increase:{position.Symbol}:{position.Side}");continue;
+                }
+                repairStop=effective.StopLoss;repairTake=effective.TakeProfit;
+            }
+            try{EnsureCapability(intent);await _ex.PlaceProtectionAsync(position.Symbol,position.Side,repairStop,repairTake,intent.ClientOrderId,ct);messages.Add(L("Execution.ProtectionRepaired",position.Symbol,position.Side));}catch(Exception ex){safe=false;messages.Add(L("Execution.ProtectionRepairFailed",position.Symbol,position.Side,SensitiveDataRedactor.ForLog(ex.Message,180)));}
         }return new(safe,messages);
     }
 
