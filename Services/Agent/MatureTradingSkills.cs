@@ -205,11 +205,27 @@ public sealed class PositionManagementSkill
             var risk=Math.Abs(position.EntryPrice-opening.StopLoss);
             if(risk<=0)continue;
             var favorable=(position.Side==PositionSide.Long?market.Price-position.EntryPrice:position.EntryPrice-market.Price)/risk;
-            var liquidationBuffer=position.EntryPrice>0&&position.LiquidationPrice>0
-                ?(double)(Math.Abs(market.Price-position.LiquidationPrice)/position.EntryPrice)
-                :1;
-            if(liquidationBuffer<.30)
+            var liquidationUnsafe=false;
+            decimal liquidationBoundary=0;
+            if(position.EntryPrice>0&&position.LiquidationPrice>0)
             {
+                var liquidationSpan=position.Side==PositionSide.Long
+                    ?position.EntryPrice-position.LiquidationPrice
+                    :position.LiquidationPrice-position.EntryPrice;
+                if(liquidationSpan<=0)liquidationUnsafe=true;
+                else
+                {
+                    liquidationBoundary=position.Side==PositionSide.Long
+                        ?position.LiquidationPrice+liquidationSpan*.30m
+                        :position.LiquidationPrice-liquidationSpan*.30m;
+                    liquidationUnsafe=position.Side==PositionSide.Long
+                        ?opening.StopLoss<liquidationBoundary
+                        :opening.StopLoss>liquidationBoundary;
+                }
+            }
+            if(liquidationUnsafe)
+            {
+                notes.Add($"liquidation-safety-compromised:{position.Symbol}:{position.Side}:stop={opening.StopLoss}:boundary={liquidationBoundary}");
                 var actionId=ActionId("LIQ",opening);
                 if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
                     intents.Add(new(
