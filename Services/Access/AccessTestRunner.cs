@@ -25,7 +25,7 @@ public static class AccessTestRunner
         var store=new AgentSettingsStore();var settings=store.Load();
         var readiness=await new AccessReadinessService().CheckAsync(settings,ct);
         settings.LastAccessCheckAtUtc=readiness.CheckedAtUtc;store.Save(settings);
-        var payload=new{readiness.CheckedAtUtc,readiness.Ready,Environment=settings.Environment.ToString(),ActiveBrain=settings.ActiveBrain,Checks=readiness.Checks};
+        var payload=new{readiness.CheckedAtUtc,readiness.Ready,Environment=settings.Environment.ToString(),ActiveBrain="WPE Local Brain",Checks=readiness.Checks};
         await File.WriteAllTextAsync(reportPath,JsonSerializer.Serialize(payload,new JsonSerializerOptions{WriteIndented=true}),ct);
         return new(readiness.Ready,reportPath);
     }
@@ -75,7 +75,7 @@ public static class AccessTestRunner
             });
             await Case(report,"关键连接缺失时启动门禁保持关闭",async()=>
             {
-                var settings=new AgentSettings{Environment=ExchangeEnvironment.Testnet,ActiveBrain="missing"};
+                var settings=new AgentSettings{Environment=ExchangeEnvironment.Testnet};
                 var readiness=await new AccessReadinessService().CheckAsync(settings,ct);
                 Require(!readiness.Ready,"缺少交易所凭据时门禁错误放行");
                 Require(readiness.Checks.Any(x=>x.Key=="credentials"&&!x.Passed&&x.Critical),"未报告交易所凭据失败");
