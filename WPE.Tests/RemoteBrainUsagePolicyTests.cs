@@ -6,8 +6,8 @@ public sealed class RemoteBrainUsagePolicyTests
         var source=File.ReadAllText(SourcePath("Services","AutoTradingAgent.cs"));
 
         Assert.Contains("IAssistantProvider brain=localBrain;",source,StringComparison.Ordinal);
-        Assert.Contains("state.BrainEffectiveMode=AiRuntimeMode.LocalOnly;",source,StringComparison.Ordinal);
-        Assert.Contains("state.BrainRemoteAllowed=false;",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("BrainEffectiveMode",source,StringComparison.Ordinal);
+        Assert.DoesNotContain("BrainRemoteAllowed",source,StringComparison.Ordinal);
         Assert.DoesNotContain("HttpBrainProvider",source,StringComparison.Ordinal);
         Assert.DoesNotContain("CreateConfiguredBrain",source,StringComparison.Ordinal);
         Assert.DoesNotContain("plannerBrain=",source,StringComparison.Ordinal);
