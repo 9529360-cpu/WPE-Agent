@@ -24,8 +24,6 @@ public static class RuntimeSnapshotFactory
         RuntimeAgentOperationsState? agentOperationsState = null,
         RuntimeBacktestState? backtestState = null,
         RuntimeAuditState? auditState = null,
-        LlmUsageSnapshot? llmUsage = null,
-        LlmUsageBreakdown? llmBreakdown = null,
         PluginRegistrySnapshot? pluginRegistry = null,
         RuntimeNotificationState? notificationState = null,
         RuntimeAuthorizationState? authorizationState = null,
@@ -175,15 +173,6 @@ public static class RuntimeSnapshotFactory
             AuditEvents = new(auditCollectionState,auditCollectionState==RuntimeCollectionState.Available?runtimeAudit.Items:Array.Empty<RuntimeAuditEventV1>(),SafeMessage(auditCollectionState,auditMessage,"Audit history read failed.",generatedAtUtc)),
             Telemetry = new(collectionState, new RuntimeTelemetryV1(state.RuntimeRunId, state.RuntimeHeartbeatAtUtc,
                 state.RuntimeRecoveryStatus, state.RealtimeStatus, state.WorkflowNode, state.ThinkingProgress), message),
-            LlmGovernance = llmUsage is null
-                ? new(RuntimeCollectionState.Unsupported, null, "LLM governance metrics are not connected.")
-                : new(collectionState, new RuntimeLlmGovernanceV1(
-                    state.BrainEffectiveMode.ToString(), state.BrainRemoteAllowed,
-                    llmUsage.Calls, llmUsage.Tokens, llmUsage.CostUsd, llmUsage.CacheHits,
-                    llmUsage.BudgetBlocks, llmUsage.Fallbacks, llmUsage.PrivacyBlocks, 0,
-                    llmUsage.TopProvider, llmUsage.TopPurpose,
-                    llmBreakdown?.TopAgent ?? "core", llmBreakdown?.TopTool ?? "assistant",
-                    llmUsage.LastCallAtUtc), message),
             Markets = new(marketCollectionState, marketStale ? Array.Empty<RuntimeMarketV1>() : runtimeMarkets.Markets, SafeMessage(marketCollectionState,marketMessage,"Market capability check failed.",generatedAtUtc)),
             PublicMarkets = new(publicMarketCollectionState, publicMarketItems, publicMarketMessage),
             PublicKlines = new(publicKlineCollectionState, publicKlineItems, publicKlineMessage),
