@@ -47,11 +47,6 @@ public sealed record RuntimeSkillCallV1(string Id,DateTime OccurredAtUtc,string 
 public sealed record RuntimeDiagnosticV1(string Code,DateTime TimeUtc,string Summary);
 public sealed record RuntimeAgentOperationV1(string RoleId,string Status,DateTime? LastActivityAtUtc,string? Activity,string Mode);
 public sealed record RuntimeAgentHandoffV1(string Id,DateTime OccurredAtUtc,string SourceRoleId,string TargetRoleId,string Result);
-public sealed record RuntimeTeacherBlockV1(string BlockId,string Kind,string Heading,string Content,IReadOnlyList<string> EvidenceHashes,string Sha256);
-public sealed record RuntimeTeacherLessonV1(string LessonId,string Kind,string TimeZoneId,DateTimeOffset ScheduledForUtc,DateTimeOffset GeneratedAtUtc,string Language,string TeachingLevel,string PersonaVersion,IReadOnlyList<RuntimeTeacherBlockV1> Blocks,string ContentSha256,bool ExecutionAuthority);
-public sealed record RuntimeTeacherRecommendationV1(string RecommendationId,int Version,string Instrument,string AssetClass,string State,string Horizon,DateTimeOffset IssuedAtUtc,DateTimeOffset ExpiresAtUtc,string Thesis,IReadOnlyList<string> EvidenceHashes,IReadOnlyList<string> ConfirmationConditions,IReadOnlyList<string> InvalidationConditions,IReadOnlyList<string> MaterialRisks,string? SupersedesId,bool ExecutionAuthority);
-public sealed record RuntimeTeacherCorrectionV1(string CorrectionId,string SupersededLessonId,string ReasonCode,DateTimeOffset IssuedAtUtc,IReadOnlyList<RuntimeTeacherBlockV1> ReplacementBlocks,string Sha256);
-public sealed record RuntimeTeacherOutcomeV1(string OutcomeId,string RecommendationId,int RecommendationVersion,string Instrument,string Benchmark,string Horizon,DateTimeOffset IssuedAtUtc,DateTimeOffset EvaluatedAtUtc,decimal InstrumentReturnPct,decimal BenchmarkReturnPct,decimal RelativeReturnPct,decimal MaximumFavorableExcursionPct,decimal MaximumAdverseExcursionPct,bool InvalidatedBeforeHorizon,string ProcessState,string CanonicalSha256);
 
 public sealed record RuntimeBacktestV1(
     string BacktestId,
@@ -305,10 +300,6 @@ public sealed class RuntimeSnapshotV1
     public RuntimeValueV1<RuntimeDiagnosticV1> Diagnostic { get; init; } = new(RuntimeCollectionState.Available, null);
     public RuntimeCollectionV1<RuntimeAgentOperationV1> AgentOperations { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Agent operations persistence is not connected.");
     public RuntimeCollectionV1<RuntimeAgentHandoffV1> AgentHandoffs { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Agent handoff persistence is not connected.");
-    public RuntimeCollectionV1<RuntimeTeacherLessonV1> TeacherLessons { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Teacher persistence is not connected.");
-    public RuntimeCollectionV1<RuntimeTeacherRecommendationV1> TeacherRecommendations { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Teacher recommendations are not connected.");
-    public RuntimeCollectionV1<RuntimeTeacherCorrectionV1> TeacherCorrections { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Teacher corrections are not connected.");
-    public RuntimeCollectionV1<RuntimeTeacherOutcomeV1> TeacherOutcomes { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Teacher outcomes are not connected.");
     public RuntimeCollectionV1<RuntimeBacktestV1> Backtests { get; init; } = new(RuntimeCollectionState.Unsupported, []);
     public RuntimeCollectionV1<RuntimeCrossAssetResearchV1> CrossAssetResearch { get; init; } = new(RuntimeCollectionState.Unsupported, [], "Cross-asset research has not been published.");
     public RuntimeValueV1<RuntimeDistributionV1> Distribution { get; init; } = new(RuntimeCollectionState.Available,
