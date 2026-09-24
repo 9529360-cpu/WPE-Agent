@@ -93,7 +93,6 @@
       <Compile Remove="Application\Backtesting\WalkForwardOptimizer.cs" />
       <Compile Remove="Infrastructure\Data\FileDataSource.cs" />
       <Compile Remove="Infrastructure\Data\DataQualityRules.cs" />
-      <Compile Remove="Services\Agent\AgentMemoryStore.cs" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">

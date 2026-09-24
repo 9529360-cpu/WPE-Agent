@@ -36,11 +36,5 @@ public sealed class AgentDecision
     [JsonPropertyName("invalidation")]
     public string Invalidation { get; set; } = string.Empty;
 
-    [JsonPropertyName("memory_validation")]
-    public string MemoryValidation { get; set; } = "首次判断";
 }
 
-public sealed record AgentMemory(
-    DateTime Timestamp,
-    decimal Price,
-    AgentDecision Decision);

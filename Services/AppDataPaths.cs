@@ -109,7 +109,7 @@ public static class LegacyPortableDataMigrator
 {
     private static readonly HashSet<string> AllowedFiles = new(StringComparer.OrdinalIgnoreCase)
     {
-        "agent-settings.json", "appsettings.json", "ui-preferences.json", "agent-memory.json", "ui-settings.json",
+        "agent-settings.json", "appsettings.json", "ui-preferences.json", "ui-settings.json",
         "local-accounts.json", "local-session.dat", "device-license.dat", "llm-calls.jsonl", "llm-cache.jsonl"
     };
     private static readonly string[] DatabaseSuffixes =
