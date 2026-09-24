@@ -12,8 +12,8 @@ public sealed class DegradedPlanningTests
         var rule = new TradingRule("BTCUSDT", 0.001m, 0.1m, 0.001m, 5m, 125);
         var limits = new RiskLimits();
 
-        var increase = planner.Plan(Decision(DecisionAction.AddLong), evidence, rule, limits, 1_000, safeToIncreaseRisk: false, "unknown order");
-        var reduction = planner.Plan(Decision(DecisionAction.ReduceLong), evidence, rule, limits, 1_000, safeToIncreaseRisk: false, "unknown order");
+        var increase = planner.Plan(Decision(DecisionAction.AddLong), evidence, rule, limits, safeToIncreaseRisk: false, safetyReason: "unknown order");
+        var reduction = planner.Plan(Decision(DecisionAction.ReduceLong), evidence, rule, limits, safeToIncreaseRisk: false, safetyReason: "unknown order");
 
         Assert.Empty(increase.Intents);
         Assert.Contains("unknown order", increase.Result, StringComparison.Ordinal);
