@@ -51,6 +51,22 @@ public sealed class RemoteBrainUsagePolicyTests
         Assert.DoesNotContain("strategy performance",source,StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void TradingRuntimeDoesNotAdvertiseMemoryCapabilityButKeepsAuditFacts()
+    {
+        var catalog=File.ReadAllText(SourcePath("Services","Agent","DecisionIntelligence.cs"));
+        var store=File.ReadAllText(SourcePath("Services","Agent","AgentSqliteStore.cs"));
+
+        Assert.DoesNotContain("DecisionMemory",catalog,StringComparison.Ordinal);
+        Assert.DoesNotContain("GetMemoryExplorerAsync",store,StringComparison.Ordinal);
+        Assert.DoesNotContain("GetMemorySourceCountsAsync",store,StringComparison.Ordinal);
+        Assert.DoesNotContain("GetMemoryReferenceCountsAsync",store,StringComparison.Ordinal);
+
+        Assert.Contains("trade_outcomes",store,StringComparison.Ordinal);
+        Assert.Contains("CREATE TABLE IF NOT EXISTS cycles",store,StringComparison.Ordinal);
+        Assert.Contains("CREATE TABLE IF NOT EXISTS news_documents",store,StringComparison.Ordinal);
+    }
+
     private static string SourcePath(params string[] path)
     {
         var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
