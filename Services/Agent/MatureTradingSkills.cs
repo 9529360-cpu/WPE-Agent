@@ -104,6 +104,8 @@ public sealed class IndependentRiskManagerSkill
         Check(market is not null&&market.Quality.SpreadBps<=limits.MaximumSpreadBps,"spread",L("RiskReview.Spread",market?.Quality.SpreadBps??999));
         Check(market is not null&&market.Quality.AtrPercent<=limits.MaxAtrPercent,"volatility",L("RiskReview.Volatility",market?.Quality.AtrPercent??1));
         Check(decision.RiskRewardRatio>=limits.MinimumRiskReward,"risk_reward",L("RiskReview.RiskReward",decision.RiskRewardRatio,limits.MinimumRiskReward));
+        var dailyLossRatio=equity>0&&history.DailyRealizedPnl<0?-history.DailyRealizedPnl/equity:0m;
+        Check(limits.MaxDailyLoss<=0||dailyLossRatio<limits.MaxDailyLoss,"daily_loss_limit",$"risk.daily-loss-limit:{dailyLossRatio:P2}");
         Check(history.ApiFailures<limits.ApiFailureThreshold,"api_health",L("RiskReview.ApiFailures",history.ApiFailures));
         Check(!history.OrderStateUncertain,"order_state",L("RiskReview.OrderUncertain"));
         Check(portfolio is{Approved:true},"portfolio_risk",L("RiskReview.Portfolio",portfolio?.Summary??"unavailable"));
