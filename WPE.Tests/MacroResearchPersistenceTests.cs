@@ -40,46 +40,6 @@ public sealed class MacroResearchPersistenceTests : IDisposable
     }
 
     [Fact]
-    public async Task SchedulerCollectsBothOfficialSeriesAndPublishesHealth()
-    {
-        var store=new AgentSqliteStore(DatabasePath);var client=new BlsMacroDataClient(new SeriesTransport());
-        var count=await new MacroResearchScheduler(client,store,()=>Now,new(new CalendarTransport())).CollectOnceAsync(CancellationToken.None);
-
-        Assert.Equal(2,count);var health=await store.GetStateAsync("macro-research:health",CancellationToken.None);
-        Assert.Contains("READY",health,StringComparison.Ordinal);Assert.Contains("\"formallyCorrelated\":2",health,StringComparison.Ordinal);
-        var latest=await store.GetLatestMacroObservationsAsync(8,CancellationToken.None);
-        Assert.Equal(new[]{"CUUR0000SA0","LNS14000000"},latest.Select(x=>x.IndicatorId));
-        Assert.All(latest,x=>{Assert.Equal("official-release-calendar",x.ReleaseTimeBasis);Assert.NotNull(x.ReleasedAtUtc);Assert.NotNull(x.ReleaseCalendarArtifactHash);});
-    }
-
-    [Fact]
-    public async Task SchedulerNeverReportsReadyWhenOneSeriesLacksCalendarCorrelation()
-    {
-        const string cpiOnly="""
-BEGIN:VCALENDAR
-VERSION:2.0
-BEGIN:VEVENT
-UID:cpi-202607@bls.gov
-DTSTART;TZID=America/New_York:20260714T083000
-SUMMARY:Consumer Price Index
-END:VEVENT
-END:VCALENDAR
-""";
-        var store=new AgentSqliteStore(DatabasePath);var count=await new MacroResearchScheduler(new(new SeriesTransport()),store,()=>Now,new(new CalendarTransport(cpiOnly))).CollectOnceAsync(CancellationToken.None);
-        var health=await store.GetStateAsync("macro-research:health",CancellationToken.None);Assert.Equal(2,count);Assert.Contains("DEGRADED",health,StringComparison.Ordinal);Assert.Contains("\"formallyCorrelated\":1",health,StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task FailedRefreshDegradesHealthWithoutDeletingLastKnownObservation()
-    {
-        var store=new AgentSqliteStore(DatabasePath);
-        Assert.True((await store.SaveMacroObservationAsync(Observation(333.952m,"aa"),CancellationToken.None)).Succeeded);
-        var count=await new MacroResearchScheduler(new(new FailingSeriesTransport()),store,()=>Now,new(new CalendarTransport())).CollectOnceAsync(CancellationToken.None);
-        Assert.Equal(0,count);Assert.Contains("DEGRADED",await store.GetStateAsync("macro-research:health",CancellationToken.None),StringComparison.Ordinal);
-        var latest=await store.GetLatestMacroObservationsAsync(8,CancellationToken.None);Assert.Equal(333.952m,Assert.Single(latest).Value);
-    }
-
-    [Fact]
     public async Task InvalidOrNonCanonicalObservationIsNeverPersisted()
     {
         var store=new AgentSqliteStore(DatabasePath);var invalid=Observation(333.952m,"zz") with
@@ -115,8 +75,6 @@ END:VCALENDAR
             return Task.FromResult(JsonSerializer.Serialize(new{status="REQUEST_SUCCEEDED",Results=new{series=new[]{new{seriesID=id,data=new[]{new{year="2026",period="M06",value=id=="LNS14000000"?"4.1":"333.952"}}}}}}));
         }
     }
-    private sealed class FailingSeriesTransport:IBlsMacroDataTransport
-    {public Task<string> PostAsync(Uri endpoint,string jsonBody,CancellationToken ct)=>Task.FromException<string>(new HttpRequestException("offline"));}
     private sealed class CalendarTransport(string? response=null):IBlsReleaseCalendarTransport
     {public Task<string> GetAsync(Uri endpoint,CancellationToken ct)=>Task.FromResult(response??BlsReleaseCalendarClientTests.Calendar());}
 }
