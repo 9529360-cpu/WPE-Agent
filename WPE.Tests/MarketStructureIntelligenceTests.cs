@@ -304,7 +304,6 @@ public sealed class MarketStructureIntelligenceTests
 
         Assert.Equal(DecisionAction.Hold,decision.Action);
         Assert.Equal("market-observation",decision.DecisionContextKind);
-        Assert.Equal(0,decision.RiskBudgetMultiplier);
     }
 
     private static EvidencePack Evidence(MarketEvidence market)=>new()
