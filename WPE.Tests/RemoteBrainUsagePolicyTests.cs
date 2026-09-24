@@ -67,6 +67,24 @@ public sealed class RemoteBrainUsagePolicyTests
         Assert.Contains("CREATE TABLE IF NOT EXISTS news_documents",store,StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void LiveDecisionSurfaceDoesNotCarryLegacyScoresOrConfidenceGates()
+    {
+        var domain=File.ReadAllText(SourcePath("Services","Agent","TradingDomain.cs"));
+        var skills=File.ReadAllText(SourcePath("Services","Agent","AgentSkills.cs"));
+        var models=File.ReadAllText(SourcePath("Services","Agent","TradingAgentModels.cs"));
+
+        Assert.DoesNotContain("RiskBudgetMultiplier",domain,StringComparison.Ordinal);
+        Assert.DoesNotContain("public double Confidence",domain,StringComparison.Ordinal);
+        Assert.DoesNotContain("RiskDecisionSkill",skills,StringComparison.Ordinal);
+        Assert.DoesNotContain("DecisionValidationSkill",skills,StringComparison.Ordinal);
+        Assert.DoesNotContain("0.60",skills,StringComparison.Ordinal);
+        Assert.DoesNotContain("AgentDecision",models,StringComparison.Ordinal);
+
+        Assert.Contains("MarketSkillSnapshot",models,StringComparison.Ordinal);
+        Assert.Contains("MarketStructureSkill",skills,StringComparison.Ordinal);
+    }
+
     private static string SourcePath(params string[] path)
     {
         var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));

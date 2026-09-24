@@ -71,7 +71,6 @@ public static class DirectMarketStructureDecisionSkill
                 Action=longSide?DecisionAction.OpenLong:DecisionAction.OpenShort,
                 Instrument=market.Symbol,
                 TargetTier=1,
-                Confidence=0,
                 EntryPrice=entry,
                 StopLossPrice=stop,
                 TakeProfitPrice=take,
@@ -85,8 +84,7 @@ public static class DirectMarketStructureDecisionSkill
                 ConflictSummary=$"direct-structure; scenario={structure.Scenario}; event={structure.FifteenMinute.Event}; confirmation={structure.ConfirmationPresent}",
                 StrategyVersion=Version,
                 DecisionContextKind=DecisionContextKind,
-                DecisionContextId=ContextId(market,structure),
-                RiskBudgetMultiplier=1
+                DecisionContextId=ContextId(market,structure)
             };
         }
 
@@ -150,12 +148,10 @@ public static class DirectMarketStructureDecisionSkill
         Action=DecisionAction.Hold,
         Instrument=market?.Symbol??string.Empty,
         TargetTier=0,
-        Confidence=0,
         Regime=market is null?MarketRegime.Unknown.ToString():analysisTool.Analyze(market).HigherTimeframeBias.ToString(),
         Reason=reason,
         Invalidation="No risk-increasing decision exists.",
         StrategyVersion=Version,
-        DecisionContextKind="market-observation",
-        RiskBudgetMultiplier=0
+        DecisionContextKind="market-observation"
     };
 }

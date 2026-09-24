@@ -30,11 +30,10 @@ public sealed class DecisionGovernanceSkill
 
     private static DecisionPlan CopyAsHold(DecisionPlan p,IReadOnlyList<string> blocks)=>new()
     {
-        Action=DecisionAction.Hold,Instrument=p.Instrument,TargetTier=0,Confidence=p.Confidence,Invalidation=p.Invalidation,Regime=p.Regime,Reason=p.Reason,
+        Action=DecisionAction.Hold,Instrument=p.Instrument,TargetTier=0,Invalidation=p.Invalidation,Regime=p.Regime,Reason=p.Reason,
         EvidenceReferences=p.EvidenceReferences,MissingConditions=blocks.Distinct().ToList(),ConflictSummary=p.ConflictSummary,
         EntryPrice=p.EntryPrice,StopLossPrice=p.StopLossPrice,TakeProfitPrice=p.TakeProfitPrice,RiskRewardRatio=p.RiskRewardRatio,OrderType=p.OrderType,
-        StrategyVersion=p.StrategyVersion,DecisionContextKind=p.DecisionContextKind,DecisionContextId=p.DecisionContextId,
-        RiskBudgetMultiplier=p.RiskBudgetMultiplier
+        StrategyVersion=p.StrategyVersion,DecisionContextKind=p.DecisionContextKind,DecisionContextId=p.DecisionContextId
     };
 
     private static string Explain(DecisionPlan decision,IReadOnlyList<string> blocks)

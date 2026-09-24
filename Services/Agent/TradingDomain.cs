@@ -183,7 +183,6 @@ public sealed class DecisionPlan
     [JsonConverter(typeof(JsonStringEnumConverter))] public DecisionAction Action { get; set; } = DecisionAction.Hold;
     public string Instrument { get; set; } = "BTCUSDT";
     public int TargetTier { get; set; }
-    public double Confidence { get; set; }
     public decimal StopLossPrice { get; set; }
     public decimal TakeProfitPrice { get; set; }
     public string Invalidation { get; set; } = string.Empty;
@@ -198,7 +197,6 @@ public sealed class DecisionPlan
     public string StrategyVersion { get; set; } = "wpe-core-v2";
     public string DecisionContextKind { get; set; } = "legacy-signal";
     public string DecisionContextId { get; set; } = string.Empty;
-    public double RiskBudgetMultiplier { get; set; } = 1;
 }
 public enum MarketRegime { Trending, Ranging, Transition, Extreme, Unknown }
 public sealed class DecisionReview
