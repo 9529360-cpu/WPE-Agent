@@ -1327,26 +1327,6 @@ public sealed partial class AgentSqliteStore
         catch(JsonException) { }
         return state.Length>240?state[..240]+"...":state;
     }
-    public async Task<IReadOnlyList<string>> GetMemoryExplorerAsync(int limit,CancellationToken ct)
-    {
-        var list=new List<string>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT completed_at,'DECISION' AS source,COALESCE(decision_json,risk_result,error,'') AS content FROM cycles WHERE completed_at IS NOT NULL UNION ALL SELECT collected_at,'NEWS',title||' · '||body_summary FROM news_documents ORDER BY completed_at DESC LIMIT $l";q.Parameters.AddWithValue("$l",Math.Clamp(limit,1,300));await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var content=r.IsDBNull(2)?string.Empty:r.GetString(2);if(content.Length>260)content=content[..260]+"...";list.Add($"{r.GetString(0)}  [{r.GetString(1)}]\n{content}");}return list;
-    }
-    public async Task<IReadOnlyList<string>> GetMemoryExplorerAsync(int limit,string? filter,CancellationToken ct)
-    {
-        var all=await GetMemoryExplorerAsync(Math.Clamp(limit,1,300),ct);var value=(filter??string.Empty).Trim();
-        return value.Length==0?all:all.Where(x=>x.Contains(value,StringComparison.OrdinalIgnoreCase)).ToArray();
-    }
-    public async Task<IReadOnlyDictionary<string,long>> GetMemorySourceCountsAsync(CancellationToken ct)
-    {
-        var result=new Dictionary<string,long>(StringComparer.OrdinalIgnoreCase);await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);
-        foreach(var pair in new[]{("DECISION","SELECT COUNT(*) FROM cycles WHERE completed_at IS NOT NULL"),("NEWS","SELECT COUNT(*) FROM news_documents")})
-        {await using var q=c.CreateCommand();q.CommandText=pair.Item2;result[pair.Item1]=Convert.ToInt64(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture);}
-        return result;
-    }
-    public async Task<IReadOnlyList<(string Source,int References)>> GetMemoryReferenceCountsAsync(CancellationToken ct)
-    {
-        var rows=await GetMemoryExplorerAsync(300,ct);return rows.GroupBy(x=>{var nl=x.IndexOf('\n');var body=nl>=0?x[(nl+1)..]:x;return body.Trim();},StringComparer.OrdinalIgnoreCase).Where(g=>g.Count()>1).OrderByDescending(g=>g.Count()).Take(10).Select(g=>(g.Key[..Math.Min(80,g.Key.Length)],g.Count())).ToArray();
-    }
     public async Task<bool> TryAcquireRuntimeLeaseAsync(string name,string ownerId,TimeSpan ttl,CancellationToken ct)
     {
         var now=DateTime.UtcNow;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="INSERT INTO runtime_leases(name,owner_id,expires_at,heartbeat_at) VALUES($n,$o,$e,$h) ON CONFLICT(name) DO UPDATE SET owner_id=excluded.owner_id,expires_at=excluded.expires_at,heartbeat_at=excluded.heartbeat_at WHERE runtime_leases.owner_id=$o OR runtime_leases.expires_at<$h; SELECT changes();";q.Parameters.AddWithValue("$n",name);q.Parameters.AddWithValue("$o",ownerId);q.Parameters.AddWithValue("$e",now.Add(ttl).ToString("O"));q.Parameters.AddWithValue("$h",now.ToString("O"));return Convert.ToInt32(await q.ExecuteScalarAsync(ct),CultureInfo.InvariantCulture)>0;
