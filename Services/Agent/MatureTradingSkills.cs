@@ -85,7 +85,7 @@ public static class ModelOffStrategyRiskEvaluatorV1
     private static string Hash(string value) => "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 }
 
-public sealed record RiskHistorySnapshot(decimal DailyRealizedPnl,int ConsecutiveLosses,int ApiFailures,bool OrderStateUncertain);
+public sealed record RiskHistorySnapshot(decimal DailyRealizedPnl,int ApiFailures,bool OrderStateUncertain);
 
 public sealed class IndependentRiskManagerSkill
 {
@@ -104,8 +104,6 @@ public sealed class IndependentRiskManagerSkill
         Check(market is not null&&market.Quality.SpreadBps<=limits.MaximumSpreadBps,"spread",L("RiskReview.Spread",market?.Quality.SpreadBps??999));
         Check(market is not null&&market.Quality.AtrPercent<=limits.MaxAtrPercent,"volatility",L("RiskReview.Volatility",market?.Quality.AtrPercent??1));
         Check(decision.RiskRewardRatio>=limits.MinimumRiskReward,"risk_reward",L("RiskReview.RiskReward",decision.RiskRewardRatio,limits.MinimumRiskReward));
-        if(history.ConsecutiveLosses>0)checks.Add($"performance_loss_streak_observed:{history.ConsecutiveLosses}");
-        if(history.DailyRealizedPnl<0)checks.Add($"performance_daily_loss_observed:{history.DailyRealizedPnl:F2}");
         Check(history.ApiFailures<limits.ApiFailureThreshold,"api_health",L("RiskReview.ApiFailures",history.ApiFailures));
         Check(!history.OrderStateUncertain,"order_state",L("RiskReview.OrderUncertain"));
         Check(portfolio is{Approved:true},"portfolio_risk",L("RiskReview.Portfolio",portfolio?.Summary??"unavailable"));
@@ -115,7 +113,7 @@ public sealed class IndependentRiskManagerSkill
         Check(exposure<=limits.MaxAccountExposure,"account_exposure",L("RiskReview.AccountExposure",exposure,limits.MaxAccountExposure));
         var riskAmount=intents.Sum(x=>x.Quantity*Math.Abs((x.ExpectedPrice>0?x.ExpectedPrice:decision.EntryPrice)-x.StopLoss));
         Check(equity>0&&riskAmount<=equity*limits.MaxRiskPerTrade,"trade_risk",L("RiskReview.TradeRisk",riskAmount,equity*limits.MaxRiskPerTrade));
-        var approved=blocks.Count==0;var performanceDegraded=history.ConsecutiveLosses>0||history.DailyRealizedPnl<0;var level=!approved?"BLOCKED":performanceDegraded||exposure>.20m||riskAmount>equity*.0075m?"ELEVATED":"NORMAL";
+        var approved=blocks.Count==0;var level=!approved?"BLOCKED":exposure>.20m||riskAmount>equity*.0075m?"ELEVATED":"NORMAL";
         return new(){Approved=approved,RiskLevel=level,PlannedQuantity=intents.Sum(x=>x.Quantity),RiskAmount=riskAmount,ExposureAfter=portfolio is null?exposure:equity>0?portfolio.GrossExposure/equity:1,BlockingReasons=blocks,Checks=checks,Summary=approved?L("RiskReview.Approved",level,riskAmount,exposure):L("RiskReview.Blocked",string.Join("; ",blocks))};
         void Check(bool condition,string name,string failure){if(condition)checks.Add(name);else blocks.Add(failure);}
     }
