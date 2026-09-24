@@ -24,7 +24,7 @@ public sealed class PostTradeReviewTests : IDisposable
     }
 
     [Fact]
-    public async Task RiskHistoryIgnoresSmokeOutcomesForDailyLossAndConsecutiveLosses()
+    public async Task RiskHistoryIgnoresSmokeOutcomesForDailyLoss()
     {
         var store=new AgentSqliteStore(Database);
         await store.GetRiskHistoryAsync(default);
@@ -43,7 +43,6 @@ public sealed class PostTradeReviewTests : IDisposable
 
         var history=await store.GetRiskHistoryAsync(default);
         Assert.Equal(-3m,history.DailyRealizedPnl);
-        Assert.Equal(1,history.ConsecutiveLosses);
     }
 
     [Fact]

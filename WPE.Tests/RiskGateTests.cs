@@ -50,97 +50,52 @@ public sealed class RiskGateTests
             TakeProfitPrice = 51_000
         };
 
-        var result = planner.Plan(decision, evidence, new TradingRule("BTCUSDT", 0.001m, 0.1m, 0.001m, 5m, 125), new RiskLimits(), 1_000);
+        var result = planner.Plan(decision, evidence, new TradingRule("BTCUSDT", 0.001m, 0.1m, 0.001m, 5m, 125), new RiskLimits());
 
         Assert.Empty(result.Intents);
         Assert.Contains("Risk.Completeness", result.Result, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void PerformanceThrottle_ReducesRiskInsteadOfBlockingAfterLossStreak()
+    public void SessionRiskGate_BlocksAtConfiguredDailyLossWithoutLossStreakState()
     {
-        var throttle = PerformanceRiskThrottle.Evaluate(
-            new RiskHistorySnapshot(-120m, 3, 0, false),
+        var gate = SessionRiskGate.Evaluate(
+            new RiskHistorySnapshot(-60m, 0, false),
             equity: 1_000m,
-            dayHigh: 1_100m,
+            dayHigh: 1_000m,
             new RiskLimits { MaxDailyLoss = .05m, DailyDrawdownLimit = .08m });
 
-        Assert.Equal(.25, throttle.Multiplier, 8);
-        Assert.Equal("MINIMUM", throttle.Mode);
-        Assert.Contains(throttle.Reasons, reason => reason.StartsWith("loss-streak:", StringComparison.Ordinal));
-        Assert.Contains(throttle.Reasons, reason => reason.StartsWith("daily-loss:", StringComparison.Ordinal));
-        Assert.Contains(throttle.Reasons, reason => reason.StartsWith("intraday-drawdown:", StringComparison.Ordinal));
+        Assert.False(gate.AllowsRiskIncrease);
+        Assert.Contains(gate.Reasons, reason => reason.StartsWith("daily-loss-limit:", StringComparison.Ordinal));
+        Assert.DoesNotContain(gate.Reasons, reason => reason.Contains("streak", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
-    public void Planner_PerformanceThrottleReducesActualOrderQuantityEvenWhenExposureCapWouldOtherwiseBind()
+    public void SessionRiskGate_BlocksAtConfiguredIntradayDrawdown()
     {
-        var planner = new RiskAndPositionPlanner();
-        var evidence = new EvidencePack
-        {
-            Completeness = 100,
-            Account = new AccountSnapshot(1_000, 1_000, 1_000, DateTime.UtcNow),
-            Markets = new Dictionary<string, MarketEvidence>
-            {
-                ["BTCUSDT"] = new("BTCUSDT", 100, 95, 110, 50, 0, 0, 0, new(0, 0, 0, 0, 0, 0, 0), DateTime.UtcNow)
-            }
-        };
-        var decision = new DecisionPlan
-        {
-            Action = DecisionAction.OpenLong,
-            Instrument = "BTCUSDT",
-            TargetTier = 1,
-            EntryPrice = 100,
-            StopLossPrice = 99,
-            TakeProfitPrice = 102,
-            RiskRewardRatio = 2
-        };
-        var rule = new TradingRule("BTCUSDT", .1m, .1m, .1m, 5m, 20);
-        var limits = new RiskLimits { MaxRiskPerTrade = .01m, MaxSymbolExposure = .25m, MaxAccountExposure = .50m };
-
-        var normal = planner.Plan(decision, evidence, rule, limits, 1_000, riskBudgetMultiplier: 1);
-        var reduced = planner.Plan(decision, evidence, rule, limits, 1_000, riskBudgetMultiplier: .50);
-
-        var normalIntent = Assert.Single(normal.Intents);
-        var reducedIntent = Assert.Single(reduced.Intents);
-        Assert.True(reducedIntent.Quantity < normalIntent.Quantity);
-        Assert.InRange(reducedIntent.Quantity / normalIntent.Quantity, .45m, .55m);
-    }
-
-    [Fact]
-    public void Planner_DoesNotHardBlockWhenDailyDrawdownThresholdIsExceeded()
-    {
-        var planner = new RiskAndPositionPlanner();
-        var evidence = new EvidencePack
-        {
-            Completeness = 100,
-            Account = new AccountSnapshot(900, 900, 900, DateTime.UtcNow),
-            Markets = new Dictionary<string, MarketEvidence>
-            {
-                ["BTCUSDT"] = new("BTCUSDT", 50_000, 49_000, 51_000, 50, 0, 0, 0, new(0, 0, 0, 0, 0, 0, 0), DateTime.UtcNow)
-            }
-        };
-        var decision = new DecisionPlan
-        {
-            Action = DecisionAction.OpenLong,
-            Instrument = "BTCUSDT",
-            TargetTier = 1,
-            EntryPrice = 50_000,
-            StopLossPrice = 49_000,
-            TakeProfitPrice = 52_000,
-            RiskRewardRatio = 2
-        };
-
-        var result = planner.Plan(
-            decision,
-            evidence,
-            new TradingRule("BTCUSDT", 0.001m, 0.1m, 0.001m, 5m, 125),
-            new RiskLimits { DailyDrawdownLimit = .08m },
+        var gate = SessionRiskGate.Evaluate(
+            new RiskHistorySnapshot(0m, 0, false),
+            equity: 900m,
             dayHigh: 1_000m,
-            riskBudgetMultiplier: .25);
+            new RiskLimits { MaxDailyLoss = .05m, DailyDrawdownLimit = .08m });
 
-        Assert.Single(result.Intents);
-        Assert.DoesNotContain("Drawdown", result.Result, StringComparison.OrdinalIgnoreCase);
+        Assert.False(gate.AllowsRiskIncrease);
+        Assert.Contains(gate.Reasons, reason => reason.StartsWith("intraday-drawdown-limit:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ProductionRiskPathDoesNotAdaptSizingFromLossStreaks()
+    {
+        var planner = File.ReadAllText(SourcePath("Services","Agent","RiskAndPositionPlanner.cs"));
+        var agent = File.ReadAllText(SourcePath("Services","AutoTradingAgent.cs"));
+        var store = File.ReadAllText(SourcePath("Services","Agent","AgentSqliteStore.cs"));
+
+        Assert.DoesNotContain("PerformanceRiskThrottle", planner, StringComparison.Ordinal);
+        Assert.DoesNotContain("riskBudgetMultiplier", planner, StringComparison.Ordinal);
+        Assert.DoesNotContain("ConsecutiveLosses", planner, StringComparison.Ordinal);
+        Assert.DoesNotContain("ConsecutiveLosses", store, StringComparison.Ordinal);
+        Assert.DoesNotContain("loss-streak:", agent, StringComparison.Ordinal);
+        Assert.Contains("SessionRiskGate.Evaluate", agent, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -153,6 +108,12 @@ public sealed class RiskGateTests
 
         Assert.True(manager.Approve(new TradeAction(TradeActionType.EnterLong, 0.01, "adaptive risk")));
         Assert.Empty(manager.CurrentProfile.BlacklistedSymbols);
+    }
+
+    private static string SourcePath(params string[] path)
+    {
+        var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
+        return Path.Combine([root,..path]);
     }
 
     private static PositionSnapshot Snapshot() => new(

@@ -81,8 +81,7 @@ public sealed class SafetyGateRegressionTests : IDisposable
             decision,
             evidence,
             new TradingRule("BTCUSDT", 0.001m, 0.1m, 0.001m, 5m, 125),
-            new RiskLimits(),
-            0);
+            new RiskLimits());
 
         Assert.Empty(result.Intents);
         Assert.Contains("Risk.MarginLimit", result.Result, StringComparison.Ordinal);

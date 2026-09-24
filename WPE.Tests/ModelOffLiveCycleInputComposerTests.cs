@@ -87,7 +87,9 @@ public sealed class ModelOffLiveCycleInputComposerTests
         Assert.Contains("liquidity",risk,StringComparison.Ordinal);
         Assert.Contains("spread",risk,StringComparison.Ordinal);
         Assert.Contains("volatility",risk,StringComparison.Ordinal);
-        Assert.Contains("loss_streak",risk,StringComparison.Ordinal);
+        Assert.Contains("daily_loss_limit",risk,StringComparison.Ordinal);
+        Assert.DoesNotContain("loss_streak",risk,StringComparison.Ordinal);
+        Assert.DoesNotContain("performance_",risk,StringComparison.Ordinal);
         Assert.Contains("order_state",risk,StringComparison.Ordinal);
         Assert.DoesNotContain("research_gate",risk,StringComparison.Ordinal);
         Assert.DoesNotContain("historical_coverage",risk,StringComparison.Ordinal);

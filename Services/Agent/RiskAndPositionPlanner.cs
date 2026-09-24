@@ -2,38 +2,24 @@ using 币安量化机器人.Services.Localization;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed record PerformanceRiskThrottle(double Multiplier,string Mode,IReadOnlyList<string> Reasons)
+public sealed record SessionRiskGate(bool AllowsRiskIncrease,IReadOnlyList<string> Reasons)
 {
-    public static PerformanceRiskThrottle Evaluate(RiskHistorySnapshot history,decimal equity,decimal dayHigh,RiskLimits limits)
+    public static SessionRiskGate Evaluate(RiskHistorySnapshot history,decimal equity,decimal dayHigh,RiskLimits limits)
     {
-        var multiplier=1d;var reasons=new List<string>();
-        if(history.ConsecutiveLosses>0)
-        {
-            var lossMultiplier=history.ConsecutiveLosses switch{1=>.75,2=>.50,_=>.25};
-            multiplier=Math.Min(multiplier,lossMultiplier);
-            reasons.Add($"loss-streak:{history.ConsecutiveLosses}");
-        }
+        var reasons=new List<string>();
         if(equity>0&&history.DailyRealizedPnl<0&&limits.MaxDailyLoss>0)
         {
             var dailyLossRatio=(double)(-history.DailyRealizedPnl/equity);
             if(dailyLossRatio>=(double)limits.MaxDailyLoss)
-            {
-                multiplier=Math.Min(multiplier,.50);
-                reasons.Add($"daily-loss:{dailyLossRatio:P2}");
-            }
+                reasons.Add($"daily-loss-limit:{dailyLossRatio:P2}");
         }
         if(dayHigh>0&&equity>0&&limits.DailyDrawdownLimit>0)
         {
             var drawdown=(double)Math.Max(0,(dayHigh-equity)/dayHigh);
             if(drawdown>=(double)limits.DailyDrawdownLimit)
-            {
-                multiplier=Math.Min(multiplier,.25);
-                reasons.Add($"intraday-drawdown:{drawdown:P2}");
-            }
+                reasons.Add($"intraday-drawdown-limit:{drawdown:P2}");
         }
-        multiplier=Math.Clamp(multiplier,.25,1);
-        var mode=multiplier>=.999?"NORMAL":multiplier>=.50?"REDUCED":"MINIMUM";
-        return new(multiplier,mode,reasons);
+        return new(reasons.Count==0,reasons);
     }
 }
 
@@ -43,10 +29,9 @@ public sealed class RiskAndPositionPlanner
         ModelOffStrategyRiskEvaluatorV1.Evaluate(request);
 
     public (IReadOnlyList<ExecutionIntent> Intents,string Result) Plan(
-        DecisionPlan d,EvidencePack e,TradingRule rule,RiskLimits limits,decimal dayHigh,
-        bool safeToIncreaseRisk=true,string? safetyReason=null,PositionSide? lockedSide=null,double riskBudgetMultiplier=1)
+        DecisionPlan d,EvidencePack e,TradingRule rule,RiskLimits limits,
+        bool safeToIncreaseRisk=true,string? safetyReason=null,PositionSide? lockedSide=null)
     {
-        var adaptiveRiskMultiplier=Math.Clamp(double.IsFinite(riskBudgetMultiplier)?riskBudgetMultiplier:1,.10,1);
         var riskIncreasing=DeterministicPlanSkill.IsRiskIncreasing(d.Action);
         if(!safeToIncreaseRisk&&riskIncreasing)return(Array.Empty<ExecutionIntent>(),safetyReason??L("Risk.Recovery"));
         if(e.Completeness<70&&riskIncreasing)return(Array.Empty<ExecutionIntent>(),L("Risk.Completeness"));
@@ -94,7 +79,7 @@ public sealed class RiskAndPositionPlanner
             var accountQuantity=accountRoom/Math.Max(entry,.00000001m);
             var tierQuantity=targetMargin*effectiveLeverage/Math.Max(entry,.00000001m);
             var targetQty=new[]{riskQuantity,exposureQuantity,accountQuantity,tierQuantity}.Min();
-            var requestedIncrease=Math.Max(0,targetQty-current)*(decimal)adaptiveRiskMultiplier;
+            var requestedIncrease=Math.Max(0,targetQty-current);
             var qty=rule.RoundQuantity(requestedIncrease);
             if(qty<rule.MinQuantity||qty*entry<rule.MinNotional)return(null,L("Risk.Quantity"));
             var limit=d.OrderType==ExecutionOrderType.Limit?(side==PositionSide.Long?m.Quality.BestAsk:m.Quality.BestBid):0;
