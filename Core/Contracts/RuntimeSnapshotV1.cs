@@ -43,7 +43,7 @@ public sealed record RuntimeRiskV1(
     double PortfolioCorrelation,
     string Summary);
 
-public sealed record RuntimeSkillCallV1(string Id,DateTime OccurredAtUtc,string Skill,string Status,long DurationMs,string? Mode,bool? RemoteLlmUsed,int? Tokens,decimal? CostUsd,int? ContextCharacters=null,int? InputTokens=null,int? OutputTokens=null,bool? CacheHit=null,string? LlmOutcome=null,string? TokenSource=null);
+public sealed record RuntimeSkillCallV1(string Id,DateTime OccurredAtUtc,string Skill,string Status,long DurationMs,string? Mode);
 public sealed record RuntimeDiagnosticV1(string Code,DateTime TimeUtc,string Summary);
 public sealed record RuntimeAgentOperationV1(string RoleId,string Status,DateTime? LastActivityAtUtc,string? Activity,string Mode);
 public sealed record RuntimeAgentHandoffV1(string Id,DateTime OccurredAtUtc,string SourceRoleId,string TargetRoleId,string Result);
