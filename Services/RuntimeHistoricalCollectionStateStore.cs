@@ -40,8 +40,8 @@ public sealed class RuntimeHistoricalCollectionStateStore
 
     public Task<HistoricalCollectionPageV1<HistoricalSkillCallV1>> ReadSkillCallsAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default) =>
         ReadAsync(HistoricalCollectionKindV1.SkillCalls, request, "runtime_skill_calls", "occurred_at", TimeSpan.FromDays(7),
-            "SELECT id,occurred_at,skill,status,duration_ms,mode,remote_llm,tokens,cost_usd FROM runtime_skill_calls ORDER BY occurred_at DESC,id DESC LIMIT $limit OFFSET $offset",
-            r => new HistoricalSkillCallV1("runtime:"+r.GetInt64(0), Instant(r.GetString(1)), Safe(r.GetString(2),120), Safe(r.GetString(3),40), Math.Max(0,r.GetInt64(4)), Text(r,5,40), r.IsDBNull(6)?null:r.GetInt32(6)==1, r.IsDBNull(7)?null:r.GetInt32(7), NullableDecimal(r,8)), ct);
+            "SELECT id,occurred_at,skill,status,duration_ms,mode FROM runtime_skill_calls ORDER BY occurred_at DESC,id DESC LIMIT $limit OFFSET $offset",
+            r => new HistoricalSkillCallV1("runtime:"+r.GetInt64(0), Instant(r.GetString(1)), Safe(r.GetString(2),120), Safe(r.GetString(3),40), Math.Max(0,r.GetInt64(4)), Text(r,5,40)), ct);
 
     public Task<HistoricalCollectionPageV1<HistoricalAuditEventV1>> ReadAuditEventsAsync(HistoricalCollectionRequestV1 request, CancellationToken ct = default) =>
         ReadAsync(HistoricalCollectionKindV1.AuditEvents, request, "runtime_events", "occurred_at", TimeSpan.FromDays(30),
