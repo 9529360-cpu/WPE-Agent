@@ -68,10 +68,7 @@ public sealed record HistoricalSkillCallV1(
     string Skill,
     string Status,
     long DurationMs,
-    string? Mode,
-    bool? RemoteLlmUsed,
-    int? Tokens,
-    decimal? CostUsd);
+    string? Mode);
 
 public sealed record HistoricalAuditEventV1(
     string Id,
