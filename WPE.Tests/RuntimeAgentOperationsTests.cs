@@ -19,8 +19,8 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
     public async Task ProjectsOnlyPersistedStatusActivityAndWorkflowHandoffs()
     {
         var db=new AgentSqliteStore(DatabasePath);
-        await db.RecordSkillCallAsync("DataQuality","SUCCESS",8,"input","output",null,default,"LocalOnly",false);
-        await db.RecordSkillCallAsync("IndependentRiskManager","BLOCKED",4,"input","output",null,default,"Hybrid",false);
+        await db.RecordSkillCallAsync("DataQuality","SUCCESS",8,"input","output",null,default,"LocalOnly");
+        await db.RecordSkillCallAsync("IndependentRiskManager","BLOCKED",4,"input","output",null,default,"LocalOnly");
         await db.BeginWorkflowRunAsync("run-1","cycle-1","{}",default);
         await db.SaveWorkflowCheckpointAsync(new("run-1","cycle-1",WorkflowNode.Execution,CheckpointPhase.Entered,"{}",DateTime.UtcNow),default);
         await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("run-1","runtime.heartbeat","AgentRuntimeSupervisor",new{RunId="run-1",LeaseRenewed=true}),default);
@@ -133,7 +133,7 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
     public async Task SnapshotNeverProjectsSecretBearingSkillMetadata()
     {
         const string secret="sk-agent-operations-secret-123456";var db=new AgentSqliteStore(DatabasePath);
-        await db.RecordSkillCallAsync("DataQuality?api_key="+secret,"FAILED",3,"prompt="+secret,"response="+secret,secret,default,"Hybrid token="+secret,true);
+        await db.RecordSkillCallAsync("DataQuality?api_key="+secret,"FAILED",3,"prompt="+secret,"response="+secret,secret,default,"LocalOnly token="+secret);
         var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath)).Read();
         var snapshot=RuntimeSnapshotFactory.Create(new SystemState{LastUpdated=DateTime.UtcNow},DateTime.UtcNow,agentOperationsState:state);
         Assert.DoesNotContain(secret,JsonSerializer.Serialize(snapshot),StringComparison.OrdinalIgnoreCase);
