@@ -108,7 +108,7 @@ public sealed class HeadlessRuntimeHealthReader
             ?value.GetString()??fallback
             :fallback;
     private static bool Bool(JsonElement element,string name)=>
-        element.TryGetProperty(name,out var value)&&value.ValueKind is JsonValueKind.True or JsonValueKind.False&&value.GetBoolean();
+        element.TryGetProperty(name,out var value)&&(value.ValueKind is JsonValueKind.True or JsonValueKind.False)&&value.GetBoolean();
     private static long Long(JsonElement element,string name)=>
         element.TryGetProperty(name,out var value)&&value.TryGetInt64(out var parsed)?parsed:0;
     private static bool TryInstant(JsonElement element,string name,out DateTimeOffset value)
@@ -213,6 +213,7 @@ public sealed class HeadlessDesktopObserver:IAsyncDisposable
         state.RuntimeRecoveryStatus=observed.RecoveryStatus;
         state.RuntimeEventSequence=observed.EventSequence;
         state.Status=observed.Ready?AgentStatus.Running:observed.Available?AgentStatus.Degraded:AgentStatus.Stopped;
+        state.AgentControlAllowed=false;
         state.LastMessage=observed.Ready
             ?"Desktop observer attached to the active Headless trading runtime."
             :observed.Diagnostic??"Headless runtime is unavailable.";
