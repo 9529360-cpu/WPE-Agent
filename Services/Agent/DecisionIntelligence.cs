@@ -49,7 +49,8 @@ public sealed class AgentSkillRegistry
 {
     public static IReadOnlyList<SkillDescriptor> Skills { get; } =
     [
-        new("EvidenceCollector","Observe","symbols","EvidencePack","read:market,read:account,network:rss",25,2,true,"market freshness and source quorum"),
+        new("OpportunityUniverse","Observe","provider market-wide tickers","OpportunityUniverseV1","network:testnet,read:market",15,1,false,"bounded liquid/active shortlist"),
+        new("EvidenceCollector","Observe","symbols","EvidencePack","read:market,read:account,network:rss",35,2,true,"market freshness and source quorum"),
         new("EvidenceDelta","Observe","current and previous evidence packs","EvidenceDeltaSnapshotV1","local:compute",3,0,false,"material changes and source degradation"),
         new("MarketState","Observe","market evidence and durable prior state","MarketStateSnapshotV1[]","read:state,write:state,local:compute",4,0,false,"restart-safe structure continuity"),
         new("RealTimeMarket","Observe","testnet websocket streams","RealtimeMarketSnapshot","network:testnet,read:market",20,0,true,"fresh book, trades and account stream"),
