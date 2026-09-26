@@ -68,6 +68,13 @@ public sealed class HeadlessDesktopObservationTests : IDisposable
         Assert.DoesNotContain("ReliableOrderExecutor",source,StringComparison.Ordinal);
         Assert.DoesNotContain("TradingExecutionGateway",source,StringComparison.Ordinal);
         Assert.DoesNotContain("AutoTradingAgent.StartDefault",source,StringComparison.Ordinal);
+
+        var reference=File.ReadAllText(Path.Combine(root,"ReferenceUiWindow.xaml.cs"));
+        var app=File.ReadAllText(Path.Combine(root,"App.xaml.cs"));
+        Assert.Contains("command == \"agent-start\" && _agentControlAllowed()",reference,StringComparison.Ordinal);
+        Assert.Contains("command == \"agent-stop\" && _agentControlAllowed()",reference,StringComparison.Ordinal);
+        Assert.Contains("() => !runtimeHost.HeadlessAuthorityDetected",app,StringComparison.Ordinal);
+        Assert.Contains("!runtimeHost.HeadlessAuthorityDetected",app,StringComparison.Ordinal);
     }
 
     private static string HealthJson(DateTimeOffset observedAt,bool ready)
