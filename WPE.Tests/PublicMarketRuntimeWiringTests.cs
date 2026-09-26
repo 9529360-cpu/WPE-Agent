@@ -7,10 +7,18 @@ public sealed class PublicMarketRuntimeWiringTests
     {
         var host = ReadSource(Path.Combine("Services", "TradingRuntimeHost.cs"));
         var app = ReadSource("App.xaml.cs");
-        var start = host.IndexOf("_publicMarketStarted = await StartPublicMarketAsync()", StringComparison.Ordinal);
-        var access = host.IndexOf("var ready = await RefreshAccessAsync()", StringComparison.Ordinal);
+        var initializeStart = host.IndexOf("public async Task<bool> InitializeAsync(", StringComparison.Ordinal);
+        var initializeEnd = host.IndexOf("public async Task<bool> RefreshAccessAsync()", initializeStart, StringComparison.Ordinal);
+        Assert.True(initializeStart >= 0 && initializeEnd > initializeStart, "Could not locate TradingRuntimeHost.InitializeAsync.");
+        var initialize = host[initializeStart..initializeEnd];
 
-        Assert.True(start >= 0 && start < access, "Public market runtime must start before access readiness is evaluated.");
+        var start = initialize.IndexOf("_publicMarketStarted = await StartPublicMarketAsync()", StringComparison.Ordinal);
+        var headlessAccess = initialize.IndexOf("RefreshAccessProjectionAsync(persistSettings: false)", StringComparison.Ordinal);
+        var localAccess = initialize.IndexOf("RefreshAccessAsync()", StringComparison.Ordinal);
+
+        Assert.True(start >= 0, "Public market startup is missing from runtime initialization.");
+        Assert.True(headlessAccess > start, "Public market runtime must start before headless observer access projection.");
+        Assert.True(localAccess > start, "Public market runtime must start before local access readiness is evaluated.");
         Assert.Contains("await ServiceLocator.PublicMarket.StartAsync()", host, StringComparison.Ordinal);
         Assert.Contains("await ServiceLocator.DisposeAsync()", host, StringComparison.Ordinal);
         Assert.DoesNotContain("ServiceLocator.PublicMarket.StartAsync()", app, StringComparison.Ordinal);
