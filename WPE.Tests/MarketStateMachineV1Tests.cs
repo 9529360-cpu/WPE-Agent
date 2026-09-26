@@ -157,7 +157,15 @@ public sealed class MarketStateMachineV1Tests : IDisposable
         var restored=await restarted.LoadAsync("btcusdt",default);
 
         Assert.NotNull(restored);
-        Assert.Equal(state,restored);
+        Assert.Equal(state.Schema,restored.Schema);
+        Assert.Equal(state.Symbol,restored.Symbol);
+        Assert.Equal(state.ObservedAtUtc,restored.ObservedAtUtc);
+        Assert.Equal(state.ObservationCount,restored.ObservationCount);
+        Assert.Equal(state.Bias,restored.Bias);
+        Assert.Equal(state.Phase,restored.Phase);
+        Assert.Equal(state.Scenario,restored.Scenario);
+        Assert.Equal(state.Lifecycle,restored.Lifecycle);
+        Assert.Equal(state.RecentTransitions,restored.RecentTransitions);
 
         var next=MarketStateMachineV1.Advance(
             "BTCUSDT",T0.AddMinutes(15),100.25m,
