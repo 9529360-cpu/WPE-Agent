@@ -104,7 +104,17 @@ public static class AutoTradingAgent
         var legacyIsolation=await RunLegacyIntentIsolationAsync(exchange,ct);
         ServiceLocator.SystemState.RuntimeRecoveryStatus=$"{legacyIsolation.Code}; examined={legacyIsolation.Examined}; quarantined={legacyIsolation.Quarantined}; retained={legacyIsolation.Retained}; unknown={legacyIsolation.Unknown}";
         ServiceLocator.SystemState.Mode=TradingMode.Testnet;
-        var opportunityUniverse=await SkillAsync("OpportunityUniverse",string.Join(',',settings.Symbols),token=>ResolveOpportunityUniverseAsync(exchange,settings.Symbols,token),x=>$"watch={x.WatchSymbols.Count} deep={x.DeepAnalysisSymbols.Count} source={x.Source}",ct);
+        OpportunityUniverseV1 opportunityUniverse;
+        try
+        {
+            opportunityUniverse=await SkillAsync("OpportunityUniverse",string.Join(',',settings.Symbols),token=>ResolveOpportunityUniverseAsync(exchange,settings.Symbols,token),x=>$"watch={x.WatchSymbols.Count} deep={x.DeepAnalysisSymbols.Count} source={x.Source}",ct);
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch(Exception ex)
+        {
+            await Db.RecordErrorAsync("OpportunityUniverseStartup",ex,CancellationToken.None);
+            opportunityUniverse=OpportunityUniverseSelectorV1.ConfiguredOnly(settings.Symbols,DateTimeOffset.UtcNow,"configured-startup-fallback");
+        }
         await Db.SetStateAsync("market.opportunity-universe:last",System.Text.Json.JsonSerializer.Serialize(opportunityUniverse),ct);
         var startupPositions=await exchange.GetPositionsAsync(ct);
         IReadOnlyList<string> authorizedTradeSymbols=opportunityUniverse.DeepAnalysisSymbols;
