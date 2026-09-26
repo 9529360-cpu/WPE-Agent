@@ -93,7 +93,7 @@ export function AgentLiveStatus() {
           <div className="min-w-0 max-w-3xl">
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge token={tone} label={title} pulse={fresh && running && !degraded} className="px-2.5 py-1 text-sm" />
-              <StatusBadge token={fresh ? 'success' : 'warning'} label={fresh ? \`${copy.fresh} · ${age}${copy.secondsAgo}\` : copy.stale} />
+              <StatusBadge token={fresh ? 'success' : 'warning'} label={fresh ? `${copy.fresh} · ${age}${copy.secondsAgo}` : copy.stale} />
               {observer ? <StatusBadge token="info" label={copy.observer} /> : null}
             </div>
             <h2 className="mt-4 text-xl font-semibold tracking-tight text-foreground">{decision.title}</h2>
