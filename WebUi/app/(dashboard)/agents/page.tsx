@@ -36,7 +36,7 @@ function runtimeRoleName(id:string,fallback:string,locale:string){
 
 function agentControlCopy(locale:string){
  if(locale==='zh_CN')return{start:'启动 Agent',stop:'停止 Agent',confirmStart:'确认请求启动 6 个运行 Agent 的 Testnet 交易链？宿主仍会重新执行就绪与权限检查。',confirmStop:'确认停止当前 Agent 运行？'}
- if(locale==='zh_TW')return{start:'啟動 Agent',stop:'停止 Agent',confirmStart:'確認要求啟動 6 個運行 Agent 的 Testnet 交易鏈？宿主仍會重新執行就緒與權限檢查。',confirmStop:'確認停止目前 Agent 執行？'}
+ if(locale==='zh_TW')return{start:'啟動 Agent',stop:'停止 Agent',confirmStart:'確認要求啟動 6 個運行 Agent 的 Testnet 交易流程？宿主仍會重新執行就緒與權限檢查。',confirmStop:'確認停止目前 Agent 執行？'}
  if(locale==='ja_JP')return{start:'Agent を開始',stop:'Agent を停止',confirmStart:'6 つの実行 Agent による Testnet 取引チェーンを開始しますか？ホストは準備状況と権限を再検証します。',confirmStop:'現在の Agent 実行を停止しますか？'}
  if(locale==='ko_KR')return{start:'Agent 시작',stop:'Agent 중지',confirmStart:'6개 런타임 Agent의 Testnet 거래 체인을 시작하시겠습니까? 호스트가 준비 상태와 권한을 다시 검사합니다.',confirmStop:'현재 Agent 실행을 중지하시겠습니까?'}
  if(locale==='it_IT')return{start:'Avvia Agent',stop:'Arresta Agent',confirmStart:'Avviare la catena Testnet dei 6 Agent runtime? L’host ricontrollerà disponibilità e autorizzazioni.',confirmStop:'Arrestare l’esecuzione corrente degli Agent?'}
