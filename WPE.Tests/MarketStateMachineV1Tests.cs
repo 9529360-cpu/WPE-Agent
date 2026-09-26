@@ -184,6 +184,44 @@ public sealed class MarketStateMachineV1Tests : IDisposable
     }
 
     [Fact]
+    public async Task ObserveAsyncAnalyzesEvidenceAndContinuesDurableSequence()
+    {
+        Directory.CreateDirectory(_dir);
+        var store=new DurableMarketStateStoreV1(new AgentSqliteStore(DbPath));
+        var firstMarket=Market(T0);
+        var first=await store.ObserveAsync(
+            new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase)
+            {
+                [firstMarket.Symbol]=firstMarket
+            },
+            default);
+
+        var firstState=Assert.Single(first).Value;
+        Assert.True(firstState.Available);
+        Assert.Equal(1,firstState.ObservationCount);
+
+        var restarted=new DurableMarketStateStoreV1(new AgentSqliteStore(DbPath));
+        var duplicate=await restarted.ObserveAsync(
+            new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase)
+            {
+                [firstMarket.Symbol]=firstMarket
+            },
+            default);
+        Assert.Equal(1,Assert.Single(duplicate).Value.ObservationCount);
+
+        var nextMarket=Market(T0.AddMinutes(15));
+        var next=await restarted.ObserveAsync(
+            new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase)
+            {
+                [nextMarket.Symbol]=nextMarket
+            },
+            default);
+
+        Assert.Equal(2,Assert.Single(next).Value.ObservationCount);
+        Assert.Equal(2,(await restarted.LoadAsync("BTCUSDT",default))!.ObservationCount);
+    }
+
+    [Fact]
     public async Task CorruptDurableStateIsIgnoredInsteadOfInventingContinuity()
     {
         Directory.CreateDirectory(_dir);
@@ -193,6 +231,59 @@ public sealed class MarketStateMachineV1Tests : IDisposable
         var state=await new DurableMarketStateStoreV1(db).LoadAsync("BTCUSDT",default);
 
         Assert.Null(state);
+    }
+
+    private static MarketEvidence Market(DateTime observedAtUtc)
+    {
+        var m15=Trend(40,90m,.25m,TimeSpan.FromMinutes(15),observedAtUtc);
+        var h1=Trend(40,80m,.40m,TimeSpan.FromHours(1),observedAtUtc);
+        var h4=Trend(40,60m,.70m,TimeSpan.FromHours(4),observedAtUtc);
+        var price=m15[^1].Close;
+        return new MarketEvidence(
+            "BTCUSDT",
+            price,
+            m15.TakeLast(20).Min(x=>x.Low),
+            m15.TakeLast(20).Max(x=>x.High),
+            50,
+            0,
+            0,
+            0,
+            new DerivativesSnapshot(0,1,1,1,1,1,0),
+            observedAtUtc)
+        {
+            Candles=m15,
+            Candles1h=h1,
+            Candles4h=h4
+        };
+    }
+
+    private static IReadOnlyList<CandleEvidence> Trend(
+        int count,
+        decimal start,
+        decimal step,
+        TimeSpan interval,
+        DateTime observedAtUtc)
+    {
+        var values=new List<CandleEvidence>(count);
+        var price=start;
+        var first=observedAtUtc-interval*count;
+        for(var i=0;i<count;i++)
+        {
+            var open=price;
+            var close=open+step;
+            values.Add(new(
+                first+interval*i,
+                open,
+                close+.20m,
+                open-.20m,
+                close,
+                100m+i,
+                (100m+i)*close,
+                100+i,
+                55m+i%10));
+            price=close;
+        }
+        return values;
     }
 
     private static MarketStructureRead Structure(
