@@ -406,6 +406,143 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task NormalPullbackDefersRunnerProfitLock()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            var opening=OpeningIntent("open-normal-pullback") with{TakeProfit=140m};
+            await SeedCompletedPartialAndBreakeven(db,opening,"pullback");
+            var market=Market(125m,105m,140m);
+            var states=new Dictionary<string,MarketStateSnapshotV1>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["BTCUSDT"]=MarketState(
+                    MarketStateTransitionKindV1.Stable,
+                    MarketStructureBias.Bullish,
+                    MarketStructureScenario.TrendPullbackLong,
+                    trigger:true,
+                    confirmation:true,
+                    observations:4,
+                    phaseOverride:MarketStructurePhase.BullishPullback,
+                    support:112m,
+                    resistance:140m)
+            };
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position() with{Quantity=.5m,MarkPrice=125m}],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",market}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(.5m),
+                tradingRules:Rules(),
+                marketStates:states);
+
+            Assert.Empty(result.Intents);
+            Assert.Empty(result.ProtectionAdjustments);
+            Assert.Contains(result.Notes,x=>x.Contains(":NormalPullback:",StringComparison.Ordinal));
+            Assert.Contains(result.Notes,x=>x.StartsWith("structure-profit-lock-deferred-normal-pullback:",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public async Task ProfitExpansionLocksRunnerBehindPersistentStructuralAnchor()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            var opening=OpeningIntent("open-profit-expansion") with{TakeProfit=140m};
+            await SeedCompletedPartialAndBreakeven(db,opening,"expansion");
+            var market=Market(125m,105m,140m);
+            var states=new Dictionary<string,MarketStateSnapshotV1>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["BTCUSDT"]=MarketState(
+                    MarketStateTransitionKindV1.EventChanged,
+                    MarketStructureBias.Bullish,
+                    MarketStructureScenario.BreakoutRetestLong,
+                    trigger:true,
+                    confirmation:true,
+                    observations:5,
+                    phaseOverride:MarketStructurePhase.BullishImpulse,
+                    support:118m,
+                    resistance:140m,
+                    eventOverride:MarketStructureEvent.BullishBreak)
+            };
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position() with{Quantity=.5m,MarkPrice=125m}],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",market}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(.5m),
+                tradingRules:Rules(),
+                marketStates:states);
+
+            Assert.Empty(result.Intents);
+            var adjustment=Assert.Single(result.ProtectionAdjustments);
+            Assert.Equal(117m,adjustment.StopLoss);
+            Assert.Equal(140m,adjustment.TakeProfit);
+            Assert.Contains(result.Notes,x=>x.Contains(":ProfitExpansion:",StringComparison.Ordinal));
+            Assert.Contains(result.Notes,x=>x.Contains("level=118",StringComparison.Ordinal)&&x.Contains("lifecycle=ProfitExpansion",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public async Task ExhaustionRiskTightensProtectionWithoutForcingExit()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            var opening=OpeningIntent("open-exhaustion-risk") with{TakeProfit=140m};
+            await SeedCompletedPartialAndBreakeven(db,opening,"exhaustion");
+            var market=Market(125m,105m,140m);
+            var states=new Dictionary<string,MarketStateSnapshotV1>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["BTCUSDT"]=MarketState(
+                    MarketStateTransitionKindV1.EventChanged,
+                    MarketStructureBias.Bullish,
+                    MarketStructureScenario.None,
+                    trigger:false,
+                    confirmation:false,
+                    observations:5,
+                    phaseOverride:MarketStructurePhase.BearishReversalAttempt,
+                    support:116m,
+                    resistance:140m,
+                    eventOverride:MarketStructureEvent.BearishRejection)
+            };
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position() with{Quantity=.5m,MarkPrice=125m}],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",market}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(.5m),
+                tradingRules:Rules(),
+                marketStates:states);
+
+            Assert.Empty(result.Intents);
+            var adjustment=Assert.Single(result.ProtectionAdjustments);
+            Assert.Equal(115m,adjustment.StopLoss);
+            Assert.Contains(result.Notes,x=>x.Contains(":ExhaustionRisk:",StringComparison.Ordinal));
+            Assert.Contains(result.Notes,x=>x.Contains("lifecycle=ExhaustionRisk",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task CompletedPartialAndBreakevenCanLockRunnerBehindFreshFifteenMinuteSupport()
     {
         var path=TempDb();
@@ -861,31 +998,36 @@ public sealed class StructurePositionManagementTests
         bool trigger,
         bool confirmation,
         DateTime? observedAt=null,
-        long observations=2)
+        long observations=2,
+        MarketStructurePhase? phaseOverride=null,
+        decimal support=95m,
+        decimal resistance=110m,
+        MarketStructureEvent? eventOverride=null)
     {
         var at=observedAt??Now.UtcDateTime;
-        var phase=scenario is MarketStructureScenario.TrendPullbackShort or MarketStructureScenario.BreakoutRetestShort
+        var phase=phaseOverride??(scenario is MarketStructureScenario.TrendPullbackShort or MarketStructureScenario.BreakoutRetestShort
             ?MarketStructurePhase.BearishPullback
             :scenario is MarketStructureScenario.TrendPullbackLong or MarketStructureScenario.BreakoutRetestLong
                 ?MarketStructurePhase.BullishPullback
-                :MarketStructurePhase.Balance;
+                :MarketStructurePhase.Balance);
         var lifecycle=confirmation&&trigger?MarketStateLifecycleV1.Confirmed:trigger?MarketStateLifecycleV1.Triggered:MarketStateLifecycleV1.Developing;
+        var eventKind=eventOverride??(confirmation
+            ?scenario is MarketStructureScenario.TrendPullbackShort or MarketStructureScenario.RangeReversionShort or MarketStructureScenario.BreakoutRetestShort
+                ?MarketStructureEvent.BearishConfirmation
+                :MarketStructureEvent.BullishConfirmation
+            :MarketStructureEvent.None);
         return new(
             MarketStateSnapshotV1.CurrentSchema,
             "BTCUSDT",
             at,
             true,
             100m,
-            95m,
-            110m,
+            support,
+            resistance,
             bias,
             phase,
             scenario,
-            confirmation
-                ?scenario is MarketStructureScenario.TrendPullbackShort or MarketStructureScenario.RangeReversionShort or MarketStructureScenario.BreakoutRetestShort
-                    ?MarketStructureEvent.BearishConfirmation
-                    :MarketStructureEvent.BullishConfirmation
-                :MarketStructureEvent.None,
+            eventKind,
             lifecycle,
             trigger,
             confirmation,
@@ -901,6 +1043,24 @@ public sealed class StructurePositionManagementTests
             confirmation?at:null,
             transition,
             []);
+    }
+
+    private static async Task SeedCompletedPartialAndBreakeven(
+        AgentSqliteStore db,
+        ExecutionIntent opening,
+        string suffix)
+    {
+        await db.SaveIntentAsync("cycle-open-"+suffix,opening,"PROTECTED","open-"+suffix,CancellationToken.None);
+        var partialId=PositionManagementActionId("TP2",opening.ClientOrderId);
+        var partial=new ExecutionIntent(
+            opening.Symbol,opening.Side,.5m,true,0,0,partialId,"partial",
+            DecisionAction.ReduceLong,ExpectedPrice:120m,
+            ReasonCode:PositionExitReasonCodes.PartialTakeProfit2R);
+        await db.SaveIntentAsync("cycle-partial-"+suffix,partial,"COMPLETED","partial-"+suffix,CancellationToken.None);
+        await db.SetStateAsync(
+            PositionManagementDurableState.ProtectionAdjustmentKey(PositionManagementActionId("BE",opening.ClientOrderId)),
+            "COMPLETED",
+            CancellationToken.None);
     }
 
     private static string TempDb()=>Path.Combine(Path.GetTempPath(),$"wpe-structure-position-{Guid.NewGuid():N}.db");
