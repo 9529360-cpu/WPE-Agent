@@ -23,6 +23,42 @@ public sealed class EvidenceCollector
 {
     private readonly IExchangeAdapter _exchange;private readonly IReadOnlyList<string> _symbols;private readonly IRealtimeMarketFeed? _realtime;private readonly NewsResearchService _news;
     public EvidenceCollector(IExchangeAdapter exchange,IEnumerable<string>? symbols=null,IRealtimeMarketFeed? realtime=null,NewsResearchService? news=null){_exchange=exchange;_symbols=(symbols??["BTCUSDT","ETHUSDT"]).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();_realtime=realtime;_news=news??new();}
+    internal sealed record MinuteCandleEnrichment(MarketEvidence Market,bool Available,string Source);
+
+    internal static async Task<MinuteCandleEnrichment> EnsureMinuteCandlesAsync(
+        IExchangeAdapter exchange,
+        MarketEvidence market,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(exchange);
+        ArgumentNullException.ThrowIfNull(market);
+        var existing=(market.Candles1m??Array.Empty<CandleEvidence>())
+            .OrderBy(x=>x.OpenTime)
+            .GroupBy(x=>x.OpenTime)
+            .Select(x=>x.Last())
+            .TakeLast(32)
+            .ToArray();
+        if(existing.Length>=4)return new(market with{Candles1m=existing},true,"realtime");
+
+        try
+        {
+            var fetched=await exchange.GetCandlesAsync(market.Symbol,"1m",12,ct);
+            var merged=existing.Concat(fetched??Array.Empty<CandleEvidence>())
+                .Where(x=>x.OpenTime!=default&&x.Open>0&&x.High>0&&x.Low>0&&x.Close>0)
+                .OrderBy(x=>x.OpenTime)
+                .GroupBy(x=>x.OpenTime)
+                .Select(x=>x.Last())
+                .TakeLast(32)
+                .ToArray();
+            return new(market with{Candles1m=merged},merged.Length>=4,merged.Length>=4?"rest-fallback":"insufficient");
+        }
+        catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
+        catch
+        {
+            return new(market with{Candles1m=existing},existing.Length>=4,existing.Length>=4?"realtime":"unavailable");
+        }
+    }
+
     public async Task<EvidencePack> CollectAsync(CancellationToken ct)
     {
         var missing=new List<string>();var markets=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase);var sourceRuns=new List<EvidenceSourceRunV1>();
@@ -35,8 +71,9 @@ public sealed class EvidenceCollector
                 try
                 {
                     var market=await _exchange.GetMarketAsync(symbol,ct);market=_realtime?.Enrich(market)??market;
-                    market=market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,provider,_exchange.Environment.ToString())};
-                    return(Symbol:symbol,Market:(MarketEvidence?)market,Missing:(string?)null,Run:new EvidenceSourceRunV1($"{symbol}:market",provider,EvidenceSourceRunState.Available,market.CollectedAt,$"quality={market.Quality.QualityScore}; candles15m={market.Candles.Count}; candles1h={market.Candles1h.Count}; candles4h={market.Candles4h.Count}"));
+                    var minute=await EnsureMinuteCandlesAsync(_exchange,market,ct);
+                    market=minute.Market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(minute.Market,provider,_exchange.Environment.ToString())};
+                    return(Symbol:symbol,Market:(MarketEvidence?)market,Missing:minute.Available?(string?)null:symbol+":candles_1m",Run:new EvidenceSourceRunV1($"{symbol}:market",provider,EvidenceSourceRunState.Available,market.CollectedAt,$"quality={market.Quality.QualityScore}; candles1m={market.Candles1m.Count}; minute_source={minute.Source}; candles15m={market.Candles.Count}; candles1h={market.Candles1h.Count}; candles4h={market.Candles4h.Count}"));
                 }
                 catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
                 catch(Exception ex)
