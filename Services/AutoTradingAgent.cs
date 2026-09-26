@@ -259,6 +259,46 @@ public static class AutoTradingAgent
         }
     }
 
+    private static async Task<OpportunityUniverseV1> ResolveOpportunityUniverseAsync(
+        IExchangeProvider exchange,
+        IReadOnlyList<string> configuredSymbols,
+        CancellationToken ct)
+    {
+        if(exchange is IOpportunityUniverseSourceV1 source)
+        {
+            var tickers=await source.GetOpportunityTickersAsync(ct);
+            if(tickers.Count>0)
+                return OpportunityUniverseSelectorV1.Select(
+                    tickers,
+                    configuredSymbols,
+                    DateTimeOffset.UtcNow,
+                    OpportunityUniverseSelectorV1.DefaultWatchLimit,
+                    OpportunityUniverseSelectorV1.DefaultDeepLimit,
+                    exchange.ProviderId+"-market-wide");
+        }
+        return OpportunityUniverseSelectorV1.ConfiguredOnly(configuredSymbols,DateTimeOffset.UtcNow);
+    }
+
+    private static async Task PrimeOpportunityHistoryAsync(
+        IExchangeAdapter exchange,
+        AgentSqliteStore db,
+        IEnumerable<string> symbols,
+        CancellationToken ct)
+    {
+        foreach(var symbol in symbols.Distinct(StringComparer.OrdinalIgnoreCase).Take(OpportunityUniverseSelectorV1.DefaultDeepLimit))
+        {
+            var latest=await db.GetLatestHistoricalCandleAsync(symbol,"1h",ct);
+            if(latest is not null&&latest.Value>=DateTime.UtcNow.AddHours(-2))continue;
+            try
+            {
+                var candles=ConfirmedMarketCandlesV1.Select(await exchange.GetCandlesAsync(symbol,"1h",1000,ct),"1h",DateTime.UtcNow);
+                if(candles.Count>0)await db.UpsertHistoricalCandlesAsync(symbol,"1h",candles,ct);
+            }
+            catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+            catch(Exception ex){await db.RecordErrorAsync("OpportunityHistory:"+symbol,ex,CancellationToken.None);}
+        }
+    }
+
     private static void UpdateAccount(AccountSnapshot account,IReadOnlyList<ManagedPosition> positions,IReadOnlyList<ExchangeOrder> orders)
     {var state=ServiceLocator.SystemState;state.WalletBalance=account.WalletBalance;state.AvailableBalance=account.AvailableBalance;state.PositionQuantity=positions.Sum(x=>x.Side==PositionSide.Long?x.Quantity:-x.Quantity);state.EntryPrice=positions.FirstOrDefault()?.EntryPrice??0;state.PositionsSummary=positions.Count==0?L("Agent.NoPositions"):string.Join("\n",positions.Select(x=>$"{x.Symbol} {x.Side} · {x.Quantity} · {x.EntryPrice:F2} · {x.UnrealizedPnl:F2}"));state.OrdersSummary=orders.Count==0?L("Agent.NoOrders"):string.Join("\n",orders.Take(8).Select(x=>$"{x.Symbol} {x.Type} · {x.Status} · {x.PositionSide}"));}
 
