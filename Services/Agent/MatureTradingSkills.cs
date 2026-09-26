@@ -156,7 +156,8 @@ public sealed class PositionManagementSkill
         AgentSqliteStore db,
         CancellationToken ct,
         IReadOnlyList<ExecutionPositionLegV1> managedLegs,
-        IReadOnlyDictionary<string,TradingRule>? tradingRules=null)
+        IReadOnlyDictionary<string,TradingRule>? tradingRules=null,
+        IReadOnlyDictionary<string,MarketStateSnapshotV1>? marketStates=null)
     {
         ArgumentNullException.ThrowIfNull(managedLegs);
         var intents=new List<ExecutionIntent>();
@@ -202,6 +203,26 @@ public sealed class PositionManagementSkill
             }
 
             if(!markets.TryGetValue(position.Symbol,out var market))continue;
+
+            if(TryGetOpposingMarketState(position,market,marketStates,out var marketState))
+            {
+                var actionId=ActionId("STATE",opening);
+                if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
+                    intents.Add(new(
+                        position.Symbol,
+                        position.Side,
+                        position.Quantity,
+                        true,
+                        0,
+                        0,
+                        actionId,
+                        L("Position.StructureInvalidated"),
+                        position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
+                        ExpectedPrice:market.Price,
+                        ReasonCode:PositionExitReasonCodes.MarketStateReversal));
+                notes.Add($"market-state-reversal:{position.Symbol}:{position.Side}:{marketState.TransitionKind}:{marketState.Bias}:{marketState.Scenario}:observations={marketState.ObservationCount}");
+                continue;
+            }
 
             if(DirectMarketStructureDecisionSkill.PositionInvalidated(position,market))
             {
@@ -349,6 +370,36 @@ public sealed class PositionManagementSkill
         }
         return new(intents,protections,notes);
     }
+
+    private static bool TryGetOpposingMarketState(
+        ManagedPosition position,
+        MarketEvidence market,
+        IReadOnlyDictionary<string,MarketStateSnapshotV1>? marketStates,
+        out MarketStateSnapshotV1 state)
+    {
+        state=null!;
+        if(marketStates is null||!marketStates.TryGetValue(position.Symbol,out var candidate))return false;
+        if(!candidate.Available||candidate.ObservationCount<2)return false;
+        if(!string.Equals(candidate.Symbol,position.Symbol,StringComparison.OrdinalIgnoreCase))return false;
+        var stateObserved=candidate.ObservedAtUtc.Kind==DateTimeKind.Utc?candidate.ObservedAtUtc:candidate.ObservedAtUtc.ToUniversalTime();
+        var marketObserved=market.CollectedAt.Kind==DateTimeKind.Utc?market.CollectedAt:market.CollectedAt.ToUniversalTime();
+        if(stateObserved!=marketObserved)return false;
+
+        var opposingBias=candidate.TransitionKind==MarketStateTransitionKindV1.BiasReversal&&
+            (position.Side==PositionSide.Long?candidate.Bias==MarketStructureBias.Bearish:candidate.Bias==MarketStructureBias.Bullish);
+        var opposingConfirmedScenario=candidate.TransitionKind==MarketStateTransitionKindV1.ScenarioFlip&&
+            candidate.TriggerPresent&&candidate.ConfirmationPresent&&
+            (position.Side==PositionSide.Long?IsShortScenario(candidate.Scenario):IsLongScenario(candidate.Scenario));
+        if(!opposingBias&&!opposingConfirmedScenario)return false;
+        state=candidate;
+        return true;
+    }
+
+    private static bool IsLongScenario(MarketStructureScenario scenario)=>scenario is
+        MarketStructureScenario.TrendPullbackLong or MarketStructureScenario.RangeReversionLong or MarketStructureScenario.BreakoutRetestLong;
+
+    private static bool IsShortScenario(MarketStructureScenario scenario)=>scenario is
+        MarketStructureScenario.TrendPullbackShort or MarketStructureScenario.RangeReversionShort or MarketStructureScenario.BreakoutRetestShort;
 
     private static bool IsExactlyManaged(
         ManagedPosition position,IReadOnlyList<ManagedPosition> positions,IReadOnlyList<ExecutionPositionLegV1> managedLegs)
