@@ -272,6 +272,7 @@ public interface IExchangeAdapter : IAsyncDisposable
 }
 public sealed class RiskLimits
 {
+    public bool TestnetHighOpportunityMode { get; set; }
     public decimal[] MarginTiers { get; set; } = [.10m,.20m,.35m];
     public decimal MaxMargin { get; set; } = .50m;
     public decimal MaxInitialMarginPerTrade { get; set; } = .05m;
