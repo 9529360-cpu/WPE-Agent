@@ -543,6 +543,178 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task DynamicStructureRatchetCanTightenAcrossNewMarketStatesButNeverLoosen()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            var opening=OpeningIntent("open-dynamic-ratchet") with{TakeProfit=140m};
+            await SeedCompletedPartialAndBreakeven(db,opening,"dynamic-ratchet");
+
+            var firstAt=Now.UtcDateTime;
+            var firstMarket=Market(125m,105m,140m,firstAt);
+            var firstState=MarketState(
+                MarketStateTransitionKindV1.EventChanged,
+                MarketStructureBias.Bullish,
+                MarketStructureScenario.BreakoutRetestLong,
+                trigger:true,
+                confirmation:true,
+                observedAt:firstAt,
+                observations:5,
+                phaseOverride:MarketStructurePhase.BullishImpulse,
+                support:118m,
+                resistance:140m,
+                eventOverride:MarketStructureEvent.BullishBreak);
+            var first=await new PositionManagementSkill().EvaluateAsync(
+                [Position() with{Quantity=.5m,MarkPrice=125m}],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",firstMarket}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(.5m),
+                tradingRules:Rules(),
+                marketStates:new Dictionary<string,MarketStateSnapshotV1>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",firstState}});
+
+            var firstAdjustment=Assert.Single(first.ProtectionAdjustments);
+            Assert.StartsWith("WPE-PM-RT-",firstAdjustment.AdjustmentId,StringComparison.Ordinal);
+            Assert.Equal(117m,firstAdjustment.StopLoss);
+            await PersistCompletedProtection(db,opening,firstAdjustment);
+
+            var secondAt=firstAt.AddMinutes(15);
+            var secondMarket=Market(130m,108m,140m,secondAt);
+            var secondState=MarketState(
+                MarketStateTransitionKindV1.EventChanged,
+                MarketStructureBias.Bullish,
+                MarketStructureScenario.BreakoutRetestLong,
+                trigger:true,
+                confirmation:true,
+                observedAt:secondAt,
+                observations:6,
+                phaseOverride:MarketStructurePhase.BullishImpulse,
+                support:123m,
+                resistance:140m,
+                eventOverride:MarketStructureEvent.BullishDisplacement);
+            var second=await new PositionManagementSkill().EvaluateAsync(
+                [Position() with{Quantity=.5m,MarkPrice=130m}],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",secondMarket}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(.5m),
+                tradingRules:Rules(),
+                marketStates:new Dictionary<string,MarketStateSnapshotV1>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",secondState}});
+
+            var secondAdjustment=Assert.Single(second.ProtectionAdjustments);
+            Assert.StartsWith("WPE-PM-RT-",secondAdjustment.AdjustmentId,StringComparison.Ordinal);
+            Assert.NotEqual(firstAdjustment.AdjustmentId,secondAdjustment.AdjustmentId);
+            Assert.Equal(122m,secondAdjustment.StopLoss);
+            Assert.True(secondAdjustment.StopLoss>firstAdjustment.StopLoss);
+            await PersistCompletedProtection(db,opening,secondAdjustment);
+
+            var thirdAt=secondAt.AddMinutes(15);
+            var thirdMarket=Market(132m,110m,140m,thirdAt);
+            var thirdState=MarketState(
+                MarketStateTransitionKindV1.EventChanged,
+                MarketStructureBias.Bullish,
+                MarketStructureScenario.BreakoutRetestLong,
+                trigger:true,
+                confirmation:true,
+                observedAt:thirdAt,
+                observations:7,
+                phaseOverride:MarketStructurePhase.BullishImpulse,
+                support:120m,
+                resistance:140m,
+                eventOverride:MarketStructureEvent.BullishBreak);
+            var third=await new PositionManagementSkill().EvaluateAsync(
+                [Position() with{Quantity=.5m,MarkPrice=132m}],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",thirdMarket}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(.5m),
+                tradingRules:Rules(),
+                marketStates:new Dictionary<string,MarketStateSnapshotV1>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",thirdState}});
+
+            Assert.Empty(third.Intents);
+            Assert.Empty(third.ProtectionAdjustments);
+            Assert.Contains(third.Notes,x=>x.StartsWith("structure-profit-lock-waiting:",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Theory]
+    [InlineData("PENDING")]
+    [InlineData("FAILED")]
+    public async Task LatestDynamicProtectionMutationFailsSafeAfterRestart(string state)
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            var opening=OpeningIntent("open-ratchet-recovery");
+            await db.SaveIntentAsync("cycle-open-ratchet",opening,"PROTECTED","ratchet-opening",CancellationToken.None);
+            const string adjustmentId="WPE-PM-RT-recovery-state";
+            await db.SetStatePairAsync(
+                PositionManagementDurableState.ProtectionAdjustmentKey(adjustmentId),
+                state,
+                PositionManagementDurableState.LatestProtectionAdjustmentKey(opening.ClientOrderId),
+                adjustmentId,
+                CancellationToken.None);
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(110m)}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(),
+                tradingRules:Rules());
+
+            var close=Assert.Single(result.Intents);
+            Assert.True(close.ReduceOnly);
+            Assert.Equal(PositionExitReasonCodes.ProtectionReplaceFailed,close.ReasonCode);
+            Assert.Empty(result.ProtectionAdjustments);
+            Assert.Contains(result.Notes,x=>x.EndsWith(":"+state,StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public async Task MissingStateBehindLatestProtectionPointerFailsSafe()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            var opening=OpeningIntent("open-ratchet-corrupt-pointer");
+            await db.SaveIntentAsync("cycle-open-ratchet-corrupt",opening,"PROTECTED","ratchet-opening-corrupt",CancellationToken.None);
+            await db.SetStateAsync(
+                PositionManagementDurableState.LatestProtectionAdjustmentKey(opening.ClientOrderId),
+                "WPE-PM-RT-missing-state",
+                CancellationToken.None);
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(110m)}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(),
+                tradingRules:Rules());
+
+            var close=Assert.Single(result.Intents);
+            Assert.Equal(PositionExitReasonCodes.ProtectionReplaceFailed,close.ReasonCode);
+            Assert.Contains(result.Notes,x=>x.EndsWith(":UNKNOWN",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task CompletedPartialAndBreakevenCanLockRunnerBehindFreshFifteenMinuteSupport()
     {
         var path=TempDb();
@@ -986,10 +1158,10 @@ public sealed class StructurePositionManagementTests
     private static ManagedPosition Position()=>new(
         "BTCUSDT",PositionSide.Long,1m,100m,100m,0m,2m,true,50m);
 
-    private static MarketEvidence Market(decimal price,decimal support=95m,decimal resistance=110m)=>new(
+    private static MarketEvidence Market(decimal price,decimal support=95m,decimal resistance=110m,DateTime? observedAt=null)=>new(
         "BTCUSDT",price,support,resistance,50,0,0,0,
         new DerivativesSnapshot(.0001m,1_000_000m,1m,1m,1m,1m,0m),
-        Now.UtcDateTime);
+        observedAt??Now.UtcDateTime);
 
     private static MarketStateSnapshotV1 MarketState(
         MarketStateTransitionKindV1 transition,
@@ -1043,6 +1215,30 @@ public sealed class StructurePositionManagementTests
             confirmation?at:null,
             transition,
             []);
+    }
+
+    private static async Task PersistCompletedProtection(
+        AgentSqliteStore db,
+        ExecutionIntent opening,
+        ProtectionAdjustment adjustment)
+    {
+        await db.SetStatePairAsync(
+            PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId!),
+            "COMPLETED",
+            PositionManagementDurableState.LatestProtectionAdjustmentKey(opening.ClientOrderId),
+            adjustment.AdjustmentId!,
+            CancellationToken.None);
+        await db.SetStateAsync(
+            PositionManagementDurableState.EffectiveProtectionKey(opening.ClientOrderId),
+            PositionManagementDurableState.SerializeEffectiveProtection(
+                new EffectiveProtectionStateV1(
+                    1,
+                    opening.ClientOrderId,
+                    adjustment.StopLoss,
+                    adjustment.TakeProfit,
+                    adjustment.AdjustmentId!,
+                    DateTimeOffset.UtcNow)),
+            CancellationToken.None);
     }
 
     private static async Task SeedCompletedPartialAndBreakeven(
