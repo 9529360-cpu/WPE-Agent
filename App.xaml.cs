@@ -396,7 +396,7 @@ public partial class App : global::System.Windows.Application
         }, runtimeHost.StartAgentAsync);
         MainWindow = reference;
         reference.Show();
-        if (accessReady) await runtimeHost.StartAgentAsync();
+        if (accessReady && !runtimeHost.HeadlessAuthorityDetected) await runtimeHost.StartAgentAsync();
     }
 
     protected override async void OnExit(ExitEventArgs e)
