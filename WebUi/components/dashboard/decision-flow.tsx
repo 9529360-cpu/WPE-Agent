@@ -31,7 +31,7 @@ function latestCanonicalHandoff(handoffs: RuntimeAgentHandoff[]) {
 
 export function DecisionFlow() {
   const runtime = useWpeRuntime()
-  const { t, formatDate } = useI18n()
+  const { t, formatDate, locale } = useI18n()
 
   if (!runtime.runtimeFresh) {
     return <RuntimeUnavailable stale={Boolean(runtime.lastUpdated)} subject={t('dashboard.decisionFlow')} />
@@ -68,12 +68,32 @@ export function DecisionFlow() {
       ? t('common.error')
       : t('agents.handoffUnsupported')
 
+
+  const roleCopy: Record<string,{name:string;activity:string}> | undefined = locale === 'zh_CN' ? {
+    market:{name:'市场 Agent',activity:'读取实时行情、K 线和账户数据，更新市场证据。'},
+    research:{name:'研究 Agent',activity:'整理新闻、宏观和市场上下文，补充研究证据。'},
+    strategy:{name:'策略 Agent',activity:'根据确认后的市场结构形成交易意图或继续观望。'},
+    risk:{name:'风控 Agent',activity:'检查仓位、风险限制和交易资格，不满足条件就阻止执行。'},
+    execution:{name:'执行 Agent',activity:'处理通过风控的订单，跟踪成交与保护单。'},
+    recovery:{name:'恢复 Agent',activity:'核对交易所与本地账本，处理重启、超时和异常恢复。'},
+    audit:{name:'审计 Agent',activity:'记录完整交易链路，验证每个环节的证据与状态。'},
+  } : locale === 'zh_TW' ? {
+    market:{name:'市場 Agent',activity:'讀取即時行情、K 線和帳戶資料，更新市場證據。'},
+    research:{name:'研究 Agent',activity:'整理新聞、宏觀和市場上下文，補充研究證據。'},
+    strategy:{name:'策略 Agent',activity:'根據確認後的市場結構形成交易意圖或繼續觀望。'},
+    risk:{name:'風控 Agent',activity:'檢查持倉、風險限制和交易資格，不符合條件就阻止執行。'},
+    execution:{name:'執行 Agent',activity:'處理通過風控的訂單，追蹤成交與保護單。'},
+    recovery:{name:'恢復 Agent',activity:'核對交易所與本地帳本，處理重啟、逾時和異常恢復。'},
+    audit:{name:'稽核 Agent',activity:'記錄完整交易鏈路，驗證每個環節的證據與狀態。'},
+  } : undefined
+  const flowTitle = locale === 'zh_CN' ? '7 个 Agent 协同链路' : locale === 'zh_TW' ? '7 個 Agent 協同鏈路' : '7 AGENTS'
+
   return (
     <Panel>
       <PanelHeader
         icon={<Workflow className="size-4" />}
         title={t('dashboard.decisionFlow')}
-        action={<span className="font-mono text-[10px] text-muted-foreground">7 AGENTS · {runtime.status ?? t('common.notProvided')}</span>}
+        action={<span className="text-[10px] text-muted-foreground">{flowTitle} · {runtime.status ? (locale.startsWith('zh_') ? t(`agents.${runtime.status.toLowerCase()}` as 'agents.running') : runtime.status) : t('common.notProvided')}</span>}
       />
       <PanelBody className="space-y-4">
         <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
@@ -85,7 +105,7 @@ export function DecisionFlow() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="font-mono text-[10px] text-muted-foreground">{String(index + 1).padStart(2, '0')}</div>
-                    <div className="mt-1 truncate text-sm font-medium">{role.name}</div>
+                    <div className="mt-1 truncate text-sm font-medium">{roleCopy?.[role.id]?.name ?? role.name}</div>
                   </div>
                   <StatusBadge
                     token={statusToken(status)}
@@ -94,10 +114,10 @@ export function DecisionFlow() {
                   />
                 </div>
                 <p className="mt-3 line-clamp-2 min-h-8 break-words text-xs leading-4 text-muted-foreground">
-                  {operation ? operation.activity ?? t('agents.noActivity') : t('common.unavailable')}
+                  {operation ? (locale.startsWith('zh_') ? (status==='degraded' ? (locale==='zh_CN'?'状态异常，请查看系统监控。':'狀態異常，請查看系統監控。') : roleCopy?.[role.id]?.activity) : operation.activity) ?? t('agents.noActivity') : t('common.unavailable')}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-2 font-mono text-[10px] text-muted-foreground">
-                  <span>{operation?.mode ?? t('common.notProvided')}</span>
+                  <span>{operation?.mode ? (locale==='zh_CN'?'纯本地':locale==='zh_TW'?'純本地':operation.mode) : t('common.notProvided')}</span>
                   {operation?.lastActivityAtUtc ? <span>{formatDate(operation.lastActivityAtUtc)}</span> : null}
                 </div>
               </li>
