@@ -204,7 +204,8 @@ public sealed class PositionManagementSkill
 
             if(!markets.TryGetValue(position.Symbol,out var market))continue;
 
-            marketStates?.TryGetValue(position.Symbol,out var currentMarketState);
+            MarketStateSnapshotV1? currentMarketState=null;
+            if(marketStates is not null)marketStates.TryGetValue(position.Symbol,out currentMarketState);
             var lifecycle=PositionLifecyclePolicyV1.Assess(position,opening,market,currentMarketState);
             notes.Add($"position-lifecycle:{position.Symbol}:{position.Side}:{lifecycle.Stage}:r={lifecycle.FavorableR:F2}:anchor={lifecycle.StructuralAnchor:F4}");
 
