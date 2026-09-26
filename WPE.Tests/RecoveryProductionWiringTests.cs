@@ -155,6 +155,8 @@ public sealed class RecoveryProductionWiringTests
             Assert.Equal(adjustment.AdjustmentId,provider.LastProtectionGroup);
             Assert.Equal("COMPLETED",await store.GetStateAsync(
                 PositionManagementDurableState.ProtectionAdjustmentKey(adjustment.AdjustmentId!),CancellationToken.None));
+            Assert.Equal(adjustment.AdjustmentId,await store.GetStateAsync(
+                PositionManagementDurableState.LatestProtectionAdjustmentKey("open-protection-1"),CancellationToken.None));
             var effectiveRaw=await store.GetStateAsync(
                 PositionManagementDurableState.EffectiveProtectionKey("open-protection-1"),CancellationToken.None);
             Assert.True(PositionManagementDurableState.TryParseEffectiveProtection(effectiveRaw,out var effective));

@@ -1220,6 +1220,20 @@ public sealed partial class AgentSqliteStore
     }
     public async Task<bool> HasStateAsync(string key,CancellationToken ct){await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT 1 FROM agent_state WHERE key=$k LIMIT 1";q.Parameters.AddWithValue("$k",key);return await q.ExecuteScalarAsync(ct) is not null;}
     public Task SetStateAsync(string key,string value,CancellationToken ct)=>Exec("INSERT OR REPLACE INTO agent_state(key,value,updated_at) VALUES($k,$v,$t)",ct,("$k",key),("$v",value),("$t",DateTime.UtcNow.ToString("O")));
+    public async Task SetStatePairAsync(string firstKey,string firstValue,string secondKey,string secondValue,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(firstKey)||string.IsNullOrWhiteSpace(secondKey))throw new ArgumentException("State keys are required.");
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var tx=(SqliteTransaction)await c.BeginTransactionAsync(ct);
+        var now=DateTime.UtcNow.ToString("O");
+        foreach(var pair in new[]{(Key:firstKey,Value:firstValue),(Key:secondKey,Value:secondValue)})
+        {
+            await using var q=c.CreateCommand();q.Transaction=tx;
+            q.CommandText="INSERT OR REPLACE INTO agent_state(key,value,updated_at) VALUES($k,$v,$t)";
+            q.Parameters.AddWithValue("$k",pair.Key);q.Parameters.AddWithValue("$v",pair.Value);q.Parameters.AddWithValue("$t",now);
+            await q.ExecuteNonQueryAsync(ct);
+        }
+        await tx.CommitAsync(ct);
+    }
     public async Task<string?> GetStateAsync(string key,CancellationToken ct)
     {
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT value FROM agent_state WHERE key=$k";q.Parameters.AddWithValue("$k",key);var value=await q.ExecuteScalarAsync(ct);return value is null||value is DBNull?null:Convert.ToString(value);
