@@ -21,9 +21,9 @@ public sealed record OpportunityUniverseV1(
 
 public static class OpportunityUniverseSelectorV1
 {
-    public const int DefaultWatchLimit=64;
-    public const int DefaultDeepLimit=12;
-    public static readonly TimeSpan DefaultRefreshInterval=TimeSpan.FromMinutes(2);
+    public const int DefaultWatchLimit=80;
+    public const int DefaultDeepLimit=16;
+    public static readonly TimeSpan DefaultRefreshInterval=TimeSpan.FromMinutes(1);
 
     public static OpportunityUniverseV1 Select(
         IReadOnlyList<OpportunityTickerV1> tickers,
