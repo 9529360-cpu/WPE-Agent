@@ -9,7 +9,11 @@ import { cn } from '@/lib/utils'
 
 export function MarketOverview() {
   const runtime = useWpeRuntime()
-  const { t, formatNumber } = useI18n()
+  const { t, formatNumber, locale } = useI18n()
+  const zh = locale === 'zh_CN', zht = locale === 'zh_TW'
+  const volumeLabel = zh ? '成交量' : zht ? '成交量' : 'Volume'
+  const klineLabel = zh ? 'K 线快照' : zht ? 'K 線快照' : 'Kline snapshots'
+  const closeLabel = zh ? '收盘价' : zht ? '收盤價' : 'Close'
   const market = runtime.publicMarkets
   const klines = runtime.publicKlines?.items ?? []
   const state = market?.state ?? runtime.publicKlines?.state
@@ -35,18 +39,18 @@ export function MarketOverview() {
           <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
             <div><div className="text-muted-foreground">{t('common.price')}</div><div className="mt-0.5 font-medium tabular-nums">{item.price === null ? t('common.unknown') : formatNumber(item.price, { maximumFractionDigits: 8 })}</div></div>
             <div><div className="text-muted-foreground">{t('common.change')}</div><div className={cn('mt-0.5 font-medium tabular-nums', (item.changePercent ?? 0) >= 0 ? 'text-success' : 'text-danger')}>{item.changePercent === null ? t('common.unknown') : `${item.changePercent >= 0 ? '+' : ''}${formatNumber(item.changePercent, { maximumFractionDigits: 2 })}%`}</div></div>
-            <div><div className="text-muted-foreground">Volume</div><div className="mt-0.5 font-medium tabular-nums">{item.volume === null ? t('common.unknown') : formatNumber(item.volume, { maximumFractionDigits: 2 })}</div></div>
+            <div><div className="text-muted-foreground">{volumeLabel}</div><div className="mt-0.5 font-medium tabular-nums">{item.volume === null ? t('common.unknown') : formatNumber(item.volume, { maximumFractionDigits: 2 })}</div></div>
           </div>
           <div className="mt-2 break-words text-[10px] text-muted-foreground">{item.source} · {item.updatedAt ? new Date(item.updatedAt).toLocaleString() : t('common.noEventTime')}</div>
         </div>
       })}
       {klines.length > 0 && <div className="border-t border-border pt-3 sm:col-span-2">
-        <div className="mb-2 text-xs font-medium text-muted-foreground">Kline snapshots</div>
+        <div className="mb-2 text-xs font-medium text-muted-foreground">{klineLabel}</div>
         <div className="grid gap-2 sm:grid-cols-2">
           {klines.map(item => <div key={`${item.symbol}:${item.interval}`} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-l-2 border-border pl-3 text-xs">
             <div className="font-medium">{item.symbol} · {item.interval}</div>
             <div className={cn('font-medium', item.stale || item.state !== 'Available' ? 'text-warning' : 'text-success')}>{item.stale || item.state === 'Stale' ? t('common.stale') : item.state === 'Unknown' ? t('common.unknown') : t('common.available')}</div>
-            <div className="text-muted-foreground">Close: <span className="text-foreground">{item.close === null ? t('common.unknown') : formatNumber(item.close, { maximumFractionDigits: 8 })}</span> · Volume: <span className="text-foreground">{item.volume === null ? t('common.unknown') : formatNumber(item.volume, { maximumFractionDigits: 2 })}</span></div>
+            <div className="text-muted-foreground">{closeLabel}: <span className="text-foreground">{item.close === null ? t('common.unknown') : formatNumber(item.close, { maximumFractionDigits: 8 })}</span> · {volumeLabel}: <span className="text-foreground">{item.volume === null ? t('common.unknown') : formatNumber(item.volume, { maximumFractionDigits: 2 })}</span></div>
             <div className="text-right text-[10px] text-muted-foreground">{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : t('common.noEventTime')}</div>
             <div className="break-words text-[10px] text-muted-foreground sm:col-span-2">{item.source}</div>
           </div>)}
