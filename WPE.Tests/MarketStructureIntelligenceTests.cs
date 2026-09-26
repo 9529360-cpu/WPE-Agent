@@ -266,6 +266,55 @@ public sealed class MarketStructureIntelligenceTests
     }
 
     [Fact]
+    public void PersistentPullbackSetupCanCompleteAfterScenarioTransitionsIntoBullishDisplacement()
+    {
+        var market=Market(
+            PullbackThenBullishDisplacement15m(),
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(15));
+        var structure=MarketStructureIntelligence.Analyze(market);
+
+        Assert.Equal(MarketStructureBias.Bullish,structure.HigherTimeframeBias);
+        Assert.Equal(MarketStructureEvent.BullishDisplacement,structure.FifteenMinute.Event);
+        Assert.Equal(MarketStructureScenario.None,structure.Scenario);
+
+        var state=ArmedState(market,structure,MarketStructureScenario.TrendPullbackLong,TimeSpan.FromMinutes(10));
+        var evidence=MarketStateEvidenceOverlayV1.Attach(
+            Evidence(market),
+            new Dictionary<string,MarketStateSnapshotV1>(StringComparer.OrdinalIgnoreCase){{market.Symbol,state}});
+
+        var decision=DirectMarketStructureDecisionSkill.Decide(evidence,false);
+
+        Assert.Equal(DecisionAction.OpenLong,decision.Action);
+        Assert.Equal(DirectMarketStructureDecisionSkill.Version,decision.StrategyVersion);
+        Assert.StartsWith("ARMED|",decision.DecisionContextId,StringComparison.Ordinal);
+        Assert.Contains("setup_memory=armed-v1",decision.EvidenceReferences);
+        Assert.Contains("setup_arm_scenario=TrendPullbackLong",decision.EvidenceReferences);
+        Assert.Contains("armed=True",decision.ConflictSummary,StringComparison.Ordinal);
+        Assert.True(DirectMarketStructureDecisionSkill.ContextMatches(decision,market));
+    }
+
+    [Fact]
+    public void ExpiredPersistentSetupCannotCreateEntry()
+    {
+        var market=Market(
+            PullbackThenBullishDisplacement15m(),
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(15));
+        var structure=MarketStructureIntelligence.Analyze(market);
+        var state=ArmedState(market,structure,MarketStructureScenario.TrendPullbackLong,DirectMarketStructureDecisionSkill.ArmedSetupTtl+TimeSpan.FromMinutes(1));
+        var evidence=MarketStateEvidenceOverlayV1.Attach(
+            Evidence(market),
+            new Dictionary<string,MarketStateSnapshotV1>(StringComparer.OrdinalIgnoreCase){{market.Symbol,state}});
+
+        var decision=DirectMarketStructureDecisionSkill.Decide(evidence,false);
+
+        Assert.Equal(DecisionAction.Hold,decision.Action);
+    }
+
+    [Fact]
     public async Task TechnicalDecisionAgentUsesInjectedAnalysisTool()
     {
         var market=Market(
@@ -493,6 +542,75 @@ public sealed class MarketStructureIntelligenceTests
             520,
             100m));
         return values;
+    }
+
+    private static IReadOnlyList<CandleEvidence> PullbackThenBullishDisplacement15m()
+    {
+        var values=Pullback15m().ToList();
+        var previous=values[^1];
+        var open=previous.Close+.05m;
+        var close=open+2.70m;
+        values.Add(new(
+            Now.UtcDateTime,
+            open,
+            close+.30m,
+            open-.20m,
+            close,
+            650m,
+            65_000m,
+            900,
+            560m));
+        return values;
+    }
+
+    private static MarketStateSnapshotV1 ArmedState(
+        MarketEvidence market,
+        MarketStructureRead structure,
+        MarketStructureScenario scenario,
+        TimeSpan age)
+    {
+        var observed=market.CollectedAt.ToUniversalTime();
+        var armedAt=observed-age;
+        var transition=new MarketStateTransitionV1(
+            10,
+            armedAt,
+            MarketStateTransitionKindV1.ScenarioChanged,
+            structure.HigherTimeframeBias,
+            structure.HigherTimeframeBias,
+            MarketStructurePhase.BullishPullback,
+            structure.Phase,
+            scenario,
+            MarketStructureScenario.None,
+            MarketStructureEvent.None,
+            structure.FifteenMinute.Event,
+            $"ScenarioChanged: {scenario}->None");
+        return new(
+            MarketStateSnapshotV1.CurrentSchema,
+            market.Symbol,
+            observed,
+            true,
+            market.Price,
+            structure.StructuralSupport,
+            structure.StructuralResistance,
+            structure.HigherTimeframeBias,
+            structure.Phase,
+            MarketStructureScenario.None,
+            structure.FifteenMinute.Event,
+            MarketStateLifecycleV1.Impulse,
+            false,
+            false,
+            10,
+            10,
+            1,
+            1,
+            1,
+            0,
+            observed-TimeSpan.FromHours(1),
+            observed,
+            armedAt,
+            null,
+            MarketStateTransitionKindV1.ScenarioChanged,
+            [transition]);
     }
 
     private sealed class CountingMarketStructureTool : IMarketStructureAnalysisTool
