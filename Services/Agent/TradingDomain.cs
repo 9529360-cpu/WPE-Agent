@@ -303,6 +303,7 @@ public sealed class DecisionPolicy
 public static class PositionExitReasonCodes
 {
     public const string StructureInvalidated = "position.structure-invalidated";
+    public const string MarketStateReversal = "position.market-state-reversal";
     public const string LiquidationBuffer = "position.liquidation-buffer";
     public const string PartialTakeProfit2R = "position.partial-take-profit-2r";
     public const string ProtectionReplaceFailed = "position.protection-replace-failed";
