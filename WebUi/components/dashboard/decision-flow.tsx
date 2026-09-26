@@ -11,6 +11,7 @@ import { Panel, PanelBody, PanelHeader } from '@/components/ui/panel'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { getRoleDirectory } from '@/lib/agents/roles'
 import { useI18n } from '@/lib/i18n/context'
+import { runtimeLabel } from '@/lib/runtime-labels'
 
 const canonicalRoles = getRoleDirectory()
 const canonicalEdges = new Set(
@@ -93,7 +94,7 @@ export function DecisionFlow() {
       <PanelHeader
         icon={<Workflow className="size-4" />}
         title={t('dashboard.decisionFlow')}
-        action={<span className="text-[10px] text-muted-foreground">{flowTitle} · {runtime.status ? (locale.startsWith('zh_') ? t(`agents.${runtime.status.toLowerCase()}` as 'agents.running') : runtime.status) : t('common.notProvided')}</span>}
+        action={<span className="text-[10px] text-muted-foreground">{flowTitle} · {runtimeLabel(runtime.status,locale) ?? t('common.notProvided')}</span>}
       />
       <PanelBody className="space-y-4">
         <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
