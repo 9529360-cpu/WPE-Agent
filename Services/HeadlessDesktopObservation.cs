@@ -197,37 +197,20 @@ public sealed class HeadlessDesktopObserver:IAsyncDisposable
         if(_symbols.Count==0)
         {
             ServiceLocator.RuntimeMarkets.Publish(new Dictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability>(), "No configured Testnet symbols are available.");
-            _nextCapabilityRefreshAtUtc=now.AddMinutes(1);
+            _nextCapabilityRefreshAtUtc=now+CapabilityRefreshInterval;
             return;
         }
         try
         {
             var capabilities=await client.ProbeCapabilitiesAsync(_symbols,ct).ConfigureAwait(false);
             ServiceLocator.RuntimeMarkets.Publish(capabilities);
-            _nextCapabilityRefreshAtUtc=now.AddMinutes(1);
+            _nextCapabilityRefreshAtUtc=now+CapabilityRefreshInterval;
         }
         catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
         catch
         {
             ServiceLocator.RuntimeMarkets.PublishError("Headless observer could not refresh provider capabilities.");
-            _nextCapabilityRefreshAtUtc=now.AddSeconds(30);
-        }
-    }
-
-    private async Task RefreshCapabilitiesAsync(CancellationToken ct)
-    {
-        var client=_client??throw new InvalidOperationException("Headless observer is not initialized.");
-        try
-        {
-            var capabilities=await client.ProbeCapabilitiesAsync(_symbols,ct).ConfigureAwait(false);
-            ServiceLocator.RuntimeMarkets.Publish(capabilities);
-            _nextCapabilityRefreshUtc=DateTimeOffset.UtcNow+CapabilityRefreshInterval;
-        }
-        catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
-        catch
-        {
-            ServiceLocator.RuntimeMarkets.PublishError("Headless observer capability refresh failed.");
-            _nextCapabilityRefreshUtc=DateTimeOffset.UtcNow+TimeSpan.FromSeconds(30);
+            _nextCapabilityRefreshAtUtc=now+TimeSpan.FromSeconds(30);
         }
     }
 
