@@ -84,11 +84,11 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
             if (!_publicMarketStarted)
                 _publicMarketStarted = await StartPublicMarketAsync().ConfigureAwait(false);
 
-            var ready = await RefreshAccessAsync().ConfigureAwait(false);
             var headless = _headlessObserver.ReadHeadless();
             if (headless.Ready)
             {
                 Interlocked.Exchange(ref _headlessAuthorityDetected, 1);
+                var ready = await RefreshAccessProjectionAsync(persistSettings: false).ConfigureAwait(false);
                 try
                 {
                     await _headlessObserver.TryStartAsync(_snapshotPumpCancellation.Token).ConfigureAwait(false);
@@ -105,9 +105,10 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
                 return ready;
             }
 
-            if (ready && startAgentWhenReady)
+            var localReady = await RefreshAccessAsync().ConfigureAwait(false);
+            if (localReady && startAgentWhenReady)
                 AutoTradingAgent.StartDefault();
-            return ready;
+            return localReady;
         }
         finally
         {
@@ -115,14 +116,22 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
         }
     }
 
-    public async Task<bool> RefreshAccessAsync()
+    public Task<bool> RefreshAccessAsync()
     {
         ThrowIfDisposed();
+        return RefreshAccessProjectionAsync(persistSettings: !HeadlessAuthorityDetected);
+    }
+
+    private async Task<bool> RefreshAccessProjectionAsync(bool persistSettings)
+    {
         var settings = _settingsStore.Load();
         var report = await _readiness.CheckAsync(settings).ConfigureAwait(false);
         PublishAccess(report, settings);
-        settings.LastAccessCheckAtUtc = report.CheckedAtUtc;
-        _settingsStore.Save(settings);
+        if (persistSettings)
+        {
+            settings.LastAccessCheckAtUtc = report.CheckedAtUtc;
+            _settingsStore.Save(settings);
+        }
         Volatile.Write(ref _accessReady, report.Ready ? 1 : 0);
         _nextAccessRefreshAtUtc = DateTimeOffset.UtcNow + AccessRefreshInterval;
         return report.Ready;
@@ -212,8 +221,11 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
     private void BindIdentity(string userName)
     {
         var settings = _settingsStore.Load();
-        settings.ActiveUser = userName;
-        _settingsStore.Save(settings);
+        if (!string.Equals(settings.ActiveUser, userName, StringComparison.Ordinal))
+        {
+            settings.ActiveUser = userName;
+            _settingsStore.Save(settings);
+        }
 
         var state = ServiceLocator.SystemState;
         ApplyLocalBrainState(state);
