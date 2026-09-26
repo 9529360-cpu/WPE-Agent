@@ -293,6 +293,13 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Contains("setup_arm_scenario=TrendPullbackLong",decision.EvidenceReferences);
         Assert.Contains("armed=True",decision.ConflictSummary,StringComparison.Ordinal);
         Assert.True(DirectMarketStructureDecisionSkill.ContextMatches(decision,market));
+
+        var opposing=market with
+        {
+            Candles1h=Trend(48,110m,-.55m,TimeSpan.FromHours(1)),
+            Candles4h=Trend(48,130m,-1.1m,TimeSpan.FromHours(4))
+        };
+        Assert.False(DirectMarketStructureDecisionSkill.ContextMatches(decision,opposing));
     }
 
     [Fact]
