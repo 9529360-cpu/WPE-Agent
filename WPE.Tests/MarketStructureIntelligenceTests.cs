@@ -240,6 +240,32 @@ public sealed class MarketStructureIntelligenceTests
     }
 
     [Fact]
+    public void DirectDecisionCarriesPersistentMarketStateEvidenceWithoutChangingAuthority()
+    {
+        var market=Market(
+            SweepLowReclaimThenConfirm15m(),
+            Trend(48,90m,.55m,TimeSpan.FromHours(1)),
+            Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(30));
+        var structure=MarketStructureIntelligence.Analyze(market);
+        var state=MarketStateMachineV1.Advance(market.Symbol,market.CollectedAt,market.Price,structure,null);
+        var evidence=MarketStateEvidenceOverlayV1.Attach(
+            Evidence(market),
+            new Dictionary<string,MarketStateSnapshotV1>(StringComparer.OrdinalIgnoreCase)
+            {
+                [market.Symbol]=state
+            });
+
+        var decision=DirectMarketStructureDecisionSkill.Decide(evidence,false);
+
+        Assert.Equal(DecisionAction.OpenLong,decision.Action);
+        Assert.Contains("market_state_lifecycle=Confirmed",decision.EvidenceReferences);
+        Assert.Contains("market_state_observations=1",decision.EvidenceReferences);
+        Assert.Contains("state=Confirmed",decision.ConflictSummary,StringComparison.Ordinal);
+        Assert.DoesNotContain("score",decision.ConflictSummary,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task TechnicalDecisionAgentUsesInjectedAnalysisTool()
     {
         var market=Market(
