@@ -28,6 +28,19 @@ public sealed class RiskAndPositionPlanner
     public ModelOffStrategyRiskContractV1 EvaluateModelOffIntent(ModelOffStrategyIntentRequestV1 request) =>
         ModelOffStrategyRiskEvaluatorV1.Evaluate(request);
 
+    public static int SelectEffectiveLeverage(DecisionPlan decision,TradingRule rule,RiskLimits limits)
+    {
+        ArgumentNullException.ThrowIfNull(decision);
+        ArgumentNullException.ThrowIfNull(limits);
+        var providerMax=Math.Max(1,rule.MaxLeverage);
+        var requested=Math.Clamp(limits.Leverage,1,providerMax);
+        if(!DeterministicPlanSkill.IsRiskIncreasing(decision.Action)||decision.EntryPrice<=0||decision.StopLossPrice<=0)return requested;
+        var stopFraction=Math.Abs(decision.EntryPrice-decision.StopLossPrice)/decision.EntryPrice;
+        if(stopFraction<=0)return 1;
+        var structuralMax=(int)Math.Floor(.70m/stopFraction);
+        return Math.Clamp(Math.Min(requested,structuralMax),1,providerMax);
+    }
+
     public (IReadOnlyList<ExecutionIntent> Intents,string Result) Plan(
         DecisionPlan d,EvidencePack e,TradingRule rule,RiskLimits limits,
         bool safeToIncreaseRisk=true,string? safetyReason=null,PositionSide? lockedSide=null)
@@ -39,7 +52,7 @@ public sealed class RiskAndPositionPlanner
         if(d.Action==DecisionAction.Hold)return(Array.Empty<ExecutionIntent>(),"HOLD");
 
         var positions=e.Positions.Where(x=>x.Symbol==d.Instrument).ToArray();
-        var effectiveLeverage=Math.Max(1,Math.Min(limits.Leverage,rule.MaxLeverage));
+        var effectiveLeverage=SelectEffectiveLeverage(d,rule,limits);
         var entry=d.EntryPrice>0?d.EntryPrice:m.Price;
 
         string NewId(string tag){var raw=$"WPE-{DateTime.UtcNow:yyMMddHHmmss}-{tag}-{Guid.NewGuid():N}";return raw[..Math.Min(36,raw.Length)];}
