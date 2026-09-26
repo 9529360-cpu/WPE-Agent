@@ -399,7 +399,9 @@ public sealed class PositionManagementSkill
                     if(adjustmentState is null)
                     {
                         protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.StructureProfitLock"),adjustmentId,opening.ClientOrderId));
-                        notes.Add($"structure-profit-ratchet:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:stop={stop}:lifecycle={lifecycle.Stage}");
+                        notes.Add(lifecycle.FreshState
+                            ?$"structure-profit-ratchet:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:stop={stop}:lifecycle={lifecycle.Stage}"
+                            :$"structure-profit-lock:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:lifecycle={lifecycle.Stage}");
                     }
                     else notes.Add($"structure-profit-ratchet-already-attempted:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:{adjustmentState}");
                 }
