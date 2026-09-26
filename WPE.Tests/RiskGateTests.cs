@@ -57,6 +57,74 @@ public sealed class RiskGateTests
     }
 
     [Fact]
+    public void PlannerCapsInitialMarginPerEntryEvenWhenRequestedLeverageIsVeryHigh()
+    {
+        var planner=new RiskAndPositionPlanner();
+        var evidence=new EvidencePack
+        {
+            Completeness=100,
+            Account=new AccountSnapshot(1_000m,1_000m,1_000m,DateTime.UtcNow),
+            Markets=new Dictionary<string,MarketEvidence>
+            {
+                ["BTCUSDT"]=new("BTCUSDT",100m,95m,110m,50,0,0,0,new(0,0,0,0,0,0,0),DateTime.UtcNow)
+            }
+        };
+        var decision=new DecisionPlan
+        {
+            Action=DecisionAction.OpenLong,
+            Instrument="BTCUSDT",
+            TargetTier=1,
+            EntryPrice=100m,
+            StopLossPrice=99.5m,
+            TakeProfitPrice=101m
+        };
+        var limits=new RiskLimits
+        {
+            Leverage=150,
+            MaxInitialMarginPerTrade=.05m,
+            MarginTiers=[.35m],
+            MaxMargin=.50m,
+            MaxRiskPerTrade=1m,
+            MaxSymbolExposure=10m,
+            MaxAccountExposure=10m,
+            MinimumRiskReward=1.8
+        };
+
+        var result=planner.Plan(
+            decision,
+            evidence,
+            new TradingRule("BTCUSDT",.1m,.1m,.1m,5m,125),
+            limits);
+
+        var intent=Assert.Single(result.Intents);
+        var effectiveLeverage=125m;
+        var initialMargin=intent.Quantity*intent.ExpectedPrice/effectiveLeverage;
+        Assert.True(initialMargin<=evidence.Account.Equity*.05m);
+        Assert.Equal(50m,initialMargin);
+    }
+
+    [Fact]
+    public void EffectiveLeverageFallsWhenStructuralStopNeedsMoreLiquidationRoom()
+    {
+        var decision=new DecisionPlan
+        {
+            Action=DecisionAction.OpenLong,
+            Instrument="BTCUSDT",
+            EntryPrice=100m,
+            StopLossPrice=98.1m,
+            TakeProfitPrice=104m
+        };
+        var rule=new TradingRule("BTCUSDT",.1m,.1m,.1m,5m,125);
+        var limits=new RiskLimits{Leverage=150};
+
+        var effective=RiskAndPositionPlanner.SelectEffectiveLeverage(decision,rule,limits);
+
+        Assert.Equal(36,effective);
+        Assert.True(effective<limits.Leverage);
+        Assert.True(effective<=rule.MaxLeverage);
+    }
+
+    [Fact]
     public void SessionRiskGate_BlocksAtConfiguredDailyLossWithoutLossStreakState()
     {
         var gate = SessionRiskGate.Evaluate(

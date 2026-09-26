@@ -274,6 +274,7 @@ public sealed class RiskLimits
 {
     public decimal[] MarginTiers { get; set; } = [.10m,.20m,.35m];
     public decimal MaxMargin { get; set; } = .50m;
+    public decimal MaxInitialMarginPerTrade { get; set; } = .05m;
     public int Leverage { get; set; } = 10;
     public decimal DailyDrawdownLimit { get; set; } = .08m;
     public decimal MaxRiskPerTrade { get; set; } = .01m;

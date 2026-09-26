@@ -202,8 +202,8 @@ public sealed class AgentSettingsStore
         settings.Decision.MinimumEvidenceCompleteness=Math.Clamp(settings.Decision.MinimumEvidenceCompleteness,60,100);
         settings.Decision.MaximumEvidenceAgeMinutes=Math.Clamp(settings.Decision.MaximumEvidenceAgeMinutes,1,30);
         settings.Decision.MinimumMarketQuality=Math.Clamp(settings.Decision.MinimumMarketQuality,50,95);
-        settings.Risk.Leverage=Math.Clamp(settings.Risk.Leverage,1,20);
-        settings.Risk.MaxMargin=Math.Clamp(settings.Risk.MaxMargin,.10m,.50m);
+        settings.Risk.Leverage=Math.Clamp(settings.Risk.Leverage,1,150);
+        settings.Risk.MaxMargin=Math.Clamp(settings.Risk.MaxMargin,.10m,.50m);settings.Risk.MaxInitialMarginPerTrade=Math.Clamp(settings.Risk.MaxInitialMarginPerTrade,.005m,.10m);
         settings.Risk.DailyDrawdownLimit=Math.Clamp(settings.Risk.DailyDrawdownLimit,.02m,.10m);
         settings.Risk.MaxRiskPerTrade=Math.Clamp(settings.Risk.MaxRiskPerTrade,.0025m,.02m);
         settings.Risk.MaxSymbolExposure=Math.Clamp(settings.Risk.MaxSymbolExposure,.05m,.35m);

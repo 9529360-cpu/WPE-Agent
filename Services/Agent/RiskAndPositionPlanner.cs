@@ -28,6 +28,19 @@ public sealed class RiskAndPositionPlanner
     public ModelOffStrategyRiskContractV1 EvaluateModelOffIntent(ModelOffStrategyIntentRequestV1 request) =>
         ModelOffStrategyRiskEvaluatorV1.Evaluate(request);
 
+    public static int SelectEffectiveLeverage(DecisionPlan decision,TradingRule rule,RiskLimits limits)
+    {
+        ArgumentNullException.ThrowIfNull(decision);
+        ArgumentNullException.ThrowIfNull(limits);
+        var providerMax=Math.Max(1,rule.MaxLeverage);
+        var requested=Math.Clamp(limits.Leverage,1,providerMax);
+        if(!DeterministicPlanSkill.IsRiskIncreasing(decision.Action)||decision.EntryPrice<=0||decision.StopLossPrice<=0)return requested;
+        var stopFraction=Math.Abs(decision.EntryPrice-decision.StopLossPrice)/decision.EntryPrice;
+        if(stopFraction<=0)return 1;
+        var structuralMax=(int)Math.Floor(.70m/stopFraction);
+        return Math.Clamp(Math.Min(requested,structuralMax),1,providerMax);
+    }
+
     public (IReadOnlyList<ExecutionIntent> Intents,string Result) Plan(
         DecisionPlan d,EvidencePack e,TradingRule rule,RiskLimits limits,
         bool safeToIncreaseRisk=true,string? safetyReason=null,PositionSide? lockedSide=null)
@@ -39,7 +52,7 @@ public sealed class RiskAndPositionPlanner
         if(d.Action==DecisionAction.Hold)return(Array.Empty<ExecutionIntent>(),"HOLD");
 
         var positions=e.Positions.Where(x=>x.Symbol==d.Instrument).ToArray();
-        var effectiveLeverage=Math.Max(1,Math.Min(limits.Leverage,rule.MaxLeverage));
+        var effectiveLeverage=SelectEffectiveLeverage(d,rule,limits);
         var entry=d.EntryPrice>0?d.EntryPrice:m.Price;
 
         string NewId(string tag){var raw=$"WPE-{DateTime.UtcNow:yyMMddHHmmss}-{tag}-{Guid.NewGuid():N}";return raw[..Math.Min(36,raw.Length)];}
@@ -67,7 +80,9 @@ public sealed class RiskAndPositionPlanner
             var currentTier=Array.FindLastIndex(tiers,x=>x<=currentRatio+.0001m)+1;
             var requestedTier=Math.Clamp(d.TargetTier,1,tiers.Length);
             var tier=Math.Min(requestedTier,Math.Min(tiers.Length,currentTier+1));
-            var targetMargin=e.Account.Equity*tiers[tier-1];
+            var tierMargin=e.Account.Equity*tiers[tier-1];
+            var entryMarginCap=e.Account.Equity*Math.Clamp(limits.MaxInitialMarginPerTrade,.005m,.10m);
+            var targetMargin=Math.Min(tierMargin,entryMarginCap);
             var otherMargin=e.Positions.Where(x=>x.Symbol!=d.Instrument||(x.Side!=side&&x.Side!=closingSide)).Sum(x=>x.Quantity*x.MarkPrice/Math.Max(1,x.Leverage));
             if(otherMargin+targetMargin>e.Account.Equity*limits.MaxMargin)return(null,L("Risk.MarginLimit",limits.MaxMargin));
 

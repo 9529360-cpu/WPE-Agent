@@ -103,12 +103,36 @@ public static class AutoTradingAgent
         if(exchange.Environment!=ExchangeEnvironment.Testnet)throw new InvalidOperationException(L("Agent.MainnetConfirmationRequired"));
         var legacyIsolation=await RunLegacyIntentIsolationAsync(exchange,ct);
         ServiceLocator.SystemState.RuntimeRecoveryStatus=$"{legacyIsolation.Code}; examined={legacyIsolation.Examined}; quarantined={legacyIsolation.Quarantined}; retained={legacyIsolation.Retained}; unknown={legacyIsolation.Unknown}";
+        ServiceLocator.SystemState.Mode=TradingMode.Testnet;
+        OpportunityUniverseV1 opportunityUniverse;
+        try
+        {
+            opportunityUniverse=await SkillAsync("OpportunityUniverse",string.Join(',',settings.Symbols),token=>ResolveOpportunityUniverseAsync(exchange,settings.Symbols,token),x=>$"watch={x.WatchSymbols.Count} deep={x.DeepAnalysisSymbols.Count} source={x.Source}",ct);
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch(Exception ex)
+        {
+            await Db.RecordErrorAsync("OpportunityUniverseStartup",ex,CancellationToken.None);
+            opportunityUniverse=OpportunityUniverseSelectorV1.ConfiguredOnly(settings.Symbols,DateTimeOffset.UtcNow,"configured-startup-fallback");
+        }
+        await Db.SetStateAsync("market.opportunity-universe:last",System.Text.Json.JsonSerializer.Serialize(opportunityUniverse),ct);
+        var startupPositions=await exchange.GetPositionsAsync(ct);
+        IReadOnlyList<string> authorizedTradeSymbols=opportunityUniverse.DeepAnalysisSymbols;
+        IReadOnlyList<string> capabilitySymbols=authorizedTradeSymbols
+            .Concat(startupPositions.Where(x=>x.Quantity>0).Select(x=>x.Symbol))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var watchSymbols=opportunityUniverse.WatchSymbols
+            .Concat(capabilitySymbols)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(64)
+            .ToArray();
         var capabilitySnapshot=new System.Collections.Concurrent.ConcurrentDictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability>(StringComparer.OrdinalIgnoreCase);
-        async Task RefreshCapabilitySnapshot(CancellationToken token)=>await RefreshCapabilitiesAsync(exchange,settings.Symbols,capabilitySnapshot,token);
+        async Task RefreshCapabilitySnapshot(CancellationToken token)=>await RefreshCapabilitiesAsync(exchange,capabilitySymbols,capabilitySnapshot,token);
+        await PrimeOpportunityHistoryAsync(exchange,Db,authorizedTradeSymbols,ct);
         await RefreshCapabilitySnapshot(ct);_activeCapabilityRefresh=RefreshCapabilitySnapshot;
-        await using var realtime=exchange.CreateRealtimeFeed(settings.Symbols,Db)??new PollingRealtimeFeed();await realtime.StartAsync(ct);
-        var roles=AgentRoleRuntimeRegistry.Shared;roles.Publish("market","monitoring","Public market and Testnet streams are being monitored.");roles.Publish("decision","monitoring","Direct local candle structure is the trading decision authority.");roles.Publish("risk","monitoring","Risk limits and execution authority are being monitored.");roles.Publish("execution","waiting","Execution queue is ready; no approved order is pending.");roles.Publish("recovery","monitoring","Order state and reconciliation queue are being monitored.");roles.Publish("audit","monitoring","Append-only runtime and decision audit is active.");
-        var newsResearch=new NewsResearchService();var collector=new EvidenceCollector(exchange,settings.Symbols,realtime,newsResearch);var marketStateStore=new DurableMarketStateStoreV1(Db);
+        await using var realtime=exchange.CreateRealtimeFeed(watchSymbols,Db)??new PollingRealtimeFeed();await realtime.StartAsync(ct);
+        var roles=AgentRoleRuntimeRegistry.Shared;roles.Publish("market","monitoring",$"Market-wide scan active; watching {watchSymbols.Length} symbols and deeply analyzing {authorizedTradeSymbols.Count}.");roles.Publish("decision","monitoring","Direct local candle structure with persistent armed setups is the trading decision authority.");roles.Publish("risk","monitoring","Risk limits and execution authority are being monitored.");roles.Publish("execution","waiting","Execution queue is ready; no approved order is pending.");roles.Publish("recovery","monitoring","Order state and reconciliation queue are being monitored.");roles.Publish("audit","monitoring","Append-only runtime and decision audit is active.");
+        var newsResearch=new NewsResearchService();var marketStateStore=new DurableMarketStateStoreV1(Db);
         var executor=new ReliableOrderExecutor(exchange,Db,settings.Risk,SystemOrderPollScheduler.Instance,capabilitySnapshot,true,capabilityRefresh:async(symbol,token)=>{var refreshed=await new ProviderCapabilityProbe().ProbeAsync(exchange,[symbol],true,token);if(refreshed.TryGetValue(symbol,out var value)){capabilitySnapshot[symbol]=value;return value;}return null;});
         var recoveryServices=await ProductionRecoveryComposition.CreateAsync(exchange,executor,Db,ProductionRecoveryComposition.DefaultKeyPath(),ct:ct);var executionGateway=recoveryServices.Gateway;var planner=new RiskAndPositionPlanner();var governance=new DecisionGovernanceSkill();var deterministic=new DeterministicPlanSkill();var independentRisk=new IndependentRiskManagerSkill();var portfolioRiskSkill=new PortfolioRiskSkill();var historicalData=new HistoricalDataService(exchange,Db);var positionManager=new PositionManagementSkill();
         _activeExecutionGateway=executionGateway;_activeRuntimeSessionId=runtime.RunId;
@@ -126,14 +150,41 @@ public static class AutoTradingAgent
         automaticWorkerTask=automaticWorker.RunAsync("automatic-"+runtime.RunId,TimeSpan.FromSeconds(1),ct);
         tradingObservationTask=ObserveTradingRuntimeAsync(exchange,TimeSpan.FromSeconds(10),ct);
         EvidencePack? previousEvidence=null;
+        var nextOpportunityUniverseRefreshAt=DateTimeOffset.UtcNow.AddMinutes(5);
         while(!ct.IsCancellationRequested)
         {
             if(_paused){await Task.Delay(1000,ct);continue;}var cycle=Guid.NewGuid().ToString("N");var workflowStarted=false;
             try
             {
-                roles.Publish("market","running","Collecting fresh market evidence for the direct local decision cycle.");
-                await RefreshCapabilitySnapshot(ct);
+                roles.Publish("market","running","Collecting fresh market evidence for the bounded market-wide opportunity cycle.");
                 Stage("Stage.AccountSync","OBSERVATION",18);var (account,positions,orders)=await ReadAccountStateAsync(exchange,ct);var positionSnapshotAt=DateTimeOffset.UtcNow;await Db.SaveSnapshotAsync(account,positions,orders,ct);await Db.SaveEquitySnapshotAsync(new(account.Timestamp,account.Equity,account.AvailableBalance,exchange.Environment.ToString(),exchange.ProviderId),ct);await ServiceLocator.RuntimeEquity.RefreshAsync(ct);_dayHigh=await Db.GetOrUpdateDailyHighAsync(DateOnly.FromDateTime(DateTime.UtcNow),account.Equity,ct);UpdateAccount(account,positions,orders);
+                if(DateTimeOffset.UtcNow>=nextOpportunityUniverseRefreshAt)
+                {
+                    try
+                    {
+                        var priorSymbols=authorizedTradeSymbols.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        var refreshedUniverse=await SkillAsync("OpportunityUniverse",string.Join(',',settings.Symbols),token=>ResolveOpportunityUniverseAsync(exchange,settings.Symbols,token),x=>$"watch={x.WatchSymbols.Count} deep={x.DeepAnalysisSymbols.Count} source={x.Source}",ct);
+                        var newlySelected=refreshedUniverse.DeepAnalysisSymbols.Where(x=>!priorSymbols.Contains(x)).ToArray();
+                        if(newlySelected.Length>0)await PrimeOpportunityHistoryAsync(exchange,Db,newlySelected,ct);
+                        opportunityUniverse=refreshedUniverse;
+                        authorizedTradeSymbols=refreshedUniverse.DeepAnalysisSymbols;
+                        await Db.SetStateAsync("market.opportunity-universe:last",System.Text.Json.JsonSerializer.Serialize(opportunityUniverse),ct);
+                        nextOpportunityUniverseRefreshAt=DateTimeOffset.UtcNow.AddMinutes(5);
+                    }
+                    catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+                    catch(Exception ex)
+                    {
+                        await Db.RecordErrorAsync("OpportunityUniverse",ex,CancellationToken.None);
+                        nextOpportunityUniverseRefreshAt=DateTimeOffset.UtcNow.AddMinutes(1);
+                    }
+                }
+                var analysisSymbols=authorizedTradeSymbols
+                    .Concat(positions.Where(x=>x.Quantity>0).Select(x=>x.Symbol))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(12)
+                    .ToArray();
+                capabilitySymbols=analysisSymbols;
+                await RefreshCapabilitySnapshot(ct);
                 Stage("Stage.Recovery","OBSERVATION",25);var recoverableBefore=await Db.GetRecoverableIntentsAsync(ct);var recovered=recoverableBefore.Count>0?await recoveryServices.Recovery.RecoverPendingAsync(ct):new RecoveryResult(true,Array.Empty<string>());if(recoverableBefore.Count>0){(account,positions,orders)=await ReadAccountStateAsync(exchange,ct);positionSnapshotAt=DateTimeOffset.UtcNow;await Db.SaveSnapshotAsync(account,positions,orders,ct);UpdateAccount(account,positions,orders);}var recoverable=await Db.GetRecoverableIntentsAsync(ct);var pendingAssessment=executionGateway.AssessUnverifiedAutomaticMutation(AutomaticMutationPath.StartupRecovery,recoverable.Count);var pendingRecovery=new RecoveryResult(recovered.SafeToIncreaseRisk&&pendingAssessment.SafeToIncreaseRisk,recovered.Messages.Append(pendingAssessment.Code).ToArray());orders=await ReadOrdersAsync(exchange,null,ct);ServiceLocator.RuntimeTrading.Publish(positions,orders);var reconciliationNow=DateTimeOffset.UtcNow;var protectionReconciliation=ProtectionReconciliationServiceV1.Reconcile(positions,orders,reconciliationNow,reconciliationNow);await Db.SaveProtectionReconciliationAsync(protectionReconciliation,ct);var protectionFillReconciliation=await ProtectionFillReconciliationServiceV1.ReconcileAsync(exchange,Db,positions,ct);await Db.SetStateAsync("protection-fill-reconciliation:last",System.Text.Json.JsonSerializer.Serialize(protectionFillReconciliation),ct);var observedAt=account.Timestamp.Kind==DateTimeKind.Utc?new DateTimeOffset(account.Timestamp):new DateTimeOffset(DateTime.SpecifyKind(account.Timestamp,DateTimeKind.Utc));var ownershipObservationFresh=observedAt<=reconciliationNow&&reconciliationNow-observedAt<=PositionReconciliationServiceV1.MaximumAge;var executionLedger=await Db.GetExecutionPositionLedgerAsync(ct);var ownershipLedger=await Db.GetExecutionPositionLedgerAsync(positionSnapshotAt,ct);if(ownershipObservationFresh){await QuarantineConflictingManagedPositionOwnershipAsync(Db,ownershipLedger,positions,positionSnapshotAt,reconciliationNow,ct);await RevokeMissingManagedPositionOwnershipAsync(Db,ownershipLedger,positions,positionSnapshotAt,reconciliationNow,ct);}var ownershipUntrusted=await HasUntrustedManagedPositionOwnershipAsync(Db,positions,ct);var positionReconciliation=PositionReconciliationServiceV1.Reconcile(executionLedger,positions,observedAt,reconciliationNow);await Db.SavePositionReconciliationAsync(positionReconciliation,ct);var externalPositionIsolation=ExternalPositionIsolationServiceV1.Evaluate(executionLedger,positions,observedAt,reconciliationNow);await Db.SaveExternalPositionIsolationAsync(externalPositionIsolation,ct);var safeToIncreaseRisk=pendingRecovery.SafeToIncreaseRisk&&protectionReconciliation.AllowsRiskIncrease&&positionReconciliation.AllowsRiskIncrease&&externalPositionIsolation.AllowsRiskIncrease&&!ownershipUntrusted;var protectionMessage=protectionReconciliation.AllowsRiskIncrease?"protection.reconciliation-confirmed":string.Join(',',protectionReconciliation.ReasonCodes);var positionMessage=positionReconciliation.AllowsRiskIncrease?"position.reconciliation-confirmed":string.Join(',',positionReconciliation.ReasonCodes);var isolationMessage=externalPositionIsolation.AllowsRiskIncrease?"external-position.isolation-clear":string.Join(',',externalPositionIsolation.ReasonCodes);var ownershipMessage=ownershipUntrusted?"position.ownership-untrusted":"position.ownership-clear";var safetyMessage=string.Join("；",pendingRecovery.Messages.Append(protectionMessage).Append(positionMessage).Append(isolationMessage).Append(ownershipMessage));await Db.SetStateAsync("authorization.automatic-maintenance",safetyMessage,ct);
                 if(safeToIncreaseRisk&&startupWorkflowRecoveryPending&&startupWorkflowMetadataOnly)
                 {
@@ -143,7 +194,7 @@ public static class AutoTradingAgent
                 }
                 var maintenanceUi=ResolveAutomaticMaintenanceMessage(safeToIncreaseRisk,runtimeState.LastMessage,safetyMessage,automaticMaintenanceOwnedMessage,L("Agent.Started",exchangeProfile.DisplayName,brain.Name));runtimeState.LastMessage=maintenanceUi.LastMessage;automaticMaintenanceOwnedMessage=maintenanceUi.OwnedMessage;
 
-                Stage("Stage.Evidence","OBSERVATION",32);var evidence=await SkillAsync("EvidenceCollector",string.Join(',',settings.Symbols),token=>collector.CollectAsync(token),x=>$"completeness={x.Completeness} markets={x.Markets.Count} missing={x.MissingSources.Count}",ct);var evidenceDelta=await SkillAsync("EvidenceDelta",$"baseline={(previousEvidence is null?"none":"present")} markets={evidence.Markets.Count}",_=>Task.FromResult(EvidenceDeltaEngineV1.Compare(evidence,previousEvidence)),x=>$"baseline={x.HasBaseline} changes={x.Signals.Count} critical={x.CriticalCount} source_degradations={x.SourceDegradationCount}",ct);await Db.SetStateAsync("market.evidence-delta:last",System.Text.Json.JsonSerializer.Serialize(evidenceDelta),ct);var marketStates=await SkillAsync("MarketState",$"markets={evidence.Markets.Count}",token=>marketStateStore.ObserveAsync(evidence.Markets,token),x=>$"states={x.Count} confirmed={x.Values.Count(s=>s.Lifecycle==MarketStateLifecycleV1.Confirmed)} transitions={x.Values.Count(s=>s.TransitionKind!=MarketStateTransitionKindV1.Stable)}",ct);evidence=MarketStateEvidenceOverlayV1.Attach(evidence,marketStates);previousEvidence=evidence;await Db.SaveNewsAsync(evidence.News,ct);var marketDegraded=evidenceDelta.SourceDegradationCount>0||marketStates.Values.Any(x=>!x.Available);roles.Publish("market",marketDegraded?"degraded":"monitoring",evidenceDelta.SourceDegradationCount>0?$"Fresh evidence collected; {evidenceDelta.SourceDegradationCount} source degradation(s) detected.":marketStates.Values.Any(x=>!x.Available)?"Fresh evidence collected; one or more persistent market states are unavailable.":"Fresh market evidence and persistent market state were updated.");await Db.StartCycleAsync(cycle,evidence,brain.Name,ct);await runtime.BeginCycleAsync(cycle,new{evidence.Completeness,Markets=evidence.Markets.Keys,MarketStates=marketStates.Values.Select(x=>new{x.Symbol,x.Lifecycle,x.Bias,x.Phase,x.Scenario,x.TransitionKind,x.ObservationCount}),brain=brain.Name,decisionPath=DirectMarketStructureDecisionSkill.DecisionContextKind},ct);workflowStarted=true;
+                Stage("Stage.Evidence","OBSERVATION",32);var collector=new EvidenceCollector(exchange,analysisSymbols,realtime,newsResearch);var evidence=await SkillAsync("EvidenceCollector",string.Join(',',analysisSymbols),token=>collector.CollectAsync(token),x=>$"completeness={x.Completeness} markets={x.Markets.Count} missing={x.MissingSources.Count}",ct);var evidenceDelta=await SkillAsync("EvidenceDelta",$"baseline={(previousEvidence is null?"none":"present")} markets={evidence.Markets.Count}",_=>Task.FromResult(EvidenceDeltaEngineV1.Compare(evidence,previousEvidence)),x=>$"baseline={x.HasBaseline} changes={x.Signals.Count} critical={x.CriticalCount} source_degradations={x.SourceDegradationCount}",ct);await Db.SetStateAsync("market.evidence-delta:last",System.Text.Json.JsonSerializer.Serialize(evidenceDelta),ct);var marketStates=await SkillAsync("MarketState",$"markets={evidence.Markets.Count}",token=>marketStateStore.ObserveAsync(evidence.Markets,token),x=>$"states={x.Count} confirmed={x.Values.Count(s=>s.Lifecycle==MarketStateLifecycleV1.Confirmed)} transitions={x.Values.Count(s=>s.TransitionKind!=MarketStateTransitionKindV1.Stable)}",ct);evidence=MarketStateEvidenceOverlayV1.Attach(evidence,marketStates);previousEvidence=evidence;await Db.SaveNewsAsync(evidence.News,ct);var marketDegraded=evidenceDelta.SourceDegradationCount>0||marketStates.Values.Any(x=>!x.Available);roles.Publish("market",marketDegraded?"degraded":"monitoring",evidenceDelta.SourceDegradationCount>0?$"Fresh evidence collected; {evidenceDelta.SourceDegradationCount} source degradation(s) detected.":marketStates.Values.Any(x=>!x.Available)?"Fresh evidence collected; one or more persistent market states are unavailable.":"Fresh market evidence and persistent market state were updated.");await Db.StartCycleAsync(cycle,evidence,brain.Name,ct);await runtime.BeginCycleAsync(cycle,new{evidence.Completeness,Markets=evidence.Markets.Keys,OpportunityWatch=opportunityUniverse.WatchSymbols,OpportunityDeep=authorizedTradeSymbols,MarketStates=marketStates.Values.Select(x=>new{x.Symbol,x.Lifecycle,x.Bias,x.Phase,x.Scenario,x.TransitionKind,x.ObservationCount}),brain=brain.Name,decisionPath=DirectMarketStructureDecisionSkill.DecisionContextKind},ct);workflowStarted=true;
                 Stage("Stage.Research","OBSERVATION",36);await runtime.TransitionAsync(cycle,WorkflowNode.Research,new{evidence.Completeness,MarketCount=evidence.Markets.Count,ExecutionAuthority="direct-market-structure"},ct);var histories=new Dictionary<string,IReadOnlyList<CandleEvidence>>(StringComparer.OrdinalIgnoreCase);foreach(var market in evidence.Markets.Values)histories[market.Symbol]=await Db.LoadHistoricalCandlesAsync(market.Symbol,"1h",30000,ct);
                 var positionTradingRules=await ReadPositionManagementRulesAsync(exchange,positions,ct);
                 Stage("Stage.PositionManagement","RISK",39);await runtime.TransitionAsync(cycle,WorkflowNode.PositionManagement,new{Positions=positions.Count},ct);var management=await SkillAsync("PositionManagement",$"positions={positions.Count}",token=>positionManager.EvaluateAsync(positions,evidence.Markets,Db,token,executionLedger,positionTradingRules,evidence.MarketStates),x=>$"intents={x.Intents.Count} adjustments={x.ProtectionAdjustments.Count}",ct);var managementActivity=false;
@@ -169,7 +220,7 @@ public static class AutoTradingAgent
 
                 Stage("Stage.Risk","RISK",78);await runtime.TransitionAsync(cycle,WorkflowNode.Risk,new{decision.Action,decision.Instrument,ReviewAccepted=review.Accepted},ct);string result;IReadOnlyList<ExecutionIntent> intents=Array.Empty<ExecutionIntent>();TradingRule? tradingRule=null;
                 var riskHistory=await Db.GetRiskHistoryAsync(ct);var sessionRisk=SessionRiskGate.Evaluate(riskHistory,evidence.Account.Equity,_dayHigh,settings.Risk);var planningSafeToIncreaseRisk=safeToIncreaseRisk&&sessionRisk.AllowsRiskIncrease;var planningSafetyMessage=sessionRisk.AllowsRiskIncrease?safetyMessage:string.Join("；",new[]{safetyMessage}.Concat(sessionRisk.Reasons).Where(x=>!string.IsNullOrWhiteSpace(x)));
-                if(!settings.Symbols.Contains(decision.Instrument,StringComparer.OrdinalIgnoreCase)){result=L("Agent.InvalidInstrument");}
+                if(!authorizedTradeSymbols.Contains(decision.Instrument,StringComparer.OrdinalIgnoreCase)){result=L("Agent.InvalidInstrument");}
                 else{tradingRule=await exchange.GetRulesAsync(decision.Instrument,ct);var lockedSide=await Db.GetLockedSideAsync(decision.Instrument,ct);var planned=await SkillAsync("RiskAndPositionPlanner",$"{decision.Action} {decision.Instrument} direct=true",_=>Task.FromResult(planner.Plan(decision,evidence,tradingRule,settings.Risk,planningSafeToIncreaseRisk,planningSafetyMessage,lockedSide)),x=>$"intents={x.Intents.Count} result={x.Result}",ct);intents=planned.Intents;result=planned.Result;}
                 var portfolioRisk=await SkillAsync("PortfolioRisk",$"positions={evidence.Positions.Count} intents={intents.Count}",_=>Task.FromResult(portfolioRiskSkill.Evaluate(evidence,histories,intents,settings.Risk)),x=>x.Summary,ct);await Db.SavePortfolioRiskAsync(cycle,portfolioRisk,ct);UpdatePortfolioRiskUi(portfolioRisk,realtime);
                 var riskReview=await SkillAsync("IndependentRiskManager",$"{decision.Action} intents={intents.Count}",_=>Task.FromResult(independentRisk.Review(decision,evidence,intents,settings.Risk,riskHistory,portfolioRisk)),x=>$"approved={x.Approved} level={x.RiskLevel} blocks={x.BlockingReasons.Count}",ct);
@@ -181,7 +232,8 @@ public static class AutoTradingAgent
 
                 if(intents.Count>0&&tradingRule is not null)
                 {
-                    var leverage=Math.Min(settings.Risk.Leverage,tradingRule.MaxLeverage);
+                    var leverage=RiskAndPositionPlanner.SelectEffectiveLeverage(decision,tradingRule,settings.Risk);
+                    await Db.SetStateAsync("risk.leverage:last",System.Text.Json.JsonSerializer.Serialize(new{decision.Instrument,Requested=settings.Risk.Leverage,Effective=leverage,ProviderMax=tradingRule.MaxLeverage,InitialMarginCap=settings.Risk.MaxInitialMarginPerTrade,ObservedAtUtc=DateTimeOffset.UtcNow}),ct);
                     if(settings.AuthorizationMode==TradingAuthorizationMode.Auto)
                     {
                         var riskIncreasingDecision=DeterministicPlanSkill.IsRiskIncreasing(decision.Action);
@@ -208,13 +260,53 @@ public static class AutoTradingAgent
             }
             catch(OperationCanceledException)when(ct.IsCancellationRequested){break;}
             catch(Exception ex){var state=ServiceLocator.SystemState;state.ExchangeConnected=false;state.ApiTradePermission=false;roles.Publish("decision","degraded","Direct decision cycle failed; retry remains scheduled.");if(workflowStarted)await runtime.FailCycleAsync(cycle,ex,CancellationToken.None);await Db.FailCycleAsync(cycle,state.SkillStage,ex,ct);await Db.RecordErrorAsync(state.SkillStage,ex,ct);await NotifyAgentDegradedAsync(cycle,state.SkillStage,ex);state.LastError=ex.Message;Set(AgentStatus.Degraded,L("Agent.CycleDegraded",ex.Message));}
-            roles.Publish("market",realtime.Healthy?"monitoring":"degraded",realtime.Healthy?"Realtime market and account streams are healthy.":"Realtime stream is reconnecting or incomplete.");ServiceLocator.SystemState.NextCycleAtUtc=DateTime.UtcNow.AddMinutes(15);ServiceLocator.SystemState.RealtimeStatus=realtime.Status;StateChanged?.Invoke();_ = await realtime.WaitForTriggerAsync(TimeSpan.FromMinutes(15),ct);
+            roles.Publish("market",realtime.Healthy?"monitoring":"degraded",realtime.Healthy?$"Market-wide scan active; {authorizedTradeSymbols.Count} deep-analysis symbols are armed for fresh opportunity checks.":"Realtime stream is reconnecting or incomplete.");ServiceLocator.SystemState.NextCycleAtUtc=DateTime.UtcNow.AddMinutes(1);ServiceLocator.SystemState.RealtimeStatus=realtime.Status;StateChanged?.Invoke();_ = await realtime.WaitForTriggerAsync(TimeSpan.FromMinutes(1),ct);
         }
         }
         finally
         {
             if(automaticWorkerTask is not null)try{await automaticWorkerTask;}catch(OperationCanceledException)when(ct.IsCancellationRequested){}
             if(tradingObservationTask is not null)try{await tradingObservationTask;}catch(OperationCanceledException)when(ct.IsCancellationRequested){}
+        }
+    }
+
+    private static async Task<OpportunityUniverseV1> ResolveOpportunityUniverseAsync(
+        IExchangeProvider exchange,
+        IReadOnlyList<string> configuredSymbols,
+        CancellationToken ct)
+    {
+        if(exchange is IOpportunityUniverseSourceV1 source)
+        {
+            var tickers=await source.GetOpportunityTickersAsync(ct);
+            if(tickers.Count>0)
+                return OpportunityUniverseSelectorV1.Select(
+                    tickers,
+                    configuredSymbols,
+                    DateTimeOffset.UtcNow,
+                    OpportunityUniverseSelectorV1.DefaultWatchLimit,
+                    OpportunityUniverseSelectorV1.DefaultDeepLimit,
+                    exchange.ProviderId+"-market-wide");
+        }
+        return OpportunityUniverseSelectorV1.ConfiguredOnly(configuredSymbols,DateTimeOffset.UtcNow);
+    }
+
+    private static async Task PrimeOpportunityHistoryAsync(
+        IExchangeAdapter exchange,
+        AgentSqliteStore db,
+        IEnumerable<string> symbols,
+        CancellationToken ct)
+    {
+        foreach(var symbol in symbols.Distinct(StringComparer.OrdinalIgnoreCase).Take(OpportunityUniverseSelectorV1.DefaultDeepLimit))
+        {
+            var latest=await db.GetLatestHistoricalCandleAsync(symbol,"1h",ct);
+            if(latest is not null&&latest.Value>=DateTime.UtcNow.AddHours(-2))continue;
+            try
+            {
+                var candles=ConfirmedMarketCandlesV1.Select(await exchange.GetCandlesAsync(symbol,"1h",1000,ct),"1h",DateTime.UtcNow);
+                if(candles.Count>0)await db.UpsertHistoricalCandlesAsync(symbol,"1h",candles,ct);
+            }
+            catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+            catch(Exception ex){await db.RecordErrorAsync("OpportunityHistory:"+symbol,ex,CancellationToken.None);}
         }
     }
 

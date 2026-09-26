@@ -27,19 +27,29 @@ public sealed class EvidenceCollector
     {
         var missing=new List<string>();var markets=new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase);var sourceRuns=new List<EvidenceSourceRunV1>();
         var account=await _exchange.GetAccountAsync(ct);var positions=await _exchange.GetPositionsAsync(ct);var provider=_exchange is IExchangeProvider p?p.ProviderId:"local";
-        foreach(var symbol in _symbols)
+        using(var marketGate=new SemaphoreSlim(4,4))
         {
-            try
+            var reads=_symbols.Select(async symbol=>
             {
-                var market=await _exchange.GetMarketAsync(symbol,ct);market=_realtime?.Enrich(market)??market;
-                market=market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,provider,_exchange.Environment.ToString())};markets[symbol]=market;
-                sourceRuns.Add(new($"{symbol}:market",provider,EvidenceSourceRunState.Available,market.CollectedAt,$"quality={market.Quality.QualityScore}; candles15m={market.Candles.Count}; candles1h={market.Candles1h.Count}; candles4h={market.Candles4h.Count}"));
-            }
-            catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
-            catch(Exception ex)
+                await marketGate.WaitAsync(ct);
+                try
+                {
+                    var market=await _exchange.GetMarketAsync(symbol,ct);market=_realtime?.Enrich(market)??market;
+                    market=market with{Provenance=MarketEvidenceProvenanceCanonicalizerV1.Create(market,provider,_exchange.Environment.ToString())};
+                    return(Symbol:symbol,Market:(MarketEvidence?)market,Missing:(string?)null,Run:new EvidenceSourceRunV1($"{symbol}:market",provider,EvidenceSourceRunState.Available,market.CollectedAt,$"quality={market.Quality.QualityScore}; candles15m={market.Candles.Count}; candles1h={market.Candles1h.Count}; candles4h={market.Candles4h.Count}"));
+                }
+                catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
+                catch(Exception ex)
+                {
+                    return(Symbol:symbol,Market:(MarketEvidence?)null,Missing:symbol+":market_derivatives",Run:new EvidenceSourceRunV1($"{symbol}:market",provider,EvidenceSourceRunState.Error,DateTime.UtcNow,ex.GetType().Name));
+                }
+                finally{marketGate.Release();}
+            }).ToArray();
+            foreach(var read in await Task.WhenAll(reads))
             {
-                missing.Add(symbol+":market_derivatives");
-                sourceRuns.Add(new($"{symbol}:market",provider,EvidenceSourceRunState.Error,DateTime.UtcNow,ex.GetType().Name));
+                if(read.Market is not null)markets[read.Symbol]=read.Market;
+                if(read.Missing is not null)missing.Add(read.Missing);
+                sourceRuns.Add(read.Run);
             }
         }
         if(_realtime is not null)
