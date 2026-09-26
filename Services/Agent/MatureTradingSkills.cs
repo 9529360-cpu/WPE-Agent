@@ -126,6 +126,7 @@ public static class PositionManagementDurableState
 {
     public static string ProtectionAdjustmentKey(string adjustmentId)=>"position-protection:"+adjustmentId;
     public static string EffectiveProtectionKey(string openingClientOrderId)=>"position-protection-effective:"+openingClientOrderId;
+    public static string LatestProtectionAdjustmentKey(string openingClientOrderId)=>"position-protection-latest:"+openingClientOrderId;
     public static string OwnershipRevocationKey(string openingClientOrderId)=>"position-ownership-revoked:"+openingClientOrderId;
     public static string OwnershipMissingCandidateKey(string openingClientOrderId)=>"position-ownership-missing-candidate:"+openingClientOrderId;
 
