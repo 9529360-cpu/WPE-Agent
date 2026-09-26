@@ -100,9 +100,11 @@ public static class DirectMarketStructureDecisionSkill
                 StopLossPrice=stop,
                 TakeProfitPrice=take,
                 Regime=structure.HigherTimeframeBias.ToString(),
-                Reason=arm is null
-                    ?$"Direct local candle-structure decision: {structure.Narrative}"
-                    :$"Persistent armed {scenario} setup completed by fresh candle confirmation: {structure.Narrative}",
+                Reason=qualification.Source=="1m-microstructure-closed"
+                    ?$"Fresh closed 1m microstructure confirmed {scenario}: {structure.Narrative}"
+                    :arm is null
+                        ?$"Direct local candle-structure decision: {structure.Narrative}"
+                        :$"Persistent armed {scenario} setup completed by fresh candle confirmation: {structure.Narrative}",
                 Invalidation=longSide
                     ?$"Exit if local structure breaks below {stop:F2} or higher-timeframe bias turns bearish."
                     :$"Exit if local structure breaks above {stop:F2} or higher-timeframe bias turns bullish.",
