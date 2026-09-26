@@ -98,6 +98,7 @@ public class SystemState
     public bool BrainConnected { get; set; }
     public bool ApiTradePermission { get; set; }
     public bool RiskReady { get; set; }
+    public bool AgentControlAllowed { get; set; } = true;
     public DateTime? LastAccessCheckAtUtc { get; set; }
     public string RuntimeRunId { get; set; } = string.Empty;
     public DateTime? RuntimeHeartbeatAtUtc { get; set; }
