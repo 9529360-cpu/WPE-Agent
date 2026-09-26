@@ -5,8 +5,8 @@
 - [ ] Converge Chinese and non-Chinese routes onto one component tree, then complete the strategy evidence-to-execution explanation timeline.
 
 ## P0
-- [ ] Restore a real GitHub Actions gate. Current private-repository pushes end in `startup_failure` before any job starts even though Actions is enabled; diagnose account/runner billing or platform eligibility, then require a successful remote build/test/publish-boundary run before treating CI as authoritative.
-- [ ] Enable protected-main enforcement when the repository plan supports private-repository branch protection, or make an explicit repository-visibility/plan decision. The GitHub API currently returns HTTP 403 stating that Pro or a public repository is required.
+- [x] Restore a real GitHub Actions gate. As of 2026-09-26 the public repository's `Product CI / build-and-test` runs successfully on current `main` and pull requests; repository protection requires that remote check before merge.
+- [x] Enforce protected `main` now that the repository is public: pull request required, strict `build-and-test` status required, conversations resolved, admins included, linear history required, and force-push/deletion disabled. Repository merge policy is squash-only with merged-branch cleanup.
 - [x] Add focused Setup Bridge message tests.
 - Keep the active safety suites in the release gate; add new collection-contract tests only together with the corresponding orders, equity, backtest, skill-call, or audit backend protocol.
 - [x] Re-enable Agent settings resilience and Brain endpoint validation suites with the stage 2A configuration migration.
