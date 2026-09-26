@@ -27,10 +27,25 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
         await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-1","workflow.node.entered","AgentRuntimeSupervisor",new{RunId="run-1",Previous=WorkflowNode.Risk,Node=WorkflowNode.Execution}),default);
 
         var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath)).Read();
-        Assert.Equal("stopped",state.Operations.Single(x=>x.RoleId=="market").Status);
-        Assert.Equal("stopped",state.Operations.Single(x=>x.RoleId=="risk").Status);
-        Assert.Equal("stopped",state.Operations.Single(x=>x.RoleId=="execution").Status);
+        Assert.Equal("waiting",state.Operations.Single(x=>x.RoleId=="market").Status);
+        Assert.Equal("waiting",state.Operations.Single(x=>x.RoleId=="risk").Status);
+        Assert.Equal("running",state.Operations.Single(x=>x.RoleId=="execution").Status);
+        Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="recovery").Status);
+        Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="audit").Status);
+        Assert.DoesNotContain(state.Operations,x=>x.Status=="stopped");
         var handoff=Assert.Single(state.Handoffs);Assert.Equal("risk",handoff.SourceRoleId);Assert.Equal("execution",handoff.TargetRoleId);
+    }
+
+    [Fact]
+    public async Task RecentPersistedActivityWithoutFreshRuntimeHeartbeatDoesNotPretendAgentIsLive()
+    {
+        var db=new AgentSqliteStore(DatabasePath);
+        await db.RecordSkillCallAsync("DataQuality","SUCCESS",8,"input","output",null,default,"LocalOnly",false);
+
+        var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath),new AgentRoleRuntimeRegistry()).Read();
+
+        Assert.Equal("stopped",state.Operations.Single(x=>x.RoleId=="market").Status);
+        Assert.All(state.Operations,x=>Assert.Equal("stopped",x.Status));
     }
 
     [Fact]
