@@ -11,7 +11,7 @@ using WpeAgent.RuntimeContracts;
 
 namespace 币安量化机器人.Services.Agent;
 
-public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvider,IBrokerProvider,IProviderMarketCatalog,IProviderEnvironmentGuard,IProtectionFillEvidenceProvider,IExchangeOrderFeeEvidenceReader,IExchangeFundingIncomeReader,ICryptoInstrumentFundamentalReader
+public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvider,IBrokerProvider,IProviderMarketCatalog,IProviderEnvironmentGuard,IProtectionFillEvidenceProvider,IExchangeOrderFeeEvidenceReader,IExchangeFundingIncomeReader,ICryptoInstrumentFundamentalReader,IOpportunityUniverseSourceV1
 {
     internal const long MaximumTradingClockSkewMilliseconds=1000;
     private readonly BinanceApiClient _api;
@@ -116,6 +116,29 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
             return new ProviderMarketCatalog(ProviderCatalogState.Error,Array.Empty<ProviderMarketCatalogEntry>(),checkedAt,global::币安量化机器人.Services.SensitiveDataRedactor.ForLog(ex.Message,180));
         }
     }
+    public async Task<IReadOnlyList<OpportunityTickerV1>> GetOpportunityTickersAsync(CancellationToken ct)
+    {
+        var catalog=await DiscoverMarketCatalogAsync(ct);
+        if(catalog.State!=ProviderCatalogState.Available||catalog.Markets.Count==0)return [];
+        var nativeToCanonical=catalog.Markets
+            .Where(x=>x.CanRead&&x.CanTrade&&x.TestnetAvailable)
+            .GroupBy(x=>x.Instrument.NativeSymbol,StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x=>x.Key,x=>x.First().Instrument.CanonicalSymbol,StringComparer.OrdinalIgnoreCase);
+        var tickers=await _api.GetMiniTickersAsync(null,ct);
+        var result=new List<OpportunityTickerV1>();
+        foreach(var ticker in tickers)
+        {
+            if(!nativeToCanonical.TryGetValue(ticker.Symbol,out var canonical))continue;
+            if(!double.IsFinite(ticker.LastPrice)||!double.IsFinite(ticker.Volume)||!double.IsFinite(ticker.ChangePercent))continue;
+            if(ticker.LastPrice<=0||ticker.Volume<=0)continue;
+            var last=(decimal)ticker.LastPrice;
+            var quoteVolume=last*(decimal)ticker.Volume;
+            if(quoteVolume<=0)continue;
+            result.Add(new(canonical,last,quoteVolume,(decimal)ticker.ChangePercent));
+        }
+        return result;
+    }
+
     public async Task<MarketEvidence> GetMarketAsync(string symbol,CancellationToken ct)
     {
         var canonical=C(symbol);var native=N(canonical);var observed=DateTime.UtcNow;
