@@ -3,7 +3,7 @@
 public static class DirectMarketStructureDecisionSkill
 {
     public const string DecisionContextKind = "market-structure-direct";
-    public const string Version = "market-structure-direct-v4";
+    public const string Version = "market-structure-direct-v5";
     internal static readonly TimeSpan ArmedSetupTtl = TimeSpan.FromMinutes(45);
 
     public static DecisionPlan Decide(EvidencePack evidence, bool circuitBreakerActive)=>
@@ -31,16 +31,16 @@ public static class DirectMarketStructureDecisionSkill
             var arm=structure.Scenario==MarketStructureScenario.None?TryResolveArmedSetup(evidence,market,structure):null;
             var scenario=structure.Scenario!=MarketStructureScenario.None?structure.Scenario:arm?.Scenario??MarketStructureScenario.None;
             if(scenario==MarketStructureScenario.None)continue;
-            var triggerPresent=arm is null?structure.TriggerPresent:HasTriggerForScenario(scenario,structure.FifteenMinute);
-            var confirmationPresent=arm is null?structure.ConfirmationPresent:HasConfirmationForScenario(scenario,structure.FifteenMinute);
-            if(!triggerPresent)
+            var setupKnownAt=arm?.ArmedAtUtc??CurrentSetupKnownAt(market);
+            var qualification=QualifyEntry(market,structure,scenario,setupKnownAt,arm is not null);
+            if(!qualification.TriggerPresent)
             {
                 holdReason=arm is null
-                    ?$"{market.Symbol}: direct structure scenario is present but the entry trigger is still waiting."
-                    :$"{market.Symbol}: persistent {scenario} setup is armed but the entry trigger is still waiting.";
+                    ?$"{market.Symbol}: direct structure scenario is present but the 15m/1m entry trigger is still waiting."
+                    :$"{market.Symbol}: persistent {scenario} setup is armed but the 15m/1m entry trigger is still waiting.";
                 continue;
             }
-            if(!confirmationPresent)
+            if(!qualification.ConfirmationPresent)
             {
                 holdReason=arm is null
                     ?$"{market.Symbol}: direct structure trigger is present but confirmation is still waiting."
@@ -51,23 +51,28 @@ public static class DirectMarketStructureDecisionSkill
             var longSide=IsLong(scenario);
             var shortSide=IsShort(scenario);
             if(!longSide&&!shortSide)continue;
-            if(!EntryStillActionable(market,structure,longSide,shortSide))
+            if(!EntryStillActionable(market,structure,longSide,shortSide,qualification.ConfirmationClose))
             {
                 holdReason=$"{market.Symbol}: confirmed structure exists but the live price has moved beyond the bounded entry zone.";
                 continue;
             }
 
             var stateEvidence=MarketStateEvidence(evidence,market.Symbol);
-            var setupEvidence=arm is null
-                ?Array.Empty<string>()
-                :new[]
-                {
-                    "setup_memory=armed-v1",
-                    $"setup_arm_scenario={arm.Scenario}",
-                    $"setup_arm_age_minutes={arm.Age.TotalMinutes:F1}",
-                    $"setup_arm_transition={arm.TransitionKind}",
-                    $"setup_arm_observed_utc={arm.ArmedAtUtc:O}"
-                };
+            var setupEvidence=new List<string>();
+            if(arm is not null)
+            {
+                setupEvidence.Add("setup_memory=armed-v1");
+                setupEvidence.Add($"setup_arm_scenario={arm.Scenario}");
+                setupEvidence.Add($"setup_arm_age_minutes={arm.Age.TotalMinutes:F1}");
+                setupEvidence.Add($"setup_arm_transition={arm.TransitionKind}");
+                setupEvidence.Add($"setup_arm_observed_utc={arm.ArmedAtUtc:O}");
+            }
+            setupEvidence.Add($"entry_confirmation_source={qualification.Source}");
+            setupEvidence.Add($"entry_confirmation_close={qualification.ConfirmationClose:F8}");
+            if(qualification.ConfirmedAtUtc is DateTime confirmedAt)
+                setupEvidence.Add($"entry_confirmation_utc={confirmedAt:O}");
+            if(!string.IsNullOrWhiteSpace(qualification.Pattern))
+                setupEvidence.Add($"entry_confirmation_pattern={qualification.Pattern}");
             var entry=market.Price;
             var buffer=Math.Max(structure.FifteenMinute.Atr*.15m,entry*.0005m);
             var stop=longSide
@@ -95,18 +100,20 @@ public static class DirectMarketStructureDecisionSkill
                 StopLossPrice=stop,
                 TakeProfitPrice=take,
                 Regime=structure.HigherTimeframeBias.ToString(),
-                Reason=arm is null
-                    ?$"Direct local candle-structure decision: {structure.Narrative}"
-                    :$"Persistent armed {scenario} setup completed by fresh candle confirmation: {structure.Narrative}",
+                Reason=qualification.Source=="1m-microstructure-closed"
+                    ?$"Fresh closed 1m microstructure confirmed {scenario}: {structure.Narrative}"
+                    :arm is null
+                        ?$"Direct local candle-structure decision: {structure.Narrative}"
+                        :$"Persistent armed {scenario} setup completed by fresh candle confirmation: {structure.Narrative}",
                 Invalidation=longSide
                     ?$"Exit if local structure breaks below {stop:F2} or higher-timeframe bias turns bearish."
                     :$"Exit if local structure breaks above {stop:F2} or higher-timeframe bias turns bullish.",
                 EvidenceReferences=structure.Evidence.Concat(stateEvidence).Concat(setupEvidence).Append("decision_path=direct-market-structure").Append("entry_qualification=trigger-plus-confirmation").Append("live_entry_guard=bounded-chase").Append("target_geometry=structural-opposite-boundary").ToList(),
                 MissingConditions=[],
-                ConflictSummary=$"direct-structure; scenario={scenario}; event={structure.FifteenMinute.Event}; confirmation={confirmationPresent}; armed={(arm is not null)}; {MarketStateSummary(evidence,market.Symbol)}",
+                ConflictSummary=$"direct-structure; scenario={scenario}; event={structure.FifteenMinute.Event}; confirmation={qualification.ConfirmationPresent}; confirmation_source={qualification.Source}; armed={(arm is not null)}; {MarketStateSummary(evidence,market.Symbol)}",
                 StrategyVersion=Version,
                 DecisionContextKind=DecisionContextKind,
-                DecisionContextId=arm is null?ContextId(market,structure):ArmedContextId(market,scenario,structure)
+                DecisionContextId=qualification.Source=="1m-microstructure-closed"?MicroContextId(market,scenario,setupKnownAt,qualification):arm is null?ContextId(market,structure):ArmedContextId(market,scenario,structure)
             };
         }
 
@@ -121,6 +128,23 @@ public static class DirectMarketStructureDecisionSkill
         if(!IsDirect(decision)||!string.Equals(decision.Instrument,market.Symbol,StringComparison.OrdinalIgnoreCase))return false;
         var structure=MarketStructureIntelligence.Analyze(market);
         if(!structure.Available)return false;
+        if(TryParseMicroContext(decision.DecisionContextId,out var microScenario,out var setupKnownAt,out var confirmedAt,out var pattern))
+        {
+            var longMicro=IsLong(microScenario);
+            var shortMicro=IsShort(microScenario);
+            var expectedMicroAction=longMicro?DecisionAction.OpenLong:shortMicro?DecisionAction.OpenShort:DecisionAction.Hold;
+            var qualification=QualifyEntry(market,structure,microScenario,setupKnownAt,true);
+            return market.CollectedAt.ToUniversalTime()-setupKnownAt<=ArmedSetupTtl
+                &&BiasSupportsScenario(structure.HigherTimeframeBias,microScenario)
+                &&qualification.TriggerPresent
+                &&qualification.ConfirmationPresent
+                &&qualification.ConfirmedAtUtc==confirmedAt
+                &&string.Equals(qualification.Pattern,pattern,StringComparison.Ordinal)
+                &&EntryStillActionable(market,structure,longMicro,shortMicro,qualification.ConfirmationClose)
+                &&expectedMicroAction==decision.Action
+                &&string.Equals(MicroContextId(market,microScenario,setupKnownAt,qualification),decision.DecisionContextId,StringComparison.Ordinal)
+                &&string.Equals(decision.StrategyVersion,Version,StringComparison.Ordinal);
+        }
         if(TryParseArmedContext(decision.DecisionContextId,out var armedScenario))
         {
             var longArmed=IsLong(armedScenario);
@@ -153,6 +177,141 @@ public static class DirectMarketStructureDecisionSkill
                 ||(market.Price<structure.StructuralSupport&&structure.FifteenMinute.Event is MarketStructureEvent.BearishBreak or MarketStructureEvent.BearishDisplacement);
         return structure.HigherTimeframeBias==MarketStructureBias.Bullish
             ||(market.Price>structure.StructuralResistance&&structure.FifteenMinute.Event is MarketStructureEvent.BullishBreak or MarketStructureEvent.BullishDisplacement);
+    }
+
+    private sealed record EntryQualification(
+        bool TriggerPresent,
+        bool ConfirmationPresent,
+        decimal ConfirmationClose,
+        string Source,
+        DateTime? ConfirmedAtUtc,
+        string Pattern);
+
+    private sealed record MicroEntrySignal(
+        bool TriggerPresent,
+        bool ConfirmationPresent,
+        decimal ConfirmationClose,
+        DateTime? ConfirmedAtUtc,
+        string Pattern);
+
+    private static EntryQualification QualifyEntry(
+        MarketEvidence market,
+        MarketStructureRead structure,
+        MarketStructureScenario scenario,
+        DateTime setupKnownAtUtc,
+        bool armed)
+    {
+        var frameTrigger=armed?HasTriggerForScenario(scenario,structure.FifteenMinute):structure.TriggerPresent;
+        var frameConfirmation=armed?HasConfirmationForScenario(scenario,structure.FifteenMinute):structure.ConfirmationPresent;
+        if(frameTrigger&&frameConfirmation)
+        {
+            var close=structure.ConfirmationClose>0?structure.ConfirmationClose:structure.FifteenMinute.LastClose;
+            return new(true,true,close,structure.ConfirmationSource=="none"?"15m-closed":structure.ConfirmationSource,null,structure.FifteenMinute.Event.ToString());
+        }
+
+        var micro=FindMicroEntrySignal(market,scenario,setupKnownAtUtc,structure);
+        if(micro is not null)
+            return new(frameTrigger||micro.TriggerPresent,micro.ConfirmationPresent,micro.ConfirmationClose,"1m-microstructure-closed",micro.ConfirmedAtUtc,micro.Pattern);
+
+        return new(frameTrigger,false,0,frameTrigger?"15m-trigger":"none",null,string.Empty);
+    }
+
+    private static MicroEntrySignal? FindMicroEntrySignal(
+        MarketEvidence market,
+        MarketStructureScenario scenario,
+        DateTime setupKnownAtUtc,
+        MarketStructureRead structure)
+    {
+        var observed=market.CollectedAt.Kind==DateTimeKind.Utc?market.CollectedAt:market.CollectedAt.ToUniversalTime();
+        var setupKnown=setupKnownAtUtc.Kind==DateTimeKind.Utc?setupKnownAtUtc:setupKnownAtUtc.ToUniversalTime();
+        var candles=ConfirmedMarketCandlesV1.Select(market.Candles1m,"1m",observed)
+            .Where(x=>x.OpenTime.ToUniversalTime()+TimeSpan.FromMinutes(1)>=setupKnown)
+            .TakeLast(12)
+            .ToArray();
+        if(candles.Length<4)return null;
+
+        var longSide=IsLong(scenario);
+        var shortSide=IsShort(scenario);
+        if(!longSide&&!shortSide)return null;
+
+        MicroEntrySignal? latestTrigger=null;
+        for(var i=3;i<candles.Length;i++)
+        {
+            var trigger=candles[i-1];
+            var prior=candles.Skip(Math.Max(0,i-4)).Take(Math.Min(3,i)).ToArray();
+            if(prior.Length<3)continue;
+            var confirmation=candles[i];
+            var confirmClosedAt=confirmation.OpenTime.ToUniversalTime()+TimeSpan.FromMinutes(1);
+            if(confirmClosedAt>observed||observed-confirmClosedAt>TimeSpan.FromMinutes(3))continue;
+
+            var priorLow=prior.Min(x=>x.Low);
+            var priorHigh=prior.Max(x=>x.High);
+            var microRange=Math.Max(.00000001m,trigger.High-trigger.Low);
+            var microBody=Math.Abs(trigger.Close-trigger.Open);
+            var lowerWick=Math.Min(trigger.Open,trigger.Close)-trigger.Low;
+            var upperWick=trigger.High-Math.Max(trigger.Open,trigger.Close);
+            var recentRanges=prior.Select(x=>Math.Max(.00000001m,x.High-x.Low)).ToArray();
+            var microAtr=recentRanges.Average();
+            var buffer=Math.Max(microAtr*.08m,trigger.Close*.00012m);
+            var bullishSweep=trigger.Low<priorLow-buffer&&trigger.Close>priorLow;
+            var bearishSweep=trigger.High>priorHigh+buffer&&trigger.Close<priorHigh;
+            var bullishReject=trigger.Close>trigger.Open&&lowerWick>=Math.Max(microBody*1.15m,microRange*.35m);
+            var bearishReject=trigger.Close<trigger.Open&&upperWick>=Math.Max(microBody*1.15m,microRange*.35m);
+            var triggerPresent=longSide?(bullishSweep||bullishReject):(bearishSweep||bearishReject);
+            if(!triggerPresent)continue;
+
+            var confirmRange=Math.Max(.00000001m,confirmation.High-confirmation.Low);
+            var confirmBodyRatio=Math.Abs(confirmation.Close-confirmation.Open)/confirmRange;
+            var confirmed=longSide
+                ?confirmation.Close>confirmation.Open&&confirmBodyRatio>=.50m&&confirmation.Close>trigger.High+buffer
+                :confirmation.Close<confirmation.Open&&confirmBodyRatio>=.50m&&confirmation.Close<trigger.Low-buffer;
+            var pattern=longSide
+                ?bullishSweep?"sweep-low-reclaim-break":"bullish-rejection-break"
+                :bearishSweep?"sweep-high-reject-break":"bearish-rejection-break";
+            latestTrigger=new(true,confirmed,confirmed?confirmation.Close:0,confirmed?confirmation.OpenTime.ToUniversalTime():null,pattern);
+            if(confirmed)return latestTrigger;
+        }
+        return latestTrigger;
+    }
+
+    private static DateTime CurrentSetupKnownAt(MarketEvidence market)
+    {
+        var candle=ConfirmedMarketCandlesV1.Select(market.Candles,"15m",market.CollectedAt).LastOrDefault();
+        return candle is null
+            ?market.CollectedAt.ToUniversalTime()
+            :candle.OpenTime.ToUniversalTime()+TimeSpan.FromMinutes(15);
+    }
+
+    private static string MicroContextId(
+        MarketEvidence market,
+        MarketStructureScenario scenario,
+        DateTime setupKnownAtUtc,
+        EntryQualification qualification)
+    {
+        var setup=setupKnownAtUtc.ToUniversalTime();
+        var confirmed=(qualification.ConfirmedAtUtc??market.CollectedAt.ToUniversalTime()).ToUniversalTime();
+        return $"MICRO|{market.Symbol}|{setup:yyyyMMddHHmmss}|{scenario}|{confirmed:yyyyMMddHHmmss}|{qualification.Pattern}";
+    }
+
+    private static bool TryParseMicroContext(
+        string? value,
+        out MarketStructureScenario scenario,
+        out DateTime setupKnownAtUtc,
+        out DateTime confirmedAtUtc,
+        out string pattern)
+    {
+        scenario=MarketStructureScenario.None;
+        setupKnownAtUtc=default;
+        confirmedAtUtc=default;
+        pattern=string.Empty;
+        if(string.IsNullOrWhiteSpace(value))return false;
+        var parts=value.Split('|');
+        if(parts.Length!=6||!string.Equals(parts[0],"MICRO",StringComparison.Ordinal))return false;
+        if(!DateTime.TryParseExact(parts[2],"yyyyMMddHHmmss",System.Globalization.CultureInfo.InvariantCulture,System.Globalization.DateTimeStyles.AssumeUniversal|System.Globalization.DateTimeStyles.AdjustToUniversal,out setupKnownAtUtc))return false;
+        if(!Enum.TryParse(parts[3],false,out scenario)||scenario==MarketStructureScenario.None)return false;
+        if(!DateTime.TryParseExact(parts[4],"yyyyMMddHHmmss",System.Globalization.CultureInfo.InvariantCulture,System.Globalization.DateTimeStyles.AssumeUniversal|System.Globalization.DateTimeStyles.AdjustToUniversal,out confirmedAtUtc))return false;
+        pattern=parts[5];
+        return !string.IsNullOrWhiteSpace(pattern);
     }
 
     private sealed record ArmedSetup(
@@ -244,10 +403,10 @@ public static class DirectMarketStructureDecisionSkill
         return $"DIRECT-{market.Symbol}-{at:yyyyMMddHHmm}-{structure.Scenario}-{structure.FifteenMinute.Event}";
     }
 
-    private static bool EntryStillActionable(MarketEvidence market,MarketStructureRead structure,bool longSide,bool shortSide)
+    private static bool EntryStillActionable(MarketEvidence market,MarketStructureRead structure,bool longSide,bool shortSide,decimal confirmationCloseOverride=0)
     {
         if(market.Price<=0||(!longSide&&!shortSide))return false;
-        var confirmationClose=structure.ConfirmationClose>0?structure.ConfirmationClose:structure.FifteenMinute.LastClose;
+        var confirmationClose=confirmationCloseOverride>0?confirmationCloseOverride:structure.ConfirmationClose>0?structure.ConfirmationClose:structure.FifteenMinute.LastClose;
         if(confirmationClose<=0)return false;
         var chaseTolerance=Math.Max(structure.FifteenMinute.Atr*.75m,confirmationClose*.0015m);
         if(longSide)
