@@ -111,7 +111,7 @@ public sealed class RiskGateTests
             new DerivativesSnapshot(0,0,0,0,0,0,0),
             DateTime.UtcNow)
         {
-            Quality=new MarketQuality{AtrPercent=.004}
+            Quality=new MarketQualityEvidence{AtrPercent=.004}
         };
         var source=new DecisionPlan
         {
@@ -163,7 +163,7 @@ public sealed class RiskGateTests
             new DerivativesSnapshot(0,0,0,0,0,0,0),
             DateTime.UtcNow)
         {
-            Quality=new MarketQuality{AtrPercent=.004}
+            Quality=new MarketQualityEvidence{AtrPercent=.004}
         };
         var source=new DecisionPlan
         {
