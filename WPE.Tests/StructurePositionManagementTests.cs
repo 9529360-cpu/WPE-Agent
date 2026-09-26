@@ -59,6 +59,159 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
+    public async Task ConfirmedScenarioFlipClosesManagedLongWithStateReason()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent("open-state-flip"),"PROTECTED","state-open-1",CancellationToken.None);
+            var market=Market(100m);
+            var states=new Dictionary<string,MarketStateSnapshotV1>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["BTCUSDT"]=MarketState(
+                    MarketStateTransitionKindV1.ScenarioFlip,
+                    MarketStructureBias.Range,
+                    MarketStructureScenario.TrendPullbackShort,
+                    trigger:true,
+                    confirmation:true)
+            };
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",market}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(),
+                tradingRules:Rules(),
+                marketStates:states);
+
+            var intent=Assert.Single(result.Intents);
+            Assert.True(intent.ReduceOnly);
+            Assert.Equal(DecisionAction.CloseLong,intent.Action);
+            Assert.Equal(PositionExitReasonCodes.MarketStateReversal,intent.ReasonCode);
+            Assert.StartsWith("WPE-PM-STATE-",intent.ClientOrderId,StringComparison.Ordinal);
+            Assert.Contains(result.Notes,x=>x.StartsWith("market-state-reversal:",StringComparison.Ordinal));
+            Assert.Empty(result.ProtectionAdjustments);
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public async Task UnconfirmedScenarioFlipCannotCloseManagedPosition()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent("open-state-unconfirmed"),"PROTECTED","state-open-2",CancellationToken.None);
+            var states=new Dictionary<string,MarketStateSnapshotV1>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["BTCUSDT"]=MarketState(
+                    MarketStateTransitionKindV1.ScenarioFlip,
+                    MarketStructureBias.Range,
+                    MarketStructureScenario.TrendPullbackShort,
+                    trigger:true,
+                    confirmation:false)
+            };
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(100m)}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(),
+                tradingRules:Rules(),
+                marketStates:states);
+
+            Assert.Empty(result.Intents);
+            Assert.Empty(result.ProtectionAdjustments);
+            Assert.DoesNotContain(result.Notes,x=>x.StartsWith("market-state-reversal:",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public async Task StaleMarketStateCannotCloseManagedPosition()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent("open-state-stale"),"PROTECTED","state-open-3",CancellationToken.None);
+            var states=new Dictionary<string,MarketStateSnapshotV1>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["BTCUSDT"]=MarketState(
+                    MarketStateTransitionKindV1.ScenarioFlip,
+                    MarketStructureBias.Range,
+                    MarketStructureScenario.TrendPullbackShort,
+                    trigger:true,
+                    confirmation:true,
+                    observedAt:Now.AddMinutes(-15).UtcDateTime)
+            };
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(100m)}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(),
+                tradingRules:Rules(),
+                marketStates:states);
+
+            Assert.Empty(result.Intents);
+            Assert.DoesNotContain(result.Notes,x=>x.StartsWith("market-state-reversal:",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
+    public async Task StableOpposingStateDoesNotReplayAStateExit()
+    {
+        var path=TempDb();
+        try
+        {
+            var db=new AgentSqliteStore(path);
+            await db.SaveIntentAsync("cycle-open",OpeningIntent("open-state-stable"),"PROTECTED","state-open-4",CancellationToken.None);
+            var states=new Dictionary<string,MarketStateSnapshotV1>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["BTCUSDT"]=MarketState(
+                    MarketStateTransitionKindV1.Stable,
+                    MarketStructureBias.Range,
+                    MarketStructureScenario.TrendPullbackShort,
+                    trigger:true,
+                    confirmation:true,
+                    observations:4)
+            };
+
+            var result=await new PositionManagementSkill().EvaluateAsync(
+                [Position()],
+                new Dictionary<string,MarketEvidence>(StringComparer.OrdinalIgnoreCase){{"BTCUSDT",Market(100m)}},
+                db,
+                CancellationToken.None,
+                ManagedLedger(),
+                tradingRules:Rules(),
+                marketStates:states);
+
+            Assert.Empty(result.Intents);
+            Assert.DoesNotContain(result.Notes,x=>x.StartsWith("market-state-reversal:",StringComparison.Ordinal));
+        }
+        finally
+        {
+            Cleanup(path);
+        }
+    }
+
+    [Fact]
     public async Task TwoRPartialTakeCarriesStableReasonCode()
     {
         var path=TempDb();
@@ -700,6 +853,55 @@ public sealed class StructurePositionManagementTests
         "BTCUSDT",price,support,resistance,50,0,0,0,
         new DerivativesSnapshot(.0001m,1_000_000m,1m,1m,1m,1m,0m),
         Now.UtcDateTime);
+
+    private static MarketStateSnapshotV1 MarketState(
+        MarketStateTransitionKindV1 transition,
+        MarketStructureBias bias,
+        MarketStructureScenario scenario,
+        bool trigger,
+        bool confirmation,
+        DateTime? observedAt=null,
+        long observations=2)
+    {
+        var at=observedAt??Now.UtcDateTime;
+        var phase=scenario is MarketStructureScenario.TrendPullbackShort or MarketStructureScenario.BreakoutRetestShort
+            ?MarketStructurePhase.BearishPullback
+            :scenario is MarketStructureScenario.TrendPullbackLong or MarketStructureScenario.BreakoutRetestLong
+                ?MarketStructurePhase.BullishPullback
+                :MarketStructurePhase.Balance;
+        var lifecycle=confirmation&&trigger?MarketStateLifecycleV1.Confirmed:trigger?MarketStateLifecycleV1.Triggered:MarketStateLifecycleV1.Developing;
+        return new(
+            MarketStateSnapshotV1.CurrentSchema,
+            "BTCUSDT",
+            at,
+            true,
+            100m,
+            95m,
+            110m,
+            bias,
+            phase,
+            scenario,
+            confirmation
+                ?scenario is MarketStructureScenario.TrendPullbackShort or MarketStructureScenario.RangeReversionShort or MarketStructureScenario.BreakoutRetestShort
+                    ?MarketStructureEvent.BearishConfirmation
+                    :MarketStructureEvent.BullishConfirmation
+                :MarketStructureEvent.None,
+            lifecycle,
+            trigger,
+            confirmation,
+            observations,
+            2,
+            2,
+            1,
+            1,
+            confirmation?1:0,
+            at.AddMinutes(-15),
+            at,
+            at,
+            confirmation?at:null,
+            transition,
+            []);
+    }
 
     private static string TempDb()=>Path.Combine(Path.GetTempPath(),$"wpe-structure-position-{Guid.NewGuid():N}.db");
 
