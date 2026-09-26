@@ -8,7 +8,7 @@ public sealed class PublicMarketRuntimeWiringTests
         var host = ReadSource(Path.Combine("Services", "TradingRuntimeHost.cs"));
         var app = ReadSource("App.xaml.cs");
         var initializeStart = host.IndexOf("public async Task<bool> InitializeAsync(", StringComparison.Ordinal);
-        var initializeEnd = host.IndexOf("public async Task<bool> RefreshAccessAsync()", initializeStart, StringComparison.Ordinal);
+        var initializeEnd = host.IndexOf("public Task<bool> RefreshAccessAsync()", initializeStart, StringComparison.Ordinal);
         Assert.True(initializeStart >= 0 && initializeEnd > initializeStart, "Could not locate TradingRuntimeHost.InitializeAsync.");
         var initialize = host[initializeStart..initializeEnd];
 
