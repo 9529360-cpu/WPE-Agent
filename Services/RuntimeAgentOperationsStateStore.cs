@@ -15,7 +15,7 @@ public sealed class RuntimeAgentOperationsStateStore
         try
         {
             var evidence=await db.GetAgentOperationsEvidenceAsync(ct);var byRole=evidence.Activities.ToDictionary(x=>x.RoleId,StringComparer.OrdinalIgnoreCase);var runtime=live.Read();
-            var items=Roles.Select(role=>runtime.TryGetValue(role,out var health)?health:byRole.TryGetValue(role,out var value)?new RuntimeAgentOperationV1(role,"stopped",value.OccurredAtUtc,value.Activity,value.Mode):new RuntimeAgentOperationV1(role,"stopped",null,null,"Local Only")).ToArray();
+            var items=Roles.Select(role=>runtime.TryGetValue(role,out var health)?health:byRole.TryGetValue(role,out var value)?new RuntimeAgentOperationV1(role,evidence.RuntimeActive?value.Status:"stopped",value.OccurredAtUtc,value.Activity,value.Mode):new RuntimeAgentOperationV1(role,"stopped",null,null,"Local Only")).ToArray();
             var handoffs=evidence.Handoffs.Select(x=>new RuntimeAgentHandoffV1(x.Id,x.OccurredAtUtc,x.SourceRoleId,x.TargetRoleId,x.Result)).ToArray();
             var latest=items.Select(x=>x.LastActivityAtUtc).Where(x=>x is not null).Select(x=>x!.Value).Concat([evidence.UpdatedAtUtc]).Max();
             lock(gate)current=new(RuntimeCollectionState.Available,items,handoffs,new DateTimeOffset(latest),null);
