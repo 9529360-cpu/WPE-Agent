@@ -101,6 +101,19 @@ public static class AutoTradingAgent
         await using var eventBus=new InProcessAgentEventBus();await using var runtime=new AgentRuntimeSupervisor(Db,eventBus);runtime.HealthChanged+=ApplyRuntimeHealth;await runtime.StartAsync(ct);
         await using IExchangeProvider exchange=Providers.Create(exchangeProfile,credentials);_activeExchange=exchange;
         if(exchange.Environment!=ExchangeEnvironment.Testnet)throw new InvalidOperationException(L("Agent.MainnetConfirmationRequired"));
+        var runtimeRisk=TestnetHighOpportunityRiskProfileV1.Resolve(settings.Risk,exchange.Environment);
+        await Db.SetStateAsync("risk.testnet-high-opportunity-profile:last",System.Text.Json.JsonSerializer.Serialize(new
+        {
+            Enabled=runtimeRisk.TestnetHighOpportunityMode,
+            RequestedLeverage=runtimeRisk.Leverage,
+            InitialMarginBudget=runtimeRisk.MaxInitialMarginPerTrade,
+            MaxLossRiskPerTrade=runtimeRisk.MaxRiskPerTrade,
+            MaxSymbolExposure=runtimeRisk.MaxSymbolExposure,
+            MaxAccountExposure=runtimeRisk.MaxAccountExposure,
+            MinimumRiskReward=runtimeRisk.MinimumRiskReward,
+            Environment=exchange.Environment.ToString(),
+            ObservedAtUtc=DateTimeOffset.UtcNow
+        }),ct);
         var legacyIsolation=await RunLegacyIntentIsolationAsync(exchange,ct);
         ServiceLocator.SystemState.RuntimeRecoveryStatus=$"{legacyIsolation.Code}; examined={legacyIsolation.Examined}; quarantined={legacyIsolation.Quarantined}; retained={legacyIsolation.Retained}; unknown={legacyIsolation.Unknown}";
         ServiceLocator.SystemState.Mode=TradingMode.Testnet;
@@ -124,16 +137,16 @@ public static class AutoTradingAgent
         var watchSymbols=opportunityUniverse.WatchSymbols
             .Concat(capabilitySymbols)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(64)
+            .Take(OpportunityUniverseSelectorV1.DefaultWatchLimit)
             .ToArray();
         var capabilitySnapshot=new System.Collections.Concurrent.ConcurrentDictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability>(StringComparer.OrdinalIgnoreCase);
         async Task RefreshCapabilitySnapshot(CancellationToken token)=>await RefreshCapabilitiesAsync(exchange,capabilitySymbols,capabilitySnapshot,token);
         await PrimeOpportunityHistoryAsync(exchange,Db,authorizedTradeSymbols,ct);
         await RefreshCapabilitySnapshot(ct);_activeCapabilityRefresh=RefreshCapabilitySnapshot;
         await using var realtime=exchange.CreateRealtimeFeed(watchSymbols,Db)??new PollingRealtimeFeed();await realtime.StartAsync(ct);
-        var roles=AgentRoleRuntimeRegistry.Shared;roles.Publish("market","monitoring",$"Market-wide scan active; watching {watchSymbols.Length} symbols and deeply analyzing {authorizedTradeSymbols.Count}.");roles.Publish("decision","monitoring","Direct local candle structure with persistent armed setups is the trading decision authority.");roles.Publish("risk","monitoring","Risk limits and execution authority are being monitored.");roles.Publish("execution","waiting","Execution queue is ready; no approved order is pending.");roles.Publish("recovery","monitoring","Order state and reconciliation queue are being monitored.");roles.Publish("audit","monitoring","Append-only runtime and decision audit is active.");
+        var roles=AgentRoleRuntimeRegistry.Shared;roles.Publish("market","monitoring",$"Market-wide scan active; watching {watchSymbols.Length} symbols and deeply analyzing {authorizedTradeSymbols.Count}.");roles.Publish("decision","monitoring","Direct local candle structure with persistent armed setups is the trading decision authority.");roles.Publish("risk","monitoring",runtimeRisk.TestnetHighOpportunityMode?$"Testnet high-opportunity profile active; leverage request cap {runtimeRisk.Leverage}x, initial margin budget {runtimeRisk.MaxInitialMarginPerTrade:P0}, loss-risk cap {runtimeRisk.MaxRiskPerTrade:P0}.":"Risk limits and execution authority are being monitored.");roles.Publish("execution","waiting","Execution queue is ready; no approved order is pending.");roles.Publish("recovery","monitoring","Order state and reconciliation queue are being monitored.");roles.Publish("audit","monitoring","Append-only runtime and decision audit is active.");
         var newsResearch=new NewsResearchService();var marketStateStore=new DurableMarketStateStoreV1(Db);
-        var executor=new ReliableOrderExecutor(exchange,Db,settings.Risk,SystemOrderPollScheduler.Instance,capabilitySnapshot,true,capabilityRefresh:async(symbol,token)=>{var refreshed=await new ProviderCapabilityProbe().ProbeAsync(exchange,[symbol],true,token);if(refreshed.TryGetValue(symbol,out var value)){capabilitySnapshot[symbol]=value;return value;}return null;});
+        var executor=new ReliableOrderExecutor(exchange,Db,runtimeRisk,SystemOrderPollScheduler.Instance,capabilitySnapshot,true,capabilityRefresh:async(symbol,token)=>{var refreshed=await new ProviderCapabilityProbe().ProbeAsync(exchange,[symbol],true,token);if(refreshed.TryGetValue(symbol,out var value)){capabilitySnapshot[symbol]=value;return value;}return null;});
         var recoveryServices=await ProductionRecoveryComposition.CreateAsync(exchange,executor,Db,ProductionRecoveryComposition.DefaultKeyPath(),ct:ct);var executionGateway=recoveryServices.Gateway;var planner=new RiskAndPositionPlanner();var governance=new DecisionGovernanceSkill();var deterministic=new DeterministicPlanSkill();var independentRisk=new IndependentRiskManagerSkill();var portfolioRiskSkill=new PortfolioRiskSkill();var historicalData=new HistoricalDataService(exchange,Db);var positionManager=new PositionManagementSkill();
         _activeExecutionGateway=executionGateway;_activeRuntimeSessionId=runtime.RunId;
         var automaticGateway=new TradingAutomaticExecutionGateway(executionGateway,exchange,Db);
@@ -215,15 +228,15 @@ public static class AutoTradingAgent
                 catch(BrainCallException ex){brainRequest=ex.Request;brainResponse=ex.Response;await Db.RecordErrorAsync("Brain",ex,ct);proposed=new(){Action=DecisionAction.Hold,Reason=L("Agent.BrainFailure",ex.Message)};}
                 catch(Exception ex){await Db.RecordErrorAsync("Brain",ex,ct);proposed=new(){Action=DecisionAction.Hold,Reason=L("Agent.BrainFailureShort")};}
 
-                evidence.Markets.TryGetValue(proposed.Instrument,out var proposedMarket);proposed=await SkillAsync("DeterministicPlan",$"{proposed.Action} {proposed.Instrument}",_=>Task.FromResult(deterministic.Complete(proposed,proposedMarket,settings.Risk)),x=>$"entry={x.EntryPrice} stop={x.StopLossPrice} take={x.TakeProfitPrice} RR={x.RiskRewardRatio:F2}",ct);
+                evidence.Markets.TryGetValue(proposed.Instrument,out var proposedMarket);proposed=await SkillAsync("DeterministicPlan",$"{proposed.Action} {proposed.Instrument}",_=>Task.FromResult(deterministic.Complete(proposed,proposedMarket,runtimeRisk)),x=>$"entry={x.EntryPrice} stop={x.StopLossPrice} take={x.TakeProfitPrice} RR={x.RiskRewardRatio:F2}",ct);
                 Stage("Stage.Review","CRITIC",65);await runtime.TransitionAsync(cycle,WorkflowNode.Critic,new{proposed.Action,proposed.Instrument,DecisionPath=proposed.DecisionContextKind},ct);var review=await SkillAsync("DecisionReviewer",$"{proposed.Action} {proposed.Instrument}",_=>Task.FromResult(governance.Review(proposed,evidence,settings.Decision)),x=>$"accepted={x.Accepted} blocks={x.BlockingReasons.Count}",ct);var decision=review.Decision;UpdateDecisionUi(decision,review);
 
                 Stage("Stage.Risk","RISK",78);await runtime.TransitionAsync(cycle,WorkflowNode.Risk,new{decision.Action,decision.Instrument,ReviewAccepted=review.Accepted},ct);string result;IReadOnlyList<ExecutionIntent> intents=Array.Empty<ExecutionIntent>();TradingRule? tradingRule=null;
-                var riskHistory=await Db.GetRiskHistoryAsync(ct);var sessionRisk=SessionRiskGate.Evaluate(riskHistory,evidence.Account.Equity,_dayHigh,settings.Risk);var planningSafeToIncreaseRisk=safeToIncreaseRisk&&sessionRisk.AllowsRiskIncrease;var planningSafetyMessage=sessionRisk.AllowsRiskIncrease?safetyMessage:string.Join("；",new[]{safetyMessage}.Concat(sessionRisk.Reasons).Where(x=>!string.IsNullOrWhiteSpace(x)));
+                var riskHistory=await Db.GetRiskHistoryAsync(ct);var sessionRisk=SessionRiskGate.Evaluate(riskHistory,evidence.Account.Equity,_dayHigh,runtimeRisk);var planningSafeToIncreaseRisk=safeToIncreaseRisk&&sessionRisk.AllowsRiskIncrease;var planningSafetyMessage=sessionRisk.AllowsRiskIncrease?safetyMessage:string.Join("；",new[]{safetyMessage}.Concat(sessionRisk.Reasons).Where(x=>!string.IsNullOrWhiteSpace(x)));
                 if(!authorizedTradeSymbols.Contains(decision.Instrument,StringComparer.OrdinalIgnoreCase)){result=L("Agent.InvalidInstrument");}
-                else{tradingRule=await exchange.GetRulesAsync(decision.Instrument,ct);var lockedSide=await Db.GetLockedSideAsync(decision.Instrument,ct);var planned=await SkillAsync("RiskAndPositionPlanner",$"{decision.Action} {decision.Instrument} direct=true",_=>Task.FromResult(planner.Plan(decision,evidence,tradingRule,settings.Risk,planningSafeToIncreaseRisk,planningSafetyMessage,lockedSide)),x=>$"intents={x.Intents.Count} result={x.Result}",ct);intents=planned.Intents;result=planned.Result;}
-                var portfolioRisk=await SkillAsync("PortfolioRisk",$"positions={evidence.Positions.Count} intents={intents.Count}",_=>Task.FromResult(portfolioRiskSkill.Evaluate(evidence,histories,intents,settings.Risk)),x=>x.Summary,ct);await Db.SavePortfolioRiskAsync(cycle,portfolioRisk,ct);UpdatePortfolioRiskUi(portfolioRisk,realtime);
-                var riskReview=await SkillAsync("IndependentRiskManager",$"{decision.Action} intents={intents.Count}",_=>Task.FromResult(independentRisk.Review(decision,evidence,intents,settings.Risk,riskHistory,portfolioRisk)),x=>$"approved={x.Approved} level={x.RiskLevel} blocks={x.BlockingReasons.Count}",ct);
+                else{tradingRule=await exchange.GetRulesAsync(decision.Instrument,ct);var lockedSide=await Db.GetLockedSideAsync(decision.Instrument,ct);var planned=await SkillAsync("RiskAndPositionPlanner",$"{decision.Action} {decision.Instrument} direct=true",_=>Task.FromResult(planner.Plan(decision,evidence,tradingRule,runtimeRisk,planningSafeToIncreaseRisk,planningSafetyMessage,lockedSide)),x=>$"intents={x.Intents.Count} result={x.Result}",ct);intents=planned.Intents;result=planned.Result;}
+                var portfolioRisk=await SkillAsync("PortfolioRisk",$"positions={evidence.Positions.Count} intents={intents.Count}",_=>Task.FromResult(portfolioRiskSkill.Evaluate(evidence,histories,intents,runtimeRisk)),x=>x.Summary,ct);await Db.SavePortfolioRiskAsync(cycle,portfolioRisk,ct);UpdatePortfolioRiskUi(portfolioRisk,realtime);
+                var riskReview=await SkillAsync("IndependentRiskManager",$"{decision.Action} intents={intents.Count}",_=>Task.FromResult(independentRisk.Review(decision,evidence,intents,runtimeRisk,riskHistory,portfolioRisk)),x=>$"approved={x.Approved} level={x.RiskLevel} blocks={x.BlockingReasons.Count}",ct);
                 if(DeterministicPlanSkill.IsRiskIncreasing(decision.Action)&&intents.Count==0)riskReview=new(){Approved=false,RiskLevel="BLOCKED",BlockingReasons=[result],Summary=result};
                 var state=ServiceLocator.SystemState;state.ReviewerStatus=review.Accepted?"APPROVED":"REJECTED";state.RiskApprovalStatus=riskReview.Approved?"APPROVED":"BLOCKED";state.PlannedQuantity=riskReview.PlannedQuantity;state.CircuitBreakerActive=!planningSafeToIncreaseRisk;state.RiskSummary=riskReview.Summary;state.DecisionAuditSummary=$"Reviewer: {review.Verdict} · Risk: {state.RiskSummary}";
                 if(!riskReview.Approved){intents=Array.Empty<ExecutionIntent>();result=riskReview.Summary;state.ExecutionApprovalStatus="BLOCKED";}
@@ -232,8 +245,8 @@ public static class AutoTradingAgent
 
                 if(intents.Count>0&&tradingRule is not null)
                 {
-                    var leverage=RiskAndPositionPlanner.SelectEffectiveLeverage(decision,tradingRule,settings.Risk);
-                    await Db.SetStateAsync("risk.leverage:last",System.Text.Json.JsonSerializer.Serialize(new{decision.Instrument,Requested=settings.Risk.Leverage,Effective=leverage,ProviderMax=tradingRule.MaxLeverage,InitialMarginCap=settings.Risk.MaxInitialMarginPerTrade,ObservedAtUtc=DateTimeOffset.UtcNow}),ct);
+                    var leverage=RiskAndPositionPlanner.SelectEffectiveLeverage(decision,tradingRule,runtimeRisk);
+                    await Db.SetStateAsync("risk.leverage:last",System.Text.Json.JsonSerializer.Serialize(new{decision.Instrument,Requested=runtimeRisk.Leverage,Effective=leverage,ProviderMax=tradingRule.MaxLeverage,InitialMarginCap=runtimeRisk.MaxInitialMarginPerTrade,ObservedAtUtc=DateTimeOffset.UtcNow}),ct);
                     if(settings.AuthorizationMode==TradingAuthorizationMode.Auto)
                     {
                         var riskIncreasingDecision=DeterministicPlanSkill.IsRiskIncreasing(decision.Action);
@@ -241,7 +254,7 @@ public static class AutoTradingAgent
                         var decisionContextId=directDriven?decision.DecisionContextId:null;
                         var decisionContextVersion=directDriven?decision.StrategyVersion:null;
                         var decisionContextValid=directDriven&&proposedMarket is not null&&DirectMarketStructureDecisionSkill.ContextMatches(decision,proposedMarket);
-                        if(!decisionContextValid||string.IsNullOrWhiteSpace(decisionContextId)||string.IsNullOrWhiteSpace(decisionContextVersion)||!settings.Risk.Isolated){result=riskIncreasingDecision?"automatic.decision-context-invalid":"automatic.artifact-context-invalid";state.ExecutionApprovalStatus="BLOCKED";}
+                        if(!decisionContextValid||string.IsNullOrWhiteSpace(decisionContextId)||string.IsNullOrWhiteSpace(decisionContextVersion)||!runtimeRisk.Isolated){result=riskIncreasingDecision?"automatic.decision-context-invalid":"automatic.artifact-context-invalid";state.ExecutionApprovalStatus="BLOCKED";}
                         else if(riskIncreasingDecision&&await Db.HasAutomaticExecutionBlockingRepeatAsync(decisionContextId!,ct))
                         {
                             result="automatic.decision-repeat-blocked";state.ExecutionApprovalStatus="BLOCKED";
