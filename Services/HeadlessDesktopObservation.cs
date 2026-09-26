@@ -128,6 +128,8 @@ public sealed class HeadlessDesktopObserver:IAsyncDisposable
     private readonly HeadlessRuntimeHealthReader _health;
     private readonly CancellationTokenSource _shutdown=new();
     private IProviderReadOnlyAccessClient? _client;
+    private IReadOnlyList<string> _symbols=Array.Empty<string>();
+    private DateTimeOffset _nextCapabilityRefreshAtUtc=DateTimeOffset.MinValue;
     private Task? _loop;
     private int _active;
 
@@ -156,8 +158,10 @@ public sealed class HeadlessDesktopObserver:IAsyncDisposable
         var credentials=_settingsStore.GetExchangeCredentials(profile);
         var provider=new ExchangeProviderCatalog().Create(profile,credentials);
         _client=new ProviderReadOnlyAccessClient(provider);
+        _symbols=settings.Symbols.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         Interlocked.Exchange(ref _active,1);
         ApplyHealth(observed);
+        await RefreshCapabilitiesAsync(ct).ConfigureAwait(false);
         await RefreshTradingAsync(ct).ConfigureAwait(false);
         _loop=Task.Run(()=>RunAsync(_shutdown.Token),CancellationToken.None);
         return true;
@@ -172,6 +176,7 @@ public sealed class HeadlessDesktopObserver:IAsyncDisposable
             ApplyHealth(observed);
             try
             {
+                await RefreshCapabilitiesAsync(ct).ConfigureAwait(false);
                 await RefreshTradingAsync(ct).ConfigureAwait(false);
             }
             catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
@@ -180,6 +185,31 @@ public sealed class HeadlessDesktopObserver:IAsyncDisposable
                 ServiceLocator.RuntimeTrading.PublishError("Headless observer could not refresh provider positions/orders.");
                 ServiceLocator.SystemState.ExchangeConnected=false;
             }
+        }
+    }
+
+    private async Task RefreshCapabilitiesAsync(CancellationToken ct)
+    {
+        var now=DateTimeOffset.UtcNow;
+        if(now<_nextCapabilityRefreshAtUtc)return;
+        var client=_client??throw new InvalidOperationException("Headless observer is not initialized.");
+        if(_symbols.Count==0)
+        {
+            ServiceLocator.RuntimeMarkets.Publish(new Dictionary<string,WpeAgent.RuntimeContracts.ExchangeCapability>(), "No configured Testnet symbols are available.");
+            _nextCapabilityRefreshAtUtc=now.AddMinutes(1);
+            return;
+        }
+        try
+        {
+            var capabilities=await client.ProbeCapabilitiesAsync(_symbols,ct).ConfigureAwait(false);
+            ServiceLocator.RuntimeMarkets.Publish(capabilities);
+            _nextCapabilityRefreshAtUtc=now.AddMinutes(1);
+        }
+        catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
+        catch
+        {
+            ServiceLocator.RuntimeMarkets.PublishError("Headless observer could not refresh provider capabilities.");
+            _nextCapabilityRefreshAtUtc=now.AddSeconds(30);
         }
     }
 
