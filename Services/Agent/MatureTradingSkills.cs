@@ -25,7 +25,9 @@ public sealed class DeterministicPlanSkill
         var distance = Math.Abs(entry-stop);
         var minimumTake = longSide ? entry+distance*(decimal)risk.MinimumRiskReward : entry-distance*(decimal)risk.MinimumRiskReward;
         decimal take;
-        if (source.TakeProfitPrice > 0) take = source.TakeProfitPrice;
+        var sourceTakeIsDirectional=source.TakeProfitPrice>0
+            &&(longSide?source.TakeProfitPrice>entry:source.TakeProfitPrice<entry);
+        if (sourceTakeIsDirectional) take = source.TakeProfitPrice;
         else if (longSide) take = market.Resistance > minimumTake ? market.Resistance*.998m : minimumTake;
         else take = market.Support > 0 && market.Support < minimumTake ? market.Support*1.002m : minimumTake;
         var reward = longSide ? take-entry : entry-take;

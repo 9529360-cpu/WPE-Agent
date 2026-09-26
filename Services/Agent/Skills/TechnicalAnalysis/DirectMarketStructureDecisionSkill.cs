@@ -88,8 +88,9 @@ public static class DirectMarketStructureDecisionSkill
             var take=longSide
                 ?structure.StructuralResistance-targetBuffer
                 :structure.StructuralSupport+targetBuffer;
-            if(take<=0||(longSide&&take<=entry)||(shortSide&&take>=entry))
-                take=entry;
+            var structuralTargetValid=take>0&&(longSide?take>entry:take<entry);
+            if(!structuralTargetValid)
+                take=0;
 
             return new DecisionPlan
             {
@@ -108,7 +109,7 @@ public static class DirectMarketStructureDecisionSkill
                 Invalidation=longSide
                     ?$"Exit if local structure breaks below {stop:F2} or higher-timeframe bias turns bearish."
                     :$"Exit if local structure breaks above {stop:F2} or higher-timeframe bias turns bullish.",
-                EvidenceReferences=structure.Evidence.Concat(stateEvidence).Concat(setupEvidence).Append("decision_path=direct-market-structure").Append("entry_qualification=trigger-plus-confirmation").Append("live_entry_guard=bounded-chase").Append("target_geometry=structural-opposite-boundary").ToList(),
+                EvidenceReferences=structure.Evidence.Concat(stateEvidence).Concat(setupEvidence).Append("decision_path=direct-market-structure").Append("entry_qualification=trigger-plus-confirmation").Append("live_entry_guard=bounded-chase").Append(structuralTargetValid?"target_geometry=structural-opposite-boundary":"target_geometry=deterministic-rr-fallback").ToList(),
                 MissingConditions=[],
                 ConflictSummary=$"direct-structure; scenario={scenario}; event={structure.FifteenMinute.Event}; confirmation={qualification.ConfirmationPresent}; confirmation_source={qualification.Source}; armed={(arm is not null)}; {MarketStateSummary(evidence,market.Symbol)}",
                 StrategyVersion=Version,

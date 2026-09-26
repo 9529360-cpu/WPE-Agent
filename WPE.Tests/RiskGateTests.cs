@@ -104,6 +104,110 @@ public sealed class RiskGateTests
     }
 
     [Fact]
+    public void DeterministicPlanRepairsInvalidLongTakeProfitBeforeRiskPlanning()
+    {
+        var market=new MarketEvidence(
+            "BTCUSDT",100m,95m,100.1m,50,0,0,0,
+            new DerivativesSnapshot(0,0,0,0,0,0,0),
+            DateTime.UtcNow)
+        {
+            Quality=new MarketQualityEvidence{AtrPercent=.004}
+        };
+        var source=new DecisionPlan
+        {
+            Action=DecisionAction.OpenLong,
+            Instrument="BTCUSDT",
+            TargetTier=1,
+            EntryPrice=100m,
+            StopLossPrice=99.5m,
+            TakeProfitPrice=100m
+        };
+        var limits=new RiskLimits
+        {
+            Leverage=150,
+            MaxInitialMarginPerTrade=.05m,
+            MarginTiers=[.35m],
+            MaxMargin=.50m,
+            MaxRiskPerTrade=1m,
+            MaxSymbolExposure=10m,
+            MaxAccountExposure=10m,
+            MinimumRiskReward=1.8
+        };
+
+        var completed=new DeterministicPlanSkill().Complete(source,market,limits);
+
+        Assert.True(completed.TakeProfitPrice>completed.EntryPrice);
+        Assert.True(completed.RiskRewardRatio>=limits.MinimumRiskReward);
+
+        var evidence=new EvidencePack
+        {
+            Completeness=100,
+            Account=new AccountSnapshot(1_000m,1_000m,1_000m,DateTime.UtcNow),
+            Markets=new Dictionary<string,MarketEvidence>{{"BTCUSDT",market}}
+        };
+        var planned=new RiskAndPositionPlanner().Plan(
+            completed,
+            evidence,
+            new TradingRule("BTCUSDT",.1m,.1m,.1m,5m,125),
+            limits);
+
+        Assert.Single(planned.Intents);
+        Assert.DoesNotContain("保护价格方向错误",planned.Result,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeterministicPlanRepairsInvalidShortTakeProfitBeforeRiskPlanning()
+    {
+        var market=new MarketEvidence(
+            "BTCUSDT",100m,99.9m,105m,50,0,0,0,
+            new DerivativesSnapshot(0,0,0,0,0,0,0),
+            DateTime.UtcNow)
+        {
+            Quality=new MarketQualityEvidence{AtrPercent=.004}
+        };
+        var source=new DecisionPlan
+        {
+            Action=DecisionAction.OpenShort,
+            Instrument="BTCUSDT",
+            TargetTier=1,
+            EntryPrice=100m,
+            StopLossPrice=100.5m,
+            TakeProfitPrice=100m
+        };
+        var limits=new RiskLimits
+        {
+            Leverage=150,
+            MaxInitialMarginPerTrade=.05m,
+            MarginTiers=[.35m],
+            MaxMargin=.50m,
+            MaxRiskPerTrade=1m,
+            MaxSymbolExposure=10m,
+            MaxAccountExposure=10m,
+            MinimumRiskReward=1.8
+        };
+
+        var completed=new DeterministicPlanSkill().Complete(source,market,limits);
+
+        Assert.True(completed.TakeProfitPrice<completed.EntryPrice);
+        Assert.True(completed.RiskRewardRatio>=limits.MinimumRiskReward);
+
+        var evidence=new EvidencePack
+        {
+            Completeness=100,
+            Account=new AccountSnapshot(1_000m,1_000m,1_000m,DateTime.UtcNow),
+            Markets=new Dictionary<string,MarketEvidence>{{"BTCUSDT",market}}
+        };
+        var planned=new RiskAndPositionPlanner().Plan(
+            completed,
+            evidence,
+            new TradingRule("BTCUSDT",.1m,.1m,.1m,5m,125),
+            limits);
+
+        Assert.Single(planned.Intents);
+        Assert.DoesNotContain("保护价格方向错误",planned.Result,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EffectiveLeverageFallsWhenStructuralStopNeedsMoreLiquidationRoom()
     {
         var decision=new DecisionPlan
