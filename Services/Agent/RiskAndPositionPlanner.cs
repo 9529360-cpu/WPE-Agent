@@ -67,7 +67,9 @@ public sealed class RiskAndPositionPlanner
             var currentTier=Array.FindLastIndex(tiers,x=>x<=currentRatio+.0001m)+1;
             var requestedTier=Math.Clamp(d.TargetTier,1,tiers.Length);
             var tier=Math.Min(requestedTier,Math.Min(tiers.Length,currentTier+1));
-            var targetMargin=e.Account.Equity*tiers[tier-1];
+            var tierMargin=e.Account.Equity*tiers[tier-1];
+            var entryMarginCap=e.Account.Equity*Math.Clamp(limits.MaxInitialMarginPerTrade,.005m,.10m);
+            var targetMargin=Math.Min(tierMargin,entryMarginCap);
             var otherMargin=e.Positions.Where(x=>x.Symbol!=d.Instrument||(x.Side!=side&&x.Side!=closingSide)).Sum(x=>x.Quantity*x.MarkPrice/Math.Max(1,x.Leverage));
             if(otherMargin+targetMargin>e.Account.Equity*limits.MaxMargin)return(null,L("Risk.MarginLimit",limits.MaxMargin));
 
