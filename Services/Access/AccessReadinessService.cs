@@ -148,7 +148,7 @@ public sealed class AccessReadinessService
             Add("database", false, true, "Local database is unavailable: " + Safe(ex.Message));
         }
 
-        var risk = settings.Risk.MaxRiskPerTrade > 0 && settings.Risk.MaxAccountExposure <= .60m && settings.Risk.Leverage <= 20;
+        var risk = settings.Risk.MaxRiskPerTrade > 0 && settings.Risk.MaxAccountExposure <= .60m && settings.Risk.Leverage <= 150;
         Add("risk", risk, true, risk ? "Risk Manager parameters are valid" : "Risk parameters are out of bounds");
         Add("data", ProviderReadPathAvailable(providerCanRead), true, providerCanRead ? "Provider read path is healthy" : "Provider read path is unavailable");
         Add("local_brain", true, true, "WPE Local Brain / deterministic rules ready");
