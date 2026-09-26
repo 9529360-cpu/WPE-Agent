@@ -13,7 +13,8 @@ public sealed class DesktopShellRetirementTests
         Assert.Contains("new WpeAgent.ReferenceUiWindow(runtimeHost.BuildRuntimeJson", app, StringComparison.Ordinal);
         Assert.Contains("runtimeHost.StartAgentAsync", app, StringComparison.Ordinal);
         Assert.Contains("var accessReady = await runtimeHost.InitializeAsync();", app, StringComparison.Ordinal);
-        Assert.Contains("if (accessReady) await runtimeHost.StartAgentAsync();", app, StringComparison.Ordinal);
+        Assert.Contains("if (accessReady && !runtimeHost.HeadlessAuthorityDetected) await runtimeHost.StartAgentAsync();", app, StringComparison.Ordinal);
+        Assert.Contains("() => !runtimeHost.HeadlessAuthorityDetected", app, StringComparison.Ordinal);
         Assert.DoesNotContain("new DesktopRuntimeHost", app, StringComparison.Ordinal);
         Assert.DoesNotContain("AutoTradingAgent.StartDefault()", app, StringComparison.Ordinal);
         Assert.DoesNotContain("AutoTradingAgent.StopAsync()", app, StringComparison.Ordinal);
