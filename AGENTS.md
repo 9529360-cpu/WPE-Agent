@@ -1,6 +1,6 @@
 # WPE Agent Project Context
 
-Read `Docs/agent-context/PROJECT_STATE.md`, `ARCHITECTURE.md`, `DECISIONS.md`, and `TODO.md` before changing the project.
+Read `Docs/agent-context/PROJECT_STATE.md`, `ARCHITECTURE.md`, `DECISIONS.md`, `TODO.md`, and root `GOVERNANCE.md` before changing the project.
 
 Rules:
 - Preserve Testnet isolation, Risk Gate enforcement, auditability, and encrypted secret storage.
@@ -8,6 +8,7 @@ Rules:
 - Reuse existing services and contracts; do not create parallel trading or configuration paths.
 - Build Web UI before .NET because MSBuild packages `WebUi/out`.
 - Do not commit API keys, generated binaries, databases, logs, or local runtime state.
+- `main` is protected: use a pull request, keep the branch current, and require `Product CI / build-and-test` before squash merge.
 
 Product and platform specs:
 - `Docs/product/master-backlog.md` is the approved commercial priority order.
