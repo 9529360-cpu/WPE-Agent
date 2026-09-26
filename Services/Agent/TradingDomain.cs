@@ -176,6 +176,7 @@ public sealed class EvidencePack
     public IReadOnlyList<NewsEvidence> News { get; init; } = Array.Empty<NewsEvidence>();
     public IReadOnlyDictionary<string,CryptoInstrumentFundamentalV1> Fundamentals { get; init; } = new Dictionary<string,CryptoInstrumentFundamentalV1>();
     public IReadOnlyList<EvidenceSourceRunV1> SourceRuns { get; init; } = Array.Empty<EvidenceSourceRunV1>();
+    public IReadOnlyDictionary<string,MarketStateSnapshotV1> MarketStates { get; init; } = new Dictionary<string,MarketStateSnapshotV1>();
     public IReadOnlyList<string> MissingSources { get; init; } = Array.Empty<string>();
     public int Completeness { get; init; }
 }
