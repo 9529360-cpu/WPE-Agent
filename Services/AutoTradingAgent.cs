@@ -150,7 +150,7 @@ public static class AutoTradingAgent
         automaticWorkerTask=automaticWorker.RunAsync("automatic-"+runtime.RunId,TimeSpan.FromSeconds(1),ct);
         tradingObservationTask=ObserveTradingRuntimeAsync(exchange,TimeSpan.FromSeconds(10),ct);
         EvidencePack? previousEvidence=null;
-        var nextOpportunityUniverseRefreshAt=DateTimeOffset.UtcNow.AddMinutes(5);
+        var nextOpportunityUniverseRefreshAt=DateTimeOffset.UtcNow+OpportunityUniverseSelectorV1.DefaultRefreshInterval;
         while(!ct.IsCancellationRequested)
         {
             if(_paused){await Task.Delay(1000,ct);continue;}var cycle=Guid.NewGuid().ToString("N");var workflowStarted=false;
@@ -169,7 +169,7 @@ public static class AutoTradingAgent
                         opportunityUniverse=refreshedUniverse;
                         authorizedTradeSymbols=refreshedUniverse.DeepAnalysisSymbols;
                         await Db.SetStateAsync("market.opportunity-universe:last",System.Text.Json.JsonSerializer.Serialize(opportunityUniverse),ct);
-                        nextOpportunityUniverseRefreshAt=DateTimeOffset.UtcNow.AddMinutes(5);
+                        nextOpportunityUniverseRefreshAt=DateTimeOffset.UtcNow+OpportunityUniverseSelectorV1.DefaultRefreshInterval;
                     }
                     catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
                     catch(Exception ex)
@@ -181,7 +181,7 @@ public static class AutoTradingAgent
                 var analysisSymbols=authorizedTradeSymbols
                     .Concat(positions.Where(x=>x.Quantity>0).Select(x=>x.Symbol))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Take(12)
+                    .Take(OpportunityUniverseSelectorV1.DefaultDeepLimit)
                     .ToArray();
                 capabilitySymbols=analysisSymbols;
                 await RefreshCapabilitySnapshot(ct);
