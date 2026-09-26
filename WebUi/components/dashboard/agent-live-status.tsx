@@ -14,7 +14,9 @@ export function AgentLiveStatus() {
   const zh = locale === 'zh_CN'
   const zht = locale === 'zh_TW'
   const fresh = runtime.runtimeFresh === true
+  const runningKnown = typeof runtime.agentIsRunning === 'boolean'
   const running = runtime.agentIsRunning === true
+  const unknown = !fresh || !runningKnown
   const degraded = fresh && running && runtime.status === 'Degraded'
   const observer = running && runtime.agentControlAllowed === false
   const mode = runtime.authorizationMode?.value?.mode
@@ -25,51 +27,57 @@ export function AgentLiveStatus() {
   const copy = zh ? {
     running: 'Agent 正在运行',
     stopped: 'Agent 未运行',
+    unknown: 'Agent 状态待确认',
     degraded: 'Agent 运行中，但有异常',
     runningBody: '后台交易内核正在持续读取行情、分析市场结构，并按确定性风控规则等待或执行交易。',
     stoppedBody: '当前没有检测到正在运行的交易 Agent。',
+    unknownBody: '桌面暂时没有拿到足够新的运行证据，不能据此判断后台 Agent 已停止。',
     degradedBody: '交易 Agent 仍在运行，但部分运行证据或依赖状态异常，请查看下方系统状态。',
     environment: '交易环境', mode: '交易模式', stage: '当前阶段', decision: '当前动作', next: '下次扫描',
     heartbeat: '运行心跳', positions: '持仓', orders: '挂单', risk: '风控', exchange: '交易所',
     observer: '桌面观察模式', observerHint: '交易由后台 Agent 独立运行，本窗口只负责观察，不会启动第二套交易循环。',
     fresh: '数据实时', stale: '数据已过期', connected: '已连接', disconnected: '未连接', ready: '就绪', notReady: '未就绪',
-    unavailable: '不可用', secondsAgo: '秒前',
+    unavailable: '不可用', backgroundManaged: '后台 Agent 管理', secondsAgo: '秒前',
   } : zht ? {
     running: 'Agent 正在運行',
     stopped: 'Agent 未運行',
+    unknown: 'Agent 狀態待確認',
     degraded: 'Agent 運行中，但有異常',
     runningBody: '後台交易內核正在持續讀取行情、分析市場結構，並按確定性風控規則等待或執行交易。',
     stoppedBody: '目前沒有偵測到正在運行的交易 Agent。',
+    unknownBody: '桌面暫時沒有取得足夠新的運行證據，不能據此判斷後台 Agent 已停止。',
     degradedBody: '交易 Agent 仍在運行，但部分運行證據或依賴狀態異常，請查看下方系統狀態。',
     environment: '交易環境', mode: '交易模式', stage: '目前階段', decision: '目前動作', next: '下次掃描',
     heartbeat: '運行心跳', positions: '持倉', orders: '掛單', risk: '風控', exchange: '交易所',
     observer: '桌面觀察模式', observerHint: '交易由後台 Agent 獨立運行，本視窗只負責觀察，不會啟動第二套交易循環。',
     fresh: '資料即時', stale: '資料已過期', connected: '已連線', disconnected: '未連線', ready: '就緒', notReady: '未就緒',
-    unavailable: '不可用', secondsAgo: '秒前',
+    unavailable: '不可用', backgroundManaged: '後台 Agent 管理', secondsAgo: '秒前',
   } : {
     running: 'Agent is running',
     stopped: 'Agent is stopped',
+    unknown: 'Agent status is awaiting fresh evidence',
     degraded: 'Agent is running with issues',
     runningBody: 'The trading runtime is reading markets, analyzing structure, and waiting for or executing deterministic risk-approved actions.',
     stoppedBody: 'No active trading Agent is currently detected.',
+    unknownBody: 'The desktop does not currently have fresh enough evidence to conclude that the background Agent has stopped.',
     degradedBody: 'The Agent is still running, but one or more runtime dependencies are degraded.',
     environment: 'Environment', mode: 'Trading mode', stage: 'Current stage', decision: 'Current action', next: 'Next scan',
     heartbeat: 'Heartbeat', positions: 'Positions', orders: 'Open orders', risk: 'Risk', exchange: 'Exchange',
     observer: 'Desktop observer', observerHint: 'Trading is owned by the background Agent. This window is observation-only.',
     fresh: 'Live data', stale: 'Stale data', connected: 'Connected', disconnected: 'Disconnected', ready: 'Ready', notReady: 'Not ready',
-    unavailable: 'Unavailable', secondsAgo: 's ago',
+    unavailable: 'Unavailable', backgroundManaged: 'Managed by background Agent', secondsAgo: 's ago',
   }
 
-  const title = !fresh || !running ? copy.stopped : degraded ? copy.degraded : copy.running
-  const body = !fresh || !running ? copy.stoppedBody : degraded ? copy.degradedBody : copy.runningBody
-  const tone = !fresh || !running ? 'muted' : degraded ? 'warning' : 'success'
+  const title = unknown ? copy.unknown : !running ? copy.stopped : degraded ? copy.degraded : copy.running
+  const body = unknown ? copy.unknownBody : !running ? copy.stoppedBody : degraded ? copy.degradedBody : copy.runningBody
+  const tone = unknown ? 'warning' : !running ? 'muted' : degraded ? 'warning' : 'success'
   const age = Math.max(0, Math.round(runtime.runtimeAgeSeconds ?? 0))
 
   const metrics = [
     { icon: Radio, label: copy.environment, value: runtimeLabel(runtime.environment, locale) ?? copy.unavailable },
     { icon: Bot, label: copy.mode, value: runtimeLabel(mode, locale) ?? copy.unavailable },
     { icon: Activity, label: copy.stage, value: workflowLabel(runtime.workflowNode, locale) ?? copy.unavailable },
-    { icon: ShieldCheck, label: copy.risk, value: runtime.riskReady ? copy.ready : copy.notReady },
+    { icon: ShieldCheck, label: copy.risk, value: observer ? copy.backgroundManaged : runtime.riskReady ? copy.ready : copy.notReady },
     { icon: WalletCards, label: copy.positions, value: positions === undefined ? '—' : String(positions) },
     { icon: Radio, label: copy.orders, value: orders === undefined ? '—' : String(orders) },
   ]
