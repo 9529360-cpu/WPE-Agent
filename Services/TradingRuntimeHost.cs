@@ -97,6 +97,7 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
                 {
                     var state = ServiceLocator.SystemState;
                     state.Status = AgentStatus.Degraded;
+                    state.AgentControlAllowed = false;
                     state.LastMessage = "Headless runtime owns trading authority, but the desktop read-only observer could not attach.";
                     state.LastUpdated = DateTime.UtcNow;
                     Log.Warning(ex, "Desktop read-only observer failed to attach to the active Headless runtime.");
@@ -135,6 +136,7 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
         {
             Interlocked.Exchange(ref _headlessAuthorityDetected, 1);
             var state = ServiceLocator.SystemState;
+            state.AgentControlAllowed = false;
             state.LastMessage = "Headless runtime already owns trading authority; desktop remains observation-only.";
             state.LastUpdated = DateTime.UtcNow;
             return false;
