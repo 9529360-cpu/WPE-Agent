@@ -75,8 +75,8 @@ public sealed class RiskGateTests
             Instrument="BTCUSDT",
             TargetTier=1,
             EntryPrice=100m,
-            StopLossPrice=99m,
-            TakeProfitPrice=102m
+            StopLossPrice=99.5m,
+            TakeProfitPrice=101m
         };
         var limits=new RiskLimits
         {
