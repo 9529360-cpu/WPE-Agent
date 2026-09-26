@@ -7,9 +7,9 @@ public sealed class OpportunityUniverseV1Tests
     [Fact]
     public void DefaultOpportunityDensityRemainsBoundedButBroad()
     {
-        Assert.Equal(64,OpportunityUniverseSelectorV1.DefaultWatchLimit);
-        Assert.Equal(12,OpportunityUniverseSelectorV1.DefaultDeepLimit);
-        Assert.Equal(TimeSpan.FromMinutes(2),OpportunityUniverseSelectorV1.DefaultRefreshInterval);
+        Assert.Equal(80,OpportunityUniverseSelectorV1.DefaultWatchLimit);
+        Assert.Equal(16,OpportunityUniverseSelectorV1.DefaultDeepLimit);
+        Assert.Equal(TimeSpan.FromMinutes(1),OpportunityUniverseSelectorV1.DefaultRefreshInterval);
     }
 
     [Fact]
