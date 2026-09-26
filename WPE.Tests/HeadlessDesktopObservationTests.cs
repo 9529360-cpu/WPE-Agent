@@ -62,6 +62,8 @@ public sealed class HeadlessDesktopObservationTests : IDisposable
 
         Assert.Contains("IProviderReadOnlyAccessClient",source,StringComparison.Ordinal);
         Assert.Contains("ProviderReadOnlyAccessClient",source,StringComparison.Ordinal);
+        Assert.Contains("ProbeCapabilitiesAsync",source,StringComparison.Ordinal);
+        Assert.Contains("ServiceLocator.RuntimeMarkets.Publish(capabilities)",source,StringComparison.Ordinal);
         Assert.DoesNotContain("PlaceMarketAsync",source,StringComparison.Ordinal);
         Assert.DoesNotContain("PlaceStopMarketAsync",source,StringComparison.Ordinal);
         Assert.DoesNotContain("CancelOrderAsync",source,StringComparison.Ordinal);
