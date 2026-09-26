@@ -2,7 +2,7 @@ import type { Locale } from '@/lib/i18n/dictionaries'
 
 const zhCn: Record<string,string> = {
   Running:'运行中', Monitoring:'持续监控', Waiting:'等待', Stopped:'已停止', Idle:'空闲', Degraded:'降级', Blocked:'阻塞',
-  Hold:'观望', OpenLong:'开多', OpenShort:'开空', CloseLong:'平多', CloseShort:'平空', ReduceLong:'减多', ReduceShort:'减空',
+  Hold:'观望', HOLD:'观望', OpenLong:'开多', OPEN_LONG:'开多', OpenShort:'开空', OPEN_SHORT:'开空', CloseLong:'平多', CLOSE_LONG:'平多', CloseShort:'平空', CLOSE_SHORT:'平空', ReduceLong:'减多', ReduceShort:'减空',
   Auto:'自动交易', Review:'审查模式', Research:'研究模式', Signal:'信号模式',
   Testnet:'测试网', FuturesTestnet:'合约测试网', ProviderTestnet:'测试网',
   Available:'可用', available:'可用', Stale:'已过期', stale:'已过期', Unknown:'未知', unknown:'未知',
@@ -22,7 +22,7 @@ const zhCn: Record<string,string> = {
 
 const zhTw: Record<string,string> = {
   Running:'運行中', Monitoring:'持續監控', Waiting:'等待', Stopped:'已停止', Idle:'閒置', Degraded:'降級', Blocked:'阻塞',
-  Hold:'觀望', OpenLong:'開多', OpenShort:'開空', CloseLong:'平多', CloseShort:'平空', ReduceLong:'減多', ReduceShort:'減空',
+  Hold:'觀望', HOLD:'觀望', OpenLong:'開多', OPEN_LONG:'開多', OpenShort:'開空', OPEN_SHORT:'開空', CloseLong:'平多', CLOSE_LONG:'平多', CloseShort:'平空', CLOSE_SHORT:'平空', ReduceLong:'減多', ReduceShort:'減空',
   Auto:'自動交易', Review:'審查模式', Research:'研究模式', Signal:'訊號模式',
   Testnet:'測試網', FuturesTestnet:'合約測試網', ProviderTestnet:'測試網',
   Available:'可用', available:'可用', Stale:'已過期', stale:'已過期', Unknown:'未知', unknown:'未知',
@@ -77,16 +77,17 @@ export function workflowLabel(value:string|undefined|null,locale:Locale){
 }
 
 export function decisionSummary(value:string|undefined|null,locale:Locale){
+  const normalized=(value??'').replaceAll('_','').toLowerCase()
   const decision=runtimeLabel(value,locale)
   if(locale==='zh_CN'){
-    if(!value||value==='Hold')return {title:'观望',detail:'正在持续扫描市场，目前没有出现同时满足结构、触发、确认和风控条件的交易机会。'}
-    if(value==='OpenLong')return {title:'准备开多',detail:'本地交易脑检测到已确认的多头结构，正在进入风险与执行链路。'}
-    if(value==='OpenShort')return {title:'准备开空',detail:'本地交易脑检测到已确认的空头结构，正在进入风险与执行链路。'}
-    if(value==='CloseLong')return {title:'准备平多',detail:'多头持仓出现退出条件，系统正在按风险降低路径处理。'}
-    if(value==='CloseShort')return {title:'准备平空',detail:'空头持仓出现退出条件，系统正在按风险降低路径处理。'}
+    if(!value||normalized==='hold')return {title:'观望',detail:'正在持续扫描市场，目前没有出现同时满足结构、触发、确认和风控条件的交易机会。'}
+    if(normalized==='openlong')return {title:'准备开多',detail:'本地交易脑检测到已确认的多头结构，正在进入风险与执行链路。'}
+    if(normalized==='openshort')return {title:'准备开空',detail:'本地交易脑检测到已确认的空头结构，正在进入风险与执行链路。'}
+    if(normalized==='closelong')return {title:'准备平多',detail:'多头持仓出现退出条件，系统正在按风险降低路径处理。'}
+    if(normalized==='closeshort')return {title:'准备平空',detail:'空头持仓出现退出条件，系统正在按风险降低路径处理。'}
   }
   if(locale==='zh_TW'){
-    if(!value||value==='Hold')return {title:'觀望',detail:'正在持續掃描市場，目前沒有同時滿足結構、觸發、確認與風控條件的交易機會。'}
+    if(!value||normalized==='hold')return {title:'觀望',detail:'正在持續掃描市場，目前沒有同時滿足結構、觸發、確認與風控條件的交易機會。'}
   }
   return {title:decision??value??'—',detail:''}
 }
