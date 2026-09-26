@@ -126,7 +126,8 @@ public static class DirectMarketStructureDecisionSkill
             var longArmed=IsLong(armedScenario);
             var shortArmed=IsShort(armedScenario);
             var expectedArmedAction=longArmed?DecisionAction.OpenLong:shortArmed?DecisionAction.OpenShort:DecisionAction.Hold;
-            return HasTriggerForScenario(armedScenario,structure.FifteenMinute)
+            return BiasSupportsScenario(structure.HigherTimeframeBias,armedScenario)
+                &&HasTriggerForScenario(armedScenario,structure.FifteenMinute)
                 &&HasConfirmationForScenario(armedScenario,structure.FifteenMinute)
                 &&EntryStillActionable(market,structure,longArmed,shortArmed)
                 &&expectedArmedAction==decision.Action
