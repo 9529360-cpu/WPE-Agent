@@ -15,17 +15,23 @@ const decisionFlowSource = await readFile(decisionFlowUrl, 'utf8')
 
 test('role registry is local only and complete', () => {
   assert.equal(registry.localOnly, true)
-  assert.equal(registry.roles.length, 7)
+  assert.equal(registry.roles.length, 6)
   const ids = registry.roles.map((role) => role.id).sort()
   assert.deepEqual(ids, [
     'audit',
+    'decision',
     'execution',
     'market',
     'recovery',
-    'research',
     'risk',
-    'strategy',
   ])
+})
+
+test('UI runtime role directory matches the live six-role trading registry', () => {
+  assert.deepEqual(registry.roles.map((role) => role.id), ['market','decision','risk','execution','recovery','audit'])
+  assert.equal(registry.roles.some((role) => role.id === 'research' || role.id === 'strategy'), false)
+  assert.ok(decisionFlowSource.includes('6 RUNTIME AGENTS'))
+  assert.equal(decisionFlowSource.includes('7 AGENTS'), false)
 })
 
 test('role authorization is typed and private Testnet has no per-order human approval', () => {
