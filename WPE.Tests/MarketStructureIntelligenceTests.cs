@@ -294,6 +294,42 @@ public sealed class MarketStructureIntelligenceTests
         Assert.Contains("entry_confirmation_pattern=sweep-low-reclaim-break",decision.EvidenceReferences);
         Assert.Contains("confirmation_source=1m-microstructure-closed",decision.ConflictSummary,StringComparison.Ordinal);
         Assert.True(DirectMarketStructureDecisionSkill.ContextMatches(decision,market));
+
+        var opposing=market with
+        {
+            Candles1h=Trend(48,110m,-.55m,TimeSpan.FromHours(1)),
+            Candles4h=Trend(48,130m,-1.1m,TimeSpan.FromHours(4))
+        };
+        Assert.False(DirectMarketStructureDecisionSkill.ContextMatches(decision,opposing));
+    }
+
+    [Fact]
+    public void BearishPullbackScenarioCanCompleteOnFreshClosedOneMinuteMicrostructure()
+    {
+        var baseline=Market(
+            Trend(40,88m,.28m,TimeSpan.FromMinutes(15)),
+            Trend(48,110m,-.55m,TimeSpan.FromHours(1)),
+            Trend(48,130m,-1.1m,TimeSpan.FromHours(4)),
+            Now.AddMinutes(5));
+        var price=baseline.Price;
+        var minute=MicroBearishSweepConfirm(price,Now.UtcDateTime);
+        var market=baseline with
+        {
+            Price=minute[^1].Close,
+            Candles1m=minute
+        };
+
+        var structure=MarketStructureIntelligence.Analyze(market);
+        Assert.Equal(MarketStructureScenario.TrendPullbackShort,structure.Scenario);
+        Assert.False(structure.TriggerPresent);
+
+        var decision=DirectMarketStructureDecisionSkill.Decide(Evidence(market),false);
+
+        Assert.Equal(DecisionAction.OpenShort,decision.Action);
+        Assert.StartsWith("MICRO|",decision.DecisionContextId,StringComparison.Ordinal);
+        Assert.Contains("entry_confirmation_pattern=sweep-high-reject-break",decision.EvidenceReferences);
+        Assert.True(decision.StopLossPrice>market.Price);
+        Assert.True(DirectMarketStructureDecisionSkill.ContextMatches(decision,market));
     }
 
     [Fact]
@@ -613,6 +649,19 @@ public sealed class MarketStructureIntelligenceTests
             new(start.AddMinutes(2),p+.04m,p+.12m,p-.04m,p+.05m,31m,3_100m,41,18m),
             new(start.AddMinutes(3),p+.04m,p+.09m,p-.35m,p+.01m,55m,5_500m,70,38m),
             new(start.AddMinutes(4),p+.02m,p+.42m,p,p+.40m,80m,8_000m,95,61m)
+        ];
+    }
+
+    private static IReadOnlyList<CandleEvidence> MicroBearishSweepConfirm(decimal price,DateTime start)
+    {
+        var p=Math.Max(2m,price);
+        return
+        [
+            new(start,p,p+.08m,p-.08m,p-.02m,30m,3_000m,40,13m),
+            new(start.AddMinutes(1),p-.02m,p+.05m,p-.10m,p-.04m,32m,3_200m,42,14m),
+            new(start.AddMinutes(2),p-.04m,p+.04m,p-.12m,p-.05m,31m,3_100m,41,13m),
+            new(start.AddMinutes(3),p-.04m,p+.35m,p-.09m,p-.01m,55m,5_500m,70,17m),
+            new(start.AddMinutes(4),p-.02m,p,p-.42m,p-.40m,80m,8_000m,95,20m)
         ];
     }
 
