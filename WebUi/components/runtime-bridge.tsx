@@ -25,6 +25,7 @@ export type WpeRuntimeState = {
   workflowNode?: string
   status?: string
   agentIsRunning?: boolean
+  agentControlAllowed?: boolean
   nextCycleAtUtc?: string
   environment?: string
   thinkingProgress?: number
@@ -641,8 +642,9 @@ export function normalizeRuntimeEvent(input: unknown): WpeRuntimeState | null {
     // A stale but structurally valid Testnet snapshot may request lifecycle control.
     // The native host re-checks current provider authority before starting; stopping
     // must remain available even when market/runtime evidence is stale.
-    agentStartAllowed:legacy.agentIsRunning !== true,
-    agentStopAllowed:legacy.agentIsRunning === true,
+    agentControlAllowed:legacy.agentControlAllowed !== false,
+    agentStartAllowed:legacy.agentControlAllowed !== false && legacy.agentIsRunning !== true,
+    agentStopAllowed:legacy.agentControlAllowed !== false && legacy.agentIsRunning === true,
     previewMode: false,
   }
   if ((value.telemetry as { value?: unknown } | undefined)?.value) Object.assign(state, (value.telemetry as { value: object }).value)
