@@ -49,16 +49,23 @@ test('every primary route has host provenance and no production fallback markers
   }
 })
 
-test('dashboard uses canonical Agent runtime and decision context instead of simulated thought UI', () => {
+test('dashboard makes live Agent authority and decision state obvious without simulated thought UI', () => {
   const home = source('app/(dashboard)/page.tsx')
+  const live = source('components/dashboard/agent-live-status.tsx')
   const context = source('components/dashboard/decision-context.tsx')
+  assert.match(home, /AgentLiveStatus/)
   assert.match(home, /DecisionFlow/)
   assert.match(home, /DecisionContext/)
   assert.doesNotMatch(home, /AgentStatusPanel|ThoughtStream/)
-  for (const field of ['lastDecision', 'decisionDiagnostics', 'lastReason']) assert.match(context, new RegExp(field))
-  for (const legacy of ['currentThought', 'workflowNode', 'thinkingProgress', 'reviewerStatus']) {
+  for (const field of ['agentIsRunning', 'runtimeFresh', 'authorizationMode', 'workflowNode', 'runtimeHeartbeatAtUtc', 'exchangeConnected']) {
+    assert.match(live, new RegExp(field), `live Agent status must expose ${field}`)
+  }
+  for (const field of ['lastDecision', 'lastReason', 'workflowNode']) assert.match(context, new RegExp(field))
+  for (const legacy of ['currentThought', 'thinkingProgress', 'reviewerStatus']) {
     assert.doesNotMatch(context, new RegExp(legacy), `legacy thought/progress semantic leaked into decision context: ${legacy}`)
   }
+  assert.match(live, /Agent 正在运行/)
+  assert.match(live, /桌面观察模式/)
 })
 
 test('static export contains deterministic nonblank DOM for every primary route', () => {
