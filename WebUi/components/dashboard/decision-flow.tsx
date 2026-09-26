@@ -72,22 +72,20 @@ export function DecisionFlow() {
 
   const roleCopy: Record<string,{name:string;activity:string}> | undefined = locale === 'zh_CN' ? {
     market:{name:'市场 Agent',activity:'读取实时行情、K 线和账户数据，更新市场证据。'},
-    research:{name:'研究 Agent',activity:'整理新闻、宏观和市场上下文，补充研究证据。'},
-    strategy:{name:'策略 Agent',activity:'根据确认后的市场结构形成交易意图或继续观望。'},
+    decision:{name:'决策 Agent',activity:'根据本地市场结构、触发与确认形成交易意图或继续观望。'},
     risk:{name:'风控 Agent',activity:'检查仓位、风险限制和交易资格，不满足条件就阻止执行。'},
     execution:{name:'执行 Agent',activity:'处理通过风控的订单，跟踪成交与保护单。'},
     recovery:{name:'恢复 Agent',activity:'核对交易所与本地账本，处理重启、超时和异常恢复。'},
     audit:{name:'审计 Agent',activity:'记录完整交易链路，验证每个环节的证据与状态。'},
   } : locale === 'zh_TW' ? {
     market:{name:'市場 Agent',activity:'讀取即時行情、K 線和帳戶資料，更新市場證據。'},
-    research:{name:'研究 Agent',activity:'整理新聞、宏觀和市場上下文，補充研究證據。'},
-    strategy:{name:'策略 Agent',activity:'根據確認後的市場結構形成交易意圖或繼續觀望。'},
+    decision:{name:'決策 Agent',activity:'根據本地市場結構、觸發與確認形成交易意圖或繼續觀望。'},
     risk:{name:'風控 Agent',activity:'檢查持倉、風險限制和交易資格，不符合條件就阻止執行。'},
     execution:{name:'執行 Agent',activity:'處理通過風控的訂單，追蹤成交與保護單。'},
     recovery:{name:'恢復 Agent',activity:'核對交易所與本地帳本，處理重啟、逾時和異常恢復。'},
     audit:{name:'稽核 Agent',activity:'記錄完整交易鏈路，驗證每個環節的證據與狀態。'},
   } : undefined
-  const flowTitle = locale === 'zh_CN' ? '7 个 Agent 协同链路' : locale === 'zh_TW' ? '7 個 Agent 協同鏈路' : '7 AGENTS'
+  const flowTitle = locale === 'zh_CN' ? '6 个运行 Agent 协同链路' : locale === 'zh_TW' ? '6 個運行 Agent 協同鏈路' : '6 RUNTIME AGENTS'
 
   return (
     <Panel>

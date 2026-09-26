@@ -70,7 +70,7 @@ Empty and unavailable are different. `available + []` means a real empty result.
 - Runtime freshness, Testnet environment and provider identity.
 - Agent running/stopped/degraded state.
 - Account, open positions, active orders and risk readiness.
-- Current seven-Agent workflow and recent canonical handoffs.
+- Current six-role live trading workflow (`market -> decision -> risk -> execution -> recovery -> audit`) and recent runtime handoffs. The separate seven-role model-off acceptance aggregate is evidence/governance material, not seven live worker statuses.
 - Current market facts and data-source health.
 - No hero marketing layout, fabricated portfolio chart or invented reasoning stream.
 
@@ -134,7 +134,7 @@ Equities, broad cross-asset research, commercial distribution and unsupported pr
 2. The production export contains no preview, fixture, fake or cached-fallback values.
 3. All four collection states are handled for every redesigned data surface.
 4. Malformed or stale runtime evidence fails closed rather than partially rendering actionable values.
-5. The exact seven-Agent chain is shown, with Teacher outside the trading chain.
+5. The exact six-role live runtime chain is shown (`market -> decision -> risk -> execution -> recovery -> audit`). Do not render the separate seven-role model-off acceptance aggregate as live worker status.
 6. No browser network API exists in production code.
 7. Only the four allowlisted host commands are emitted, through the shared typed bridge.
 8. Start/stop controls remain disabled unless the host runtime reports the corresponding action as allowed.

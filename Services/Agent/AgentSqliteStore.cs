@@ -935,7 +935,7 @@ public sealed partial class AgentSqliteStore
             }
         }
         var handoffs=new List<PersistedAgentHandoff>();
-        string? activeRunId=null;
+        string? activeRunId=null;DateTime? activeHeartbeatAt=null;
         await using(var heartbeat=c.CreateCommand())
         {
             heartbeat.CommandText="SELECT occurred_at,payload_json FROM runtime_events WHERE event_type='runtime.heartbeat' ORDER BY occurred_at DESC LIMIT 1";
@@ -944,9 +944,22 @@ public sealed partial class AgentSqliteStore
                 var at=DateTime.Parse(r.GetString(0),null,DateTimeStyles.RoundtripKind).ToUniversalTime();
                 if(DateTime.UtcNow-at<=TimeSpan.FromSeconds(30))
                 {
-                    try{using var doc=JsonDocument.Parse(r.GetString(1));var root=doc.RootElement;if((!root.TryGetProperty("LeaseRenewed",out var renewed)&&!root.TryGetProperty("leaseRenewed",out renewed))||renewed.ValueKind!=JsonValueKind.True)activeRunId=null;else if(root.TryGetProperty("RunId",out var run)||root.TryGetProperty("runId",out run))activeRunId=run.GetString();}catch(JsonException){}
+                    try{using var doc=JsonDocument.Parse(r.GetString(1));var root=doc.RootElement;if((!root.TryGetProperty("LeaseRenewed",out var renewed)&&!root.TryGetProperty("leaseRenewed",out renewed))||renewed.ValueKind!=JsonValueKind.True)activeRunId=null;else if(root.TryGetProperty("RunId",out var run)||root.TryGetProperty("runId",out run)){activeRunId=run.GetString();activeHeartbeatAt=at;}}catch(JsonException){}
                 }
             }
+        }
+        if(!string.IsNullOrWhiteSpace(activeRunId)&&activeHeartbeatAt is DateTime activeAt)
+        {
+            var defaults=new (string Role,string Status,string Activity)[]
+            {
+                ("market","monitoring","Background market monitoring is active."),
+                ("decision","monitoring","Local deterministic decision monitoring is active."),
+                ("risk","monitoring","Risk and execution authority monitoring is active."),
+                ("execution","waiting","Execution queue is active and waiting for an approved order."),
+                ("recovery","monitoring","Order recovery and reconciliation monitoring is active."),
+                ("audit","monitoring","Runtime audit monitoring is active.")
+            };
+            foreach(var item in defaults)if(!activities.ContainsKey(item.Role))activities[item.Role]=new(item.Role,item.Status,activeAt,item.Activity,"Local Only");
         }
         if(!string.IsNullOrWhiteSpace(activeRunId))await using(var q=c.CreateCommand())
         {
@@ -966,7 +979,7 @@ public sealed partial class AgentSqliteStore
             }
         }
         var latest=activities.Values.Select(x=>x.OccurredAtUtc).Concat(handoffs.Select(x=>x.OccurredAtUtc)).DefaultIfEmpty(DateTime.UtcNow).Max();
-        return new(activities.Values.ToArray(),handoffs,latest);
+        return new(activities.Values.ToArray(),handoffs,latest,!string.IsNullOrWhiteSpace(activeRunId));
     }
 
     private static string? RoleForSkill(string skill)=>skill switch
@@ -1609,4 +1622,4 @@ public sealed record LegacyIntentIsolationMutationResult(bool Succeeded,string C
 public sealed record PersistedLegacyIntentIsolation(string ClientOrderId,string SourceStatus,string ProjectionStatus,string ReasonCode,DateTimeOffset IsolatedAtUtc);
 public sealed record PersistedLegacyIntentIsolationEvent(string ClientOrderId,int Sequence,DateTimeOffset OccurredAtUtc,string FromStatus,string ToStatus,string EventCode);
 public sealed record PersistedAgentHandoff(string Id,DateTime OccurredAtUtc,string SourceRoleId,string TargetRoleId,string Result);
-public sealed record AgentOperationsEvidence(IReadOnlyList<PersistedAgentActivity> Activities,IReadOnlyList<PersistedAgentHandoff> Handoffs,DateTime UpdatedAtUtc);
+public sealed record AgentOperationsEvidence(IReadOnlyList<PersistedAgentActivity> Activities,IReadOnlyList<PersistedAgentHandoff> Handoffs,DateTime UpdatedAtUtc,bool RuntimeActive);

@@ -37,8 +37,7 @@ export type RoleRegistry = {
 
 export const ROLE_IDS = [
   'market',
-  'research',
-  'strategy',
+  'decision',
   'risk',
   'execution',
   'recovery',
