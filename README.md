@@ -8,10 +8,10 @@ WPE Agent is a local-first, auditable trading Agent platform for Windows. The cu
 - Platform: Windows 10/11, .NET 8, WPF with a read-only WebView runtime UI
 - Default environment: Testnet/Paper
 - Mainnet: disabled
-- Remote or local LLM: optional advisory layer only
+- Trading brain: local deterministic technical analysis; Remote/Hybrid/AI Research trading modes are retired
 - User state: `%LOCALAPPDATA%\WPE Agent\`
 
-Accepted capabilities are deliberately bounded. Current accepted components include the seven-role orchestrator, Market Data, Technical, Backtest, Risk Gate, execution contract boundary, Position safety gates, and post-trade review. The retired Teacher/mentor surface is not part of the trading runtime. The seven aggregate Agents remain partially accepted until their full production and live Testnet evidence gates are complete. The machine-readable authority is [`Docs/product/model-off-capability-maturity.json`](Docs/product/model-off-capability-maturity.json).
+Accepted capabilities are deliberately bounded. The machine-readable maturity authority currently marks all seven aggregate Agents as accepted within their documented private-autonomous-Testnet scopes; that does not certify Mainnet, profitability, other symbols/providers, or broader production use. The retired Teacher/mentor and remote-LLM trading surfaces are not part of the current trading runtime. The authority is [`Docs/product/model-off-capability-maturity.json`](Docs/product/model-off-capability-maturity.json).
 
 ## Safety Boundary
 
@@ -55,6 +55,8 @@ dotnet run --project "币安量化机器人.csproj"
 - Architecture: [`Docs/agent-context/ARCHITECTURE.md`](Docs/agent-context/ARCHITECTURE.md)
 - Decisions: [`Docs/agent-context/DECISIONS.md`](Docs/agent-context/DECISIONS.md)
 - Remaining work: [`Docs/agent-context/TODO.md`](Docs/agent-context/TODO.md)
+- Repository governance: [`GOVERNANCE.md`](GOVERNANCE.md)
+- Contribution workflow: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - Local-first design: [`Docs/architecture/wpe_multi_agent_local_first_design.md`](Docs/architecture/wpe_multi_agent_local_first_design.md)
 
 ## Repository Layout
