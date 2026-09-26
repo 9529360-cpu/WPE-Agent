@@ -5,7 +5,7 @@ import { useWpeRuntime } from '@/components/runtime-bridge'
 import { RuntimeUnavailable } from '@/components/runtime-state'
 import { Panel, PanelBody, PanelHeader } from '@/components/ui/panel'
 import { useI18n } from '@/lib/i18n/context'
-import { decisionSummary, runtimeLabel } from '@/lib/runtime-labels'
+import { decisionSummary, workflowLabel } from '@/lib/runtime-labels'
 
 export function DecisionContext() {
   const runtime = useWpeRuntime()
@@ -21,7 +21,7 @@ export function DecisionContext() {
   const actionLabel = zh ? '当前动作' : zht ? '目前動作' : t('dashboard.lastDecision')
   const reasonLabel = zh ? '系统解释' : zht ? '系統解釋' : t('common.reason')
   const stageLabel = zh ? '当前阶段' : zht ? '目前階段' : 'Stage'
-  const stage = runtimeLabel(runtime.workflowNode, locale)
+  const stage = workflowLabel(runtime.workflowNode, locale)
 
   return (
     <Panel className="h-full">
