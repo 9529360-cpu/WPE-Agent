@@ -104,6 +104,27 @@ public sealed class RiskGateTests
     }
 
     [Fact]
+    public void EffectiveLeverageFallsWhenStructuralStopNeedsMoreLiquidationRoom()
+    {
+        var decision=new DecisionPlan
+        {
+            Action=DecisionAction.OpenLong,
+            Instrument="BTCUSDT",
+            EntryPrice=100m,
+            StopLossPrice=98.1m,
+            TakeProfitPrice=104m
+        };
+        var rule=new TradingRule("BTCUSDT",.1m,.1m,.1m,5m,125);
+        var limits=new RiskLimits{Leverage=150};
+
+        var effective=RiskAndPositionPlanner.SelectEffectiveLeverage(decision,rule,limits);
+
+        Assert.Equal(36,effective);
+        Assert.True(effective<limits.Leverage);
+        Assert.True(effective<=rule.MaxLeverage);
+    }
+
+    [Fact]
     public void SessionRiskGate_BlocksAtConfiguredDailyLossWithoutLossStreakState()
     {
         var gate = SessionRiskGate.Evaluate(
