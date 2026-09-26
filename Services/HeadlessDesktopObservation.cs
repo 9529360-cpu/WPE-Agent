@@ -124,6 +124,7 @@ public sealed class HeadlessRuntimeHealthReader
 public sealed class HeadlessDesktopObserver:IAsyncDisposable
 {
     private static readonly TimeSpan PollInterval=TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan CapabilityRefreshInterval=TimeSpan.FromMinutes(2);
     private readonly AgentSettingsStore _settingsStore;
     private readonly HeadlessRuntimeHealthReader _health;
     private readonly CancellationTokenSource _shutdown=new();
@@ -210,6 +211,23 @@ public sealed class HeadlessDesktopObserver:IAsyncDisposable
         {
             ServiceLocator.RuntimeMarkets.PublishError("Headless observer could not refresh provider capabilities.");
             _nextCapabilityRefreshAtUtc=now.AddSeconds(30);
+        }
+    }
+
+    private async Task RefreshCapabilitiesAsync(CancellationToken ct)
+    {
+        var client=_client??throw new InvalidOperationException("Headless observer is not initialized.");
+        try
+        {
+            var capabilities=await client.ProbeCapabilitiesAsync(_symbols,ct).ConfigureAwait(false);
+            ServiceLocator.RuntimeMarkets.Publish(capabilities);
+            _nextCapabilityRefreshUtc=DateTimeOffset.UtcNow+CapabilityRefreshInterval;
+        }
+        catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
+        catch
+        {
+            ServiceLocator.RuntimeMarkets.PublishError("Headless observer capability refresh failed.");
+            _nextCapabilityRefreshUtc=DateTimeOffset.UtcNow+TimeSpan.FromSeconds(30);
         }
     }
 
