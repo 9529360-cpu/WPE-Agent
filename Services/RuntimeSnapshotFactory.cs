@@ -192,7 +192,7 @@ public static class RuntimeSnapshotFactory
                 ["btcPrice"] = (double)state.BtcPrice, ["ethPrice"] = (double)state.EthPrice,
                 ["walletBalance"] = (double)state.WalletBalance, ["availableBalance"] = (double)state.AvailableBalance,
                 ["positionQuantity"] = (double)state.PositionQuantity, ["status"] = state.Status.ToString(),
-                ["agentIsRunning"] = AgentIsRunning(state,generatedAtUtc),
+                ["agentIsRunning"] = AgentIsRunning(state,generatedAtUtc), ["agentControlAllowed"] = state.AgentControlAllowed,
                 ["nextCycleAtUtc"] = state.NextCycleAtUtc,
                 ["environment"] = state.Mode.ToString(), ["runtimeFresh"] = fresh, ["runtimeAgeSeconds"] = age,
                 ["workflowNode"] = state.WorkflowNode, ["thinkingProgress"] = state.ThinkingProgress,
