@@ -55,7 +55,7 @@ public sealed class EvidenceDeltaEngineV1Tests
 
         var delta=EvidenceDeltaEngineV1.Compare(current,previous);
 
-        var signal=Assert.Single(delta.Signals.Where(x=>x.Kind==EvidenceDeltaKind.BreakingNews));
+        var signal=Assert.Single(delta.Signals,x=>x.Kind==EvidenceDeltaKind.BreakingNews);
         Assert.Contains("Fresh item",signal.Detail,StringComparison.Ordinal);
         Assert.DoesNotContain(delta.Signals,x=>x.Key=="news:group-existing");
     }
