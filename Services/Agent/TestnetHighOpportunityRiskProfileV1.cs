@@ -14,14 +14,16 @@ public static class TestnetHighOpportunityRiskProfileV1
     public const double MaximumSpreadBps=8;
     public const double MaximumAtrPercent=.045;
 
-    public static RiskLimits Create(RiskLimits configured,ExchangeEnvironment environment)
+    public static RiskLimits Resolve(RiskLimits configured,ExchangeEnvironment environment)
     {
         ArgumentNullException.ThrowIfNull(configured);
+        if(!configured.TestnetHighOpportunityMode)return configured;
         if(environment!=ExchangeEnvironment.Testnet)
             throw new InvalidOperationException("High-opportunity risk profile is Testnet-only.");
 
         return new RiskLimits
         {
+            TestnetHighOpportunityMode=true,
             MarginTiers=(configured.MarginTiers??[]).ToArray(),
             MaxMargin=Math.Min(configured.MaxMargin,.50m),
             MaxInitialMarginPerTrade=InitialMarginBudget,
