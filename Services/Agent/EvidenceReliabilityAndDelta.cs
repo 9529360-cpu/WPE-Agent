@@ -133,7 +133,7 @@ public static class EvidenceDeltaEngineV1
             if (!biasChanged && !scenarioChanged && !eventChanged)
                 continue;
 
-            var severity = OppositeDirectionalBias(previousStructure.HigherTimeframeBias, currentStructure.HigherTimeframeBias)
+            var structureSeverity = OppositeDirectionalBias(previousStructure.HigherTimeframeBias, currentStructure.HigherTimeframeBias)
                 ? EvidenceDeltaSeverity.Critical
                 : biasChanged || OppositeDirectionalScenario(previousStructure.Scenario, currentStructure.Scenario)
                     ? EvidenceDeltaSeverity.High
@@ -142,7 +142,7 @@ public static class EvidenceDeltaEngineV1
             signals.Add(new(
                 $"market:{pair.Key}:structure",
                 EvidenceDeltaKind.StructureShift,
-                severity,
+                structureSeverity,
                 pair.Key,
                 $"bias {previousStructure.HigherTimeframeBias} -> {currentStructure.HigherTimeframeBias}; " +
                 $"scenario {previousStructure.Scenario} -> {currentStructure.Scenario}; " +
