@@ -107,6 +107,26 @@ public sealed class RuntimeSnapshotV1Tests
     }
 
     [Fact]
+    public void Create_ProjectsFreshExternalRuntimeAsRunningButControlDisabled()
+    {
+        var now=DateTime.UtcNow;
+        var state=new SystemState
+        {
+            LastUpdated=now,
+            Status=AgentStatus.Running,
+            RuntimeHeartbeatAtUtc=now.AddSeconds(-2),
+            AgentControlAllowed=false
+        };
+        var options=new JsonSerializerOptions{PropertyNamingPolicy=JsonNamingPolicy.CamelCase};
+        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+
+        using var doc=JsonDocument.Parse(JsonSerializer.Serialize(RuntimeSnapshotFactory.Create(state,now),options));
+
+        Assert.True(doc.RootElement.GetProperty("agentIsRunning").GetBoolean());
+        Assert.False(doc.RootElement.GetProperty("agentControlAllowed").GetBoolean());
+    }
+
+    [Fact]
     public void Create_ProducesVersionedFreshSnapshot()
     {
         var now = DateTime.UtcNow;

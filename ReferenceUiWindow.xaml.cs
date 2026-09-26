@@ -14,18 +14,21 @@ namespace WpeAgent
         private readonly Action _openSetup;
         private readonly Action _openNotificationSetup;
         private readonly Func<System.Threading.Tasks.Task<bool>> _startAgent;
+        private readonly Func<bool> _agentControlAllowed;
         private DispatcherTimer? _runtimeTimer;
 
         public ReferenceUiWindow(
             Func<string> stateJson,
             Action? openSetup = null,
             Action? openNotificationSetup = null,
-            Func<System.Threading.Tasks.Task<bool>>? startAgent = null)
+            Func<System.Threading.Tasks.Task<bool>>? startAgent = null,
+            Func<bool>? agentControlAllowed = null)
         {
             _stateJson = stateJson;
             _openSetup = openSetup ?? (() => { });
             _openNotificationSetup = openNotificationSetup ?? _openSetup;
             _startAgent = startAgent ?? (() => System.Threading.Tasks.Task.FromResult(false));
+            _agentControlAllowed = agentControlAllowed ?? (() => true);
             InitializeComponent();
             Loaded += async (_, _) => await InitializeAsync();
             Closed += (_, _) => StopRuntimeTimer();
@@ -61,9 +64,9 @@ namespace WpeAgent
                     if (!IsTrustedWebViewSource(e.Source) || !TryGetHostCommand(e.WebMessageAsJson, out var command)) return;
                     if (command == "open-settings") Dispatcher.Invoke(_openSetup);
                     else if (command == "open-notification-settings") Dispatcher.Invoke(_openNotificationSetup);
-                    else if (command == "agent-start")
+                    else if (command == "agent-start" && _agentControlAllowed())
                         await _startAgent();
-                    else if (command == "agent-stop")
+                    else if (command == "agent-stop" && _agentControlAllowed())
                         await AutoTradingAgent.StopAsync();
                 }
                 catch (Exception ex)

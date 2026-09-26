@@ -192,7 +192,7 @@ public static class RuntimeSnapshotFactory
                 ["btcPrice"] = (double)state.BtcPrice, ["ethPrice"] = (double)state.EthPrice,
                 ["walletBalance"] = (double)state.WalletBalance, ["availableBalance"] = (double)state.AvailableBalance,
                 ["positionQuantity"] = (double)state.PositionQuantity, ["status"] = state.Status.ToString(),
-                ["agentIsRunning"] = AutoTradingAgent.IsRunning,
+                ["agentIsRunning"] = AgentIsRunning(state,generatedAtUtc), ["agentControlAllowed"] = state.AgentControlAllowed,
                 ["nextCycleAtUtc"] = state.NextCycleAtUtc,
                 ["environment"] = state.Mode.ToString(), ["runtimeFresh"] = fresh, ["runtimeAgeSeconds"] = age,
                 ["workflowNode"] = state.WorkflowNode, ["thinkingProgress"] = state.ThinkingProgress,
@@ -210,6 +210,15 @@ public static class RuntimeSnapshotFactory
                 ["runtimeProviderId"] = connectionCollectionState == RuntimeCollectionState.Available ? runtimeConnection.Value?.ProviderId : null
             }
         };
+    }
+
+    private static bool AgentIsRunning(SystemState state,DateTime generatedAtUtc)
+    {
+        if(AutoTradingAgent.IsRunning)return true;
+        if(state.Status!=AgentStatus.Running||state.RuntimeHeartbeatAtUtc is not DateTime heartbeat)return false;
+        heartbeat=heartbeat.ToUniversalTime();
+        generatedAtUtc=generatedAtUtc.ToUniversalTime();
+        return heartbeat<=generatedAtUtc&&generatedAtUtc-heartbeat<=TradingRuntimeHealthV1.MaximumHeartbeatAge;
     }
 
     private static RuntimeCollectionState MapEquityState(EquityMarketDataStatus state)=>state switch

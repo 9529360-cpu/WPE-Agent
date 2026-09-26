@@ -48,6 +48,8 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
     private readonly CancellationTokenSource _snapshotPumpCancellation = new();
     private readonly SemaphoreSlim _initializeGate = new(1, 1);
     private readonly Task _snapshotPumpTask;
+    private readonly HeadlessDesktopObserver _headlessObserver = new();
+    private int _headlessAuthorityDetected;
     private string _runtimeJson;
     private bool _publicMarketStarted;
     private DateTimeOffset _nextAccessRefreshAtUtc = DateTimeOffset.MinValue;
@@ -66,6 +68,8 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
     }
 
     public string UserName { get; }
+    public bool HeadlessAuthorityDetected => Volatile.Read(ref _headlessAuthorityDetected) != 0;
+    public bool IsObservingHeadless => _headlessObserver.Active;
 
     /// <summary>
     /// Starts non-UI runtime infrastructure, refreshes access truth and optionally starts
@@ -80,10 +84,31 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
             if (!_publicMarketStarted)
                 _publicMarketStarted = await StartPublicMarketAsync().ConfigureAwait(false);
 
-            var ready = await RefreshAccessAsync().ConfigureAwait(false);
-            if (ready && startAgentWhenReady)
+            var headless = _headlessObserver.ReadHeadless();
+            if (headless.Ready)
+            {
+                Interlocked.Exchange(ref _headlessAuthorityDetected, 1);
+                var ready = await RefreshAccessProjectionAsync(persistSettings: false).ConfigureAwait(false);
+                try
+                {
+                    await _headlessObserver.TryStartAsync(_snapshotPumpCancellation.Token).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    var state = ServiceLocator.SystemState;
+                    state.Status = AgentStatus.Degraded;
+                    state.AgentControlAllowed = false;
+                    state.LastMessage = "Headless runtime owns trading authority, but the desktop read-only observer could not attach.";
+                    state.LastUpdated = DateTime.UtcNow;
+                    Log.Warning(ex, "Desktop read-only observer failed to attach to the active Headless runtime.");
+                }
+                return ready;
+            }
+
+            var localReady = await RefreshAccessAsync().ConfigureAwait(false);
+            if (localReady && startAgentWhenReady)
                 AutoTradingAgent.StartDefault();
-            return ready;
+            return localReady;
         }
         finally
         {
@@ -91,14 +116,22 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
         }
     }
 
-    public async Task<bool> RefreshAccessAsync()
+    public Task<bool> RefreshAccessAsync()
     {
         ThrowIfDisposed();
+        return RefreshAccessProjectionAsync(persistSettings: !HeadlessAuthorityDetected);
+    }
+
+    private async Task<bool> RefreshAccessProjectionAsync(bool persistSettings)
+    {
         var settings = _settingsStore.Load();
         var report = await _readiness.CheckAsync(settings).ConfigureAwait(false);
         PublishAccess(report, settings);
-        settings.LastAccessCheckAtUtc = report.CheckedAtUtc;
-        _settingsStore.Save(settings);
+        if (persistSettings)
+        {
+            settings.LastAccessCheckAtUtc = report.CheckedAtUtc;
+            _settingsStore.Save(settings);
+        }
         Volatile.Write(ref _accessReady, report.Ready ? 1 : 0);
         _nextAccessRefreshAtUtc = DateTimeOffset.UtcNow + AccessRefreshInterval;
         return report.Ready;
@@ -108,6 +141,15 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
     {
         ThrowIfDisposed();
         if (!await RefreshAccessAsync().ConfigureAwait(false)) return false;
+        if (HeadlessAuthorityDetected || _headlessObserver.ReadHeadless().Ready)
+        {
+            Interlocked.Exchange(ref _headlessAuthorityDetected, 1);
+            var state = ServiceLocator.SystemState;
+            state.AgentControlAllowed = false;
+            state.LastMessage = "Headless runtime already owns trading authority; desktop remains observation-only.";
+            state.LastUpdated = DateTime.UtcNow;
+            return false;
+        }
         AutoTradingAgent.StartDefault();
         return true;
     }
@@ -129,12 +171,16 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
         DateTimeOffset? accessChecked = state.LastAccessCheckAtUtc is DateTime access
             ? new DateTimeOffset(DateTime.SpecifyKind(access, DateTimeKind.Utc))
             : null;
+        var externalRunning = HeadlessAuthorityDetected &&
+                              state.Status == AgentStatus.Running &&
+                              heartbeat is { } externalHeartbeat &&
+                              DateTimeOffset.UtcNow - externalHeartbeat <= TradingRuntimeHealthV1.MaximumHeartbeatAge;
         return new(
             TradingRuntimeHealthV1.CurrentSchema,
             DateTimeOffset.UtcNow,
             Volatile.Read(ref _accessReady) != 0,
             accessChecked,
-            AutoTradingAgent.IsRunning,
+            AutoTradingAgent.IsRunning || externalRunning,
             state.Status.ToString(),
             state.RuntimeRunId,
             heartbeat,
@@ -149,6 +195,7 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
 
         try
         {
+            await _headlessObserver.DisposeAsync().ConfigureAwait(false);
             await AutoTradingAgent.StopAsync().ConfigureAwait(false);
         }
         finally
@@ -174,8 +221,11 @@ public sealed class TradingRuntimeHost : IAsyncDisposable
     private void BindIdentity(string userName)
     {
         var settings = _settingsStore.Load();
-        settings.ActiveUser = userName;
-        _settingsStore.Save(settings);
+        if (!string.Equals(settings.ActiveUser, userName, StringComparison.Ordinal))
+        {
+            settings.ActiveUser = userName;
+            _settingsStore.Save(settings);
+        }
 
         var state = ServiceLocator.SystemState;
         ApplyLocalBrainState(state);
