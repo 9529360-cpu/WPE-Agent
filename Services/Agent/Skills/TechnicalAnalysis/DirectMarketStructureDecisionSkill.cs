@@ -48,6 +48,7 @@ public static class DirectMarketStructureDecisionSkill
                 continue;
             }
 
+            var stateEvidence=MarketStateEvidence(evidence,market.Symbol);
             var entry=market.Price;
             var buffer=Math.Max(structure.FifteenMinute.Atr*.15m,entry*.0005m);
             var stop=longSide
@@ -79,9 +80,9 @@ public static class DirectMarketStructureDecisionSkill
                 Invalidation=longSide
                     ?$"Exit if local structure breaks below {stop:F2} or higher-timeframe bias turns bearish."
                     :$"Exit if local structure breaks above {stop:F2} or higher-timeframe bias turns bullish.",
-                EvidenceReferences=structure.Evidence.Append("decision_path=direct-market-structure").Append("entry_qualification=trigger-plus-confirmation").Append("live_entry_guard=bounded-chase").Append("target_geometry=structural-opposite-boundary").ToList(),
+                EvidenceReferences=structure.Evidence.Concat(stateEvidence).Append("decision_path=direct-market-structure").Append("entry_qualification=trigger-plus-confirmation").Append("live_entry_guard=bounded-chase").Append("target_geometry=structural-opposite-boundary").ToList(),
                 MissingConditions=[],
-                ConflictSummary=$"direct-structure; scenario={structure.Scenario}; event={structure.FifteenMinute.Event}; confirmation={structure.ConfirmationPresent}",
+                ConflictSummary=$"direct-structure; scenario={structure.Scenario}; event={structure.FifteenMinute.Event}; confirmation={structure.ConfirmationPresent}; {MarketStateSummary(evidence,market.Symbol)}",
                 StrategyVersion=Version,
                 DecisionContextKind=DecisionContextKind,
                 DecisionContextId=ContextId(market,structure)
@@ -136,6 +137,28 @@ public static class DirectMarketStructureDecisionSkill
             return market.Price>structure.StructuralSupport&&market.Price<=confirmationClose+chaseTolerance;
         return market.Price<structure.StructuralResistance&&market.Price>=confirmationClose-chaseTolerance;
     }
+
+    private static IReadOnlyList<string> MarketStateEvidence(EvidencePack evidence,string symbol)
+    {
+        if(!evidence.MarketStates.TryGetValue(symbol,out var state))return ["market_state=unavailable"];
+        return
+        [
+            $"market_state_schema={state.Schema}",
+            $"market_state_lifecycle={state.Lifecycle}",
+            $"market_state_observations={state.ObservationCount}",
+            $"market_state_bias_streak={state.BiasStreak}",
+            $"market_state_phase_streak={state.PhaseStreak}",
+            $"market_state_scenario_streak={state.ScenarioStreak}",
+            $"market_state_confirmation_streak={state.ConfirmationStreak}",
+            $"market_state_transition={state.TransitionKind}",
+            $"market_state_last_transition_utc={state.LastTransitionAtUtc:O}"
+        ];
+    }
+
+    private static string MarketStateSummary(EvidencePack evidence,string symbol)=>
+        evidence.MarketStates.TryGetValue(symbol,out var state)
+            ?$"state={state.Lifecycle}; observations={state.ObservationCount}; transition={state.TransitionKind}"
+            :"state=unavailable";
 
     private static bool IsLong(MarketStructureScenario scenario)=>scenario is
         MarketStructureScenario.TrendPullbackLong or MarketStructureScenario.RangeReversionLong or MarketStructureScenario.BreakoutRetestLong;
