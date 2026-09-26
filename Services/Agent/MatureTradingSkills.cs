@@ -204,7 +204,11 @@ public sealed class PositionManagementSkill
 
             if(!markets.TryGetValue(position.Symbol,out var market))continue;
 
-            if(TryGetOpposingMarketState(position,market,marketStates,out var marketState))
+            marketStates?.TryGetValue(position.Symbol,out var currentMarketState);
+            var lifecycle=PositionLifecyclePolicyV1.Assess(position,opening,market,currentMarketState);
+            notes.Add($"position-lifecycle:{position.Symbol}:{position.Side}:{lifecycle.Stage}:r={lifecycle.FavorableR:F2}:anchor={lifecycle.StructuralAnchor:F4}");
+
+            if(lifecycle.Stage==PositionLifecycleStageV1.ConfirmedReversal&&currentMarketState is not null)
             {
                 var actionId=ActionId("STATE",opening);
                 if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
@@ -220,7 +224,7 @@ public sealed class PositionManagementSkill
                         position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
                         ExpectedPrice:market.Price,
                         ReasonCode:PositionExitReasonCodes.MarketStateReversal));
-                notes.Add($"market-state-reversal:{position.Symbol}:{position.Side}:{marketState.TransitionKind}:{marketState.Bias}:{marketState.Scenario}:observations={marketState.ObservationCount}");
+                notes.Add($"market-state-reversal:{position.Symbol}:{position.Side}:{currentMarketState.TransitionKind}:{currentMarketState.Bias}:{currentMarketState.Scenario}:observations={currentMarketState.ObservationCount}");
                 continue;
             }
 
@@ -332,6 +336,16 @@ public sealed class PositionManagementSkill
             var partialCompleted=partialState is "COMPLETED" or "COMPLETED_PARTIAL";
             if(favorable>=2&&partialCompleted&&protectionState=="COMPLETED"&&profitLockState is null)
             {
+                if(lifecycle.FreshState&&lifecycle.Stage==PositionLifecycleStageV1.NormalPullback)
+                {
+                    notes.Add($"structure-profit-lock-deferred-normal-pullback:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:anchor={lifecycle.StructuralAnchor}");
+                    continue;
+                }
+                if(lifecycle.FreshState&&lifecycle.Stage is not PositionLifecycleStageV1.ProfitExpansion and not PositionLifecycleStageV1.ExhaustionRisk)
+                {
+                    notes.Add($"structure-profit-lock-deferred-lifecycle:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:{lifecycle.Stage}");
+                    continue;
+                }
                 if(tradingRules is null||!tradingRules.TryGetValue(position.Symbol,out var rule)||rule.TickSize<=0)
                 {
                     notes.Add($"structure-profit-lock-rule-unavailable:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
@@ -341,7 +355,9 @@ public sealed class PositionManagementSkill
                 var breakevenAnchor=position.Side==PositionSide.Long
                     ?Math.Max(position.EntryPrice,openingEntry)
                     :Math.Min(position.EntryPrice,openingEntry);
-                var structureLevel=position.Side==PositionSide.Long?market.Support:market.Resistance;
+                var structureLevel=lifecycle.FreshState&&lifecycle.StructuralAnchor>0
+                    ?lifecycle.StructuralAnchor
+                    :position.Side==PositionSide.Long?market.Support:market.Resistance;
                 var structureBuffer=Math.Max(risk*.10m,market.Price*.0003m);
                 var rawStop=position.Side==PositionSide.Long
                     ?structureLevel-structureBuffer
@@ -363,43 +379,13 @@ public sealed class PositionManagementSkill
                 if(validStop)
                 {
                     protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.StructureProfitLock"),profitLockId,opening.ClientOrderId));
-                    notes.Add($"structure-profit-lock:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}");
+                    notes.Add($"structure-profit-lock:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:lifecycle={lifecycle.Stage}");
                 }
-                else notes.Add($"structure-profit-lock-waiting:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}");
+                else notes.Add($"structure-profit-lock-waiting:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:lifecycle={lifecycle.Stage}");
             }
         }
         return new(intents,protections,notes);
     }
-
-    private static bool TryGetOpposingMarketState(
-        ManagedPosition position,
-        MarketEvidence market,
-        IReadOnlyDictionary<string,MarketStateSnapshotV1>? marketStates,
-        out MarketStateSnapshotV1 state)
-    {
-        state=null!;
-        if(marketStates is null||!marketStates.TryGetValue(position.Symbol,out var candidate))return false;
-        if(!candidate.Available||candidate.ObservationCount<2)return false;
-        if(!string.Equals(candidate.Symbol,position.Symbol,StringComparison.OrdinalIgnoreCase))return false;
-        var stateObserved=candidate.ObservedAtUtc.Kind==DateTimeKind.Utc?candidate.ObservedAtUtc:candidate.ObservedAtUtc.ToUniversalTime();
-        var marketObserved=market.CollectedAt.Kind==DateTimeKind.Utc?market.CollectedAt:market.CollectedAt.ToUniversalTime();
-        if(stateObserved!=marketObserved)return false;
-
-        var opposingBias=candidate.TransitionKind==MarketStateTransitionKindV1.BiasReversal&&
-            (position.Side==PositionSide.Long?candidate.Bias==MarketStructureBias.Bearish:candidate.Bias==MarketStructureBias.Bullish);
-        var opposingConfirmedScenario=candidate.TransitionKind==MarketStateTransitionKindV1.ScenarioFlip&&
-            candidate.TriggerPresent&&candidate.ConfirmationPresent&&
-            (position.Side==PositionSide.Long?IsShortScenario(candidate.Scenario):IsLongScenario(candidate.Scenario));
-        if(!opposingBias&&!opposingConfirmedScenario)return false;
-        state=candidate;
-        return true;
-    }
-
-    private static bool IsLongScenario(MarketStructureScenario scenario)=>scenario is
-        MarketStructureScenario.TrendPullbackLong or MarketStructureScenario.RangeReversionLong or MarketStructureScenario.BreakoutRetestLong;
-
-    private static bool IsShortScenario(MarketStructureScenario scenario)=>scenario is
-        MarketStructureScenario.TrendPullbackShort or MarketStructureScenario.RangeReversionShort or MarketStructureScenario.BreakoutRetestShort;
 
     private static bool IsExactlyManaged(
         ManagedPosition position,IReadOnlyList<ManagedPosition> positions,IReadOnlyList<ExecutionPositionLegV1> managedLegs)
