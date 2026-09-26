@@ -186,9 +186,17 @@ public sealed class PositionManagementSkill
             var profitLockId=ActionId("LOCK2R",opening);
             var profitLockStateKey=PositionManagementDurableState.ProtectionAdjustmentKey(profitLockId);
             var profitLockState=await db.GetStateAsync(profitLockStateKey,ct);
+            var latestProtectionId=await db.GetStateAsync(PositionManagementDurableState.LatestProtectionAdjustmentKey(opening.ClientOrderId),ct);
+            var latestProtectionState=string.IsNullOrWhiteSpace(latestProtectionId)
+                ?null
+                :await db.GetStateAsync(PositionManagementDurableState.ProtectionAdjustmentKey(latestProtectionId),ct);
             var unresolvedProtectionState=protectionState is "PENDING" or "FAILED"
                 ?protectionState
-                :profitLockState is "PENDING" or "FAILED"?profitLockState:null;
+                :profitLockState is "PENDING" or "FAILED"
+                    ?profitLockState
+                    :!string.IsNullOrWhiteSpace(latestProtectionId)&&latestProtectionState is null
+                        ?"UNKNOWN"
+                        :latestProtectionState is "PENDING" or "FAILED"?latestProtectionState:null;
             if(unresolvedProtectionState is not null)
             {
                 var actionId=ActionId("PROTFAIL",opening);
@@ -336,7 +344,7 @@ public sealed class PositionManagementSkill
             }
 
             var partialCompleted=partialState is "COMPLETED" or "COMPLETED_PARTIAL";
-            if(favorable>=2&&partialCompleted&&protectionState=="COMPLETED"&&profitLockState is null)
+            if(favorable>=2&&partialCompleted&&protectionState=="COMPLETED")
             {
                 if(lifecycle.FreshState&&lifecycle.Stage==PositionLifecycleStageV1.NormalPullback)
                 {
@@ -348,6 +356,8 @@ public sealed class PositionManagementSkill
                     notes.Add($"structure-profit-lock-deferred-lifecycle:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:{lifecycle.Stage}");
                     continue;
                 }
+                if(!lifecycle.FreshState&&profitLockState is not null)
+                    continue;
                 if(tradingRules is null||!tradingRules.TryGetValue(position.Symbol,out var rule)||rule.TickSize<=0)
                 {
                     notes.Add($"structure-profit-lock-rule-unavailable:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
@@ -380,8 +390,18 @@ public sealed class PositionManagementSkill
                     :stop<currentProtectedStop&&stop>market.Price&&stop>opening.TakeProfit);
                 if(validStop)
                 {
-                    protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.StructureProfitLock"),profitLockId,opening.ClientOrderId));
-                    notes.Add($"structure-profit-lock:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:lifecycle={lifecycle.Stage}");
+                    var adjustmentId=lifecycle.FreshState&&currentMarketState is not null
+                        ?RatchetActionId(opening,currentMarketState,stop)
+                        :profitLockId;
+                    var adjustmentState=string.Equals(adjustmentId,profitLockId,StringComparison.Ordinal)
+                        ?profitLockState
+                        :await db.GetStateAsync(PositionManagementDurableState.ProtectionAdjustmentKey(adjustmentId),ct);
+                    if(adjustmentState is null)
+                    {
+                        protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.StructureProfitLock"),adjustmentId,opening.ClientOrderId));
+                        notes.Add($"structure-profit-ratchet:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:stop={stop}:lifecycle={lifecycle.Stage}");
+                    }
+                    else notes.Add($"structure-profit-ratchet-already-attempted:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:{adjustmentState}");
                 }
                 else notes.Add($"structure-profit-lock-waiting:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:lifecycle={lifecycle.Stage}");
             }
@@ -411,6 +431,13 @@ public sealed class PositionManagementSkill
     {
         var hash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{opening.ClientOrderId}\u001f{tag}"))).ToLowerInvariant();
         return $"WPE-PM-{tag}-{hash[..20]}";
+    }
+    private static string RatchetActionId(ExecutionIntent opening,MarketStateSnapshotV1 state,decimal stop)
+    {
+        var observed=state.ObservedAtUtc.Kind==DateTimeKind.Utc?state.ObservedAtUtc:state.ObservedAtUtc.ToUniversalTime();
+        var material=$"{opening.ClientOrderId}\u001fRATCHET\u001f{observed:O}\u001f{stop.ToString(CultureInfo.InvariantCulture)}";
+        var hash=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material))).ToLowerInvariant();
+        return $"WPE-PM-RT-{hash[..20]}";
     }
     private static string Id(string tag){var raw=$"WPE-PM-{tag}-{DateTime.UtcNow:HHmmss}-{Guid.NewGuid():N}";return raw[..Math.Min(36,raw.Length)];}
     private static string L(string key)=>LocalizationService.Current.T(key);
