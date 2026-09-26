@@ -313,6 +313,8 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     public async Task<string> ReplaceProtectionAsync(string cycle,ProtectionAdjustment adjustment,CancellationToken ct)
     {
         EnsureTestnet();ArgumentNullException.ThrowIfNull(adjustment);
+        if(!string.IsNullOrWhiteSpace(adjustment.OpeningClientOrderId)&&string.IsNullOrWhiteSpace(adjustment.AdjustmentId))
+            throw new InvalidOperationException("Opening-scoped protection adjustment requires a durable adjustment id before mutation.");
         var group=string.IsNullOrWhiteSpace(adjustment.AdjustmentId)
             ?EmergencyId($"WPE-PROT-{DateTime.UtcNow:yyMMddHHmmss}")
             :adjustment.AdjustmentId;
@@ -327,7 +329,17 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
                 throw new InvalidOperationException("Protection adjustment already has durable state and must be reconciled.");
             var capabilityIntent=new ExecutionIntent(adjustment.Symbol,adjustment.Side,0,true,0,0,group,"protection adjustment capability refresh");
             await EnsureFreshCapabilityAsync(capabilityIntent,ct);
-            if(stateKey is not null)await _db.SetStateAsync(stateKey,"PENDING",ct);
+            if(stateKey is not null)
+            {
+                if(!string.IsNullOrWhiteSpace(adjustment.OpeningClientOrderId))
+                    await _db.SetStatePairAsync(
+                        stateKey,
+                        "PENDING",
+                        PositionManagementDurableState.LatestProtectionAdjustmentKey(adjustment.OpeningClientOrderId),
+                        adjustment.AdjustmentId!,
+                        ct);
+                else await _db.SetStateAsync(stateKey,"PENDING",ct);
+            }
         }
         finally
         {
