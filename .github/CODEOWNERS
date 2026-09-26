@@ -1,0 +1,10 @@
+# Repository-wide ownership
+* @9529360-cpu
+
+# Safety-critical surfaces
+/Services/Agent/ @9529360-cpu
+/Services/Exchange/ @9529360-cpu
+/eng/ @9529360-cpu
+/.github/ @9529360-cpu
+/Docs/agent-context/ @9529360-cpu
+/Docs/architecture/ @9529360-cpu
