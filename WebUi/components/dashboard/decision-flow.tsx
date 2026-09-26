@@ -137,7 +137,7 @@ export function DecisionFlow() {
                 {' → '}
                 {roleNames.get(latestHandoff.targetRoleId.toLowerCase()) ?? latestHandoff.targetRoleId}
               </span>
-              <span className="break-words">· {latestHandoff.result}</span>
+              <span className="break-words">· {locale==='zh_CN'?'交接完成':locale==='zh_TW'?'交接完成':latestHandoff.result}</span>
               <span>· {formatDate(latestHandoff.occurredAtUtc)}</span>
             </>
           ) : (
