@@ -174,6 +174,24 @@ public sealed class AgentSettingsResilienceTests : IDisposable
         Assert.Equal(["SOLUSDT", "XRPUSDT"], store.Load().Symbols);
     }
 
+    [Theory]
+    [InlineData(150,150)]
+    [InlineData(151,150)]
+    [InlineData(0,1)]
+    public void TestnetLeverageRequestIsBoundedButCanExpressProviderClampedHighLeverage(int requested,int expected)
+    {
+        var store=new AgentSettingsStore(SettingsPath);
+        var settings=Settings(ExchangeEnvironment.Testnet);
+        settings.Risk.Leverage=requested;
+        settings.Risk.MaxInitialMarginPerTrade=.05m;
+
+        store.Save(settings);
+        var loaded=store.Load();
+
+        Assert.Equal(expected,loaded.Risk.Leverage);
+        Assert.Equal(.05m,loaded.Risk.MaxInitialMarginPerTrade);
+    }
+
     [Fact]
     public void InvalidDpapiCipher_IsNotSwallowedOrLoggedAsMissing()
     {
