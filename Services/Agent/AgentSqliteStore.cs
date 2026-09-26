@@ -919,7 +919,7 @@ public sealed partial class AgentSqliteStore
         foreach(var call in await GetRecentRuntimeSkillCallsAsync(300,ct))
         {
             var role=RoleForSkill(call.Skill);if(role is null||activities.ContainsKey(role))continue;
-            var status=call.Status.Contains("FAIL",StringComparison.OrdinalIgnoreCase)||call.Status.Contains("ERROR",StringComparison.OrdinalIgnoreCase)?"degraded":"waiting";
+            var status=PersistedRoleStatus(role,call.Skill,call.Status);
             activities[role]=new(role,status,call.OccurredAtUtc,$"Skill {SafeAuditToken(call.Skill,"unknown")} {SafeAuditToken(call.Status,"UNKNOWN")}",NormalizeAgentMode(call.Mode));
         }
         await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);
@@ -980,6 +980,14 @@ public sealed partial class AgentSqliteStore
         }
         var latest=activities.Values.Select(x=>x.OccurredAtUtc).Concat(handoffs.Select(x=>x.OccurredAtUtc)).DefaultIfEmpty(DateTime.UtcNow).Max();
         return new(activities.Values.ToArray(),handoffs,latest,!string.IsNullOrWhiteSpace(activeRunId));
+    }
+
+    private static string PersistedRoleStatus(string role,string skill,string status)
+    {
+        if(status.Contains("FAIL",StringComparison.OrdinalIgnoreCase)||status.Contains("ERROR",StringComparison.OrdinalIgnoreCase))return "degraded";
+        if(string.Equals(role,"execution",StringComparison.OrdinalIgnoreCase))
+            return skill is "ReliableOrderExecutor" or "EmergencyClose" ? "running" : "waiting";
+        return "monitoring";
     }
 
     private static string? RoleForSkill(string skill)=>skill switch

@@ -27,13 +27,33 @@ public sealed class RuntimeAgentOperationsTests:IDisposable
         await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("cycle-1","workflow.node.entered","AgentRuntimeSupervisor",new{RunId="run-1",Previous=WorkflowNode.Risk,Node=WorkflowNode.Execution}),default);
 
         var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath)).Read();
-        Assert.Equal("waiting",state.Operations.Single(x=>x.RoleId=="market").Status);
-        Assert.Equal("waiting",state.Operations.Single(x=>x.RoleId=="risk").Status);
+        Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="market").Status);
+        Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="risk").Status);
         Assert.Equal("running",state.Operations.Single(x=>x.RoleId=="execution").Status);
         Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="recovery").Status);
         Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="audit").Status);
         Assert.DoesNotContain(state.Operations,x=>x.Status=="stopped");
         var handoff=Assert.Single(state.Handoffs);Assert.Equal("risk",handoff.SourceRoleId);Assert.Equal("execution",handoff.TargetRoleId);
+    }
+
+    [Fact]
+    public async Task SuccessfulPersistedSkillsShowMonitoringExceptIdleExecution()
+    {
+        var db=new AgentSqliteStore(DatabasePath);
+        await db.RecordSkillCallAsync("EvidenceCollector","SUCCESS",8,"input","output",null,default,"LocalOnly",false);
+        await db.RecordSkillCallAsync("BrainPlanner","SUCCESS",2,"input","output",null,default,"LocalOnly",false);
+        await db.RecordSkillCallAsync("IndependentRiskManager","SUCCESS",1,"input","output",null,default,"LocalOnly",false);
+        await db.RecordSkillCallAsync("PositionManagement","SUCCESS",1,"positions=0","intents=0",null,default,"LocalOnly",false);
+        await db.RecordRuntimeEventAsync(AgentRuntimeEvent.Create("run-status","runtime.heartbeat","AgentRuntimeSupervisor",new{RunId="run-status",LeaseRenewed=true}),default);
+
+        var state=new RuntimeAgentOperationsStateStore(new AgentSqliteStore(DatabasePath),new AgentRoleRuntimeRegistry()).Read();
+
+        Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="market").Status);
+        Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="decision").Status);
+        Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="risk").Status);
+        Assert.Equal("waiting",state.Operations.Single(x=>x.RoleId=="execution").Status);
+        Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="recovery").Status);
+        Assert.Equal("monitoring",state.Operations.Single(x=>x.RoleId=="audit").Status);
     }
 
     [Fact]
