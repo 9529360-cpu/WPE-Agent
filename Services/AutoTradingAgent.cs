@@ -222,7 +222,8 @@ public static class AutoTradingAgent
 
                 if(intents.Count>0&&tradingRule is not null)
                 {
-                    var leverage=Math.Min(settings.Risk.Leverage,tradingRule.MaxLeverage);
+                    var leverage=RiskAndPositionPlanner.SelectEffectiveLeverage(decision,tradingRule,settings.Risk);
+                    await Db.SetStateAsync("risk.leverage:last",System.Text.Json.JsonSerializer.Serialize(new{decision.Instrument,Requested=settings.Risk.Leverage,Effective=leverage,ProviderMax=tradingRule.MaxLeverage,InitialMarginCap=settings.Risk.MaxInitialMarginPerTrade,ObservedAtUtc=DateTimeOffset.UtcNow}),ct);
                     if(settings.AuthorizationMode==TradingAuthorizationMode.Auto)
                     {
                         var riskIncreasingDecision=DeterministicPlanSkill.IsRiskIncreasing(decision.Action);
