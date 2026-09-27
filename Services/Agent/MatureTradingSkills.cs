@@ -24,14 +24,24 @@ public sealed class DeterministicPlanSkill
         if (stop is <= 0 or decimal.MaxValue || (longSide && stop >= entry) || (shortSide && stop <= entry)) stop = longSide ? entry-riskDistance : entry+riskDistance;
         var distance = Math.Abs(entry-stop);
         var minimumTake = longSide ? entry+distance*(decimal)risk.MinimumRiskReward : entry-distance*(decimal)risk.MinimumRiskReward;
-        decimal take;
+        decimal take;var minimumFallbackUsed=false;
         var sourceTakeIsDirectional=source.TakeProfitPrice>0
             &&(longSide?source.TakeProfitPrice>entry:source.TakeProfitPrice<entry);
         if (sourceTakeIsDirectional) take = source.TakeProfitPrice;
-        else if (longSide) take = market.Resistance > minimumTake ? market.Resistance*.998m : minimumTake;
-        else take = market.Support > 0 && market.Support < minimumTake ? market.Support*1.002m : minimumTake;
+        else if (longSide)
+        {
+            var structural=market.Resistance>minimumTake?market.Resistance*.998m:0m;
+            take=structural>=minimumTake?structural:minimumTake;
+            minimumFallbackUsed=take==minimumTake;
+        }
+        else
+        {
+            var structural=market.Support>0&&market.Support<minimumTake?market.Support*1.002m:decimal.MaxValue;
+            take=structural>0&&structural<=minimumTake?structural:minimumTake;
+            minimumFallbackUsed=take==minimumTake;
+        }
         var reward = longSide ? take-entry : entry-take;
-        source.EntryPrice=entry;source.StopLossPrice=stop;source.TakeProfitPrice=take;source.RiskRewardRatio=distance>0?(double)(reward/distance):0;
+        source.EntryPrice=entry;source.StopLossPrice=stop;source.TakeProfitPrice=take;source.RiskRewardRatio=distance>0?(minimumFallbackUsed?risk.MinimumRiskReward:(double)(reward/distance)):0;
         source.OrderType=market.Quality.BestBid>0&&market.Quality.BestAsk>0&&market.Quality.SpreadBps<=risk.MaximumSpreadBps?ExecutionOrderType.Limit:ExecutionOrderType.Market;
         return source;
     }

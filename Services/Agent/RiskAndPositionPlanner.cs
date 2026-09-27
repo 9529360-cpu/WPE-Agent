@@ -86,7 +86,9 @@ public sealed class RiskAndPositionPlanner
             var otherMargin=e.Positions.Where(x=>x.Symbol!=d.Instrument||(x.Side!=side&&x.Side!=closingSide)).Sum(x=>x.Quantity*x.MarkPrice/Math.Max(1,x.Leverage));
             if(otherMargin+targetMargin>e.Account.Equity*limits.MaxMargin)return(null,L("Risk.MarginLimit",limits.MaxMargin));
 
-            var stopDistance=Math.Abs(entry-d.StopLossPrice);
+            var roundedStop=rule.RoundPrice(d.StopLossPrice);
+            if(roundedStop<=0||(side==PositionSide.Long&&roundedStop>=entry)||(side==PositionSide.Short&&roundedStop<=entry))return(null,L(side==PositionSide.Long?"Risk.LongProtection":"Risk.ShortProtection"));
+            var stopDistance=Math.Abs(entry-roundedStop);
             var riskQuantity=e.Account.Equity*limits.MaxRiskPerTrade/Math.Max(stopDistance,.00000001m);
             var exposureQuantity=e.Account.Equity*limits.MaxSymbolExposure/Math.Max(entry,.00000001m);
             var accountExposure=e.Positions.Where(x=>x.Symbol!=d.Instrument).Sum(x=>x.Quantity*x.MarkPrice);
@@ -99,7 +101,7 @@ public sealed class RiskAndPositionPlanner
             if(qty<rule.MinQuantity||qty*entry<rule.MinNotional)return(null,L("Risk.Quantity"));
             var limit=d.OrderType==ExecutionOrderType.Limit?(side==PositionSide.Long?m.Quality.BestAsk:m.Quality.BestBid):0;
             if(limit<=0)limit=entry;
-            return(new(d.Instrument,side,qty,false,rule.RoundPrice(d.StopLossPrice),rule.RoundPrice(d.TakeProfitPrice),NewId(action.ToString()[..Math.Min(3,action.ToString().Length)]),d.Reason,action,d.OrderType,rule.RoundPrice(limit),entry),null);
+            return(new(d.Instrument,side,qty,false,roundedStop,rule.RoundPrice(d.TakeProfitPrice),NewId(action.ToString()[..Math.Min(3,action.ToString().Length)]),d.Reason,action,d.OrderType,rule.RoundPrice(limit),entry),null);
         }
 
         if(d.Action==DecisionAction.Lock)

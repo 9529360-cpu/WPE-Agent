@@ -208,6 +208,75 @@ public sealed class RiskGateTests
     }
 
     [Fact]
+    public void DeterministicMinimumRiskRewardFallbackRemainsExactlyAtConfiguredFloor()
+    {
+        var market=new MarketEvidence(
+            "SOONUSDT",.3069m,.2865317857142857m,.3069m,50,0,0,0,
+            new DerivativesSnapshot(0,0,0,0,0,0,0),DateTime.UtcNow)
+        {
+            Quality=new MarketQualityEvidence{AtrPercent=.01}
+        };
+        var source=new DecisionPlan
+        {
+            Action=DecisionAction.OpenLong,
+            Instrument="SOONUSDT",
+            TargetTier=1,
+            EntryPrice=.3069m,
+            StopLossPrice=.2865317857142857m,
+            TakeProfitPrice=0m
+        };
+        var limits=new RiskLimits{MinimumRiskReward=1.8};
+
+        var completed=new DeterministicPlanSkill().Complete(source,market,limits);
+
+        Assert.Equal(limits.MinimumRiskReward,completed.RiskRewardRatio);
+        Assert.True(completed.RiskRewardRatio>=limits.MinimumRiskReward);
+    }
+
+    [Fact]
+    public void PlannerSizesAgainstFinalRoundedStopSoRiskCannotIncreaseAfterTickAlignment()
+    {
+        var evidence=new EvidencePack
+        {
+            Completeness=100,
+            Account=new AccountSnapshot(1_000m,1_000m,1_000m,DateTime.UtcNow),
+            Markets=new Dictionary<string,MarketEvidence>
+            {
+                ["BTCUSDT"]=new("BTCUSDT",100m,95m,110m,50,0,0,0,new(0,0,0,0,0,0,0),DateTime.UtcNow)
+            }
+        };
+        var decision=new DecisionPlan
+        {
+            Action=DecisionAction.OpenLong,
+            Instrument="BTCUSDT",
+            TargetTier=1,
+            EntryPrice=100m,
+            StopLossPrice=98.04m,
+            TakeProfitPrice=103.528m,
+            RiskRewardRatio=1.8
+        };
+        var limits=new RiskLimits
+        {
+            Leverage=125,
+            MaxInitialMarginPerTrade=.10m,
+            MarginTiers=[.50m],
+            MaxMargin=.50m,
+            MaxRiskPerTrade=.01m,
+            MaxSymbolExposure=10m,
+            MaxAccountExposure=10m,
+            MinimumRiskReward=1.8
+        };
+
+        var result=new RiskAndPositionPlanner().Plan(
+            decision,evidence,new TradingRule("BTCUSDT",.1m,.1m,.1m,5m,125),limits);
+
+        var intent=Assert.Single(result.Intents);
+        var actualRisk=intent.Quantity*Math.Abs(intent.ExpectedPrice-intent.StopLoss);
+        Assert.Equal(98.0m,intent.StopLoss);
+        Assert.True(actualRisk<=evidence.Account.Equity*limits.MaxRiskPerTrade);
+    }
+
+    [Fact]
     public void EffectiveLeverageFallsWhenStructuralStopNeedsMoreLiquidationRoom()
     {
         var decision=new DecisionPlan
