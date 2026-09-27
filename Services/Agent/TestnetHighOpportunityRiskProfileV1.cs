@@ -40,6 +40,7 @@ public static class TestnetHighOpportunityRiskProfileV1
             MaximumSpreadBps=Math.Min(configured.MaximumSpreadBps,MaximumSpreadBps),
             MaximumSlippageBps=configured.MaximumSlippageBps,
             MinimumRiskReward=Math.Max(configured.MinimumRiskReward,MinimumRiskReward),
+            LiquidationBufferFraction=Math.Max(configured.LiquidationBufferFraction,.05m),
             ApiFailureThreshold=configured.ApiFailureThreshold,
             MaxPortfolioVaR99=configured.MaxPortfolioVaR99,
             MaxPortfolioCVaR99=configured.MaxPortfolioCVaR99,

@@ -10,10 +10,14 @@ public enum PositionSide { Long, Short }
 public enum DecisionAction { OpenLong, OpenShort, AddLong, AddShort, ReduceLong, ReduceShort, CloseLong, CloseShort, Lock, Unlock, ReverseToLong, ReverseToShort, Hold }
 public enum ExecutionOrderType { Market, Limit }
 
-public sealed record TradingRule(string Symbol, decimal StepSize, decimal TickSize, decimal MinQuantity, decimal MinNotional, int MaxLeverage)
+public sealed record LeverageBracket(int Bracket,decimal NotionalFloor,decimal NotionalCap,int InitialLeverage,decimal MaintenanceMarginRate,decimal MaintenanceAmount);
+public sealed record TradingRule(string Symbol, decimal StepSize, decimal TickSize, decimal MinQuantity, decimal MinNotional, int MaxLeverage,IReadOnlyList<LeverageBracket>? LeverageBrackets=null,decimal MakerFeeRate=0m,decimal TakerFeeRate=0m,bool FeeRateVerified=false)
 {
     public decimal RoundQuantity(decimal value) => StepSize <= 0 ? value : Math.Floor(value / StepSize) * StepSize;
     public decimal RoundPrice(decimal value) => TickSize <= 0 ? Math.Round(value, 8) : Math.Round(value / TickSize, MidpointRounding.ToZero) * TickSize;
+    public LeverageBracket? BracketForNotional(decimal notional)=>LeverageBrackets?.OrderBy(x=>x.NotionalFloor).FirstOrDefault(x=>notional>x.NotionalFloor&&notional<=x.NotionalCap)
+        ??LeverageBrackets?.OrderBy(x=>x.NotionalFloor).LastOrDefault(x=>notional>=x.NotionalFloor);
+    public bool HasVerifiedLeverageBrackets=>LeverageBrackets is{Count:>0};
 }
 public sealed record AccountSnapshot(decimal WalletBalance, decimal AvailableBalance, decimal Equity, DateTime Timestamp);
 public sealed record ManagedPosition(string Symbol, PositionSide Side, decimal Quantity, decimal EntryPrice, decimal MarkPrice, decimal UnrealizedPnl, decimal Leverage, bool Isolated, decimal LiquidationPrice);
@@ -288,6 +292,7 @@ public sealed class RiskLimits
     public double MaximumSpreadBps { get; set; } = 8;
     public double MaximumSlippageBps { get; set; } = 12;
     public double MinimumRiskReward { get; set; } = 1.8;
+    public decimal LiquidationBufferFraction { get; set; } = .05m;
     public int ApiFailureThreshold { get; set; } = 3;
     public double MaxPortfolioVaR99 { get; set; } = .03;
     public double MaxPortfolioCVaR99 { get; set; } = .045;
@@ -346,7 +351,7 @@ public static class ExecutionReasonCode
     }
 }
 
-public sealed record ExecutionIntent(string Symbol, PositionSide Side, decimal Quantity, bool ReduceOnly, decimal StopLoss, decimal TakeProfit, string ClientOrderId, string Reason, DecisionAction Action = DecisionAction.Hold, ExecutionOrderType OrderType = ExecutionOrderType.Market, decimal LimitPrice = 0, decimal ExpectedPrice = 0, [property:JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] string? ReasonCode = null);
+public sealed record ExecutionIntent(string Symbol, PositionSide Side, decimal Quantity, bool ReduceOnly, decimal StopLoss, decimal TakeProfit, string ClientOrderId, string Reason, DecisionAction Action = DecisionAction.Hold, ExecutionOrderType OrderType = ExecutionOrderType.Market, decimal LimitPrice = 0, decimal ExpectedPrice = 0, [property:JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] string? ReasonCode = null,[property:JsonIgnore] int EffectiveLeverage=0,[property:JsonIgnore] decimal EstimatedLiquidationPrice=0,[property:JsonIgnore] decimal EstimatedRoundTripFee=0,[property:JsonIgnore] decimal EstimatedExecutionCost=0);
 public sealed record PersistedIntent(string CycleId, ExecutionIntent Intent, string Status, string? ExchangeOrderId);
 public sealed record PersistedBacktestRun(string Id,string StrategyId,string StrategyVersion,string Symbol,string Status,DateTime CompletedAtUtc,int CoverageDays,int Trades,double OutOfSampleReturn,double MaxDrawdown,double Sharpe);
 public sealed record RecoveryResult(bool SafeToIncreaseRisk, IReadOnlyList<string> Messages);

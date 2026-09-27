@@ -17,7 +17,8 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
     private readonly BinanceApiClient _api;
     private readonly ExchangeConnectionProfile _profile;
     private readonly string _streamApiKey;
-    private readonly Dictionary<string,TradingRule> _rules = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string,(TradingRule Rule,DateTimeOffset CachedAt)> _rules = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan TradingRuleCacheLifetime=TimeSpan.FromMinutes(15);
     private readonly ConcurrentDictionary<string,byte> _algoOrderIds = new();
     public ExchangeEnvironment Environment { get; }
     public string ConnectionId=>_profile.Id;
@@ -94,13 +95,66 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
     }
     public async Task<TradingRule> GetRulesAsync(string symbol,CancellationToken ct)
     {
-        var canonical=C(symbol);var native=N(canonical);
-        if (_rules.TryGetValue(canonical,out var cached)) return cached;
+        var canonical=C(symbol);var native=N(canonical);var now=DateTimeOffset.UtcNow;
+        if(_rules.TryGetValue(canonical,out var cached)&&now-cached.CachedAt<=TradingRuleCacheLifetime)return cached.Rule;
+        static decimal Number(JsonElement e,string name)
+        {
+            if(!e.TryGetProperty(name,out var value))return 0;
+            if(value.ValueKind==JsonValueKind.Number&&value.TryGetDecimal(out var number))return number;
+            return value.ValueKind==JsonValueKind.String&&decimal.TryParse(value.GetString(),NumberStyles.Any,CultureInfo.InvariantCulture,out number)?number:0;
+        }
+
         using var d=JsonDocument.Parse(await _api.GetPublicRawAsync("/fapi/v1/exchangeInfo",null,ct));
         var s=d.RootElement.GetProperty("symbols").EnumerateArray().First(x=>x.GetProperty("symbol").GetString()==native);
         decimal step=0,tick=0,minQty=0,minNotional=5;
-        foreach(var f in s.GetProperty("filters").EnumerateArray()) { var t=f.GetProperty("filterType").GetString(); if(t=="LOT_SIZE"){step=D(f,"stepSize");minQty=D(f,"minQty");} else if(t=="PRICE_FILTER")tick=D(f,"tickSize"); else if(t=="MIN_NOTIONAL")minNotional=D(f,"notional"); }
-        return _rules[canonical]=new(canonical,step,tick,minQty,minNotional,125);
+        foreach(var f in s.GetProperty("filters").EnumerateArray())
+        {
+            var t=f.GetProperty("filterType").GetString();
+            if(t=="LOT_SIZE"){step=D(f,"stepSize");minQty=D(f,"minQty");}
+            else if(t=="PRICE_FILTER")tick=D(f,"tickSize");
+            else if(t=="MIN_NOTIONAL")minNotional=D(f,"notional");
+        }
+
+        var brackets=new List<LeverageBracket>();
+        try
+        {
+            using var leverageDocument=JsonDocument.Parse(await _api.GetSignedRawAsync("/fapi/v1/leverageBracket",new Dictionary<string,string?>{{"symbol",native}},ct));
+            JsonElement item=default;
+            if(leverageDocument.RootElement.ValueKind==JsonValueKind.Array)
+                item=leverageDocument.RootElement.EnumerateArray().FirstOrDefault(x=>string.Equals(x.GetProperty("symbol").GetString(),native,StringComparison.OrdinalIgnoreCase));
+            else if(leverageDocument.RootElement.ValueKind==JsonValueKind.Object)item=leverageDocument.RootElement;
+            if(item.ValueKind==JsonValueKind.Object&&item.TryGetProperty("brackets",out var values)&&values.ValueKind==JsonValueKind.Array)
+            {
+                foreach(var value in values.EnumerateArray())
+                {
+                    brackets.Add(new(
+                        value.TryGetProperty("bracket",out var bracketValue)&&bracketValue.TryGetInt32(out var bracket)?bracket:brackets.Count+1,
+                        Number(value,"notionalFloor"),
+                        Number(value,"notionalCap"),
+                        value.TryGetProperty("initialLeverage",out var leverageValue)&&leverageValue.TryGetInt32(out var initialLeverage)?initialLeverage:1,
+                        Number(value,"maintMarginRatio"),
+                        Number(value,"cum")));
+                }
+            }
+        }
+        catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
+        catch{}
+
+        decimal makerFee=0,takerFee=0;var feeRateVerified=false;
+        try
+        {
+            using var feeDocument=JsonDocument.Parse(await _api.GetSignedRawAsync("/fapi/v1/commissionRate",new Dictionary<string,string?>{{"symbol",native}},ct));
+            makerFee=Number(feeDocument.RootElement,"makerCommissionRate");
+            takerFee=Number(feeDocument.RootElement,"takerCommissionRate");
+            feeRateVerified=true;
+        }
+        catch(OperationCanceledException) when(ct.IsCancellationRequested){throw;}
+        catch{}
+
+        var maxLeverage=brackets.Count>0?brackets.Max(x=>x.InitialLeverage):1;
+        var rule=new TradingRule(canonical,step,tick,minQty,minNotional,maxLeverage,brackets.OrderBy(x=>x.NotionalFloor).ToArray(),makerFee,takerFee,feeRateVerified);
+        _rules[canonical]=(rule,now);
+        return rule;
     }
     public async Task<ProviderMarketCatalog> DiscoverMarketCatalogAsync(CancellationToken ct)
     {
