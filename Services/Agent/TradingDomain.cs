@@ -281,6 +281,7 @@ public sealed class RiskLimits
     public decimal MaxRiskPerTrade { get; set; } = .01m;
     public decimal MaxSymbolExposure { get; set; } = .25m;
     public decimal MaxAccountExposure { get; set; } = .50m;
+    public int MaxConcurrentPositions { get; set; } = 5;
     public decimal MaxDailyLoss { get; set; } = .05m;
     public double MaxAtrPercent { get; set; } = .045;
     public double MinimumLiquidityScore { get; set; } = .55;

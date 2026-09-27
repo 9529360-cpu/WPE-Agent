@@ -9,6 +9,41 @@ public static class DirectMarketStructureDecisionSkill
     public static DecisionPlan Decide(EvidencePack evidence, bool circuitBreakerActive)=>
         Decide(evidence,circuitBreakerActive,MarketStructureAnalysisTool.Shared);
 
+    public static IReadOnlyList<DecisionPlan> DecideCandidates(EvidencePack evidence,bool circuitBreakerActive,int limit=5)=>
+        DecideCandidates(evidence,circuitBreakerActive,limit,MarketStructureAnalysisTool.Shared);
+
+    internal static IReadOnlyList<DecisionPlan> DecideCandidates(EvidencePack evidence,bool circuitBreakerActive,int limit,IMarketStructureAnalysisTool analysisTool)
+    {
+        ArgumentNullException.ThrowIfNull(evidence);
+        ArgumentNullException.ThrowIfNull(analysisTool);
+        if(limit<1||limit>5)throw new ArgumentOutOfRangeException(nameof(limit));
+        var result=new List<DecisionPlan>(limit);
+        var reserved=(evidence.Positions??Array.Empty<ManagedPosition>()).ToList();
+        for(var i=0;i<limit;i++)
+        {
+            var view=new EvidencePack
+            {
+                CollectedAt=evidence.CollectedAt,
+                Account=evidence.Account,
+                Positions=reserved.ToArray(),
+                Markets=evidence.Markets,
+                News=evidence.News,
+                Fundamentals=evidence.Fundamentals,
+                SourceRuns=evidence.SourceRuns,
+                MarketStates=evidence.MarketStates,
+                MissingSources=evidence.MissingSources,
+                Completeness=evidence.Completeness
+            };
+            var next=Decide(view,circuitBreakerActive,analysisTool);
+            if(!DeterministicPlanSkill.IsRiskIncreasing(next.Action)||string.IsNullOrWhiteSpace(next.Instrument))break;
+            result.Add(next);
+            var side=next.Action is DecisionAction.OpenShort or DecisionAction.AddShort?PositionSide.Short:PositionSide.Long;
+            var px=next.EntryPrice>0?next.EntryPrice:evidence.Markets.GetValueOrDefault(next.Instrument)?.Price??1m;
+            reserved.Add(new ManagedPosition(next.Instrument,side,1m,px,px,0,1,true,0));
+        }
+        return result;
+    }
+
     internal static DecisionPlan Decide(EvidencePack evidence,bool circuitBreakerActive,IMarketStructureAnalysisTool analysisTool)
     {
         ArgumentNullException.ThrowIfNull(evidence);
@@ -23,6 +58,7 @@ public static class DirectMarketStructureDecisionSkill
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var holdReason="No confirmed direct candle-structure setup is actionable.";
+        var candidates=new List<(DecisionPlan Plan,int ConfirmationRank,int HigherTimeframeRank,int Quality,double Liquidity,double RelativeVolume,double DirectionalFlow,double Spread,double ChaseAtr)>();
         foreach(var market in markets)
         {
             if(openSymbols.Contains(market.Symbol))continue;
@@ -92,7 +128,7 @@ public static class DirectMarketStructureDecisionSkill
             if(!structuralTargetValid)
                 take=0;
 
-            return new DecisionPlan
+            var plan=new DecisionPlan
             {
                 Action=longSide?DecisionAction.OpenLong:DecisionAction.OpenShort,
                 Instrument=market.Symbol,
@@ -116,6 +152,35 @@ public static class DirectMarketStructureDecisionSkill
                 DecisionContextKind=DecisionContextKind,
                 DecisionContextId=qualification.Source=="1m-microstructure-closed"?MicroContextId(market,scenario,setupKnownAt,qualification):arm is null?ContextId(market,structure):ArmedContextId(market,scenario,structure)
             };
+            var confirmationRank=qualification.Source=="1m-microstructure-closed"?4
+                :structure.FifteenMinute.Event is MarketStructureEvent.BullishRetest or MarketStructureEvent.BearishRetest or MarketStructureEvent.BullishConfirmation or MarketStructureEvent.BearishConfirmation?3
+                :structure.FifteenMinute.Event is MarketStructureEvent.BullishDisplacement or MarketStructureEvent.BearishDisplacement?2:1;
+            var alignedState=longSide?PriceStructureState.Bullish:PriceStructureState.Bearish;
+            var higherTimeframeRank=(structure.OneHour.State==alignedState?1:0)+(structure.FourHour.State==alignedState?1:0);
+            var directionalFlow=market.Quality.OrderFlowAvailable
+                ?longSide?market.Quality.OrderFlowImbalance:-market.Quality.OrderFlowImbalance
+                :0d;
+            var chaseAtr=structure.FifteenMinute.Atr>0
+                ?Math.Abs((double)(market.Price-qualification.ConfirmationClose)/(double)structure.FifteenMinute.Atr)
+                :double.MaxValue;
+            candidates.Add((plan,confirmationRank,higherTimeframeRank,market.Quality.QualityScore,market.Quality.LiquidityScore,market.Quality.RelativeVolume,directionalFlow,market.Quality.SpreadBps,chaseAtr));
+        }
+
+        if(candidates.Count>0)
+        {
+            var winner=candidates
+                .OrderByDescending(x=>x.ConfirmationRank)
+                .ThenByDescending(x=>x.HigherTimeframeRank)
+                .ThenByDescending(x=>x.Quality)
+                .ThenByDescending(x=>x.Liquidity)
+                .ThenByDescending(x=>x.RelativeVolume)
+                .ThenByDescending(x=>x.DirectionalFlow)
+                .ThenBy(x=>x.Spread)
+                .ThenBy(x=>x.ChaseAtr)
+                .ThenBy(x=>x.Plan.Instrument,StringComparer.Ordinal)
+                .First();
+            winner.Plan.EvidenceReferences.Add("candidate_selection=ranked-v1");
+            return winner.Plan;
         }
 
         return Hold(markets.FirstOrDefault(),holdReason,analysisTool);
@@ -204,6 +269,12 @@ public static class DirectMarketStructureDecisionSkill
     {
         var frameTrigger=armed?HasTriggerForScenario(scenario,structure.FifteenMinute):structure.TriggerPresent;
         var frameConfirmation=armed?HasConfirmationForScenario(scenario,structure.FifteenMinute):structure.ConfirmationPresent;
+        var rawBreak=(scenario is MarketStructureScenario.BreakoutRetestLong or MarketStructureScenario.BreakoutRetestShort)
+            &&(structure.FifteenMinute.Event is MarketStructureEvent.BullishBreak or MarketStructureEvent.BearishBreak);
+        // A just-closed breakout candle establishes the setup but is not itself an entry.
+        // Require a real retest or fresh 1m microstructure confirmation after the break so
+        // the agent does not buy the top / sell the bottom of the expansion candle.
+        if(rawBreak)frameConfirmation=false;
         if(frameTrigger&&frameConfirmation)
         {
             var close=structure.ConfirmationClose>0?structure.ConfirmationClose:structure.FifteenMinute.LastClose;
@@ -260,6 +331,19 @@ public static class DirectMarketStructureDecisionSkill
             var bearishReject=trigger.Close<trigger.Open&&upperWick>=Math.Max(microBody*1.15m,microRange*.35m);
             var triggerPresent=longSide?(bullishSweep||bullishReject):(bearishSweep||bearishReject);
             if(!triggerPresent)continue;
+
+            if(scenario==MarketStructureScenario.BreakoutRetestLong)
+            {
+                var breakoutLevel=structure.FifteenMinute.Supply;
+                var retestTolerance=Math.Max(structure.FifteenMinute.Atr*.35m,trigger.Close*.0008m);
+                if(breakoutLevel<=0||trigger.Low>breakoutLevel+retestTolerance||trigger.Close<breakoutLevel-retestTolerance)continue;
+            }
+            else if(scenario==MarketStructureScenario.BreakoutRetestShort)
+            {
+                var breakoutLevel=structure.FifteenMinute.Demand;
+                var retestTolerance=Math.Max(structure.FifteenMinute.Atr*.35m,trigger.Close*.0008m);
+                if(breakoutLevel<=0||trigger.High<breakoutLevel-retestTolerance||trigger.Close>breakoutLevel+retestTolerance)continue;
+            }
 
             var confirmRange=Math.Max(.00000001m,confirmation.High-confirmation.Low);
             var confirmBodyRatio=Math.Abs(confirmation.Close-confirmation.Open)/confirmRange;
