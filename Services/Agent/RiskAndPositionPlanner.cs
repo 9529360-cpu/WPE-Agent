@@ -62,7 +62,8 @@ public sealed class RiskAndPositionPlanner
             if(side==PositionSide.Long&&(d.StopLossPrice>=entry||d.TakeProfitPrice<=entry))return L("Risk.LongProtection");
             if(side==PositionSide.Short&&(d.StopLossPrice<=entry||d.TakeProfitPrice>=entry))return L("Risk.ShortProtection");
             var rr=Math.Abs(d.TakeProfitPrice-entry)/Math.Max(.00000001m,Math.Abs(entry-d.StopLossPrice));
-            if((double)rr<limits.MinimumRiskReward)return L("Risk.RiskReward",rr,limits.MinimumRiskReward);
+            const decimal rrComparisonTolerance=.000000001m;
+            if(rr+rrComparisonTolerance<(decimal)limits.MinimumRiskReward)return L("Risk.RiskReward",rr,limits.MinimumRiskReward);
             var estimatedLiquidation=side==PositionSide.Long?entry*(1-1m/effectiveLeverage):entry*(1+1m/effectiveLeverage);
             var boundary=side==PositionSide.Long?estimatedLiquidation+(entry-estimatedLiquidation)*.30m:estimatedLiquidation-(estimatedLiquidation-entry)*.30m;
             if(side==PositionSide.Long&&d.StopLossPrice<boundary)return L("Risk.LongBuffer");

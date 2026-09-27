@@ -234,6 +234,47 @@ public sealed class RiskGateTests
     }
 
     [Fact]
+    public void PlannerDoesNotRejectDeterministicMinimumRrFallbackForSubNanoscopicDecimalError()
+    {
+        var evidence=new EvidencePack
+        {
+            Completeness=100,
+            Account=new AccountSnapshot(1_000m,1_000m,1_000m,DateTime.UtcNow),
+            Markets=new Dictionary<string,MarketEvidence>
+            {
+                ["SOONUSDT"]=new("SOONUSDT",.3057m,.2865789285714286m,.35m,50,0,0,0,new(0,0,0,0,0,0,0),DateTime.UtcNow)
+            }
+        };
+        var decision=new DecisionPlan
+        {
+            Action=DecisionAction.OpenLong,
+            Instrument="SOONUSDT",
+            TargetTier=1,
+            EntryPrice=.3057m,
+            StopLossPrice=.2865789285714286m,
+            TakeProfitPrice=.3401179285714286m,
+            RiskRewardRatio=1.8
+        };
+        var limits=new RiskLimits
+        {
+            Leverage=20,
+            MaxInitialMarginPerTrade=.10m,
+            MarginTiers=[.50m],
+            MaxMargin=.50m,
+            MaxRiskPerTrade=1m,
+            MaxSymbolExposure=10m,
+            MaxAccountExposure=10m,
+            MinimumRiskReward=1.8
+        };
+
+        var result=new RiskAndPositionPlanner().Plan(
+            decision,evidence,new TradingRule("SOONUSDT",1m,.0001m,1m,5m,150),limits);
+
+        Assert.Single(result.Intents);
+        Assert.DoesNotContain("风险收益比",result.Result,StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlannerSizesAgainstFinalRoundedStopSoRiskCannotIncreaseAfterTickAlignment()
     {
         var evidence=new EvidencePack
