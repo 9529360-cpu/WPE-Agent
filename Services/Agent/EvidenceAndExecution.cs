@@ -631,17 +631,19 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
                     ?quality.BestBid
                     :market.Price;
             var slippageBps=intent.ExpectedPrice>0?Math.Abs((double)((executablePrice-intent.ExpectedPrice)/intent.ExpectedPrice))*10000:0d;
+            var spreadAssessment=ExecutionCostPolicy.AssessSpread(_limits,quality,intent.ExpectedPrice,intent.StopLoss,slippageBps,true);
             var failures=new List<string>(5);
             if(quality.QualityScore<65)failures.Add("market-quality");
             if(quality.LiquidityScore<_limits.MinimumLiquidityScore)failures.Add("liquidity");
-            if(quality.SpreadBps>_limits.MaximumSpreadBps)failures.Add("spread");
+            if(!spreadAssessment.Allowed)failures.Add("spread");
             if(quality.AtrPercent>_limits.MaxAtrPercent)failures.Add("atr");
             if(intent.ExpectedPrice>0&&slippageBps>_limits.MaximumSlippageBps)failures.Add("slippage");
             var allowed=failures.Count==0;
             var diagnostic=System.Text.Json.JsonSerializer.Serialize(new
             {
-                schema="wpe.execution-preflight/1.1",symbol=intent.Symbol,side=intent.Side.ToString(),allowed,failures,
+                schema="wpe.execution-preflight/1.2",symbol=intent.Symbol,side=intent.Side.ToString(),allowed,failures,
                 observed=new{qualityScore=quality.QualityScore,liquidityScore=quality.LiquidityScore,spreadBps=quality.SpreadBps,atrPercent=quality.AtrPercent,expectedPrice=intent.ExpectedPrice,marketPrice=market.Price,bestBid=quality.BestBid,bestAsk=quality.BestAsk,executablePrice,slippageBps},
+                spreadPolicy=new{spreadAssessment.Mode,spreadAssessment.Adaptive,spreadAssessment.BaseLimitBps,spreadAssessment.EffectiveLimitBps,spreadAssessment.HardLimitBps,spreadAssessment.RiskDistanceBps},
                 limits=new{minimumQualityScore=65,minimumLiquidityScore=_limits.MinimumLiquidityScore,maximumSpreadBps=_limits.MaximumSpreadBps,maxAtrPercent=_limits.MaxAtrPercent,maximumSlippageBps=_limits.MaximumSlippageBps},
                 observedAtUtc=DateTime.UtcNow
             });

@@ -41,7 +41,19 @@ public sealed class DeterministicPlanSkill
             minimumFallbackUsed=take==minimumTake;
         }
         var reward = longSide ? take-entry : entry-take;
-        source.EntryPrice=entry;source.StopLossPrice=stop;source.TakeProfitPrice=take;source.RiskRewardRatio=distance>0?(minimumFallbackUsed?risk.MinimumRiskReward:(double)(reward/distance)):0;
+        var computedRr=distance>0?(double)(reward/distance):0;
+        var structuralTarget=sourceTakeIsDirectional&&source.EvidenceReferences.Any(x=>string.Equals(x,"target_geometry=structural-opposite-boundary",StringComparison.Ordinal));
+        if(structuralTarget&&computedRr+1e-9<risk.MinimumRiskReward)
+        {
+            source.Action=DecisionAction.Hold;
+            source.TargetTier=0;
+            source.EntryPrice=entry;source.StopLossPrice=stop;source.TakeProfitPrice=take;source.RiskRewardRatio=computedRr;
+            source.MissingConditions.Add($"structural reward space {computedRr:F2}R is below required {risk.MinimumRiskReward:F2}R; wait for a better entry");
+            source.Reason=$"{source.Instrument}: direction is confirmed, but the current entry leaves only {computedRr:F2}R to the structural target; wait for a better price.";
+            source.ConflictSummary=string.IsNullOrWhiteSpace(source.ConflictSummary)?"reward-space-insufficient":source.ConflictSummary+"; reward-space-insufficient";
+            return source;
+        }
+        source.EntryPrice=entry;source.StopLossPrice=stop;source.TakeProfitPrice=take;source.RiskRewardRatio=distance>0?(minimumFallbackUsed?risk.MinimumRiskReward:computedRr):0;
         source.OrderType=market.Quality.BestBid>0&&market.Quality.BestAsk>0&&market.Quality.SpreadBps<=risk.MaximumSpreadBps?ExecutionOrderType.Limit:ExecutionOrderType.Market;
         return source;
     }
@@ -113,9 +125,10 @@ public sealed class IndependentRiskManagerSkill
         if(market is not null&&DirectMarketStructureDecisionSkill.IsDirect(decision))
             Check(DirectMarketStructureDecisionSkill.ContextMatches(decision,market),"direct_context_fresh","risk.direct-context-stale");
         Check(market is not null&&market.Quality.LiquidityScore>=limits.MinimumLiquidityScore,"liquidity",L("RiskReview.Liquidity",market?.Quality.LiquidityScore??0));
-        Check(market is not null&&market.Quality.SpreadBps<=limits.MaximumSpreadBps,"spread",L("RiskReview.Spread",market?.Quality.SpreadBps??999));
+        var spreadAssessment=market is null?null:ExecutionCostPolicy.AssessSpread(limits,market.Quality,decision.EntryPrice>0?decision.EntryPrice:market.Price,decision.StopLossPrice);
+        Check(spreadAssessment is{Allowed:true},"spread",L("RiskReview.Spread",market?.Quality.SpreadBps??999));
         Check(market is not null&&market.Quality.AtrPercent<=limits.MaxAtrPercent,"volatility",L("RiskReview.Volatility",market?.Quality.AtrPercent??1));
-        Check(decision.RiskRewardRatio>=limits.MinimumRiskReward,"risk_reward",L("RiskReview.RiskReward",decision.RiskRewardRatio,limits.MinimumRiskReward));
+        Check(decision.RiskRewardRatio+1e-9>=limits.MinimumRiskReward,"risk_reward",L("RiskReview.RiskReward",decision.RiskRewardRatio,limits.MinimumRiskReward));
         var dailyLossRatio=equity>0&&history.DailyRealizedPnl<0?-history.DailyRealizedPnl/equity:0m;
         Check(limits.MaxDailyLoss<=0||dailyLossRatio<limits.MaxDailyLoss,"daily_loss_limit",$"risk.daily-loss-limit:{dailyLossRatio:P2}");
         Check(history.ApiFailures<limits.ApiFailureThreshold,"api_health",L("RiskReview.ApiFailures",history.ApiFailures));
