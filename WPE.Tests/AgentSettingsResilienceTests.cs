@@ -193,6 +193,25 @@ public sealed class AgentSettingsResilienceTests : IDisposable
     }
 
     [Fact]
+    public void TestnetHighOpportunityModePersistsOnlyWhenExplicitlyEnabled()
+    {
+        var store=new AgentSettingsStore(SettingsPath);
+        var settings=Settings(ExchangeEnvironment.Testnet);
+        Assert.False(settings.Risk.TestnetHighOpportunityMode);
+
+        settings.Risk.TestnetHighOpportunityMode=true;
+        settings.Risk.Leverage=150;
+        settings.Risk.MaxInitialMarginPerTrade=.05m;
+        store.Save(settings);
+
+        var loaded=store.Load();
+
+        Assert.True(loaded.Risk.TestnetHighOpportunityMode);
+        Assert.Equal(150,loaded.Risk.Leverage);
+        Assert.Equal(.05m,loaded.Risk.MaxInitialMarginPerTrade);
+    }
+
+    [Fact]
     public void InvalidDpapiCipher_IsNotSwallowedOrLoggedAsMissing()
     {
         var store = new AgentSettingsStore(SettingsPath);
