@@ -254,7 +254,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     {
         EnsureMutationAllowed(intent);
         EnsureCapability(intent);
-        if(!intent.ReduceOnly)try{await PreflightAsync(intent,ct);}catch(Exception ex){await _db.SaveIntentAsync(cycle,intent,"PREFLIGHT_BLOCKED",null,ct);var blocked=ConfirmedNotificationTruth.System(ConfirmedNotificationTruth.EventKey(cycle,intent.ClientOrderId,NotificationEventKind.RiskBlocked),NotificationEventKind.RiskBlocked,ProviderName(),_ex.Environment.ToString(),DateTime.UtcNow,UiDiagnostic.FromText(ex.ToString(),"Risk blocked").Code,intent.Symbol,intent.Side.ToString());await ObserveSafelyAsync(blocked);throw;}
+        if(!intent.ReduceOnly)try{await PreflightAsync(intent,ct);}catch(Exception ex){var diagnostic=ex.Data["preflight.diagnostic"] as string;await _db.SaveIntentAsync(cycle,intent,"PREFLIGHT_BLOCKED",null,diagnostic,ct);var blocked=ConfirmedNotificationTruth.System(ConfirmedNotificationTruth.EventKey(cycle,intent.ClientOrderId,NotificationEventKind.RiskBlocked),NotificationEventKind.RiskBlocked,ProviderName(),_ex.Environment.ToString(),DateTime.UtcNow,UiDiagnostic.FromText(ex.ToString(),"Risk blocked").Code,intent.Symbol,intent.Side.ToString());await ObserveSafelyAsync(blocked);throw;}
         await _db.SaveIntentAsync(cycle,intent,"INTENT",null,ct);
         if(!intent.ReduceOnly)
         {
@@ -599,17 +599,32 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     private async Task PreflightAsync(ExecutionIntent intent,CancellationToken ct)
     {
         var market=await _ex.GetMarketAsync(intent.Symbol,ct);var quality=market.Quality;
-        if(quality.QualityScore<65||quality.LiquidityScore<_limits.MinimumLiquidityScore||quality.SpreadBps>_limits.MaximumSpreadBps||quality.AtrPercent>_limits.MaxAtrPercent)throw new InvalidOperationException(L("Execution.PreflightBlocked",quality.QualityScore,quality.LiquidityScore,quality.SpreadBps,quality.AtrPercent));
-        if(intent.ExpectedPrice>0)
+        var executablePrice=intent.Side==PositionSide.Long&&quality.BestAsk>0
+            ?quality.BestAsk
+            :intent.Side==PositionSide.Short&&quality.BestBid>0
+                ?quality.BestBid
+                :market.Price;
+        var slippageBps=intent.ExpectedPrice>0?Math.Abs((double)((executablePrice-intent.ExpectedPrice)/intent.ExpectedPrice))*10000:0d;
+        var failures=new List<string>(5);
+        if(quality.QualityScore<65)failures.Add("market-quality");
+        if(quality.LiquidityScore<_limits.MinimumLiquidityScore)failures.Add("liquidity");
+        if(quality.SpreadBps>_limits.MaximumSpreadBps)failures.Add("spread");
+        if(quality.AtrPercent>_limits.MaxAtrPercent)failures.Add("atr");
+        if(intent.ExpectedPrice>0&&slippageBps>_limits.MaximumSlippageBps)failures.Add("slippage");
+        if(failures.Count==0)return;
+        var diagnostic=System.Text.Json.JsonSerializer.Serialize(new
         {
-            var executablePrice=intent.Side==PositionSide.Long&&quality.BestAsk>0
-                ?quality.BestAsk
-                :intent.Side==PositionSide.Short&&quality.BestBid>0
-                    ?quality.BestBid
-                    :market.Price;
-            var slippage=Math.Abs((double)((executablePrice-intent.ExpectedPrice)/intent.ExpectedPrice))*10000;
-            if(slippage>_limits.MaximumSlippageBps)throw new InvalidOperationException(L("Execution.SlippageBlocked",slippage,_limits.MaximumSlippageBps));
-        }
+            schema="wpe.execution-preflight/1.0",symbol=intent.Symbol,side=intent.Side.ToString(),failures,
+            observed=new{qualityScore=quality.QualityScore,liquidityScore=quality.LiquidityScore,spreadBps=quality.SpreadBps,atrPercent=quality.AtrPercent,expectedPrice=intent.ExpectedPrice,marketPrice=market.Price,bestBid=quality.BestBid,bestAsk=quality.BestAsk,executablePrice,slippageBps},
+            limits=new{minimumQualityScore=65,minimumLiquidityScore=_limits.MinimumLiquidityScore,maximumSpreadBps=_limits.MaximumSpreadBps,maxAtrPercent=_limits.MaxAtrPercent,maximumSlippageBps=_limits.MaximumSlippageBps},
+            observedAtUtc=DateTime.UtcNow
+        });
+        var message=failures.Count==1&&failures[0]=="slippage"
+            ?L("Execution.SlippageBlocked",slippageBps,_limits.MaximumSlippageBps)
+            :L("Execution.PreflightBlocked",quality.QualityScore,quality.LiquidityScore,quality.SpreadBps,quality.AtrPercent);
+        var exception=new InvalidOperationException(message);
+        exception.Data["preflight.diagnostic"]=diagnostic;
+        throw exception;
     }
     private async Task<ExchangeOrder> SubmitIdempotentlyAsync(ExecutionIntent intent,CancellationToken ct)
     {

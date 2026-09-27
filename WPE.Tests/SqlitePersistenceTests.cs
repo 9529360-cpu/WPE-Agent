@@ -45,6 +45,21 @@ public sealed class SqlitePersistenceTests : IDisposable
     }
 
     [Fact]
+    public async Task PreflightDiagnostic_IsPersistedAlongsideBlockedIntent()
+    {
+        var store=new AgentSqliteStore(DatabasePath);
+        var diagnostic="{\"failures\":[\"spread\"],\"observed\":{\"spreadBps\":12.5}}";
+        await store.SaveIntentAsync("cycle-preflight",Intent("client-preflight"),"PREFLIGHT_BLOCKED",null,diagnostic,CancellationToken.None);
+
+        SqliteConnection.ClearAllPools();
+        await using var connection=new SqliteConnection($"Data Source={DatabasePath}");
+        await connection.OpenAsync();
+        await using var command=connection.CreateCommand();
+        command.CommandText="SELECT preflight_diagnostic_json FROM order_intents WHERE client_order_id='client-preflight'";
+        Assert.Equal(diagnostic,(string?)await command.ExecuteScalarAsync());
+    }
+
+    [Fact]
     public async Task IntentStateSummary_ReportsCountsWithoutIdentifiersOrDetails()
     {
         var store=new AgentSqliteStore(DatabasePath);
