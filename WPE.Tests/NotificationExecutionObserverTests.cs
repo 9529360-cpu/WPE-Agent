@@ -23,7 +23,7 @@ public sealed class NotificationExecutionObserverTests:IDisposable
     {
         var exchange=new RecordingExchange("FILLED",1m);
         var observer=new RecordingObserver();
-        var executor=Executor(exchange,observer);
+        var executor=Executor(exchange,observer,out var store);
 
         var result=await executor.ExecuteAsync("cycle-1",Intent(),5,true,default);
 
@@ -38,6 +38,9 @@ public sealed class NotificationExecutionObserverTests:IDisposable
             Assert.Equal("Testnet",value.Environment);
         });
         Assert.Equal(1m,observer.Events[0].Quantity);
+        var preflight=Assert.Single(await store.GetRecentExecutionPreflightObservationsAsync("SOLUSDT",10,default));
+        Assert.True(preflight.Allowed);
+        Assert.Contains("\"allowed\":true",preflight.DiagnosticJson,StringComparison.Ordinal);
     }
 
     [Fact]
@@ -66,6 +69,22 @@ public sealed class NotificationExecutionObserverTests:IDisposable
     }
 
     [Fact]
+    public async Task OverfillFailsClosedBeforeProtectionAndRemainsRecoverable()
+    {
+        var exchange=new RecordingExchange("FILLED",1.2m);
+        var executor=Executor(exchange,new RecordingObserver(),out var store);
+
+        var error=await Assert.ThrowsAsync<InvalidOperationException>(()=>
+            executor.ExecuteAsync("cycle-overfill",Intent(),5,true,default));
+
+        Assert.Contains("overfill",error.Message,StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1,exchange.PlaceCount);
+        Assert.Equal(0,exchange.ProtectionCount);
+        Assert.Equal("OVERFILL_DETECTED",await store.GetOrderIntentStatusAsync("notify-open",default));
+        Assert.Contains(await store.GetRecoverableIntentsAsync(default),x=>x.Status=="OVERFILL_DETECTED");
+    }
+
+    [Fact]
     public async Task PersistedPreflightBlockPublishesRiskBlockedWithoutTrade()
     {
         var exchange=new RecordingExchange("FILLED",1m)
@@ -73,18 +92,22 @@ public sealed class NotificationExecutionObserverTests:IDisposable
             MarketQuality=new(){QualityScore=20,LiquidityScore=.1,SpreadBps=50,AtrPercent=.2}
         };
         var observer=new RecordingObserver();
-        var executor=Executor(exchange,observer);
+        var executor=Executor(exchange,observer,out var store);
 
         await Assert.ThrowsAsync<InvalidOperationException>(()=>
             executor.ExecuteAsync("cycle-risk",Intent(),5,true,default));
 
         Assert.Equal(0,exchange.PlaceCount);
         Assert.Equal(NotificationEventKind.RiskBlocked,Assert.Single(observer.Events).Kind);
+        var preflight=Assert.Single(await store.GetRecentExecutionPreflightObservationsAsync("SOLUSDT",10,default));
+        Assert.False(preflight.Allowed);
+        Assert.Contains("market-quality",preflight.DiagnosticJson,StringComparison.Ordinal);
     }
 
-    private ReliableOrderExecutor Executor(IExchangeAdapter exchange,IConfirmedNotificationObserver observer)
+    private ReliableOrderExecutor Executor(IExchangeAdapter exchange,IConfirmedNotificationObserver observer)=>Executor(exchange,observer,out _);
+    private ReliableOrderExecutor Executor(IExchangeAdapter exchange,IConfirmedNotificationObserver observer,out AgentSqliteStore db)
     {
-        var db=new AgentSqliteStore(Path.Combine(_directory,Guid.NewGuid().ToString("N")+".db"));
+        db=new AgentSqliteStore(Path.Combine(_directory,Guid.NewGuid().ToString("N")+".db"));
         var capability=new ExchangeCapability(
             "test","test","SOLUSDT","SOLUSDT",MarketType.Perpetual,
             CapabilityStatus.Available,true,true,true,DateTimeOffset.UtcNow);
@@ -123,6 +146,7 @@ public sealed class NotificationExecutionObserverTests:IDisposable
         private ExchangeOrder? _order;
         public MarketQualityEvidence MarketQuality{get;init;}=new(){QualityScore=95,LiquidityScore=.9,SpreadBps=1,AtrPercent=.01};
         public int PlaceCount{get;private set;}
+        public int ProtectionCount{get;private set;}
         public ExchangeEnvironment Environment=>ExchangeEnvironment.Testnet;
         public Task<AccountSnapshot> GetAccountAsync(CancellationToken ct)=>Task.FromResult(new AccountSnapshot(1000,900,1000,DateTime.UtcNow));
         public Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct)=>Task.FromResult<IReadOnlyList<ManagedPosition>>([]);
@@ -148,8 +172,11 @@ public sealed class NotificationExecutionObserverTests:IDisposable
         }
         public Task<ExchangeOrder> PlaceLimitAsync(string symbol,PositionSide side,decimal quantity,decimal price,string clientOrderId,bool reduceOnly,CancellationToken ct)=>
             PlaceMarketAsync(symbol,side,quantity,clientOrderId,reduceOnly,ct);
-        public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide sideToClose,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct)=>
-            Task.FromResult(new ExchangeOrder(symbol,"protection",groupId,"NEW",0,0,"OCO",sideToClose,true,DateTime.UtcNow));
+        public Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide sideToClose,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct)
+        {
+            ProtectionCount++;
+            return Task.FromResult(new ExchangeOrder(symbol,"protection",groupId,"NEW",0,0,"OCO",sideToClose,true,DateTime.UtcNow));
+        }
         public Task CancelOrderAsync(string symbol,string orderId,CancellationToken ct)=>Task.CompletedTask;
         public ValueTask DisposeAsync()=>ValueTask.CompletedTask;
     }

@@ -247,14 +247,29 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
 
     public async Task<string> ExecuteAsync(string cycle,ExecutionIntent intent,int leverage,bool isolated,CancellationToken ct)
     {
-        var gate=IntentLocks.GetOrAdd(intent.ClientOrderId,_=>new SemaphoreSlim(1,1));await gate.WaitAsync(ct);try{return await ExecuteCoreAsync(cycle,intent,leverage,isolated,ct);}finally{gate.Release();}
+        var gate=IntentLocks.GetOrAdd(intent.ClientOrderId,_=>new SemaphoreSlim(1,1));await gate.WaitAsync(ct);
+        using var activity=TradingTelemetry.StartExecution(cycle,intent);
+        try
+        {
+            var result=await ExecuteCoreAsync(cycle,intent,leverage,isolated,ct);
+            TradingTelemetry.RecordExecution(intent,"succeeded");
+            activity?.SetStatus(System.Diagnostics.ActivityStatusCode.Ok);
+            return result;
+        }
+        catch(Exception ex)
+        {
+            TradingTelemetry.RecordExecution(intent,"failed");
+            TradingTelemetry.MarkError(activity,ex);
+            throw;
+        }
+        finally{gate.Release();}
     }
 
     private async Task<string> ExecuteCoreAsync(string cycle,ExecutionIntent intent,int leverage,bool isolated,CancellationToken ct)
     {
         EnsureMutationAllowed(intent);
         EnsureCapability(intent);
-        if(!intent.ReduceOnly)try{await PreflightAsync(intent,ct);}catch(Exception ex){await _db.SaveIntentAsync(cycle,intent,"PREFLIGHT_BLOCKED",null,ct);var blocked=ConfirmedNotificationTruth.System(ConfirmedNotificationTruth.EventKey(cycle,intent.ClientOrderId,NotificationEventKind.RiskBlocked),NotificationEventKind.RiskBlocked,ProviderName(),_ex.Environment.ToString(),DateTime.UtcNow,UiDiagnostic.FromText(ex.ToString(),"Risk blocked").Code,intent.Symbol,intent.Side.ToString());await ObserveSafelyAsync(blocked);throw;}
+        if(!intent.ReduceOnly)try{await PreflightAsync(cycle,intent,ct);}catch(Exception ex){var diagnostic=ex.Data["preflight.diagnostic"] as string;await _db.SaveIntentAsync(cycle,intent,"PREFLIGHT_BLOCKED",null,diagnostic,ct);var blocked=ConfirmedNotificationTruth.System(ConfirmedNotificationTruth.EventKey(cycle,intent.ClientOrderId,NotificationEventKind.RiskBlocked),NotificationEventKind.RiskBlocked,ProviderName(),_ex.Environment.ToString(),DateTime.UtcNow,UiDiagnostic.FromText(ex.ToString(),"Risk blocked").Code,intent.Symbol,intent.Side.ToString());await ObserveSafelyAsync(blocked);throw;}
         await _db.SaveIntentAsync(cycle,intent,"INTENT",null,ct);
         if(!intent.ReduceOnly)
         {
@@ -278,6 +293,13 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
             if(order.Status is "CANCELED" or "EXPIRED" or "REJECTED"){await _db.SaveIntentAsync(cycle,intent,order.Status,order.OrderId,ct);throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));}
             await _db.SaveIntentAsync(cycle,intent,"UNKNOWN",order.OrderId,ct);
             throw new InvalidOperationException(L("Execution.Unconfirmed",order.Status));
+        }
+        var fillTolerance=Math.Max(.00000001m,intent.Quantity*.000001m);
+        if(order.ExecutedQuantity-intent.Quantity>fillTolerance)
+        {
+            await _db.SaveIntentAsync(cycle,intent,"OVERFILL_DETECTED",order.OrderId,ct);
+            TradingTelemetry.RecordOverfill(intent);
+            throw new InvalidOperationException($"Execution overfill detected for {intent.Symbol}: executed {order.ExecutedQuantity.ToString(CultureInfo.InvariantCulture)} exceeds authorized {intent.Quantity.ToString(CultureInfo.InvariantCulture)}.");
         }
         var filledIntent=intent with{Quantity=order.ExecutedQuantity};var recordedOrder=order.ExecutedQuantity>0&&order.Status!="FILLED"?order with{Status="PARTIALLY_FILLED"}:order;await CaptureFeeEvidenceAsync(recordedOrder,ct);if(intent.ReduceOnly&&recordedOrder.Status=="FILLED")await CaptureFundingEvidenceAsync(intent.Symbol,intent.Side,order.ExecutedQuantity,ct);await _db.RecordExecutionAsync(cycle,filledIntent,recordedOrder,"wpe-core-v2",ct);
         if(intent.ReduceOnly)
@@ -596,19 +618,53 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
         return Math.Abs(localMatches[0].Quantity-position.Quantity)<=tolerance;
     }
 
-    private async Task PreflightAsync(ExecutionIntent intent,CancellationToken ct)
+    private async Task PreflightAsync(string cycle,ExecutionIntent intent,CancellationToken ct)
     {
-        var market=await _ex.GetMarketAsync(intent.Symbol,ct);var quality=market.Quality;
-        if(quality.QualityScore<65||quality.LiquidityScore<_limits.MinimumLiquidityScore||quality.SpreadBps>_limits.MaximumSpreadBps||quality.AtrPercent>_limits.MaxAtrPercent)throw new InvalidOperationException(L("Execution.PreflightBlocked",quality.QualityScore,quality.LiquidityScore,quality.SpreadBps,quality.AtrPercent));
-        if(intent.ExpectedPrice>0)
+        var started=System.Diagnostics.Stopwatch.GetTimestamp();
+        using var activity=TradingTelemetry.StartPreflight(intent);
+        try
         {
+            var market=await _ex.GetMarketAsync(intent.Symbol,ct);var quality=market.Quality;
             var executablePrice=intent.Side==PositionSide.Long&&quality.BestAsk>0
                 ?quality.BestAsk
                 :intent.Side==PositionSide.Short&&quality.BestBid>0
                     ?quality.BestBid
                     :market.Price;
-            var slippage=Math.Abs((double)((executablePrice-intent.ExpectedPrice)/intent.ExpectedPrice))*10000;
-            if(slippage>_limits.MaximumSlippageBps)throw new InvalidOperationException(L("Execution.SlippageBlocked",slippage,_limits.MaximumSlippageBps));
+            var slippageBps=intent.ExpectedPrice>0?Math.Abs((double)((executablePrice-intent.ExpectedPrice)/intent.ExpectedPrice))*10000:0d;
+            var failures=new List<string>(5);
+            if(quality.QualityScore<65)failures.Add("market-quality");
+            if(quality.LiquidityScore<_limits.MinimumLiquidityScore)failures.Add("liquidity");
+            if(quality.SpreadBps>_limits.MaximumSpreadBps)failures.Add("spread");
+            if(quality.AtrPercent>_limits.MaxAtrPercent)failures.Add("atr");
+            if(intent.ExpectedPrice>0&&slippageBps>_limits.MaximumSlippageBps)failures.Add("slippage");
+            var allowed=failures.Count==0;
+            var diagnostic=System.Text.Json.JsonSerializer.Serialize(new
+            {
+                schema="wpe.execution-preflight/1.1",symbol=intent.Symbol,side=intent.Side.ToString(),allowed,failures,
+                observed=new{qualityScore=quality.QualityScore,liquidityScore=quality.LiquidityScore,spreadBps=quality.SpreadBps,atrPercent=quality.AtrPercent,expectedPrice=intent.ExpectedPrice,marketPrice=market.Price,bestBid=quality.BestBid,bestAsk=quality.BestAsk,executablePrice,slippageBps},
+                limits=new{minimumQualityScore=65,minimumLiquidityScore=_limits.MinimumLiquidityScore,maximumSpreadBps=_limits.MaximumSpreadBps,maxAtrPercent=_limits.MaxAtrPercent,maximumSlippageBps=_limits.MaximumSlippageBps},
+                observedAtUtc=DateTime.UtcNow
+            });
+            await _db.SaveExecutionPreflightObservationAsync(cycle,intent,allowed,diagnostic,ct);
+            var durationMs=System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            TradingTelemetry.RecordPreflight(intent,allowed,quality.SpreadBps,slippageBps,durationMs,failures.Count);
+            activity?.SetTag("wpe.preflight.allowed",allowed);
+            activity?.SetTag("wpe.preflight.failure_count",failures.Count);
+            activity?.SetTag("wpe.preflight.spread_bps",quality.SpreadBps);
+            activity?.SetTag("wpe.preflight.slippage_bps",slippageBps);
+            if(allowed){activity?.SetStatus(System.Diagnostics.ActivityStatusCode.Ok);return;}
+            var message=failures.Count==1&&failures[0]=="slippage"
+                ?L("Execution.SlippageBlocked",slippageBps,_limits.MaximumSlippageBps)
+                :L("Execution.PreflightBlocked",quality.QualityScore,quality.LiquidityScore,quality.SpreadBps,quality.AtrPercent);
+            var exception=new InvalidOperationException(message);
+            exception.Data["preflight.diagnostic"]=diagnostic;
+            TradingTelemetry.MarkError(activity,exception);
+            throw exception;
+        }
+        catch(Exception ex)
+        {
+            TradingTelemetry.MarkError(activity,ex);
+            throw;
         }
     }
     private async Task<ExchangeOrder> SubmitIdempotentlyAsync(ExecutionIntent intent,CancellationToken ct)
