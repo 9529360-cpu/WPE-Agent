@@ -183,7 +183,8 @@ public sealed class PositionManagementSkill
         CancellationToken ct,
         IReadOnlyList<ExecutionPositionLegV1> managedLegs,
         IReadOnlyDictionary<string,TradingRule>? tradingRules=null,
-        IReadOnlyDictionary<string,MarketStateSnapshotV1>? marketStates=null)
+        IReadOnlyDictionary<string,MarketStateSnapshotV1>? marketStates=null,
+        RiskLimits? riskLimits=null)
     {
         ArgumentNullException.ThrowIfNull(managedLegs);
         var intents=new List<ExecutionIntent>();
@@ -297,12 +298,11 @@ public sealed class PositionManagementSkill
                 if(liquidationSpan<=0)liquidationUnsafe=true;
                 else
                 {
+                    var liquidationBuffer=Math.Clamp(riskLimits?.LiquidationBufferFraction??.05m,0m,.99m);
                     liquidationBoundary=position.Side==PositionSide.Long
-                        ?position.LiquidationPrice+liquidationSpan*.30m
-                        :position.LiquidationPrice-liquidationSpan*.30m;
-                    liquidationUnsafe=position.Side==PositionSide.Long
-                        ?opening.StopLoss<liquidationBoundary
-                        :opening.StopLoss>liquidationBoundary;
+                        ?position.LiquidationPrice+liquidationSpan*liquidationBuffer
+                        :position.LiquidationPrice-liquidationSpan*liquidationBuffer;
+                    liquidationUnsafe=!RiskAndPositionPlanner.StopRespectsLiquidationBuffer(position.Side,position.EntryPrice,opening.StopLoss,position.LiquidationPrice,liquidationBuffer);
                 }
             }
             if(liquidationUnsafe)

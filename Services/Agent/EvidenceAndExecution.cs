@@ -165,7 +165,7 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     public string ProviderId=>_ex is IExchangeProvider provider?provider.ProviderId:"local";
     public string AccountId=>_ex is IExchangeProvider provider?provider.ConnectionId:"local";
     public async Task<string> ExecutePlanAsync(string cycle,IReadOnlyList<ExecutionIntent> intents,int leverage,bool isolated,CancellationToken ct)
-    {var results=new List<string>();foreach(var intent in intents){results.Add(await ExecuteAsync(cycle,intent,leverage,isolated,ct));var observed=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);if(observed is not null&&observed.ExecutedQuantity>0&&observed.ExecutedQuantity<intent.Quantity)break;}return string.Join("; ",results);}
+    {var results=new List<string>();foreach(var intent in intents){var effective=!intent.ReduceOnly&&intent.EffectiveLeverage>0?intent.EffectiveLeverage:leverage;results.Add(await ExecuteAsync(cycle,intent,effective,isolated,ct));var observed=await _ex.FindOrderAsync(intent.Symbol,intent.ClientOrderId,ct);if(observed is not null&&observed.ExecutedQuantity>0&&observed.ExecutedQuantity<intent.Quantity)break;}return string.Join("; ",results);}
 
     public async Task<string> ExecuteReduceOnlyRecoveryAsync(string cycle,ExecutionIntent intent,CancellationToken ct)
     {

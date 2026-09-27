@@ -215,6 +215,7 @@ public sealed class AgentSettingsStore
         settings.Risk.MaximumSpreadBps=Math.Clamp(settings.Risk.MaximumSpreadBps,1,30);
         settings.Risk.MaximumSlippageBps=Math.Clamp(settings.Risk.MaximumSlippageBps,2,50);
         settings.Risk.MinimumRiskReward=Math.Clamp(settings.Risk.MinimumRiskReward,1.2,4.0);
+        settings.Risk.LiquidationBufferFraction=Math.Clamp(settings.Risk.LiquidationBufferFraction,.01m,.25m);
         settings.Risk.ApiFailureThreshold=Math.Clamp(settings.Risk.ApiFailureThreshold,2,10);
         settings.Risk.MaxPortfolioVaR99=Math.Clamp(settings.Risk.MaxPortfolioVaR99,.005,.10);
         settings.Risk.MaxPortfolioCVaR99=Math.Clamp(settings.Risk.MaxPortfolioCVaR99,.01,.15);
