@@ -211,6 +211,41 @@ public sealed class OrderFaultInjectionTests : IDisposable
     }
 
     [Fact]
+    public async Task AcceptedOrderWithLostResponseAndDelayedVisibility_ReconcilesWithoutSecondMutation()
+    {
+        var exchange=new DelayedVisibilityAfterAcceptExchange();
+        var (executor,store)=CreateExecutor(exchange);
+        var intent=Opening("accepted-delayed-visibility",0.01m);
+
+        await Assert.ThrowsAsync<TimeoutException>(()=>
+            executor.ExecuteAsync("cycle-delayed",intent,10,true,CancellationToken.None));
+
+        Assert.Equal(1,exchange.MarketOrderSubmissions);
+        Assert.Equal("UNKNOWN",await store.GetOrderIntentStatusAsync(intent.ClientOrderId,CancellationToken.None));
+        Assert.Empty(exchange.ProtectionRequests);
+
+        var stillHidden=await executor.RecoverPendingAsync(CancellationToken.None);
+        Assert.False(stillHidden.SafeToIncreaseRisk);
+        Assert.Equal(1,exchange.MarketOrderSubmissions);
+        Assert.Empty(exchange.ProtectionRequests);
+        Assert.Equal("UNKNOWN",await store.GetOrderIntentStatusAsync(intent.ClientOrderId,CancellationToken.None));
+
+        exchange.Visible=true;
+        var recovery=await executor.RecoverPendingAsync(CancellationToken.None);
+
+        Assert.True(recovery.SafeToIncreaseRisk);
+        Assert.Equal(1,exchange.MarketOrderSubmissions);
+        Assert.Single(exchange.ProtectionRequests);
+        Assert.Equal("PROTECTED",await store.GetOrderIntentStatusAsync(intent.ClientOrderId,CancellationToken.None));
+        Assert.Empty(await store.GetRecoverableIntentsAsync(CancellationToken.None));
+
+        var idempotentRecovery=await executor.RecoverPendingAsync(CancellationToken.None);
+        Assert.True(idempotentRecovery.SafeToIncreaseRisk);
+        Assert.Equal(1,exchange.MarketOrderSubmissions);
+        Assert.Single(exchange.ProtectionRequests);
+    }
+
+    [Fact]
     public async Task ConcurrentSameClientOrderId_ConvergesOnSingleAcceptedExchangeOrder()
     {
         var exchange = new ConcurrentIdempotentExchange();
@@ -303,6 +338,30 @@ public sealed class OrderFaultInjectionTests : IDisposable
     private sealed class QuoteMarketExchange(MarketEvidence market) : ScriptedExchange
     {
         public override Task<MarketEvidence> GetMarketAsync(string symbol,CancellationToken ct)=>Task.FromResult(market);
+    }
+
+    private sealed class DelayedVisibilityAfterAcceptExchange : ExchangeStub
+    {
+        private ExchangeOrder? _accepted;
+        public bool Visible{get;set;}
+        public int MarketOrderSubmissions{get;private set;}
+        public List<string> ProtectionRequests{get;}=[];
+
+        public override Task<ExchangeOrder> PlaceMarketAsync(string symbol,PositionSide side,decimal quantity,string clientOrderId,bool reduceOnly,CancellationToken ct)
+        {
+            MarketOrderSubmissions++;
+            _accepted=new ExchangeOrder(symbol,"accepted-42",clientOrderId,"FILLED",quantity,50_000m,"MARKET",side,false,DateTime.UtcNow);
+            throw new TimeoutException("exchange accepted order but mutation response was lost");
+        }
+
+        public override Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct)=>
+            Task.FromResult(Visible?_accepted:null);
+
+        public override Task<ExchangeOrder> PlaceProtectionAsync(string symbol,PositionSide sideToClose,decimal stopLoss,decimal takeProfit,string groupId,CancellationToken ct)
+        {
+            ProtectionRequests.Add(groupId);
+            return Task.FromResult(new ExchangeOrder(symbol,"protection-42",groupId+"-SL","NEW",0,0,"STOP_MARKET",sideToClose,true,DateTime.UtcNow));
+        }
     }
 
     private sealed class ConcurrentIdempotentExchange : ExchangeStub
