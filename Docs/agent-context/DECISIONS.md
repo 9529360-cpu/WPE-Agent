@@ -1,5 +1,7 @@
 # Decisions
 
+- The product runtime does not run local ML/LLM models. Do not add ONNX Runtime, ML.NET inference, embedded LLMs, or another model runtime to the live or shadow trading path. Trading intelligence comes from deterministic market/microstructure rules, bounded statistics, replay, drift/anomaly measurement, execution evidence, and hard risk/reconciliation gates. The retired remote LLM trading path remains retired.
+- Observability may use local .NET `ActivitySource`/`Meter` instrumentation and append-only SQLite evidence. Exporters are optional diagnostics only; no telemetry backend or network service may become a trading dependency or authority.
 - WPF remains the authority for secrets and configuration writes.
 - Mainnet remains disabled by default; current autonomous execution is Testnet only.
 - UI environment and freshness must come from runtime truth, never hardcoded labels.

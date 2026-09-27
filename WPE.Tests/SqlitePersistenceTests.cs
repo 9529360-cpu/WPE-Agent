@@ -60,6 +60,28 @@ public sealed class SqlitePersistenceTests : IDisposable
     }
 
     [Fact]
+    public async Task PreflightObservations_AreAppendOnlyAndQueryable()
+    {
+        var store=new AgentSqliteStore(DatabasePath);
+        var intent=Intent("preflight-observation");
+        await store.SaveExecutionPreflightObservationAsync("cycle-a",intent,true,"{\"allowed\":true,\"observed\":{\"spreadBps\":2.1}}",CancellationToken.None);
+        await store.SaveExecutionPreflightObservationAsync("cycle-b",intent,false,"{\"allowed\":false,\"failures\":[\"spread\"]}",CancellationToken.None);
+
+        var rows=await store.GetRecentExecutionPreflightObservationsAsync("BTCUSDT",10,CancellationToken.None);
+        Assert.Equal(2,rows.Count);
+        Assert.False(rows[0].Allowed);
+        Assert.True(rows[1].Allowed);
+        Assert.Equal("cycle-b",rows[0].CycleId);
+
+        await using var connection=new SqliteConnection($"Data Source={DatabasePath}");
+        await connection.OpenAsync();
+        await using var update=connection.CreateCommand();
+        update.CommandText="UPDATE execution_preflight_observations SET allowed=1 WHERE id=$id";
+        update.Parameters.AddWithValue("$id",rows[0].Id);
+        await Assert.ThrowsAsync<SqliteException>(()=>update.ExecuteNonQueryAsync());
+    }
+
+    [Fact]
     public async Task IntentStateSummary_ReportsCountsWithoutIdentifiersOrDetails()
     {
         var store=new AgentSqliteStore(DatabasePath);

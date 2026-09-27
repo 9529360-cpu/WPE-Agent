@@ -14,6 +14,7 @@ namespace 币安量化机器人.Services.Agent;
 
 public sealed record IntentStatusCount(string Status,int Count);
 public sealed record IntentStateSummary(int TotalCount,int RecoverableCount,int UnknownCount,DateTimeOffset? LatestUpdatedAtUtc,IReadOnlyList<IntentStatusCount> Statuses);
+public sealed record PersistedExecutionPreflightObservation(long Id,string CycleId,string ClientOrderId,string Symbol,string Side,bool Allowed,DateTimeOffset ObservedAtUtc,string DiagnosticJson);
 public sealed record ModelOffAuditPersistenceResult(bool Succeeded,bool Idempotent,string Code);
 public sealed record MacroObservationPersistenceResult(bool Succeeded,bool Idempotent,int Revision,string Code);
 public sealed record PersistedMacroObservation(string IndicatorId,DateTimeOffset ObservationAtUtc,int Revision,string Geography,string Frequency,string Unit,decimal Value,string SourceId,string SourceArtifactHash,DateTimeOffset FirstObservedAtUtc,DateTimeOffset? ReleasedAtUtc=null,string ReleaseTimeBasis="official-endpoint-first-observed",string? ReleaseCalendarArtifactHash=null,string? ReleaseCalendarEventId=null);
@@ -41,6 +42,10 @@ public sealed partial class AgentSqliteStore
     CREATE TABLE IF NOT EXISTS cycles(id TEXT PRIMARY KEY,started_at TEXT NOT NULL,completed_at TEXT,status TEXT,completeness INTEGER,evidence_json TEXT,brain TEXT,brain_request TEXT,brain_response TEXT,decision_json TEXT,risk_result TEXT,error TEXT);
     CREATE TABLE IF NOT EXISTS order_intents(client_order_id TEXT PRIMARY KEY,cycle_id TEXT,symbol TEXT,side TEXT,quantity TEXT,status TEXT,exchange_order_id INTEGER,updated_at TEXT,details TEXT);
     CREATE TABLE IF NOT EXISTS execution_submission_journal(submission_id TEXT PRIMARY KEY,client_order_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,environment TEXT NOT NULL,submitted_at TEXT NOT NULL,result_code TEXT NOT NULL,result_hash TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS execution_preflight_observations(id INTEGER PRIMARY KEY AUTOINCREMENT,cycle_id TEXT NOT NULL,client_order_id TEXT NOT NULL,symbol TEXT NOT NULL,side TEXT NOT NULL,allowed INTEGER NOT NULL,observed_at TEXT NOT NULL,diagnostic_json TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS ix_execution_preflight_symbol_time ON execution_preflight_observations(symbol,observed_at DESC);
+    CREATE TRIGGER IF NOT EXISTS execution_preflight_observations_no_update BEFORE UPDATE ON execution_preflight_observations BEGIN SELECT RAISE(ABORT,'execution preflight observations are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS execution_preflight_observations_no_delete BEFORE DELETE ON execution_preflight_observations BEGIN SELECT RAISE(ABORT,'execution preflight observations are append-only'); END;
     CREATE TABLE IF NOT EXISTS legacy_intent_isolation(client_order_id TEXT PRIMARY KEY,source_status TEXT NOT NULL,projection_status TEXT NOT NULL CHECK(projection_status='Quarantined'),reason_code TEXT NOT NULL,isolated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS legacy_intent_isolation_events(id INTEGER PRIMARY KEY AUTOINCREMENT,client_order_id TEXT NOT NULL,sequence INTEGER NOT NULL,occurred_at TEXT NOT NULL,from_status TEXT NOT NULL,to_status TEXT NOT NULL,event_code TEXT NOT NULL,UNIQUE(client_order_id,sequence));
     CREATE INDEX IF NOT EXISTS ix_legacy_intent_isolation_status ON legacy_intent_isolation(projection_status,isolated_at);
@@ -281,6 +286,20 @@ public sealed partial class AgentSqliteStore
     public async Task SaveSnapshotAsync(AccountSnapshot a,IReadOnlyList<ManagedPosition> p,IReadOnlyList<ExchangeOrder> o,CancellationToken ct)=>await Exec("INSERT INTO snapshots(collected_at,account_json,positions_json,orders_json) VALUES($t,$a,$p,$o)",ct,("$t",DateTime.UtcNow.ToString("O")),("$a",JsonSerializer.Serialize(a)),("$p",JsonSerializer.Serialize(p)),("$o",JsonSerializer.Serialize(o)));
     public Task SaveIntentAsync(string cycle,ExecutionIntent i,string status,string? orderId,CancellationToken ct)=>SaveIntentAsync(cycle,i,status,orderId,null,ct);
     public async Task SaveIntentAsync(string cycle,ExecutionIntent i,string status,string? orderId,string? preflightDiagnosticJson,CancellationToken ct)=>await Exec("INSERT OR REPLACE INTO order_intents(client_order_id,cycle_id,symbol,side,quantity,status,exchange_order_id,updated_at,details,preflight_diagnostic_json) VALUES($id,$c,$s,$side,$q,$st,$oid,$t,$d,$p)",ct,("$id",i.ClientOrderId),("$c",cycle),("$s",i.Symbol),("$side",i.Side.ToString()),("$q",i.Quantity.ToString(CultureInfo.InvariantCulture)),("$st",status),("$oid",orderId),("$t",DateTime.UtcNow.ToString("O")),("$d",JsonSerializer.Serialize(i)),("$p",preflightDiagnosticJson));
+    public async Task SaveExecutionPreflightObservationAsync(string cycle,ExecutionIntent intent,bool allowed,string diagnosticJson,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(diagnosticJson)||diagnosticJson.Length>8192)throw new ArgumentException("Preflight diagnostic must be bounded.",nameof(diagnosticJson));
+        await Exec("INSERT INTO execution_preflight_observations(cycle_id,client_order_id,symbol,side,allowed,observed_at,diagnostic_json) VALUES($cycle,$client,$symbol,$side,$allowed,$observed,$diagnostic)",ct,("$cycle",cycle),("$client",intent.ClientOrderId),("$symbol",intent.Symbol),("$side",intent.Side.ToString()),("$allowed",allowed?1:0),("$observed",_utcNow().ToUniversalTime().ToString("O",CultureInfo.InvariantCulture)),("$diagnostic",diagnosticJson));
+    }
+    public async Task<IReadOnlyList<PersistedExecutionPreflightObservation>> GetRecentExecutionPreflightObservationsAsync(string? symbol,int limit,CancellationToken ct)
+    {
+        var list=new List<PersistedExecutionPreflightObservation>();await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText=string.IsNullOrWhiteSpace(symbol)
+            ?"SELECT id,cycle_id,client_order_id,symbol,side,allowed,observed_at,diagnostic_json FROM execution_preflight_observations ORDER BY id DESC LIMIT $limit"
+            :"SELECT id,cycle_id,client_order_id,symbol,side,allowed,observed_at,diagnostic_json FROM execution_preflight_observations WHERE symbol=$symbol ORDER BY id DESC LIMIT $limit";
+        if(!string.IsNullOrWhiteSpace(symbol))q.Parameters.AddWithValue("$symbol",symbol.Trim().ToUpperInvariant());q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,500));
+        await using var r=await q.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))list.Add(new(r.GetInt64(0),r.GetString(1),r.GetString(2),r.GetString(3),r.GetString(4),r.GetInt64(5)==1,Instant(r.GetString(6)),r.GetString(7)));return list;
+    }
     public async Task<TradingReviewQueueMutationResult> SaveTradingReviewQueueAsync(
         TradingApprovalRequest request,
         DurableReviewExecutionArtifactV1 artifact,
