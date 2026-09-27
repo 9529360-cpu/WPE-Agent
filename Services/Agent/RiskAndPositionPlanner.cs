@@ -57,6 +57,13 @@ public sealed class RiskAndPositionPlanner
         if(e.Completeness<70&&riskIncreasing)return(Array.Empty<ExecutionIntent>(),L("Risk.Completeness"));
         if(!e.Markets.TryGetValue(d.Instrument,out var m))return(Array.Empty<ExecutionIntent>(),L("Risk.MarketMissing"));
         if(d.Action==DecisionAction.Hold)return(Array.Empty<ExecutionIntent>(),"HOLD");
+        if(riskIncreasing)
+        {
+            var openSymbols=e.Positions.Where(x=>x.Quantity>0).Select(x=>x.Symbol).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var opensNewSymbol=!openSymbols.Contains(d.Instrument,StringComparer.OrdinalIgnoreCase);
+            if(opensNewSymbol&&openSymbols.Length>=Math.Max(1,limits.MaxConcurrentPositions))
+                return(Array.Empty<ExecutionIntent>(),$"risk.max-concurrent-positions:{limits.MaxConcurrentPositions}");
+        }
 
         var positions=e.Positions.Where(x=>x.Symbol==d.Instrument).ToArray();
         var effectiveLeverage=SelectEffectiveLeverage(d,rule,limits);
