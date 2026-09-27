@@ -239,8 +239,31 @@ public sealed class TradingAutomaticExecutionGateway : IAutomaticExecutionGatewa
         var mutationHash=TradingExecutionGateway.ComputeIntentHash(intents,artifact.Leverage,artifact.Isolated);
         var mutationReceipt=receipt with{IntentHash=mutationHash};
         var authorization=new TradingAuthorizationRequest(TradingAuthorizationMode.Auto,true,artifact.CorrelationId,mutationHash,"automatic","automatic","automatic",mutationReceipt,null);
-        var result=await _gateway.ExecutePlanAsync(new(null,authorization,intents,artifact.Leverage,artifact.Isolated),ct);
-        return result.Executed?new(AutomaticGatewayExecutionState.Succeeded,result.Code):new(AutomaticGatewayExecutionState.Rejected,result.Code);
+        try
+        {
+            var result=await _gateway.ExecutePlanAsync(new(null,authorization,intents,artifact.Leverage,artifact.Isolated),ct);
+            return result.Executed?new(AutomaticGatewayExecutionState.Succeeded,result.Code):new(AutomaticGatewayExecutionState.Rejected,result.Code);
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
+        catch
+        {
+            if(await AllPreflightBlockedWithoutSubmissionAsync(intents,ct))
+                return new(AutomaticGatewayExecutionState.Rejected,"automatic.preflight-blocked");
+            return new(AutomaticGatewayExecutionState.Unknown,"automatic.gateway-unknown");
+        }
+    }
+
+    private async Task<bool> AllPreflightBlockedWithoutSubmissionAsync(IReadOnlyList<ExecutionIntent> intents,CancellationToken ct)
+    {
+        if(intents.Count==0)return false;
+        foreach(var intent in intents)
+        {
+            if(!string.Equals(await _store.GetOrderIntentStatusAsync(intent.ClientOrderId,ct),"PREFLIGHT_BLOCKED",StringComparison.Ordinal))
+                return false;
+            if(await _store.HasExecutionSubmissionJournalAsync(intent.ClientOrderId,ct))
+                return false;
+        }
+        return true;
     }
 
     public async Task<AutomaticGatewayReconciliationResult> ReconcileAsync(DurableExecutionArtifactV2 artifact,CancellationToken ct)
