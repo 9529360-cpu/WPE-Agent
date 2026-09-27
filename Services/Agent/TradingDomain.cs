@@ -76,12 +76,13 @@ public sealed record MarketEvidence(string Symbol, decimal Price, decimal Suppor
     public IReadOnlyList<CandleEvidence> Candles1m { get; init; } = Array.Empty<CandleEvidence>();
     public IReadOnlyList<CandleEvidence> Candles1h { get; init; } = Array.Empty<CandleEvidence>();
     public IReadOnlyList<CandleEvidence> Candles4h { get; init; } = Array.Empty<CandleEvidence>();
+    public IReadOnlyList<CandleEvidence> Candles1d { get; init; } = Array.Empty<CandleEvidence>();
     public MarketEvidenceProvenanceV1? Provenance { get; init; }
 }
 public sealed record MarketEvidenceProvenanceV1(string Schema,string ProviderId,string Environment,string Symbol,DateTime CollectedAtUtc,DateTime? FirstCandleOpenUtc,DateTime? LastCandleOpenUtc,int CandleCount,byte[] CanonicalBytes,string CanonicalSha256);
 public static class MarketEvidenceProvenanceCanonicalizerV1
 {
-    public const string Schema="wpe.market-evidence-provenance/1.2";
+    public const string Schema="wpe.market-evidence-provenance/1.3";
 
     public static MarketEvidenceProvenanceV1 Create(MarketEvidence market,string providerId,string environment)
     {
@@ -89,7 +90,8 @@ public static class MarketEvidenceProvenanceCanonicalizerV1
         var candles15m=market.Candles.OrderBy(x=>x.OpenTime).ToArray();
         var candles1h=market.Candles1h.OrderBy(x=>x.OpenTime).ToArray();
         var candles4h=market.Candles4h.OrderBy(x=>x.OpenTime).ToArray();
-        var bytes=Serialize(market,providerId,environment,candles1m,candles15m,candles1h,candles4h);
+        var candles1d=market.Candles1d.OrderBy(x=>x.OpenTime).ToArray();
+        var bytes=Serialize(market,providerId,environment,candles1m,candles15m,candles1h,candles4h,candles1d);
         return new(
             Schema,providerId,environment,market.Symbol,market.CollectedAt,
             candles15m.FirstOrDefault()?.OpenTime,candles15m.LastOrDefault()?.OpenTime,candles15m.Length,
@@ -118,7 +120,8 @@ public static class MarketEvidenceProvenanceCanonicalizerV1
         IReadOnlyList<CandleEvidence> candles1m,
         IReadOnlyList<CandleEvidence> candles15m,
         IReadOnlyList<CandleEvidence> candles1h,
-        IReadOnlyList<CandleEvidence> candles4h)
+        IReadOnlyList<CandleEvidence> candles4h,
+        IReadOnlyList<CandleEvidence> candles1d)
     {
         using var stream=new MemoryStream();
         using(var writer=new Utf8JsonWriter(stream))
@@ -128,6 +131,7 @@ public static class MarketEvidenceProvenanceCanonicalizerV1
             writer.WriteNumber("candle_count_15m",candles15m.Count);
             writer.WriteNumber("candle_count_1h",candles1h.Count);
             writer.WriteNumber("candle_count_4h",candles4h.Count);
+            writer.WriteNumber("candle_count_1d",candles1d.Count);
             writer.WriteString("collected_at_utc",market.CollectedAt.ToUniversalTime());
             writer.WriteString("environment",environment);
             writer.WriteNumber("price",market.Price);
@@ -144,6 +148,7 @@ public static class MarketEvidenceProvenanceCanonicalizerV1
             WriteCandles(writer,"candles_15m",candles15m);
             WriteCandles(writer,"candles_1h",candles1h);
             WriteCandles(writer,"candles_4h",candles4h);
+            WriteCandles(writer,"candles_1d",candles1d);
             writer.WriteEndObject();
         }
         return stream.ToArray();
@@ -199,6 +204,7 @@ public sealed class DecisionPlan
     public string ConflictSummary { get; set; } = string.Empty;
     public decimal EntryPrice { get; set; }
     public double RiskRewardRatio { get; set; }
+    public decimal RiskBudgetFraction { get; set; }
     public ExecutionOrderType OrderType { get; set; } = ExecutionOrderType.Market;
     public string StrategyVersion { get; set; } = "wpe-core-v2";
     public string DecisionContextKind { get; set; } = "legacy-signal";
@@ -283,6 +289,7 @@ public sealed class RiskLimits
     public int Leverage { get; set; } = 10;
     public decimal DailyDrawdownLimit { get; set; } = .08m;
     public decimal MaxRiskPerTrade { get; set; } = .01m;
+    public decimal MaxPortfolioStopRisk { get; set; } = .025m;
     public decimal MaxSymbolExposure { get; set; } = .25m;
     public decimal MaxAccountExposure { get; set; } = .50m;
     public int MaxConcurrentPositions { get; set; } = 5;

@@ -26,14 +26,14 @@ public sealed class ModelOffLiveCycleInputComposerTests
     }
 
     [Fact]
-    public void ComposerUsesDirectCandleStructureInsteadOfScoresOrHypotheses()
+    public void ComposerUsesDailyFourHourStructureInsteadOfScoresOrHypotheses()
     {
         var source=File.ReadAllText(Path.Combine(Root(),"Services","Agent","ModelOffLiveCycleInputComposerV1.cs"));
 
-        Assert.Contains("DirectMarketStructureDecisionSkill.IsDirect",source,StringComparison.Ordinal);
-        Assert.Contains("DirectMarketStructureDecisionSkill.ContextMatches",source,StringComparison.Ordinal);
-        Assert.Contains("MarketStructureIntelligence.Analyze",source,StringComparison.Ordinal);
-        Assert.Contains("DirectStructureFact",source,StringComparison.Ordinal);
+        Assert.Contains("MediumHorizonDecisionSkill.IsMediumHorizon",source,StringComparison.Ordinal);
+        Assert.Contains("MediumHorizonDecisionSkill.ContextMatches",source,StringComparison.Ordinal);
+        Assert.Contains("MediumHorizonDecisionSkill.Analyze",source,StringComparison.Ordinal);
+        Assert.Contains("MediumHorizonFact",source,StringComparison.Ordinal);
         Assert.DoesNotContain("TradeHypothesis",source,StringComparison.Ordinal);
         Assert.DoesNotContain("MarketDecisionAssessment",source,StringComparison.Ordinal);
         Assert.DoesNotContain("ResearchValidationResult",source,StringComparison.Ordinal);
@@ -46,8 +46,8 @@ public sealed class ModelOffLiveCycleInputComposerTests
     {
         var source=File.ReadAllText(Path.Combine(Root(),"Services","AutoTradingAgent.cs"));
 
-        Assert.Contains("DirectMarketStructureDecisionSkill.DecisionContextKind",source,StringComparison.Ordinal);
-        Assert.Contains("direct=true",source,StringComparison.Ordinal);
+        Assert.Contains("MediumHorizonDecisionSkill.DecisionContextKind",source,StringComparison.Ordinal);
+        Assert.Contains("horizon=1d-4h",source,StringComparison.Ordinal);
         Assert.DoesNotContain("new SignalAggregationSkill",source,StringComparison.Ordinal);
         Assert.DoesNotContain("AdaptiveStrategySelector",source,StringComparison.Ordinal);
         Assert.DoesNotContain("AdaptiveStrategyPortfolioAllocator",source,StringComparison.Ordinal);
@@ -66,8 +66,9 @@ public sealed class ModelOffLiveCycleInputComposerTests
         Assert.Contains("WPE Local Brain",provider,StringComparison.Ordinal);
         Assert.Contains("TechnicalDecisionAgent",provider,StringComparison.Ordinal);
         Assert.Contains("local-deterministic",provider,StringComparison.Ordinal);
-        Assert.Contains("DirectMarketStructureDecisionSkill.Decide",agent,StringComparison.Ordinal);
-        Assert.Contains("IMarketStructureAnalysisTool",agent,StringComparison.Ordinal);
+        Assert.Contains("MediumHorizonDecisionSkill.Decide",agent,StringComparison.Ordinal);
+        Assert.DoesNotContain("DirectMarketStructureDecisionSkill.Decide",agent,StringComparison.Ordinal);
+        Assert.DoesNotContain("IMarketStructureAnalysisTool",agent,StringComparison.Ordinal);
         Assert.DoesNotContain("OpenAiCompatibleAdapter",provider,StringComparison.Ordinal);
         Assert.DoesNotContain("AnthropicMessagesAdapter",provider,StringComparison.Ordinal);
         Assert.DoesNotContain("GeminiGenerativeAdapter",provider,StringComparison.Ordinal);
@@ -75,7 +76,7 @@ public sealed class ModelOffLiveCycleInputComposerTests
     }
 
     [Fact]
-    public void IndependentRiskSourceContainsOnlyHardSafetyAndDirectContextGates()
+    public void IndependentRiskSourceContainsOnlyHardSafetyAndMediumHorizonContextGates()
     {
         var source=File.ReadAllText(Path.Combine(Root(),"Services","Agent","MatureTradingSkills.cs"));
         var start=source.IndexOf("public sealed class IndependentRiskManagerSkill",StringComparison.Ordinal);
@@ -83,7 +84,7 @@ public sealed class ModelOffLiveCycleInputComposerTests
         Assert.True(start>=0&&end>start);
         var risk=source[start..end];
 
-        Assert.Contains("direct_market_structure_context",risk,StringComparison.Ordinal);
+        Assert.Contains("medium_horizon_context",risk,StringComparison.Ordinal);
         Assert.Contains("liquidity",risk,StringComparison.Ordinal);
         Assert.Contains("spread",risk,StringComparison.Ordinal);
         Assert.Contains("volatility",risk,StringComparison.Ordinal);
@@ -97,5 +98,7 @@ public sealed class ModelOffLiveCycleInputComposerTests
         Assert.DoesNotContain("NetScore",risk,StringComparison.Ordinal);
     }
 
-    private static string Root()=>Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
+    private static string Root()=>Environment.GetEnvironmentVariable("WPE_TEST_SOURCE_ROOT") is {Length:>0} configured
+        ?Path.GetFullPath(configured)
+        :Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
 }

@@ -119,6 +119,38 @@ public sealed class RiskBasedSizingLeverageTests
     }
 
     [Fact]
+    public void PortfolioStopRiskBudgetCapsNewTradeRisk()
+    {
+        var equity=10_000m;
+        var decision=Long("TESTUSDT",100m,97m,106.6m);decision.RiskBudgetFraction=.0085m;
+        var limits=Limits(maxSymbolExposure:.80m,maxAccountExposure:.90m);
+        limits.MaxPortfolioStopRisk=.025m;
+        var rule=Rule("TESTUSDT",.001m,.01m,.001m,5m,125,.0004m);
+        var existingRisk=240m;
+
+        var result=new RiskAndPositionPlanner().Plan(decision,Evidence(equity,decision),rule,limits,existingPortfolioStopRisk:existingRisk);
+
+        var intent=Assert.Single(result.Intents);
+        var newRisk=intent.Quantity*Math.Abs(intent.ExpectedPrice-intent.StopLoss)+intent.EstimatedRoundTripFee+intent.EstimatedExecutionCost;
+        Assert.True(newRisk<=10.01m);
+        Assert.True(existingRisk+newRisk<=equity*limits.MaxPortfolioStopRisk+.01m);
+    }
+
+    [Fact]
+    public void PortfolioStopRiskBudgetBlocksWhenAlreadyExhausted()
+    {
+        var decision=Long("TESTUSDT",100m,97m,106.6m);decision.RiskBudgetFraction=.0085m;
+        var limits=Limits(maxSymbolExposure:.80m,maxAccountExposure:.90m);
+        limits.MaxPortfolioStopRisk=.025m;
+        var rule=Rule("TESTUSDT",.001m,.01m,.001m,5m,125,.0004m);
+
+        var result=new RiskAndPositionPlanner().Plan(decision,Evidence(10_000m,decision),rule,limits,existingPortfolioStopRisk:250m);
+
+        Assert.Empty(result.Intents);
+        Assert.Equal("risk.portfolio-stop-budget-exhausted",result.Result);
+    }
+
+    [Fact]
     public void HighOpportunityModeFailsClosedWithoutLiveBracketOrFeeEvidence()
     {
         var decision=Long("TESTUSDT",100m,97m,105.4m);

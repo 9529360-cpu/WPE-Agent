@@ -5,12 +5,13 @@ public static class TestnetHighOpportunityRiskProfileV1
     public const int RequestedLeverage=150;
     public const decimal InitialMarginBudget=.05m;
     public const decimal MaximumLossRiskPerTrade=.01m;
+    public const decimal MaximumPortfolioStopRisk=.025m;
     public const decimal MaximumSymbolExposure=.25m;
     public const decimal MaximumAccountExposure=.50m;
     public const int MaximumConcurrentPositions=5;
     public const decimal MaximumDailyLoss=.05m;
     public const decimal MaximumDailyDrawdown=.08m;
-    public const double MinimumRiskReward=1.8;
+    public const double MinimumRiskReward=2.2;
     public const double MinimumLiquidityScore=.55;
     public const double MaximumSpreadBps=8;
     public const double MaximumAtrPercent=.045;
@@ -31,6 +32,7 @@ public static class TestnetHighOpportunityRiskProfileV1
             Leverage=RequestedLeverage,
             DailyDrawdownLimit=Math.Min(configured.DailyDrawdownLimit,MaximumDailyDrawdown),
             MaxRiskPerTrade=Math.Min(configured.MaxRiskPerTrade,MaximumLossRiskPerTrade),
+            MaxPortfolioStopRisk=Math.Min(configured.MaxPortfolioStopRisk,MaximumPortfolioStopRisk),
             MaxSymbolExposure=Math.Min(configured.MaxSymbolExposure,MaximumSymbolExposure),
             MaxAccountExposure=Math.Min(configured.MaxAccountExposure,MaximumAccountExposure),
             MaxConcurrentPositions=Math.Clamp(configured.MaxConcurrentPositions,1,MaximumConcurrentPositions),

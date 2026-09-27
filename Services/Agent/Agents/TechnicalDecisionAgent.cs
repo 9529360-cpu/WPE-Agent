@@ -15,18 +15,16 @@ public interface ITradingDecisionAgent
 public sealed class TechnicalDecisionAgent : ITradingDecisionAgent
 {
     private readonly string _providerName;
-    private readonly IMarketStructureAnalysisTool _marketStructure;
 
-    public TechnicalDecisionAgent(string providerName="WPE Local Brain",IMarketStructureAnalysisTool? marketStructure=null)
+    public TechnicalDecisionAgent(string providerName="WPE Local Brain")
     {
         _providerName=string.IsNullOrWhiteSpace(providerName)
             ?throw new ArgumentException("Provider name is required.",nameof(providerName))
             :providerName;
-        _marketStructure=marketStructure??MarketStructureAnalysisTool.Shared;
     }
 
-    public string Name => "Technical Market Decision Agent";
-    public string DecisionAuthority => DirectMarketStructureDecisionSkill.DecisionContextKind;
+    public string Name => "Medium Horizon Trading Agent";
+    public string DecisionAuthority => MediumHorizonDecisionSkill.DecisionContextKind;
 
     public Task<BrainDecisionResult> DecideAsync(
         EvidencePack evidence,
@@ -37,35 +35,29 @@ public sealed class TechnicalDecisionAgent : ITradingDecisionAgent
         ArgumentNullException.ThrowIfNull(context);
         ct.ThrowIfCancellationRequested();
 
-        var decision=DirectMarketStructureDecisionSkill.Decide(
-            evidence,
-            false,
-            _marketStructure);
+        var decision=MediumHorizonDecisionSkill.Decide(evidence);
         var market=evidence.Markets.GetValueOrDefault(decision.Instrument);
         var structure=market is null
             ?null
-            :_marketStructure.Analyze(market);
+            :MediumHorizonDecisionSkill.Analyze(market);
 
         var audit=JsonSerializer.Serialize(new
         {
             provider=_providerName,
             agent=Name,
             decisionAuthority=DecisionAuthority,
-            tool=_marketStructure.Name,
+            tool="medium-horizon-d1-h4-v1",
             decision.Action,
             decision.Instrument,
             decision.DecisionContextId,
             decision.StrategyVersion,
             structure=structure is null?null:new
             {
-                structure.HigherTimeframeBias,
-                structure.Phase,
-                structure.Scenario,
-                structure.TriggerPresent,
-                structure.ConfirmationPresent,
-                structure.StructuralSupport,
-                structure.StructuralResistance,
-                event15m=structure.FifteenMinute.Event
+                dailyBias=structure.Daily.Bias,
+                dailyStrength=structure.Daily.Strength,
+                fourHourBias=structure.FourHour.Bias,
+                fourHourStrength=structure.FourHour.Strength,
+                fourHourClosedAt=structure.FourHour.ClosedAtUtc
             },
             decision.Reason
         });

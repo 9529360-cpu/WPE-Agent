@@ -34,7 +34,7 @@ public sealed class ActiveTradingReviewRuntimeValidator : ITradingReviewRuntimeV
         if(!Matches(request.UserId,context.UserId)||!Matches(request.DeviceId,context.DeviceId)||!Matches(request.SessionId,context.SessionId))return Deny("review.context-mismatch");
         if(!Matches(artifact.ProviderId,context.ProviderId))return Deny("review.provider-mismatch");
         if(now-artifact.MarketCollectedAtUtc>MaximumMarketAge||artifact.MarketCollectedAtUtc>now)return Deny("review.market-stale");
-        if(string.IsNullOrWhiteSpace(artifact.StrategyId)||!string.Equals(artifact.StrategyVersion,DirectMarketStructureDecisionSkill.Version,StringComparison.Ordinal))return Deny("review.decision-context-invalid");
+        if(string.IsNullOrWhiteSpace(artifact.StrategyId)||!string.Equals(artifact.StrategyVersion,MediumHorizonDecisionSkill.Version,StringComparison.Ordinal))return Deny("review.decision-context-invalid");
         foreach(var intent in artifact.Intents)
         {
             if(!_capabilities.TryGetValue(intent.Symbol,out var capability))return Deny("review.capability-stale");
@@ -73,7 +73,7 @@ public sealed class ActiveTradingReviewRiskValidator : ITradingReviewRiskValidat
         var histories=new Dictionary<string,IReadOnlyList<CandleEvidence>>(StringComparer.OrdinalIgnoreCase);
         foreach(var symbol in evidence.Markets.Keys)histories[symbol]=await _store.LoadHistoricalCandlesAsync(symbol,"1h",30000,ct);
         var portfolio=_portfolio.Evaluate(evidence,histories,intents,settings.Risk);var history=await _store.GetRiskHistoryAsync(ct);
-        var decision=new DecisionPlan{Action=first.Action,Instrument=first.Symbol,EntryPrice=first.ExpectedPrice,StopLossPrice=first.StopLoss,TakeProfitPrice=first.TakeProfit,OrderType=first.OrderType,StrategyVersion=artifact.StrategyVersion,DecisionContextKind=DirectMarketStructureDecisionSkill.DecisionContextKind,DecisionContextId=artifact.StrategyId,RiskRewardRatio=RiskReward(first)};
+        var decision=new DecisionPlan{Action=first.Action,Instrument=first.Symbol,EntryPrice=first.ExpectedPrice,StopLossPrice=first.StopLoss,TakeProfitPrice=first.TakeProfit,OrderType=first.OrderType,StrategyVersion=artifact.StrategyVersion,DecisionContextKind=MediumHorizonDecisionSkill.DecisionContextKind,DecisionContextId=artifact.StrategyId,RiskRewardRatio=RiskReward(first)};
         var review=_risk.Review(decision,evidence,intents,settings.Risk,history,portfolio);if(!review.Approved)return Deny("review.risk-blocked");
         var now=_utcNow().ToUniversalTime();var receipt=new DeterministicRiskReceipt("review-risk-"+Guid.NewGuid().ToString("N"),request.CorrelationId,hashes.IntentHash,true,now,now.AddMinutes(1),null,hashes.ArtifactHash);
         return new(true,"review.risk-valid",receipt);

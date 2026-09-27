@@ -76,7 +76,7 @@ public sealed class TradingReviewProductionWiringTests
         Assert.Contains("settings.AuthorizationMode!=TradingAuthorizationMode.Review",source,StringComparison.Ordinal);
         Assert.Contains("!context.IsTestnet",source,StringComparison.Ordinal);
         Assert.Contains("review.context-mismatch",source,StringComparison.Ordinal);
-        Assert.Contains("DirectMarketStructureDecisionSkill.Version",source,StringComparison.Ordinal);
+        Assert.Contains("MediumHorizonDecisionSkill.Version",source,StringComparison.Ordinal);
         Assert.Contains("review.decision-context-invalid",source,StringComparison.Ordinal);
         Assert.DoesNotContain("GetStrategiesAsync",source,StringComparison.Ordinal);
         Assert.DoesNotContain("StrategyLifecycle.Active",source,StringComparison.Ordinal);
@@ -89,7 +89,10 @@ public sealed class TradingReviewProductionWiringTests
 
     private static string Source(params string[] path)
     {
-        var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));return File.ReadAllText(Path.Combine([root,..path]));
+        var root=Environment.GetEnvironmentVariable("WPE_TEST_SOURCE_ROOT") is {Length:>0} configured
+            ?Path.GetFullPath(configured)
+            :Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
+        return File.ReadAllText(Path.Combine([root,..path]));
     }
     private static string Slice(string source,string startToken,string endToken){var start=source.IndexOf(startToken,StringComparison.Ordinal);var end=source.IndexOf(endToken,start,StringComparison.Ordinal);Assert.True(start>=0&&end>start);return source[start..end];}
     private static int Count(string source,string value){var count=0;var offset=0;while((offset=source.IndexOf(value,offset,StringComparison.Ordinal))>=0){count++;offset+=value.Length;}return count;}

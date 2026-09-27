@@ -206,6 +206,7 @@ public sealed class AgentSettingsStore
         settings.Risk.MaxMargin=Math.Clamp(settings.Risk.MaxMargin,.10m,.50m);settings.Risk.MaxInitialMarginPerTrade=Math.Clamp(settings.Risk.MaxInitialMarginPerTrade,.005m,.10m);
         settings.Risk.DailyDrawdownLimit=Math.Clamp(settings.Risk.DailyDrawdownLimit,.02m,.10m);
         settings.Risk.MaxRiskPerTrade=Math.Clamp(settings.Risk.MaxRiskPerTrade,.0025m,.02m);
+        settings.Risk.MaxPortfolioStopRisk=Math.Clamp(settings.Risk.MaxPortfolioStopRisk,.01m,.05m);
         settings.Risk.MaxSymbolExposure=Math.Clamp(settings.Risk.MaxSymbolExposure,.05m,.35m);
         settings.Risk.MaxAccountExposure=Math.Clamp(settings.Risk.MaxAccountExposure,.10m,.60m);
         settings.Risk.MaxConcurrentPositions=Math.Clamp(settings.Risk.MaxConcurrentPositions,1,5);

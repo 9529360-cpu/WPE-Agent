@@ -15,13 +15,13 @@ public sealed class DecisionGovernanceSkill
         ArgumentNullException.ThrowIfNull(policy);
         var blocks=new List<string>();
         var riskIncreasing=DeterministicPlanSkill.IsRiskIncreasing(proposed.Action);
-        var directDriven=DirectMarketStructureDecisionSkill.IsDirect(proposed);
-        if(riskIncreasing&&!directDriven)blocks.Add("only direct candle-structure decisions may increase risk");
+        var mediumHorizonDriven=MediumHorizonDecisionSkill.IsMediumHorizon(proposed);
+        if(riskIncreasing&&!mediumHorizonDriven)blocks.Add("only daily/4h medium-horizon decisions may increase risk");
         if(riskIncreasing&&evidence.Completeness<policy.MinimumEvidenceCompleteness)blocks.Add(L("Review.Incomplete"));
-        if(directDriven&&riskIncreasing)
+        if(mediumHorizonDriven&&riskIncreasing)
         {
-            if(!evidence.Markets.TryGetValue(proposed.Instrument,out var market)||!DirectMarketStructureDecisionSkill.ContextMatches(proposed,market))
-                blocks.Add("direct candle-structure context is stale or no longer actionable");
+            if(!evidence.Markets.TryGetValue(proposed.Instrument,out var market)||!MediumHorizonDecisionSkill.ContextMatches(proposed,market))
+                blocks.Add("daily/4h medium-horizon context is stale or no longer actionable");
         }
         var final=blocks.Count==0?proposed:CopyAsHold(proposed,blocks);
         var accepted=blocks.Count==0;
@@ -32,13 +32,13 @@ public sealed class DecisionGovernanceSkill
     {
         Action=DecisionAction.Hold,Instrument=p.Instrument,TargetTier=0,Invalidation=p.Invalidation,Regime=p.Regime,Reason=p.Reason,
         EvidenceReferences=p.EvidenceReferences,MissingConditions=blocks.Distinct().ToList(),ConflictSummary=p.ConflictSummary,
-        EntryPrice=p.EntryPrice,StopLossPrice=p.StopLossPrice,TakeProfitPrice=p.TakeProfitPrice,RiskRewardRatio=p.RiskRewardRatio,OrderType=p.OrderType,
+        EntryPrice=p.EntryPrice,StopLossPrice=p.StopLossPrice,TakeProfitPrice=p.TakeProfitPrice,RiskRewardRatio=p.RiskRewardRatio,RiskBudgetFraction=p.RiskBudgetFraction,OrderType=p.OrderType,
         StrategyVersion=p.StrategyVersion,DecisionContextKind=p.DecisionContextKind,DecisionContextId=p.DecisionContextId
     };
 
     private static string Explain(DecisionPlan decision,IReadOnlyList<string> blocks)
     {
-        var prefix=DirectMarketStructureDecisionSkill.IsDirect(decision)?$"{decision.Action} · Direct candle structure":$"{decision.Action} · No risk-increasing direct context";
+        var prefix=MediumHorizonDecisionSkill.IsMediumHorizon(decision)?$"{decision.Action} · Daily/4H thesis":$"{decision.Action} · No risk-increasing medium-horizon context";
         var missing=blocks.Concat(decision.MissingConditions).Where(x=>!string.IsNullOrWhiteSpace(x)).Distinct().ToArray();
         return missing.Length==0?$"{prefix}\n{L("Review.Reason")}{decision.Reason}":$"{prefix}\n{L("Review.Reason")}{decision.Reason}\n{L("Review.Missing")}{string.Join("; ",missing)}";
     }

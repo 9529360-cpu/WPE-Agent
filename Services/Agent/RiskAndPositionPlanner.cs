@@ -99,7 +99,7 @@ public sealed class RiskAndPositionPlanner
 
     public (IReadOnlyList<ExecutionIntent> Intents,string Result) Plan(
         DecisionPlan d,EvidencePack e,TradingRule rule,RiskLimits limits,
-        bool safeToIncreaseRisk=true,string? safetyReason=null,PositionSide? lockedSide=null)
+        bool safeToIncreaseRisk=true,string? safetyReason=null,PositionSide? lockedSide=null,decimal existingPortfolioStopRisk=0)
     {
         var riskIncreasing=DeterministicPlanSkill.IsRiskIncreasing(d.Action);
         if(!safeToIncreaseRisk&&riskIncreasing)return(Array.Empty<ExecutionIntent>(),safetyReason??L("Risk.Recovery"));
@@ -162,7 +162,12 @@ public sealed class RiskAndPositionPlanner
             var slippageFraction=slippageBps/10_000m;
             var entryExecutionCostPerUnit=entry*(halfSpreadFraction+slippageFraction);
             var exitExecutionCostPerUnit=roundedStop*(halfSpreadFraction+slippageFraction);
-            var riskBudget=e.Account.Equity*limits.MaxRiskPerTrade;
+            var requestedRisk=d.RiskBudgetFraction>0?Math.Min(d.RiskBudgetFraction,limits.MaxRiskPerTrade):limits.MaxRiskPerTrade;
+            var perTradeRiskBudget=e.Account.Equity*requestedRisk;
+            var portfolioRiskBudget=e.Account.Equity*Math.Clamp(limits.MaxPortfolioStopRisk,.01m,.05m);
+            var portfolioRiskRoom=Math.Max(0,portfolioRiskBudget-Math.Max(0,existingPortfolioStopRisk));
+            var riskBudget=Math.Min(perTradeRiskBudget,portfolioRiskRoom);
+            if(riskBudget<=0)return(null,"risk.portfolio-stop-budget-exhausted");
             var riskPerNewUnit=stopDistance+(entry+roundedStop)*feeRate+entryExecutionCostPerUnit+exitExecutionCostPerUnit;
             var riskQuantity=riskBudget/Math.Max(riskPerNewUnit,.00000001m);
             var exposureQuantity=e.Account.Equity*limits.MaxSymbolExposure/Math.Max(entry,.00000001m);

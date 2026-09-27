@@ -475,7 +475,9 @@ public sealed class RiskGateTests
 
     private static string SourcePath(params string[] path)
     {
-        var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
+        var root=Environment.GetEnvironmentVariable("WPE_TEST_SOURCE_ROOT") is {Length:>0} configured
+            ?Path.GetFullPath(configured)
+            :Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
         return Path.Combine([root,..path]);
     }
 

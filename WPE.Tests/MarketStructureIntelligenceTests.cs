@@ -214,7 +214,7 @@ public sealed class MarketStructureIntelligenceTests
     }
 
     [Fact]
-    public async Task LocalBrainTradesDirectlyFromFreshCandleStructure()
+    public async Task LocalBrainDoesNotTradeIntradayOnlyStructureWithoutDailyThesis()
     {
         var market=Market(
             SweepLowReclaimThenConfirm15m(),
@@ -225,21 +225,12 @@ public sealed class MarketStructureIntelligenceTests
 
         var result=await new DeterministicBrainProvider().DecideAsync(Evidence(market),context,CancellationToken.None);
 
-        Assert.Equal(DecisionAction.OpenLong,result.Decision.Action);
-        Assert.Equal(DirectMarketStructureDecisionSkill.DecisionContextKind,result.Decision.DecisionContextKind);
-        Assert.Equal(DirectMarketStructureDecisionSkill.Version,result.Decision.StrategyVersion);
-        Assert.True(result.Decision.StopLossPrice<market.Price);
-        var structure=MarketStructureIntelligence.Analyze(market);
-        Assert.True(result.Decision.TakeProfitPrice>market.Price);
-        Assert.True(result.Decision.TakeProfitPrice<structure.StructuralResistance);
-        Assert.Contains("target_geometry=structural-opposite-boundary",result.Decision.EvidenceReferences);
-        Assert.True(DirectMarketStructureDecisionSkill.ContextMatches(result.Decision,market));
-        Assert.Contains("decision_path=direct-market-structure",result.Decision.EvidenceReferences);
-        Assert.Contains("entry_qualification=trigger-plus-confirmation",result.Decision.EvidenceReferences);
+        Assert.Equal(DecisionAction.Hold,result.Decision.Action);
+        Assert.Equal("medium-horizon-observation",result.Decision.DecisionContextKind);
+        Assert.Contains("No daily/4h thesis is actionable",result.Decision.Reason,StringComparison.Ordinal);
         Assert.Contains("\"provider\":\"WPE Local Brain\"",result.Response,StringComparison.Ordinal);
-        Assert.Contains("\"agent\":\"Technical Market Decision Agent\"",result.Response,StringComparison.Ordinal);
-        Assert.Contains("\"tool\":\"market.structure.analyze\"",result.Response,StringComparison.Ordinal);
-        Assert.DoesNotContain("score",result.Decision.ConflictSummary,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"agent\":\"Medium Horizon Trading Agent\"",result.Response,StringComparison.Ordinal);
+        Assert.Contains("\"tool\":\"medium-horizon-d1-h4-v1\"",result.Response,StringComparison.Ordinal);
     }
 
     [Fact]
@@ -413,24 +404,24 @@ public sealed class MarketStructureIntelligenceTests
     }
 
     [Fact]
-    public async Task TechnicalDecisionAgentUsesInjectedAnalysisTool()
+    public async Task TechnicalDecisionAgentNoLongerDependsOnIntradayAnalysisTool()
     {
         var market=Market(
             SweepLowReclaimThenConfirm15m(),
             Trend(48,90m,.55m,TimeSpan.FromHours(1)),
             Trend(48,70m,1.1m,TimeSpan.FromHours(4)),
             Now.AddMinutes(30));
-        var tool=new CountingMarketStructureTool();
 
-        var result=await new TechnicalDecisionAgent(marketStructure:tool)
-            .DecideAsync(Evidence(market),new AgentContext("WPE Local Brain"),CancellationToken.None);
+        var agent=new TechnicalDecisionAgent();
+        var result=await agent.DecideAsync(Evidence(market),new AgentContext("WPE Local Brain"),CancellationToken.None);
 
-        Assert.Equal(DecisionAction.OpenLong,result.Decision.Action);
-        Assert.True(tool.Calls>=2);
+        Assert.Equal(MediumHorizonDecisionSkill.DecisionContextKind,agent.DecisionAuthority);
+        Assert.Equal(DecisionAction.Hold,result.Decision.Action);
+        Assert.Contains("No daily/4h thesis is actionable",result.Decision.Reason,StringComparison.Ordinal);
     }
 
     [Fact]
-    public void DirectReviewerNeedsNoScoreOrResearchGate()
+    public void ProductionReviewerRejectsRetiredDirectRiskIncreasingContext()
     {
         var market=Market(
             SweepLowReclaimThenConfirm15m(),
@@ -442,14 +433,13 @@ public sealed class MarketStructureIntelligenceTests
 
         var review=new DecisionGovernanceSkill().Review(decision,evidence,new DecisionPolicy());
 
-        Assert.True(review.Accepted);
-        Assert.Empty(review.BlockingReasons);
-        Assert.Equal(DecisionAction.OpenLong,review.Decision.Action);
-        Assert.Contains("Direct candle structure",review.Explanation,StringComparison.Ordinal);
+        Assert.False(review.Accepted);
+        Assert.Equal(DecisionAction.Hold,review.Decision.Action);
+        Assert.Contains(review.BlockingReasons,x=>x.Contains("only daily/4h medium-horizon decisions may increase risk",StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task PerformanceRiskStateDoesNotOverrideDirectMarketAnalysis()
+    public async Task DeterministicBrainProviderUsesMediumHorizonAuthority()
     {
         var market=Market(
             SweepLowReclaimThenConfirm15m(),
@@ -460,9 +450,9 @@ public sealed class MarketStructureIntelligenceTests
 
         var result=await new DeterministicBrainProvider().DecideAsync(Evidence(market),context,CancellationToken.None);
 
-        Assert.Equal(DecisionAction.OpenLong,result.Decision.Action);
-        Assert.DoesNotContain("circuit breaker",result.Decision.Reason,StringComparison.OrdinalIgnoreCase);
-        Assert.True(DirectMarketStructureDecisionSkill.IsDirect(result.Decision));
+        Assert.Equal(DecisionAction.Hold,result.Decision.Action);
+        Assert.Contains("No daily/4h thesis is actionable",result.Decision.Reason,StringComparison.Ordinal);
+        Assert.Contains("medium-horizon-d1-h4-v1",result.Response,StringComparison.Ordinal);
     }
 
     [Fact]

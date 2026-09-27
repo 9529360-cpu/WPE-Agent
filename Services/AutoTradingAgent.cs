@@ -108,6 +108,7 @@ public static class AutoTradingAgent
             RequestedLeverage=runtimeRisk.Leverage,
             InitialMarginBudget=runtimeRisk.MaxInitialMarginPerTrade,
             MaxLossRiskPerTrade=runtimeRisk.MaxRiskPerTrade,
+            MaxPortfolioStopRisk=runtimeRisk.MaxPortfolioStopRisk,
             MaxSymbolExposure=runtimeRisk.MaxSymbolExposure,
             MaxAccountExposure=runtimeRisk.MaxAccountExposure,
             MaxConcurrentPositions=runtimeRisk.MaxConcurrentPositions,
@@ -208,8 +209,8 @@ public static class AutoTradingAgent
                 }
                 var maintenanceUi=ResolveAutomaticMaintenanceMessage(safeToIncreaseRisk,runtimeState.LastMessage,safetyMessage,automaticMaintenanceOwnedMessage,L("Agent.Started",exchangeProfile.DisplayName,brain.Name));runtimeState.LastMessage=maintenanceUi.LastMessage;automaticMaintenanceOwnedMessage=maintenanceUi.OwnedMessage;
 
-                Stage("Stage.Evidence","OBSERVATION",32);var collector=new EvidenceCollector(exchange,analysisSymbols,realtime,newsResearch);var evidence=await SkillAsync("EvidenceCollector",string.Join(',',analysisSymbols),token=>collector.CollectAsync(token),x=>$"completeness={x.Completeness} markets={x.Markets.Count} missing={x.MissingSources.Count}",ct);var evidenceDelta=await SkillAsync("EvidenceDelta",$"baseline={(previousEvidence is null?"none":"present")} markets={evidence.Markets.Count}",_=>Task.FromResult(EvidenceDeltaEngineV1.Compare(evidence,previousEvidence)),x=>$"baseline={x.HasBaseline} changes={x.Signals.Count} critical={x.CriticalCount} source_degradations={x.SourceDegradationCount}",ct);await Db.SetStateAsync("market.evidence-delta:last",System.Text.Json.JsonSerializer.Serialize(evidenceDelta),ct);var marketStates=await SkillAsync("MarketState",$"markets={evidence.Markets.Count}",token=>marketStateStore.ObserveAsync(evidence.Markets,token),x=>$"states={x.Count} confirmed={x.Values.Count(s=>s.Lifecycle==MarketStateLifecycleV1.Confirmed)} transitions={x.Values.Count(s=>s.TransitionKind!=MarketStateTransitionKindV1.Stable)}",ct);evidence=MarketStateEvidenceOverlayV1.Attach(evidence,marketStates);previousEvidence=evidence;await Db.SaveNewsAsync(evidence.News,ct);var marketDegraded=evidenceDelta.SourceDegradationCount>0||marketStates.Values.Any(x=>!x.Available);roles.Publish("market",marketDegraded?"degraded":"monitoring",evidenceDelta.SourceDegradationCount>0?$"Fresh evidence collected; {evidenceDelta.SourceDegradationCount} source degradation(s) detected.":marketStates.Values.Any(x=>!x.Available)?"Fresh evidence collected; one or more persistent market states are unavailable.":"Fresh market evidence and persistent market state were updated.");await Db.StartCycleAsync(cycle,evidence,brain.Name,ct);await runtime.BeginCycleAsync(cycle,new{evidence.Completeness,Markets=evidence.Markets.Keys,OpportunityWatch=opportunityUniverse.WatchSymbols,OpportunityDeep=authorizedTradeSymbols,MarketStates=marketStates.Values.Select(x=>new{x.Symbol,x.Lifecycle,x.Bias,x.Phase,x.Scenario,x.TransitionKind,x.ObservationCount}),brain=brain.Name,decisionPath=DirectMarketStructureDecisionSkill.DecisionContextKind},ct);workflowStarted=true;
-                Stage("Stage.Research","OBSERVATION",36);await runtime.TransitionAsync(cycle,WorkflowNode.Research,new{evidence.Completeness,MarketCount=evidence.Markets.Count,ExecutionAuthority="direct-market-structure"},ct);var histories=new Dictionary<string,IReadOnlyList<CandleEvidence>>(StringComparer.OrdinalIgnoreCase);foreach(var market in evidence.Markets.Values)histories[market.Symbol]=await Db.LoadHistoricalCandlesAsync(market.Symbol,"1h",30000,ct);
+                Stage("Stage.Evidence","OBSERVATION",32);var collector=new EvidenceCollector(exchange,analysisSymbols,realtime,newsResearch);var evidence=await SkillAsync("EvidenceCollector",string.Join(',',analysisSymbols),token=>collector.CollectAsync(token),x=>$"completeness={x.Completeness} markets={x.Markets.Count} missing={x.MissingSources.Count}",ct);var evidenceDelta=await SkillAsync("EvidenceDelta",$"baseline={(previousEvidence is null?"none":"present")} markets={evidence.Markets.Count}",_=>Task.FromResult(EvidenceDeltaEngineV1.Compare(evidence,previousEvidence)),x=>$"baseline={x.HasBaseline} changes={x.Signals.Count} critical={x.CriticalCount} source_degradations={x.SourceDegradationCount}",ct);await Db.SetStateAsync("market.evidence-delta:last",System.Text.Json.JsonSerializer.Serialize(evidenceDelta),ct);var marketStates=await SkillAsync("MarketState",$"markets={evidence.Markets.Count}",token=>marketStateStore.ObserveAsync(evidence.Markets,token),x=>$"states={x.Count} confirmed={x.Values.Count(s=>s.Lifecycle==MarketStateLifecycleV1.Confirmed)} transitions={x.Values.Count(s=>s.TransitionKind!=MarketStateTransitionKindV1.Stable)}",ct);evidence=MarketStateEvidenceOverlayV1.Attach(evidence,marketStates);previousEvidence=evidence;await Db.SaveNewsAsync(evidence.News,ct);var marketDegraded=evidenceDelta.SourceDegradationCount>0||marketStates.Values.Any(x=>!x.Available);roles.Publish("market",marketDegraded?"degraded":"monitoring",evidenceDelta.SourceDegradationCount>0?$"Fresh evidence collected; {evidenceDelta.SourceDegradationCount} source degradation(s) detected.":marketStates.Values.Any(x=>!x.Available)?"Fresh evidence collected; one or more persistent market states are unavailable.":"Fresh market evidence and persistent market state were updated.");await Db.StartCycleAsync(cycle,evidence,brain.Name,ct);await runtime.BeginCycleAsync(cycle,new{evidence.Completeness,Markets=evidence.Markets.Keys,OpportunityWatch=opportunityUniverse.WatchSymbols,OpportunityDeep=authorizedTradeSymbols,MarketStates=marketStates.Values.Select(x=>new{x.Symbol,x.Lifecycle,x.Bias,x.Phase,x.Scenario,x.TransitionKind,x.ObservationCount}),brain=brain.Name,decisionPath=MediumHorizonDecisionSkill.DecisionContextKind},ct);workflowStarted=true;
+                Stage("Stage.Research","OBSERVATION",36);await runtime.TransitionAsync(cycle,WorkflowNode.Research,new{evidence.Completeness,MarketCount=evidence.Markets.Count,ExecutionAuthority="medium-horizon-d1-h4"},ct);var histories=new Dictionary<string,IReadOnlyList<CandleEvidence>>(StringComparer.OrdinalIgnoreCase);foreach(var market in evidence.Markets.Values)histories[market.Symbol]=await Db.LoadHistoricalCandlesAsync(market.Symbol,"1h",30000,ct);
                 var positionTradingRules=await ReadPositionManagementRulesAsync(exchange,positions,ct);
                 Stage("Stage.PositionManagement","RISK",39);await runtime.TransitionAsync(cycle,WorkflowNode.PositionManagement,new{Positions=positions.Count},ct);var management=await SkillAsync("PositionManagement",$"positions={positions.Count}",token=>positionManager.EvaluateAsync(positions,evidence.Markets,Db,token,executionLedger,positionTradingRules,evidence.MarketStates,runtimeRisk),x=>$"intents={x.Intents.Count} adjustments={x.ProtectionAdjustments.Count}",ct);var managementActivity=false;
                 if(management.Intents.Count>0||management.ProtectionAdjustments.Count>0)
@@ -223,17 +224,17 @@ public static class AutoTradingAgent
                     if(protectionCount>0){safeToIncreaseRisk=false;safetyMessage="position.protection-adjusted-awaiting-reconciliation";await Db.SetStateAsync("authorization.position-management",safetyMessage,ct);}
                 }
 
-                Stage("Stage.Aggregation","OBSERVATION",43);await runtime.TransitionAsync(cycle,WorkflowNode.Aggregation,new{ManagementIntents=management.Intents.Count,managementActivity,DecisionPath=DirectMarketStructureDecisionSkill.DecisionContextKind},ct);UpdateEvidence(evidence);
-                Stage("Stage.Planner","PLANNER",52);await runtime.TransitionAsync(cycle,WorkflowNode.Planner,new{DecisionPath=DirectMarketStructureDecisionSkill.DecisionContextKind,Markets=evidence.Markets.Count},ct);DecisionPlan proposed;string? brainRequest=null,brainResponse=null;
+                Stage("Stage.Aggregation","OBSERVATION",43);await runtime.TransitionAsync(cycle,WorkflowNode.Aggregation,new{ManagementIntents=management.Intents.Count,managementActivity,DecisionPath=MediumHorizonDecisionSkill.DecisionContextKind},ct);UpdateEvidence(evidence);
+                Stage("Stage.Planner","PLANNER",52);await runtime.TransitionAsync(cycle,WorkflowNode.Planner,new{DecisionPath=MediumHorizonDecisionSkill.DecisionContextKind,Markets=evidence.Markets.Count},ct);DecisionPlan proposed;string? brainRequest=null,brainResponse=null;
                 var openPositionCount=evidence.Positions.Where(x=>x.Quantity>0).Select(x=>x.Symbol).Distinct(StringComparer.OrdinalIgnoreCase).Count();
                 var availablePositionSlots=Math.Max(0,runtimeRisk.MaxConcurrentPositions-openPositionCount);
                 var rankedCandidates=availablePositionSlots>0
-                    ?DirectMarketStructureDecisionSkill.DecideCandidates(evidence,false,Math.Min(5,availablePositionSlots))
+                    ?MediumHorizonDecisionSkill.DecideCandidates(evidence,Math.Min(5,availablePositionSlots))
                     :Array.Empty<DecisionPlan>();
                 try
                 {
                     var brainContext=new AgentContext(brain.Name);
-                    var brainResult=await SkillAsync("BrainPlanner",$"markets={evidence.Markets.Count} direct=true candidates={rankedCandidates.Count}",token=>brain.DecideAsync(evidence,brainContext,token),x=>$"{x.Decision.Action} {x.Decision.Instrument} direct={DirectMarketStructureDecisionSkill.IsDirect(x.Decision)}",ct);
+                    var brainResult=await SkillAsync("BrainPlanner",$"markets={evidence.Markets.Count} horizon=1d-4h candidates={rankedCandidates.Count}",token=>brain.DecideAsync(evidence,brainContext,token),x=>$"{x.Decision.Action} {x.Decision.Instrument} medium={MediumHorizonDecisionSkill.IsMediumHorizon(x.Decision)}",ct);
                     proposed=brainResult.Decision;brainRequest=brainResult.Request;brainResponse=brainResult.Response;
                     if(availablePositionSlots<=0)
                         proposed=new(){Action=DecisionAction.Hold,Reason=$"Portfolio already has {openPositionCount} open symbols; maximum concurrent positions is {runtimeRisk.MaxConcurrentPositions}.",DecisionContextKind="portfolio-capacity"};
@@ -242,14 +243,14 @@ public static class AutoTradingAgent
                         DecisionPlan? selected=null;
                         foreach(var candidate in rankedCandidates)
                         {
-                            if(!DirectMarketStructureDecisionSkill.IsDirect(candidate)||string.IsNullOrWhiteSpace(candidate.DecisionContextId))continue;
+                            if(!MediumHorizonDecisionSkill.IsMediumHorizon(candidate)||string.IsNullOrWhiteSpace(candidate.DecisionContextId))continue;
                             if(!await Db.HasAutomaticExecutionBlockingRepeatAsync(candidate.DecisionContextId,ct)){selected=candidate;break;}
                         }
                         if(selected is not null)
                         {
                             proposed=selected;
                             if(!string.Equals(proposed.DecisionContextId,brainResult.Decision.DecisionContextId,StringComparison.Ordinal))
-                                brainResponse=System.Text.Json.JsonSerializer.Serialize(new{source="local-ranked-candidates",selected=proposed.DecisionContextId,candidates=rankedCandidates.Select(x=>new{x.Instrument,x.Action,x.DecisionContextId}).ToArray(),primary=brainResult.Response});
+                                brainResponse=System.Text.Json.JsonSerializer.Serialize(new{source="medium-horizon-ranked-candidates",selected=proposed.DecisionContextId,candidates=rankedCandidates.Select(x=>new{x.Instrument,x.Action,x.DecisionContextId,x.RiskBudgetFraction}).ToArray(),primary=brainResult.Response});
                         }
                         else
                             proposed=new(){Action=DecisionAction.Hold,Reason="All currently actionable ranked setups already have an active or completed execution for the same decision context.",DecisionContextKind="market-observation"};
@@ -263,8 +264,10 @@ public static class AutoTradingAgent
 
                 Stage("Stage.Risk","RISK",78);await runtime.TransitionAsync(cycle,WorkflowNode.Risk,new{decision.Action,decision.Instrument,ReviewAccepted=review.Accepted},ct);string result;IReadOnlyList<ExecutionIntent> intents=Array.Empty<ExecutionIntent>();TradingRule? tradingRule=null;
                 var riskHistory=await Db.GetRiskHistoryAsync(ct);var sessionRisk=SessionRiskGate.Evaluate(riskHistory,evidence.Account.Equity,_dayHigh,runtimeRisk);var planningSafeToIncreaseRisk=safeToIncreaseRisk&&sessionRisk.AllowsRiskIncrease;var planningSafetyMessage=sessionRisk.AllowsRiskIncrease?safetyMessage:string.Join("；",new[]{safetyMessage}.Concat(sessionRisk.Reasons).Where(x=>!string.IsNullOrWhiteSpace(x)));
+                var existingStopRisk=await ExistingPortfolioStopRiskAsync(evidence,Db,ct);
+                if(!existingStopRisk.Complete&&evidence.Positions.Any(x=>x.Quantity>0)){planningSafeToIncreaseRisk=false;planningSafetyMessage="risk.portfolio-stop-evidence-incomplete";}
                 if(!authorizedTradeSymbols.Contains(decision.Instrument,StringComparer.OrdinalIgnoreCase)){result=L("Agent.InvalidInstrument");}
-                else{tradingRule=await exchange.GetRulesAsync(decision.Instrument,ct);var lockedSide=await Db.GetLockedSideAsync(decision.Instrument,ct);var planned=await SkillAsync("RiskAndPositionPlanner",$"{decision.Action} {decision.Instrument} direct=true",_=>Task.FromResult(planner.Plan(decision,evidence,tradingRule,runtimeRisk,planningSafeToIncreaseRisk,planningSafetyMessage,lockedSide)),x=>$"intents={x.Intents.Count} result={x.Result}",ct);intents=planned.Intents;result=planned.Result;}
+                else{tradingRule=await exchange.GetRulesAsync(decision.Instrument,ct);var lockedSide=await Db.GetLockedSideAsync(decision.Instrument,ct);var planned=await SkillAsync("RiskAndPositionPlanner",$"{decision.Action} {decision.Instrument} horizon=1d-4h portfolioStopRisk={existingStopRisk.Risk:F4}",_=>Task.FromResult(planner.Plan(decision,evidence,tradingRule,runtimeRisk,planningSafeToIncreaseRisk,planningSafetyMessage,lockedSide,existingStopRisk.Risk)),x=>$"intents={x.Intents.Count} result={x.Result}",ct);intents=planned.Intents;result=planned.Result;}
                 var portfolioRisk=await SkillAsync("PortfolioRisk",$"positions={evidence.Positions.Count} intents={intents.Count}",_=>Task.FromResult(portfolioRiskSkill.Evaluate(evidence,histories,intents,runtimeRisk)),x=>x.Summary,ct);await Db.SavePortfolioRiskAsync(cycle,portfolioRisk,ct);UpdatePortfolioRiskUi(portfolioRisk,realtime);
                 var riskReview=await SkillAsync("IndependentRiskManager",$"{decision.Action} intents={intents.Count}",_=>Task.FromResult(independentRisk.Review(decision,evidence,intents,runtimeRisk,riskHistory,portfolioRisk)),x=>$"approved={x.Approved} level={x.RiskLevel} blocks={x.BlockingReasons.Count}",ct);
                 if(DeterministicPlanSkill.IsRiskIncreasing(decision.Action)&&intents.Count==0)riskReview=new(){Approved=false,RiskLevel="BLOCKED",BlockingReasons=[result],Summary=result};
@@ -283,10 +286,10 @@ public static class AutoTradingAgent
                     if(settings.AuthorizationMode==TradingAuthorizationMode.Auto)
                     {
                         var riskIncreasingDecision=DeterministicPlanSkill.IsRiskIncreasing(decision.Action);
-                        var directDriven=DirectMarketStructureDecisionSkill.IsDirect(decision);
-                        var decisionContextId=directDriven?decision.DecisionContextId:null;
-                        var decisionContextVersion=directDriven?decision.StrategyVersion:null;
-                        var decisionContextValid=directDriven&&proposedMarket is not null&&DirectMarketStructureDecisionSkill.ContextMatches(decision,proposedMarket);
+                        var mediumHorizonDriven=MediumHorizonDecisionSkill.IsMediumHorizon(decision);
+                        var decisionContextId=mediumHorizonDriven?decision.DecisionContextId:null;
+                        var decisionContextVersion=mediumHorizonDriven?decision.StrategyVersion:null;
+                        var decisionContextValid=mediumHorizonDriven&&proposedMarket is not null&&MediumHorizonDecisionSkill.ContextMatches(decision,proposedMarket);
                         if(!decisionContextValid||string.IsNullOrWhiteSpace(decisionContextId)||string.IsNullOrWhiteSpace(decisionContextVersion)||!runtimeRisk.Isolated){result=riskIncreasingDecision?"automatic.decision-context-invalid":"automatic.artifact-context-invalid";state.ExecutionApprovalStatus="BLOCKED";}
                         else if(riskIncreasingDecision&&await Db.HasAutomaticExecutionBlockingRepeatAsync(decisionContextId!,ct))
                         {
@@ -354,6 +357,26 @@ public static class AutoTradingAgent
             catch(OperationCanceledException)when(ct.IsCancellationRequested){throw;}
             catch(Exception ex){await db.RecordErrorAsync("OpportunityHistory:"+symbol,ex,CancellationToken.None);}
         }
+    }
+
+    private static async Task<(decimal Risk,bool Complete)> ExistingPortfolioStopRiskAsync(EvidencePack evidence,AgentSqliteStore db,CancellationToken ct)
+    {
+        decimal total=0;
+        foreach(var position in evidence.Positions.Where(x=>x.Quantity>0))
+        {
+            var opening=await db.GetLatestOpeningIntentAsync(position.Symbol,position.Side,ct);
+            if(opening is null||opening.StopLoss<=0)return(total,false);
+            var stop=opening.StopLoss;
+            var effectiveRaw=await db.GetStateAsync(PositionManagementDurableState.EffectiveProtectionKey(opening.ClientOrderId),ct);
+            if(PositionManagementDurableState.TryParseEffectiveProtection(effectiveRaw,out var effective)&&
+               string.Equals(effective.OpeningClientOrderId,opening.ClientOrderId,StringComparison.Ordinal)&&effective.StopLoss>0)
+                stop=effective.StopLoss;
+            var perUnit=position.Side==PositionSide.Long
+                ?Math.Max(0,position.EntryPrice-stop)
+                :Math.Max(0,stop-position.EntryPrice);
+            total+=position.Quantity*perUnit;
+        }
+        return(total,true);
     }
 
     private static void UpdateAccount(AccountSnapshot account,IReadOnlyList<ManagedPosition> positions,IReadOnlyList<ExchangeOrder> orders)
