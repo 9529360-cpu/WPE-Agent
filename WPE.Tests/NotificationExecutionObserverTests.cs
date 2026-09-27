@@ -85,6 +85,19 @@ public sealed class NotificationExecutionObserverTests:IDisposable
     }
 
     [Fact]
+    public async Task PlannedIntentLeverageOverridesLegacyPlanLeverageAtMutationBoundary()
+    {
+        var exchange=new RecordingExchange("FILLED",1m);
+        var executor=Executor(exchange,new RecordingObserver());
+        var intent=Intent() with{EffectiveLeverage=3};
+
+        var result=await executor.ExecutePlanAsync("cycle-leverage",[intent],100,true,default);
+
+        Assert.Contains("Protected",result,StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3,exchange.LastLeverage);
+    }
+
+    [Fact]
     public async Task PersistedPreflightBlockPublishesRiskBlockedWithoutTrade()
     {
         var exchange=new RecordingExchange("FILLED",1m)
@@ -147,6 +160,7 @@ public sealed class NotificationExecutionObserverTests:IDisposable
         public MarketQualityEvidence MarketQuality{get;init;}=new(){QualityScore=95,LiquidityScore=.9,SpreadBps=1,AtrPercent=.01};
         public int PlaceCount{get;private set;}
         public int ProtectionCount{get;private set;}
+        public int LastLeverage{get;private set;}
         public ExchangeEnvironment Environment=>ExchangeEnvironment.Testnet;
         public Task<AccountSnapshot> GetAccountAsync(CancellationToken ct)=>Task.FromResult(new AccountSnapshot(1000,900,1000,DateTime.UtcNow));
         public Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct)=>Task.FromResult<IReadOnlyList<ManagedPosition>>([]);
@@ -160,7 +174,7 @@ public sealed class NotificationExecutionObserverTests:IDisposable
         public Task<IReadOnlyList<DerivativesSnapshot>> GetDerivativeHistoryAsync(string symbol,CancellationToken ct)=>Task.FromResult<IReadOnlyList<DerivativesSnapshot>>([]);
         public Task<IReadOnlyList<CandleEvidence>> GetCandlesAsync(string symbol,string interval,int limit,CancellationToken ct)=>Task.FromResult<IReadOnlyList<CandleEvidence>>([]);
         public Task<IReadOnlyList<CandleEvidence>> GetCandlesRangeAsync(string symbol,string interval,DateTime start,DateTime end,int limit,CancellationToken ct)=>Task.FromResult<IReadOnlyList<CandleEvidence>>([]);
-        public Task SetLeverageAsync(string symbol,int leverage,CancellationToken ct)=>Task.CompletedTask;
+        public Task SetLeverageAsync(string symbol,int leverage,CancellationToken ct){LastLeverage=leverage;return Task.CompletedTask;}
         public Task SetMarginModeAsync(string symbol,bool isolated,CancellationToken ct)=>Task.CompletedTask;
         public Task SetHedgeModeAsync(bool enabled,CancellationToken ct)=>Task.CompletedTask;
         public Task<ExchangeOrder?> FindOrderAsync(string symbol,string clientOrderId,CancellationToken ct)=>Task.FromResult(_order);

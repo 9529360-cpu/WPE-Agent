@@ -208,12 +208,14 @@ public sealed class AgentSettingsStore
         settings.Risk.MaxRiskPerTrade=Math.Clamp(settings.Risk.MaxRiskPerTrade,.0025m,.02m);
         settings.Risk.MaxSymbolExposure=Math.Clamp(settings.Risk.MaxSymbolExposure,.05m,.35m);
         settings.Risk.MaxAccountExposure=Math.Clamp(settings.Risk.MaxAccountExposure,.10m,.60m);
+        settings.Risk.MaxConcurrentPositions=Math.Clamp(settings.Risk.MaxConcurrentPositions,1,5);
         settings.Risk.MaxDailyLoss=Math.Clamp(settings.Risk.MaxDailyLoss,.01m,.08m);
         settings.Risk.MaxAtrPercent=Math.Clamp(settings.Risk.MaxAtrPercent,.01,.12);
         settings.Risk.MinimumLiquidityScore=Math.Clamp(settings.Risk.MinimumLiquidityScore,.20,.95);
         settings.Risk.MaximumSpreadBps=Math.Clamp(settings.Risk.MaximumSpreadBps,1,30);
         settings.Risk.MaximumSlippageBps=Math.Clamp(settings.Risk.MaximumSlippageBps,2,50);
         settings.Risk.MinimumRiskReward=Math.Clamp(settings.Risk.MinimumRiskReward,1.2,4.0);
+        settings.Risk.LiquidationBufferFraction=Math.Clamp(settings.Risk.LiquidationBufferFraction,.01m,.25m);
         settings.Risk.ApiFailureThreshold=Math.Clamp(settings.Risk.ApiFailureThreshold,2,10);
         settings.Risk.MaxPortfolioVaR99=Math.Clamp(settings.Risk.MaxPortfolioVaR99,.005,.10);
         settings.Risk.MaxPortfolioCVaR99=Math.Clamp(settings.Risk.MaxPortfolioCVaR99,.01,.15);

@@ -7,6 +7,7 @@ public static class TestnetHighOpportunityRiskProfileV1
     public const decimal MaximumLossRiskPerTrade=.01m;
     public const decimal MaximumSymbolExposure=.25m;
     public const decimal MaximumAccountExposure=.50m;
+    public const int MaximumConcurrentPositions=5;
     public const decimal MaximumDailyLoss=.05m;
     public const decimal MaximumDailyDrawdown=.08m;
     public const double MinimumRiskReward=1.8;
@@ -32,12 +33,14 @@ public static class TestnetHighOpportunityRiskProfileV1
             MaxRiskPerTrade=Math.Min(configured.MaxRiskPerTrade,MaximumLossRiskPerTrade),
             MaxSymbolExposure=Math.Min(configured.MaxSymbolExposure,MaximumSymbolExposure),
             MaxAccountExposure=Math.Min(configured.MaxAccountExposure,MaximumAccountExposure),
+            MaxConcurrentPositions=Math.Clamp(configured.MaxConcurrentPositions,1,MaximumConcurrentPositions),
             MaxDailyLoss=Math.Min(configured.MaxDailyLoss,MaximumDailyLoss),
             MaxAtrPercent=Math.Min(configured.MaxAtrPercent,MaximumAtrPercent),
             MinimumLiquidityScore=Math.Max(configured.MinimumLiquidityScore,MinimumLiquidityScore),
             MaximumSpreadBps=Math.Min(configured.MaximumSpreadBps,MaximumSpreadBps),
             MaximumSlippageBps=configured.MaximumSlippageBps,
             MinimumRiskReward=Math.Max(configured.MinimumRiskReward,MinimumRiskReward),
+            LiquidationBufferFraction=Math.Max(configured.LiquidationBufferFraction,.05m),
             ApiFailureThreshold=configured.ApiFailureThreshold,
             MaxPortfolioVaR99=configured.MaxPortfolioVaR99,
             MaxPortfolioCVaR99=configured.MaxPortfolioCVaR99,

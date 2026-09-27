@@ -49,6 +49,7 @@ public sealed class TestnetHighOpportunityRiskProfileV1Tests
         Assert.Equal(.01m,resolved.MaxRiskPerTrade);
         Assert.Equal(.25m,resolved.MaxSymbolExposure);
         Assert.Equal(.50m,resolved.MaxAccountExposure);
+        Assert.Equal(5,resolved.MaxConcurrentPositions);
         Assert.Equal(.05m,resolved.MaxDailyLoss);
         Assert.Equal(.08m,resolved.DailyDrawdownLimit);
         Assert.Equal(1.8,resolved.MinimumRiskReward);
@@ -116,7 +117,7 @@ public sealed class TestnetHighOpportunityRiskProfileV1Tests
             new TradingRule("BTCUSDT",.1m,.1m,.1m,5m,125),
             resolved);
 
-        Assert.Equal(36,effective);
+        Assert.Equal(30,effective);
         Assert.True(effective<resolved.Leverage);
     }
 

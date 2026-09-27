@@ -382,6 +382,11 @@ public static class MarketStructureIntelligence
                 return MarketStructureScenario.TrendPullbackLong;
             if (nearDemand && phase == MarketStructurePhase.BullishPullback)
                 return MarketStructureScenario.TrendPullbackLong;
+            // In an established bullish impulse, keep a continuation setup alive so a fresh
+            // 1m pullback/rejection can provide entry timing instead of waiting for another
+            // late 15m breakout candle.
+            if (phase == MarketStructurePhase.BullishImpulse && m15.State == PriceStructureState.Bullish)
+                return MarketStructureScenario.TrendPullbackLong;
         }
 
         if (bias == MarketStructureBias.Bearish)
@@ -394,6 +399,10 @@ public static class MarketStructureIntelligence
                 (nearSupply || m15.Event == MarketStructureEvent.LiquiditySweepHighReject))
                 return MarketStructureScenario.TrendPullbackShort;
             if (nearSupply && phase == MarketStructurePhase.BearishPullback)
+                return MarketStructureScenario.TrendPullbackShort;
+            // Symmetric continuation setup: wait for a fresh 1m bearish pullback signal
+            // rather than chasing a later 15m breakdown close.
+            if (phase == MarketStructurePhase.BearishImpulse && m15.State == PriceStructureState.Bearish)
                 return MarketStructureScenario.TrendPullbackShort;
         }
 

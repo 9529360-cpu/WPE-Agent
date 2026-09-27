@@ -97,10 +97,66 @@ public sealed class RiskGateTests
             limits);
 
         var intent=Assert.Single(result.Intents);
-        var effectiveLeverage=125m;
+        var effectiveLeverage=(decimal)RiskAndPositionPlanner.SelectEffectiveLeverage(
+            decision,
+            new TradingRule("BTCUSDT",.1m,.1m,.1m,5m,125),
+            limits);
         var initialMargin=intent.Quantity*intent.ExpectedPrice/effectiveLeverage;
+        Assert.True(initialMargin>0);
         Assert.True(initialMargin<=evidence.Account.Equity*.05m);
-        Assert.Equal(50m,initialMargin);
+        Assert.True(intent.Quantity*Math.Abs(intent.ExpectedPrice-intent.StopLoss)<=evidence.Account.Equity*limits.MaxRiskPerTrade);
+    }
+
+    [Fact]
+    public void PlannerBlocksSixthDistinctPositionButAllowsFifthWithinAccountBasedSizing()
+    {
+        static ManagedPosition Position(string symbol)=>new(symbol,PositionSide.Long,1m,100m,100m,0m,5m,true,80m);
+        var planner=new RiskAndPositionPlanner();
+        var market=new MarketEvidence("NEWUSDT",100m,95m,110m,50,0,0,0,new(0,0,0,0,0,0,0),DateTime.UtcNow)
+        {
+            Quality=new MarketQualityEvidence{AtrPercent=.01,LiquidityScore=1,QualityScore=100,BestBid=99.9m,BestAsk=100m}
+        };
+        var decision=new DecisionPlan
+        {
+            Action=DecisionAction.OpenLong,
+            Instrument="NEWUSDT",
+            TargetTier=1,
+            EntryPrice=100m,
+            StopLossPrice=98m,
+            TakeProfitPrice=104m,
+            RiskRewardRatio=2
+        };
+        var limits=new RiskLimits
+        {
+            Leverage=20,
+            MaxConcurrentPositions=5,
+            MaxInitialMarginPerTrade=.05m,
+            MarginTiers=[.10m],
+            MaxMargin=.50m,
+            MaxRiskPerTrade=.01m,
+            MaxSymbolExposure=.25m,
+            MaxAccountExposure=.50m,
+            MinimumRiskReward=1.8
+        };
+        EvidencePack Evidence(params string[] symbols)=>new()
+        {
+            Completeness=100,
+            Account=new AccountSnapshot(10_000m,10_000m,10_000m,DateTime.UtcNow),
+            Markets=new Dictionary<string,MarketEvidence>{{"NEWUSDT",market}},
+            Positions=symbols.Select(Position).ToArray()
+        };
+        var rule=new TradingRule("NEWUSDT",.1m,.1m,.1m,5m,125);
+
+        var fifth=planner.Plan(decision,Evidence("AUSDT","BUSDT","CUSDT","DUSDT"),rule,limits);
+        var fifthIntent=Assert.Single(fifth.Intents);
+        var leverage=(decimal)RiskAndPositionPlanner.SelectEffectiveLeverage(decision,rule,limits);
+        var fifthMargin=fifthIntent.Quantity*fifthIntent.ExpectedPrice/leverage;
+        Assert.True(fifthMargin<=10_000m*limits.MaxInitialMarginPerTrade);
+        Assert.True(fifthIntent.Quantity*Math.Abs(fifthIntent.ExpectedPrice-fifthIntent.StopLoss)<=10_000m*limits.MaxRiskPerTrade);
+
+        var sixth=planner.Plan(decision,Evidence("AUSDT","BUSDT","CUSDT","DUSDT","EUSDT"),rule,limits);
+        Assert.Empty(sixth.Intents);
+        Assert.Equal("risk.max-concurrent-positions:5",sixth.Result);
     }
 
     [Fact]
@@ -333,9 +389,34 @@ public sealed class RiskGateTests
 
         var effective=RiskAndPositionPlanner.SelectEffectiveLeverage(decision,rule,limits);
 
-        Assert.Equal(36,effective);
+        Assert.Equal(30,effective);
         Assert.True(effective<limits.Leverage);
         Assert.True(effective<=rule.MaxLeverage);
+    }
+
+    [Fact]
+    public void EffectiveLeverageKeepsRecentBtcStopInsideConservativeLiquidationReserve()
+    {
+        var decision=new DecisionPlan
+        {
+            Action=DecisionAction.OpenLong,
+            Instrument="BTCUSDT",
+            EntryPrice=84945m,
+            StopLossPrice=84428.2275m,
+            TakeProfitPrice=85875.1905m
+        };
+        var rule=new TradingRule("BTCUSDT",.0001m,.1m,.0001m,5m,125);
+        var limits=new RiskLimits{Leverage=150};
+
+        var effective=RiskAndPositionPlanner.SelectEffectiveLeverage(decision,rule,limits);
+        var stopFraction=(decision.EntryPrice-decision.StopLossPrice)/decision.EntryPrice;
+        const decimal maintenanceAllowance=.006m;
+        const decimal usableLiquidationSpan=.70m;
+        var conservativeSafeStopFraction=(1m/effective-maintenanceAllowance)*usableLiquidationSpan;
+
+        Assert.Equal(68,effective);
+        Assert.True(stopFraction<=conservativeSafeStopFraction);
+        Assert.True(effective<115);
     }
 
     [Fact]

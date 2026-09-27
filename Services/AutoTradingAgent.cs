@@ -110,6 +110,7 @@ public static class AutoTradingAgent
             MaxLossRiskPerTrade=runtimeRisk.MaxRiskPerTrade,
             MaxSymbolExposure=runtimeRisk.MaxSymbolExposure,
             MaxAccountExposure=runtimeRisk.MaxAccountExposure,
+            MaxConcurrentPositions=runtimeRisk.MaxConcurrentPositions,
             MinimumRiskReward=runtimeRisk.MinimumRiskReward,
             Environment=exchange.Environment.ToString(),
             ObservedAtUtc=DateTimeOffset.UtcNow
@@ -166,7 +167,7 @@ public static class AutoTradingAgent
         var nextOpportunityUniverseRefreshAt=DateTimeOffset.UtcNow+OpportunityUniverseSelectorV1.DefaultRefreshInterval;
         while(!ct.IsCancellationRequested)
         {
-            if(_paused){await Task.Delay(1000,ct);continue;}var cycle=Guid.NewGuid().ToString("N");var workflowStarted=false;
+            if(_paused){await Task.Delay(1000,ct);continue;}var cycle=Guid.NewGuid().ToString("N");var workflowStarted=false;var fastOpportunityFollowUp=false;
             try
             {
                 roles.Publish("market","running","Collecting fresh market evidence for the bounded market-wide opportunity cycle.");
@@ -210,7 +211,7 @@ public static class AutoTradingAgent
                 Stage("Stage.Evidence","OBSERVATION",32);var collector=new EvidenceCollector(exchange,analysisSymbols,realtime,newsResearch);var evidence=await SkillAsync("EvidenceCollector",string.Join(',',analysisSymbols),token=>collector.CollectAsync(token),x=>$"completeness={x.Completeness} markets={x.Markets.Count} missing={x.MissingSources.Count}",ct);var evidenceDelta=await SkillAsync("EvidenceDelta",$"baseline={(previousEvidence is null?"none":"present")} markets={evidence.Markets.Count}",_=>Task.FromResult(EvidenceDeltaEngineV1.Compare(evidence,previousEvidence)),x=>$"baseline={x.HasBaseline} changes={x.Signals.Count} critical={x.CriticalCount} source_degradations={x.SourceDegradationCount}",ct);await Db.SetStateAsync("market.evidence-delta:last",System.Text.Json.JsonSerializer.Serialize(evidenceDelta),ct);var marketStates=await SkillAsync("MarketState",$"markets={evidence.Markets.Count}",token=>marketStateStore.ObserveAsync(evidence.Markets,token),x=>$"states={x.Count} confirmed={x.Values.Count(s=>s.Lifecycle==MarketStateLifecycleV1.Confirmed)} transitions={x.Values.Count(s=>s.TransitionKind!=MarketStateTransitionKindV1.Stable)}",ct);evidence=MarketStateEvidenceOverlayV1.Attach(evidence,marketStates);previousEvidence=evidence;await Db.SaveNewsAsync(evidence.News,ct);var marketDegraded=evidenceDelta.SourceDegradationCount>0||marketStates.Values.Any(x=>!x.Available);roles.Publish("market",marketDegraded?"degraded":"monitoring",evidenceDelta.SourceDegradationCount>0?$"Fresh evidence collected; {evidenceDelta.SourceDegradationCount} source degradation(s) detected.":marketStates.Values.Any(x=>!x.Available)?"Fresh evidence collected; one or more persistent market states are unavailable.":"Fresh market evidence and persistent market state were updated.");await Db.StartCycleAsync(cycle,evidence,brain.Name,ct);await runtime.BeginCycleAsync(cycle,new{evidence.Completeness,Markets=evidence.Markets.Keys,OpportunityWatch=opportunityUniverse.WatchSymbols,OpportunityDeep=authorizedTradeSymbols,MarketStates=marketStates.Values.Select(x=>new{x.Symbol,x.Lifecycle,x.Bias,x.Phase,x.Scenario,x.TransitionKind,x.ObservationCount}),brain=brain.Name,decisionPath=DirectMarketStructureDecisionSkill.DecisionContextKind},ct);workflowStarted=true;
                 Stage("Stage.Research","OBSERVATION",36);await runtime.TransitionAsync(cycle,WorkflowNode.Research,new{evidence.Completeness,MarketCount=evidence.Markets.Count,ExecutionAuthority="direct-market-structure"},ct);var histories=new Dictionary<string,IReadOnlyList<CandleEvidence>>(StringComparer.OrdinalIgnoreCase);foreach(var market in evidence.Markets.Values)histories[market.Symbol]=await Db.LoadHistoricalCandlesAsync(market.Symbol,"1h",30000,ct);
                 var positionTradingRules=await ReadPositionManagementRulesAsync(exchange,positions,ct);
-                Stage("Stage.PositionManagement","RISK",39);await runtime.TransitionAsync(cycle,WorkflowNode.PositionManagement,new{Positions=positions.Count},ct);var management=await SkillAsync("PositionManagement",$"positions={positions.Count}",token=>positionManager.EvaluateAsync(positions,evidence.Markets,Db,token,executionLedger,positionTradingRules,evidence.MarketStates),x=>$"intents={x.Intents.Count} adjustments={x.ProtectionAdjustments.Count}",ct);var managementActivity=false;
+                Stage("Stage.PositionManagement","RISK",39);await runtime.TransitionAsync(cycle,WorkflowNode.PositionManagement,new{Positions=positions.Count},ct);var management=await SkillAsync("PositionManagement",$"positions={positions.Count}",token=>positionManager.EvaluateAsync(positions,evidence.Markets,Db,token,executionLedger,positionTradingRules,evidence.MarketStates,runtimeRisk),x=>$"intents={x.Intents.Count} adjustments={x.ProtectionAdjustments.Count}",ct);var managementActivity=false;
                 if(management.Intents.Count>0||management.ProtectionAdjustments.Count>0)
                 {
                     await runtime.TransitionAsync(cycle,WorkflowNode.SafetyExecution,new{RiskReducingIntents=management.Intents.Count,ProtectionAdjustments=management.ProtectionAdjustments.Count},ct);
@@ -224,7 +225,36 @@ public static class AutoTradingAgent
 
                 Stage("Stage.Aggregation","OBSERVATION",43);await runtime.TransitionAsync(cycle,WorkflowNode.Aggregation,new{ManagementIntents=management.Intents.Count,managementActivity,DecisionPath=DirectMarketStructureDecisionSkill.DecisionContextKind},ct);UpdateEvidence(evidence);
                 Stage("Stage.Planner","PLANNER",52);await runtime.TransitionAsync(cycle,WorkflowNode.Planner,new{DecisionPath=DirectMarketStructureDecisionSkill.DecisionContextKind,Markets=evidence.Markets.Count},ct);DecisionPlan proposed;string? brainRequest=null,brainResponse=null;
-                try{var brainContext=new AgentContext(brain.Name);var brainResult=await SkillAsync("BrainPlanner",$"markets={evidence.Markets.Count} direct=true",token=>brain.DecideAsync(evidence,brainContext,token),x=>$"{x.Decision.Action} {x.Decision.Instrument} direct={DirectMarketStructureDecisionSkill.IsDirect(x.Decision)}",ct);proposed=brainResult.Decision;brainRequest=brainResult.Request;brainResponse=brainResult.Response;}
+                var openPositionCount=evidence.Positions.Where(x=>x.Quantity>0).Select(x=>x.Symbol).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+                var availablePositionSlots=Math.Max(0,runtimeRisk.MaxConcurrentPositions-openPositionCount);
+                var rankedCandidates=availablePositionSlots>0
+                    ?DirectMarketStructureDecisionSkill.DecideCandidates(evidence,false,Math.Min(5,availablePositionSlots))
+                    :Array.Empty<DecisionPlan>();
+                try
+                {
+                    var brainContext=new AgentContext(brain.Name);
+                    var brainResult=await SkillAsync("BrainPlanner",$"markets={evidence.Markets.Count} direct=true candidates={rankedCandidates.Count}",token=>brain.DecideAsync(evidence,brainContext,token),x=>$"{x.Decision.Action} {x.Decision.Instrument} direct={DirectMarketStructureDecisionSkill.IsDirect(x.Decision)}",ct);
+                    proposed=brainResult.Decision;brainRequest=brainResult.Request;brainResponse=brainResult.Response;
+                    if(availablePositionSlots<=0)
+                        proposed=new(){Action=DecisionAction.Hold,Reason=$"Portfolio already has {openPositionCount} open symbols; maximum concurrent positions is {runtimeRisk.MaxConcurrentPositions}.",DecisionContextKind="portfolio-capacity"};
+                    else if(rankedCandidates.Count>0)
+                    {
+                        DecisionPlan? selected=null;
+                        foreach(var candidate in rankedCandidates)
+                        {
+                            if(!DirectMarketStructureDecisionSkill.IsDirect(candidate)||string.IsNullOrWhiteSpace(candidate.DecisionContextId))continue;
+                            if(!await Db.HasAutomaticExecutionBlockingRepeatAsync(candidate.DecisionContextId,ct)){selected=candidate;break;}
+                        }
+                        if(selected is not null)
+                        {
+                            proposed=selected;
+                            if(!string.Equals(proposed.DecisionContextId,brainResult.Decision.DecisionContextId,StringComparison.Ordinal))
+                                brainResponse=System.Text.Json.JsonSerializer.Serialize(new{source="local-ranked-candidates",selected=proposed.DecisionContextId,candidates=rankedCandidates.Select(x=>new{x.Instrument,x.Action,x.DecisionContextId}).ToArray(),primary=brainResult.Response});
+                        }
+                        else
+                            proposed=new(){Action=DecisionAction.Hold,Reason="All currently actionable ranked setups already have an active or completed execution for the same decision context.",DecisionContextKind="market-observation"};
+                    }
+                }
                 catch(BrainCallException ex){brainRequest=ex.Request;brainResponse=ex.Response;await Db.RecordErrorAsync("Brain",ex,ct);proposed=new(){Action=DecisionAction.Hold,Reason=L("Agent.BrainFailure",ex.Message)};}
                 catch(Exception ex){await Db.RecordErrorAsync("Brain",ex,ct);proposed=new(){Action=DecisionAction.Hold,Reason=L("Agent.BrainFailureShort")};}
 
@@ -245,8 +275,11 @@ public static class AutoTradingAgent
 
                 if(intents.Count>0&&tradingRule is not null)
                 {
-                    var leverage=RiskAndPositionPlanner.SelectEffectiveLeverage(decision,tradingRule,runtimeRisk);
-                    await Db.SetStateAsync("risk.leverage:last",System.Text.Json.JsonSerializer.Serialize(new{decision.Instrument,Requested=runtimeRisk.Leverage,Effective=leverage,ProviderMax=tradingRule.MaxLeverage,InitialMarginCap=runtimeRisk.MaxInitialMarginPerTrade,ObservedAtUtc=DateTimeOffset.UtcNow}),ct);
+                    var plannedOpening=intents.FirstOrDefault(x=>!x.ReduceOnly);
+                    var leverage=plannedOpening is not null&&plannedOpening.EffectiveLeverage>0
+                        ?plannedOpening.EffectiveLeverage
+                        :RiskAndPositionPlanner.SelectEffectiveLeverage(decision,tradingRule,runtimeRisk);
+                    await Db.SetStateAsync("risk.leverage:last",System.Text.Json.JsonSerializer.Serialize(new{decision.Instrument,RequestedCap=runtimeRisk.Leverage,Effective=leverage,ProviderMax=tradingRule.MaxLeverage,InitialMarginCap=runtimeRisk.MaxInitialMarginPerTrade,LiquidationBuffer=runtimeRisk.LiquidationBufferFraction,EstimatedLiquidationPrice=plannedOpening?.EstimatedLiquidationPrice??0,EstimatedRoundTripFee=plannedOpening?.EstimatedRoundTripFee??0,EstimatedExecutionCost=plannedOpening?.EstimatedExecutionCost??0,TakerFeeRate=tradingRule.TakerFeeRate,FeeRateVerified=tradingRule.FeeRateVerified,BracketCount=tradingRule.LeverageBrackets?.Count??0,ObservedAtUtc=DateTimeOffset.UtcNow}),ct);
                     if(settings.AuthorizationMode==TradingAuthorizationMode.Auto)
                     {
                         var riskIncreasingDecision=DeterministicPlanSkill.IsRiskIncreasing(decision.Action);
@@ -261,7 +294,7 @@ public static class AutoTradingAgent
                         }
                         else
                         {
-                            var created=DateTimeOffset.UtcNow;var expires=created.AddMinutes(2);var durableIntents=intents.Select((value,index)=>new DurableExecutionIntentSnapshotV1(index,value.Symbol,value.Side.ToString(),value.Quantity,value.ReduceOnly,value.StopLoss,value.TakeProfit,value.ClientOrderId,ExecutionReasonCode.ResolveForDurableIntent(value,"automatic.risk-approved"),value.Action.ToString(),value.OrderType.ToString(),value.LimitPrice,value.ExpectedPrice)).ToArray();var marketCollected=new DateTimeOffset(DateTime.SpecifyKind(proposedMarket!.CollectedAt,DateTimeKind.Utc));var artifact=new DurableExecutionArtifactV2(DurableExecutionArtifactV2.Version,cycle,durableIntents,leverage,true,exchange.ProviderId,"Testnet",decisionContextId,decisionContextVersion,marketCollected,"provider-market-v1",created,expires);var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);var saved=await Db.SaveAutomaticExecutionAsync(cycle,artifact,ct);if(!saved.Succeeded){result=saved.Code;state.ExecutionApprovalStatus="BLOCKED";}else{var receipt=new DeterministicRiskReceipt("risk-"+cycle,cycle,hashes.IntentHash,true,created,expires,null,hashes.ArtifactHash);var approved=await Db.RecordAutomaticRiskDecisionAsync(cycle,receipt,ct);result=approved.Succeeded?"automatic.risk-approved":approved.Code;state.ExecutionApprovalStatus=approved.Succeeded?"RISK_APPROVED":"BLOCKED";}
+                            var created=DateTimeOffset.UtcNow;var expires=created.AddMinutes(2);var durableIntents=intents.Select((value,index)=>new DurableExecutionIntentSnapshotV1(index,value.Symbol,value.Side.ToString(),value.Quantity,value.ReduceOnly,value.StopLoss,value.TakeProfit,value.ClientOrderId,ExecutionReasonCode.ResolveForDurableIntent(value,"automatic.risk-approved"),value.Action.ToString(),value.OrderType.ToString(),value.LimitPrice,value.ExpectedPrice)).ToArray();var marketCollected=new DateTimeOffset(DateTime.SpecifyKind(proposedMarket!.CollectedAt,DateTimeKind.Utc));var artifact=new DurableExecutionArtifactV2(DurableExecutionArtifactV2.Version,cycle,durableIntents,leverage,true,exchange.ProviderId,"Testnet",decisionContextId,decisionContextVersion,marketCollected,"provider-market-v1",created,expires);var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);var saved=await Db.SaveAutomaticExecutionAsync(cycle,artifact,ct);if(!saved.Succeeded){result=saved.Code;state.ExecutionApprovalStatus="BLOCKED";}else{var receipt=new DeterministicRiskReceipt("risk-"+cycle,cycle,hashes.IntentHash,true,created,expires,null,hashes.ArtifactHash);var approved=await Db.RecordAutomaticRiskDecisionAsync(cycle,receipt,ct);result=approved.Succeeded?"automatic.risk-approved":approved.Code;state.ExecutionApprovalStatus=approved.Succeeded?"RISK_APPROVED":"BLOCKED";if(approved.Succeeded&&riskIncreasingDecision&&openPositionCount<runtimeRisk.MaxConcurrentPositions)fastOpportunityFollowUp=true;}
                         }
                     }
                     else if(settings.AuthorizationMode==TradingAuthorizationMode.Research){result="authorization.research-read-only";state.ExecutionApprovalStatus="RESEARCH_ONLY";}
@@ -273,7 +306,7 @@ public static class AutoTradingAgent
             }
             catch(OperationCanceledException)when(ct.IsCancellationRequested){break;}
             catch(Exception ex){var state=ServiceLocator.SystemState;state.ExchangeConnected=false;state.ApiTradePermission=false;roles.Publish("decision","degraded","Direct decision cycle failed; retry remains scheduled.");if(workflowStarted)await runtime.FailCycleAsync(cycle,ex,CancellationToken.None);await Db.FailCycleAsync(cycle,state.SkillStage,ex,ct);await Db.RecordErrorAsync(state.SkillStage,ex,ct);await NotifyAgentDegradedAsync(cycle,state.SkillStage,ex);state.LastError=ex.Message;Set(AgentStatus.Degraded,L("Agent.CycleDegraded",ex.Message));}
-            roles.Publish("market",realtime.Healthy?"monitoring":"degraded",realtime.Healthy?$"Market-wide scan active; {authorizedTradeSymbols.Count} deep-analysis symbols are armed for fresh opportunity checks.":"Realtime stream is reconnecting or incomplete.");ServiceLocator.SystemState.NextCycleAtUtc=DateTime.UtcNow.AddMinutes(1);ServiceLocator.SystemState.RealtimeStatus=realtime.Status;StateChanged?.Invoke();_ = await realtime.WaitForTriggerAsync(TimeSpan.FromMinutes(1),ct);
+            roles.Publish("market",realtime.Healthy?"monitoring":"degraded",realtime.Healthy?$"Market-wide scan active; {authorizedTradeSymbols.Count} deep-analysis symbols are armed for fresh opportunity checks.":"Realtime stream is reconnecting or incomplete.");var nextCycleDelay=fastOpportunityFollowUp?TimeSpan.FromSeconds(5):TimeSpan.FromMinutes(1);ServiceLocator.SystemState.NextCycleAtUtc=DateTime.UtcNow+nextCycleDelay;ServiceLocator.SystemState.RealtimeStatus=realtime.Status;StateChanged?.Invoke();if(fastOpportunityFollowUp)await Task.Delay(nextCycleDelay,ct);else _ = await realtime.WaitForTriggerAsync(nextCycleDelay,ct);
         }
         }
         finally

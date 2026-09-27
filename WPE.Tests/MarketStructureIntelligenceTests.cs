@@ -24,7 +24,7 @@ public sealed class MarketStructureIntelligenceTests
     }
 
     [Fact]
-    public void BullishImpulseAwayFromDemandIsNotAFakeTrigger()
+    public void BullishImpulseCreatesContinuationSetupButDoesNotFakeAnEntryTrigger()
     {
         var market=Market(
             Trend(40,90m,.35m,TimeSpan.FromMinutes(15)),
@@ -32,12 +32,15 @@ public sealed class MarketStructureIntelligenceTests
             Trend(48,70m,1.1m,TimeSpan.FromHours(4)));
 
         var structure=MarketStructureIntelligence.Analyze(market);
+        var decision=DirectMarketStructureDecisionSkill.Decide(Evidence(market),false);
 
         Assert.True(structure.Available);
         Assert.Equal(MarketStructureBias.Bullish,structure.HigherTimeframeBias);
         Assert.Equal(MarketStructurePhase.BullishImpulse,structure.Phase);
-        Assert.Equal(MarketStructureScenario.None,structure.Scenario);
+        Assert.Equal(MarketStructureScenario.TrendPullbackLong,structure.Scenario);
         Assert.False(structure.TriggerPresent);
+        Assert.Equal(DecisionAction.Hold,decision.Action);
+        Assert.Contains("entry trigger is still waiting",decision.Reason,StringComparison.Ordinal);
     }
 
     [Fact]
