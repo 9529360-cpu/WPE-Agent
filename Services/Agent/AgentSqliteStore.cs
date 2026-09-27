@@ -15,6 +15,7 @@ namespace 币安量化机器人.Services.Agent;
 public sealed record IntentStatusCount(string Status,int Count);
 public sealed record IntentStateSummary(int TotalCount,int RecoverableCount,int UnknownCount,DateTimeOffset? LatestUpdatedAtUtc,IReadOnlyList<IntentStatusCount> Statuses);
 public sealed record PersistedExecutionPreflightObservation(long Id,string CycleId,string ClientOrderId,string Symbol,string Side,bool Allowed,DateTimeOffset ObservedAtUtc,string DiagnosticJson);
+public sealed record RecentExecutionLedgerRow(string Symbol,string Direction,string Action,decimal Quantity,decimal Price,decimal Notional,decimal Fee,string FeeAsset,string OrderId,string ClientOrderId,string Status,DateTimeOffset OccurredAtUtc);
 public sealed record ModelOffAuditPersistenceResult(bool Succeeded,bool Idempotent,string Code);
 public sealed record MacroObservationPersistenceResult(bool Succeeded,bool Idempotent,int Revision,string Code);
 public sealed record PersistedMacroObservation(string IndicatorId,DateTimeOffset ObservationAtUtc,int Revision,string Geography,string Frequency,string Unit,decimal Value,string SourceId,string SourceArtifactHash,DateTimeOffset FirstObservedAtUtc,DateTimeOffset? ReleasedAtUtc=null,string ReleaseTimeBasis="official-endpoint-first-observed",string? ReleaseCalendarArtifactHash=null,string? ReleaseCalendarEventId=null);
@@ -530,6 +531,49 @@ public sealed partial class AgentSqliteStore
     public async Task<PersistedAutomaticExecution?> GetAutomaticExecutionAsync(string executionId,CancellationToken ct)
     {
         if(!QueueToken(executionId,120))return null;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=AutomaticQueueReadCommand(c,"WHERE execution_id=$id",1);q.Parameters.AddWithValue("$id",executionId);await using var r=await q.ExecuteReaderAsync(ct);return await r.ReadAsync(ct)?ReadAutomaticExecution(r):null;
+    }
+
+    public async Task<IReadOnlyList<RecentExecutionLedgerRow>> GetRecentExecutionLedgerAsync(int limit,CancellationToken ct)
+    {
+        var rows=new List<RecentExecutionLedgerRow>();
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="""
+            SELECT e.symbol,e.action,e.quantity,e.avg_price,e.status,e.client_order_id,e.occurred_at,
+                   COALESCE(f.order_id,''),COALESCE(f.fee_amount,'0'),COALESCE(f.fee_asset,'')
+            FROM execution_events e
+            LEFT JOIN exchange_order_fee_evidence f ON f.evidence_id=(
+                SELECT f2.evidence_id FROM exchange_order_fee_evidence f2
+                WHERE f2.client_order_id=e.client_order_id
+                ORDER BY f2.observed_at DESC LIMIT 1)
+            WHERE e.status='FILLED'
+            ORDER BY COALESCE(e.exchange_updated_at,e.occurred_at) DESC,e.id DESC
+            LIMIT $limit
+            """;
+        q.Parameters.AddWithValue("$limit",Math.Clamp(limit,1,200));
+        await using var r=await q.ExecuteReaderAsync(ct);
+        while(await r.ReadAsync(ct))
+        {
+            var symbol=r.IsDBNull(0)?string.Empty:r.GetString(0);
+            var action=r.IsDBNull(1)?string.Empty:r.GetString(1);
+            var quantity=r.IsDBNull(2)?0:Decimal(r.GetString(2));
+            var price=r.IsDBNull(3)?0:Decimal(r.GetString(3));
+            var status=r.IsDBNull(4)?string.Empty:r.GetString(4);
+            var clientOrderId=r.IsDBNull(5)?string.Empty:r.GetString(5);
+            var occurred=r.IsDBNull(6)?DateTimeOffset.MinValue:DateTimeOffset.Parse(r.GetString(6),CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal|DateTimeStyles.AdjustToUniversal);
+            var orderId=r.IsDBNull(7)?string.Empty:r.GetString(7);
+            var fee=r.IsDBNull(8)?0:Decimal(r.GetString(8));
+            var feeAsset=r.IsDBNull(9)?string.Empty:r.GetString(9);
+            var direction=action switch
+            {
+                nameof(DecisionAction.OpenLong) or nameof(DecisionAction.AddLong)=>"买入开多",
+                nameof(DecisionAction.CloseLong) or nameof(DecisionAction.ReduceLong)=>"卖出平多",
+                nameof(DecisionAction.OpenShort) or nameof(DecisionAction.AddShort)=>"卖出开空",
+                nameof(DecisionAction.CloseShort) or nameof(DecisionAction.ReduceShort)=>"买入平空",
+                _=>action
+            };
+            rows.Add(new(symbol,direction,action,quantity,price,quantity*price,fee,feeAsset,orderId,clientOrderId,status,occurred));
+        }
+        return rows;
     }
 
     public async Task<IReadOnlyList<PersistedAutomaticExecution>> GetAutomaticExecutionQueueAsync(AutomaticExecutionQueueStatus status,int limit,CancellationToken ct)
