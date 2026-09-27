@@ -146,6 +146,43 @@ public sealed class TradingInvariantPropertyTests
     }
 
     [Fact]
+    public void EffectiveLeverageKeepsStructuralStopInsideConservativeLiquidationReserve()
+    {
+        var gen=new DeterministicGenerator(0x94D049BB133111EBUL);
+        for(var i=0;i<25_000;i++)
+        {
+            var entry=Ratio(gen.NextUInt64(),10m,100_000m);
+            var stopFraction=Ratio(gen.NextUInt64(),.001m,.20m);
+            var longSide=(gen.NextUInt64()&1UL)==0;
+            var stop=longSide?entry*(1m-stopFraction):entry*(1m+stopFraction);
+            var rewardDistance=entry*stopFraction*2.2m;
+            var take=longSide?entry+rewardDistance:entry-rewardDistance;
+            if(stop<=0||take<=0)continue;
+            var providerMax=(int)(gen.NextUInt64()%150UL)+1;
+            var decision=new DecisionPlan
+            {
+                Action=longSide?DecisionAction.OpenLong:DecisionAction.OpenShort,
+                Instrument="GENUSDT",
+                EntryPrice=entry,
+                StopLossPrice=stop,
+                TakeProfitPrice=take,
+                RiskRewardRatio=2.2
+            };
+            var rule=new TradingRule("GENUSDT",.0001m,.0001m,.0001m,1m,providerMax);
+            var limits=new RiskLimits{Leverage=150};
+
+            var effective=RiskAndPositionPlanner.SelectEffectiveLeverage(decision,rule,limits);
+            var maintenanceAllowance=providerMax>=100?.006m:providerMax>=50?.010m:providerMax>=25?.020m:.030m;
+            var conservativeLiquidationSpan=Math.Max(0m,1m/effective-maintenanceAllowance);
+            var conservativeSafeStopFraction=conservativeLiquidationSpan*.70m;
+
+            Assert.InRange(effective,1,providerMax);
+            Assert.True(stopFraction<=conservativeSafeStopFraction+.0000000001m,
+                $"case={i}; side={(longSide?"Long":"Short")}; entry={entry}; stop={stop}; stopFraction={stopFraction}; providerMax={providerMax}; effective={effective}; maintenance={maintenanceAllowance}; safeFraction={conservativeSafeStopFraction}");
+        }
+    }
+
+    [Fact]
     public void ValidExecutionReasonCodesAlwaysNormalizeWithoutMutation()
     {
         var gen=new DeterministicGenerator(0x8EBC6AF09C88C6E3UL);
