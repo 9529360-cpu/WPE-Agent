@@ -142,6 +142,10 @@ jobs:
     - name: Restore .NET
       run: dotnet restore "币安量化机器人.sln"
 
+    - name: Audit NuGet vulnerabilities
+      shell: pwsh
+      run: ./eng/dependency-audit.ps1
+
     - name: Build .NET
       run: dotnet build "币安量化机器人.sln" --configuration Release --no-restore
 
