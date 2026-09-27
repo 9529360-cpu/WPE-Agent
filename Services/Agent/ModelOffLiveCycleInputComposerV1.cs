@@ -73,18 +73,18 @@ internal static class ModelOffLiveCycleInputComposerV1
         var decision=request.DecisionReview.Decision;
         var target=decision.Instrument;
         var riskIncreasing=DeterministicPlanSkill.IsRiskIncreasing(decision.Action);
-        var directDriven=DirectMarketStructureDecisionSkill.IsDirect(decision);
+        var mediumDriven=MediumHorizonDecisionSkill.IsMediumHorizon(decision);
         request.Evidence.Markets.TryGetValue(target,out var technicalMarket);
         var technicalMarketValid=technicalMarket is not null&&MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(technicalMarket)
             &&TryUtc(technicalMarket.CollectedAt,out var technicalAt)&&Fresh(technicalAt,request.EvaluationTimeUtc);
-        var structure=technicalMarketValid?MarketStructureIntelligence.Analyze(technicalMarket!):null;
+        var structure=technicalMarketValid?MediumHorizonDecisionSkill.Analyze(technicalMarket!):null;
         var structureAvailable=structure is {Available:true};
-        var directContextValid=!riskIncreasing||(directDriven&&technicalMarket is not null&&DirectMarketStructureDecisionSkill.ContextMatches(decision,technicalMarket));
+        var mediumContextValid=!riskIncreasing||(mediumDriven&&technicalMarket is not null&&MediumHorizonDecisionSkill.ContextMatches(decision,technicalMarket));
 
         if(!technicalMarketValid)researchReasons.Add("live.research.technical-source-invalid");
-        if(!structureAvailable)researchReasons.Add("live.research.structure-unavailable");
-        if(riskIncreasing&&!directDriven)researchReasons.Add("live.research.direct-context-required");
-        if(riskIncreasing&&!directContextValid)researchReasons.Add("live.research.direct-context-stale");
+        if(!structureAvailable)researchReasons.Add("live.research.medium-horizon-unavailable");
+        if(riskIncreasing&&!mediumDriven)researchReasons.Add("live.research.medium-horizon-context-required");
+        if(riskIncreasing&&!mediumContextValid)researchReasons.Add("live.research.medium-horizon-context-stale");
 
         request.Evidence.Fundamentals.TryGetValue(target,out var targetFundamental);
         var targetFundamentalValid=targetFundamental is not null&&CryptoInstrumentFundamentalCanonicalizerV1.IsCanonical(targetFundamental,request.EvaluationTimeUtc)&&string.Equals(targetFundamental.Symbol,target,StringComparison.OrdinalIgnoreCase)&&targetFundamental.Environment=="Testnet";
@@ -108,8 +108,8 @@ internal static class ModelOffLiveCycleInputComposerV1
         if(macroValid)foreach(var item in macro.OrderBy(x=>x.IndicatorId,StringComparer.Ordinal))
             researchSources.Add(new($"macro-{item.IndicatorId.ToLowerInvariant()}-r{item.Revision}",ModelOffSourceKindV1.Macro,item.FirstObservedAtUtc,request.EvaluationTimeUtc,ModelOffSourceStatusV1.Available,"sha256:"+item.SourceArtifactHash.ToLowerInvariant()));
         if(technicalMarketValid&&structureAvailable)
-            researchSources.Add(new($"direct-structure-{target.ToLowerInvariant()}",ModelOffSourceKindV1.Market,new DateTimeOffset(technicalMarket!.CollectedAt),request.EvaluationTimeUtc,ModelOffSourceStatusV1.Available,
-                Hash(DirectStructureFact(technicalMarket,structure!))));
+            researchSources.Add(new($"medium-horizon-{target.ToLowerInvariant()}",ModelOffSourceKindV1.Market,new DateTimeOffset(technicalMarket!.CollectedAt),request.EvaluationTimeUtc,ModelOffSourceStatusV1.Available,
+                Hash(MediumHorizonFact(technicalMarket,structure!))));
         if(targetFundamentalValid)
             researchSources.Add(new("fundamental-"+target.ToLowerInvariant(),ModelOffSourceKindV1.Fundamental,targetFundamental!.ObservedAtUtc,request.EvaluationTimeUtc,ModelOffSourceStatusV1.Available,"sha256:"+targetFundamental.CanonicalSha256));
 
@@ -117,19 +117,19 @@ internal static class ModelOffLiveCycleInputComposerV1
             researchReasons.Count==0?"publish_research":"block",researchReasons,new
             {
                 target_symbol=SafeToken(target)?target:"unknown",
-                decision_path=directDriven?DirectMarketStructureDecisionSkill.DecisionContextKind:"market-observation",
+                decision_path=mediumDriven?MediumHorizonDecisionSkill.DecisionContextKind:"market-observation",
                 technical_state=technicalMarketValid&&structureAvailable?"verified":"unavailable",
-                technical_evidence_hash=technicalMarketValid&&structureAvailable?Hash(DirectStructureFact(technicalMarket!,structure!)):string.Empty,
+                technical_evidence_hash=technicalMarketValid&&structureAvailable?Hash(MediumHorizonFact(technicalMarket!,structure!)):string.Empty,
                 structure=structure is null?null:new
                 {
-                    bias=structure.HigherTimeframeBias.ToString(),
-                    phase=structure.Phase.ToString(),
-                    scenario=structure.Scenario.ToString(),
-                    trigger=structure.TriggerPresent,
-                    confirmation=structure.ConfirmationPresent,
-                    support=structure.StructuralSupport,
-                    resistance=structure.StructuralResistance,
-                    event_15m=structure.FifteenMinute.Event.ToString()
+                    daily_bias=structure.Daily.Bias.ToString(),
+                    daily_strength=structure.Daily.Strength,
+                    daily_close=structure.Daily.Close,
+                    four_hour_bias=structure.FourHour.Bias.ToString(),
+                    four_hour_strength=structure.FourHour.Strength,
+                    four_hour_close=structure.FourHour.Close,
+                    four_hour_atr=structure.FourHour.Atr,
+                    four_hour_closed_at_utc=structure.FourHour.ClosedAtUtc
                 },
                 news_evidence_count=newsValid?news.Length:0,
                 news_target_count=newsValid?news.Count(x=>NewsTargets(x,target)):0,
@@ -142,8 +142,8 @@ internal static class ModelOffLiveCycleInputComposerV1
         if(!request.DecisionReview.Accepted)strategyReasons.Add("live.strategy.review-blocked");
         if(!Enum.IsDefined(decision.Action))strategyReasons.Add("live.strategy.action-invalid");
         if(!SafeToken(decision.Instrument))strategyReasons.Add("live.strategy.instrument-invalid");
-        if(riskIncreasing&&!directDriven)strategyReasons.Add("live.strategy.direct-context-required");
-        if(riskIncreasing&&!directContextValid)strategyReasons.Add("live.strategy.direct-context-stale");
+        if(riskIncreasing&&!mediumDriven)strategyReasons.Add("live.strategy.medium-horizon-context-required");
+        if(riskIncreasing&&!mediumContextValid)strategyReasons.Add("live.strategy.medium-horizon-context-stale");
         if(riskIncreasing&&!ValidPlanGeometry(decision))strategyReasons.Add("live.strategy.plan-geometry-invalid");
         if(!ModelOffEligibilityV1.IsEligibleForDownstream(research))strategyReasons.Add("live.strategy.research-invalid");
 
@@ -272,20 +272,23 @@ internal static class ModelOffLiveCycleInputComposerV1
         confidence=value.Confidence,corroborating_sources=value.CorroboratingSources,event_type=value.EventType,is_breaking=value.IsBreaking,sentiment=value.Sentiment,
         title_sha256=Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value.Title))).ToLowerInvariant()
     };
-    private static object DirectStructureFact(MarketEvidence market,MarketStructureRead structure)=>new
+    private static object MediumHorizonFact(MarketEvidence market,MediumHorizonRead structure)=>new
     {
-        schema="wpe.live-direct-structure/1.0",
+        schema="wpe.live-medium-horizon/1.0",
         symbol=market.Symbol,
         market_evidence_sha256=market.Provenance!.CanonicalSha256,
-        higher_timeframe_bias=structure.HigherTimeframeBias.ToString(),
-        phase=structure.Phase.ToString(),
-        scenario=structure.Scenario.ToString(),
-        trigger_present=structure.TriggerPresent,
-        confirmation_present=structure.ConfirmationPresent,
-        structural_support=structure.StructuralSupport,
-        structural_resistance=structure.StructuralResistance,
-        event_15m=structure.FifteenMinute.Event.ToString(),
-        evidence_sha256=Hash(structure.Evidence.Order(StringComparer.Ordinal).ToArray())
+        daily_bias=structure.Daily.Bias.ToString(),
+        daily_strength=structure.Daily.Strength,
+        daily_close=structure.Daily.Close,
+        daily_ema20=structure.Daily.Ema20,
+        daily_ema50=structure.Daily.Ema50,
+        four_hour_bias=structure.FourHour.Bias.ToString(),
+        four_hour_strength=structure.FourHour.Strength,
+        four_hour_close=structure.FourHour.Close,
+        four_hour_ema20=structure.FourHour.Ema20,
+        four_hour_ema50=structure.FourHour.Ema50,
+        four_hour_atr=structure.FourHour.Atr,
+        four_hour_closed_at_utc=structure.FourHour.ClosedAtUtc
     };
     private static bool TryUtc(DateTime value, out DateTimeOffset result)
     {

@@ -5,7 +5,7 @@ public sealed class AutoTradingAuthorizationBoundaryTests
     [Fact]
     public void AutomaticRun_DoesNotCallReliableExecutorMutationMethodsDirectly()
     {
-        var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
+        var root=Root();
         var source=File.ReadAllText(Path.Combine(root,"Services","AutoTradingAgent.cs"));
         var start=source.IndexOf("private static async Task Run",StringComparison.Ordinal);
         var end=source.IndexOf("private static void UpdateAccount",start,StringComparison.Ordinal);
@@ -52,7 +52,7 @@ public sealed class AutoTradingAuthorizationBoundaryTests
     [Fact]
     public void ManualEmergencyClose_UsesSharedAuthorizationGateway()
     {
-        var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
+        var root=Root();
         var source=File.ReadAllText(Path.Combine(root,"Services","AutoTradingAgent.cs"));
 
         Assert.Contains("public static async Task<string> EmergencyCloseAllAsync",source,StringComparison.Ordinal);
@@ -64,7 +64,7 @@ public sealed class AutoTradingAuthorizationBoundaryTests
     [Fact]
     public void LiveSmokeMutation_IsCommandLineGatedAndUsesSharedAuthorizationGateway()
     {
-        var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
+        var root=Root();
         var smoke=File.ReadAllText(Path.Combine(root,"Services","Agent","SmokeTestRunner.cs"));
         var app=File.ReadAllText(Path.Combine(root,"App.xaml.cs"));
         var gate=app.IndexOf("--smoke-test",StringComparison.Ordinal);var call=app.IndexOf("SmokeTestRunner.RunAsync()",StringComparison.Ordinal);
@@ -77,7 +77,7 @@ public sealed class AutoTradingAuthorizationBoundaryTests
         Assert.DoesNotContain("new DeterministicRiskReceipt",smoke,StringComparison.Ordinal);
         Assert.DoesNotContain("SaveTradingApprovalReceipt",smoke,StringComparison.Ordinal);
         var run=smoke[..smoke.IndexOf("private static async Task Step",StringComparison.Ordinal)];
-        var direct=run.IndexOf("DirectMarketStructureDecisionSkill.Decide",StringComparison.Ordinal);
+        var medium=run.IndexOf("MediumHorizonDecisionSkill.Decide",StringComparison.Ordinal);
         var deterministic=run.IndexOf("Model-off deterministic readiness",StringComparison.Ordinal);
         var review=run.IndexOf("new DecisionGovernanceSkill().Review",StringComparison.Ordinal);
         var gateway=run.IndexOf("gateway.ExecuteTestnetSmokeAsync",StringComparison.Ordinal);
@@ -85,7 +85,11 @@ public sealed class AutoTradingAuthorizationBoundaryTests
         Assert.DoesNotContain("CreateBrain(",run,StringComparison.Ordinal);
         Assert.DoesNotContain("brain.HealthCheckAsync",run,StringComparison.Ordinal);
         Assert.DoesNotContain("brain.DecideAsync",run,StringComparison.Ordinal);
-        Assert.True(direct>=0&&deterministic>direct&&review>deterministic&&gateway>review);
+        Assert.True(medium>=0&&deterministic>medium&&review>deterministic&&gateway>review);
         Assert.Contains("new ReliableOrderExecutor",smoke,StringComparison.Ordinal);
     }
+
+    private static string Root()=>Environment.GetEnvironmentVariable("WPE_TEST_SOURCE_ROOT") is {Length:>0} configured
+        ?Path.GetFullPath(configured)
+        :Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
 }

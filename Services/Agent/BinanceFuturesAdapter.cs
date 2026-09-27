@@ -198,7 +198,8 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
         var canonical=C(symbol);var native=N(canonical);var observed=DateTime.UtcNow;
         var candles15m=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"15m",240,ct),"15m",observed);
         var candles1h=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"1h",160,ct),"1h",observed);
-        var candles4h=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"4h",120,ct),"4h",observed);
+        var candles4h=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"4h",160,ct),"4h",observed);
+        var candles1d=ConfirmedMarketCandlesV1.Select(await GetCandlesAsync(canonical,"1d",180,ct),"1d",observed);
         var s15=ConfirmedMarketCandlesV1.Analyze(canonical,"15m",candles15m,observed);
         var s1=ConfirmedMarketCandlesV1.Analyze(canonical,"1h",candles1h,observed);
         var s4=ConfirmedMarketCandlesV1.Analyze(canonical,"4h",candles4h,observed);
@@ -209,6 +210,7 @@ public sealed class BinanceFuturesAdapter : IExchangeProvider,IMarketDataProvide
             Candles=candles15m,
             Candles1h=candles1h,
             Candles4h=candles4h,
+            Candles1d=candles1d,
             Quality=quality
         };
     }

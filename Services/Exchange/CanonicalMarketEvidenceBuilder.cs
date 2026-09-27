@@ -17,15 +17,17 @@ internal static class CanonicalMarketEvidenceBuilder
         var observed=DateTime.UtcNow;
         var candles15Task=getCandles("15m",240,ct);
         var candles1hTask=getCandles("1h",160,ct);
-        var candles4hTask=getCandles("4h",120,ct);
+        var candles4hTask=getCandles("4h",160,ct);
+        var candles1dTask=getCandles("1d",180,ct);
         var derivativesTask=getDerivatives(ct);
 
-        await Task.WhenAll(candles15Task,candles1hTask,candles4hTask,derivativesTask);
+        await Task.WhenAll(candles15Task,candles1hTask,candles4hTask,candles1dTask,derivativesTask);
 
         var c15=ConfirmedMarketCandlesV1.Select(await candles15Task,"15m",observed);
         var c1=ConfirmedMarketCandlesV1.Select(await candles1hTask,"1h",observed);
         var c4=ConfirmedMarketCandlesV1.Select(await candles4hTask,"4h",observed);
-        if(c15.Count<31||c1.Count<31||c4.Count<31)
+        var c1d=ConfirmedMarketCandlesV1.Select(await candles1dTask,"1d",observed);
+        if(c15.Count<31||c1.Count<31||c4.Count<60||c1d.Count<60)
             throw new InvalidOperationException($"{canonicalSymbol} confirmed market history is incomplete");
 
         var sourceAt=c15[^1].OpenTime+ConfirmedMarketCandlesV1.Duration("15m");
@@ -74,6 +76,7 @@ internal static class CanonicalMarketEvidenceBuilder
             Candles=c15,
             Candles1h=c1,
             Candles4h=c4,
+            Candles1d=c1d,
             Quality=quality
         };
     }

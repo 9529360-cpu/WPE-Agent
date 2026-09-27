@@ -1,4 +1,4 @@
-﻿using Microsoft.Data.Sqlite;
+using Microsoft.Data.Sqlite;
 using System.Globalization;
 using System.Text.Json;
 using System.IO;
@@ -846,6 +846,16 @@ public sealed partial class AgentSqliteStore
         }
         return null;
     }
+    public async Task<DateTimeOffset?> GetOpeningExecutionTimeAsync(string clientOrderId,CancellationToken ct)
+    {
+        if(string.IsNullOrWhiteSpace(clientOrderId))return null;
+        await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();
+        q.CommandText="SELECT exchange_updated_at,occurred_at FROM execution_events WHERE client_order_id=$id AND reduce_only=0 AND status IN ('FILLED','PARTIALLY_FILLED') ORDER BY COALESCE(exchange_updated_at,occurred_at) LIMIT 1";
+        q.Parameters.AddWithValue("$id",clientOrderId);
+        await using var r=await q.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct))return null;
+        return ExecutionEventTime(r,0,1);
+    }
+
     public async Task<string?> GetOrderIntentStatusAsync(string clientOrderId,CancellationToken ct)
     {
         if(string.IsNullOrWhiteSpace(clientOrderId))return null;await using var c=new SqliteConnection(_cs);await c.OpenAsync(ct);await using var q=c.CreateCommand();q.CommandText="SELECT status FROM order_intents WHERE client_order_id=$id";q.Parameters.AddWithValue("$id",clientOrderId);return (await q.ExecuteScalarAsync(ct))?.ToString();

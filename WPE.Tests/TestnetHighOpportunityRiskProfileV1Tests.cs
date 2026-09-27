@@ -47,12 +47,13 @@ public sealed class TestnetHighOpportunityRiskProfileV1Tests
         Assert.Equal(150,resolved.Leverage);
         Assert.Equal(.05m,resolved.MaxInitialMarginPerTrade);
         Assert.Equal(.01m,resolved.MaxRiskPerTrade);
+        Assert.Equal(.025m,resolved.MaxPortfolioStopRisk);
         Assert.Equal(.25m,resolved.MaxSymbolExposure);
         Assert.Equal(.50m,resolved.MaxAccountExposure);
         Assert.Equal(5,resolved.MaxConcurrentPositions);
         Assert.Equal(.05m,resolved.MaxDailyLoss);
         Assert.Equal(.08m,resolved.DailyDrawdownLimit);
-        Assert.Equal(1.8,resolved.MinimumRiskReward);
+        Assert.Equal(2.2,resolved.MinimumRiskReward);
         Assert.Equal(.55,resolved.MinimumLiquidityScore);
         Assert.Equal(8,resolved.MaximumSpreadBps);
         Assert.Equal(.045,resolved.MaxAtrPercent);
@@ -124,7 +125,9 @@ public sealed class TestnetHighOpportunityRiskProfileV1Tests
     [Fact]
     public void AutoRuntimeUsesResolvedRiskProfileAcrossAllRiskIncreasingOwners()
     {
-        var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
+        var root=Environment.GetEnvironmentVariable("WPE_TEST_SOURCE_ROOT") is {Length:>0} configured
+            ?Path.GetFullPath(configured)
+            :Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
         var source=File.ReadAllText(Path.Combine(root,"Services","AutoTradingAgent.cs"));
 
         Assert.Contains("TestnetHighOpportunityRiskProfileV1.Resolve(settings.Risk,exchange.Environment)",source,StringComparison.Ordinal);

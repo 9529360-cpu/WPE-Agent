@@ -121,9 +121,9 @@ public sealed class IndependentRiskManagerSkill
         var market=evidence.Markets.GetValueOrDefault(decision.Instrument);var equity=evidence.Account.Equity;
         Check(evidence.Completeness>=70,"evidence_complete",L("RiskReview.Evidence"));
         Check(market is not null&&DateTime.UtcNow-market.CollectedAt<=TimeSpan.FromMinutes(5),"market_fresh",L("RiskReview.Stale"));
-        Check(DirectMarketStructureDecisionSkill.IsDirect(decision),"direct_market_structure_context","risk.direct-context-required");
-        if(market is not null&&DirectMarketStructureDecisionSkill.IsDirect(decision))
-            Check(DirectMarketStructureDecisionSkill.ContextMatches(decision,market),"direct_context_fresh","risk.direct-context-stale");
+        Check(MediumHorizonDecisionSkill.IsMediumHorizon(decision),"medium_horizon_context","risk.medium-horizon-context-required");
+        if(market is not null&&MediumHorizonDecisionSkill.IsMediumHorizon(decision))
+            Check(MediumHorizonDecisionSkill.ContextMatches(decision,market),"medium_horizon_context_fresh","risk.medium-horizon-context-stale");
         Check(market is not null&&market.Quality.LiquidityScore>=limits.MinimumLiquidityScore,"liquidity",L("RiskReview.Liquidity",market?.Quality.LiquidityScore??0));
         var spreadAssessment=market is null?null:ExecutionCostPolicy.AssessSpread(limits,market.Quality,decision.EntryPrice>0?decision.EntryPrice:market.Price,decision.StopLossPrice);
         Check(spreadAssessment is{Allowed:true},"spread",L("RiskReview.Spread",market?.Quality.SpreadBps??999));
@@ -239,50 +239,42 @@ public sealed class PositionManagementSkill
 
             if(!markets.TryGetValue(position.Symbol,out var market))continue;
 
+            var mediumHorizonPosition=MediumHorizonDecisionSkill.IsMediumHorizonOpening(opening);
             MarketStateSnapshotV1? currentMarketState=null;
-            if(marketStates is not null)marketStates.TryGetValue(position.Symbol,out currentMarketState);
-            var lifecycle=PositionLifecyclePolicyV1.Assess(position,opening,market,currentMarketState);
-            notes.Add($"position-lifecycle:{position.Symbol}:{position.Side}:{lifecycle.Stage}:r={lifecycle.FavorableR:F2}:anchor={lifecycle.StructuralAnchor:F4}");
-
-            if(lifecycle.Stage==PositionLifecycleStageV1.ConfirmedReversal&&currentMarketState is not null)
+            PositionLifecycleAssessmentV1? lifecycle=null;
+            if(mediumHorizonPosition)
             {
-                var actionId=ActionId("STATE",opening);
-                if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
-                    intents.Add(new(
-                        position.Symbol,
-                        position.Side,
-                        position.Quantity,
-                        true,
-                        0,
-                        0,
-                        actionId,
-                        L("Position.StructureInvalidated"),
-                        position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
-                        ExpectedPrice:market.Price,
-                        ReasonCode:PositionExitReasonCodes.MarketStateReversal));
-                notes.Add($"market-state-reversal:{position.Symbol}:{position.Side}:{currentMarketState.TransitionKind}:{currentMarketState.Bias}:{currentMarketState.Scenario}:observations={currentMarketState.ObservationCount}");
-                continue;
+                var medium=MediumHorizonDecisionSkill.Analyze(market);
+                var openingAt=await db.GetOpeningExecutionTimeAsync(opening.ClientOrderId,ct);
+                var ordinaryThesisExitEligible=openingAt is not null&&MediumHorizonDecisionSkill.HasFullPostEntryFourHourBar(openingAt.Value,market);
+                notes.Add($"position-medium-horizon:{position.Symbol}:{position.Side}:daily={medium.Daily.Bias}:h4={medium.FourHour.Bias}:closed={medium.FourHour.ClosedAtUtc:O}:post-entry-4h={(ordinaryThesisExitEligible?1:0)}");
+                if(!ordinaryThesisExitEligible)
+                    notes.Add($"medium-horizon-thesis-exit-locked:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
+                else if(MediumHorizonDecisionSkill.PositionInvalidated(position,market))
+                {
+                    var actionId=ActionId("MHSTRUCT",opening);
+                    if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
+                        intents.Add(new(
+                            position.Symbol,
+                            position.Side,
+                            position.Quantity,
+                            true,
+                            0,
+                            0,
+                            actionId,
+                            L("Position.StructureInvalidated"),
+                            position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
+                            ExpectedPrice:market.Price,
+                            ReasonCode:PositionExitReasonCodes.StructureInvalidated));
+                    notes.Add($"medium-horizon-invalidated:{position.Symbol}:{position.Side}:daily={medium.Daily.Bias}:h4={medium.FourHour.Bias}:closed={medium.FourHour.ClosedAtUtc:O}");
+                    continue;
+                }
             }
-
-            if(DirectMarketStructureDecisionSkill.PositionInvalidated(position,market))
+            else
             {
-                var actionId=ActionId("STRUCT",opening);
-                if(await db.GetOrderIntentStatusAsync(actionId,ct) is null)
-                    intents.Add(new(
-                        position.Symbol,
-                        position.Side,
-                        position.Quantity,
-                        true,
-                        0,
-                        0,
-                        actionId,
-                        L("Position.StructureInvalidated"),
-                        position.Side==PositionSide.Long?DecisionAction.CloseLong:DecisionAction.CloseShort,
-                        ExpectedPrice:market.Price,
-                        ReasonCode:PositionExitReasonCodes.StructureInvalidated));
-                var structure=MarketStructureIntelligence.Analyze(market);
-                notes.Add($"direct-structure-invalidated:{position.Symbol}:{position.Side}:{structure.HigherTimeframeBias}:{structure.FifteenMinute.Event}");
-                continue;
+                if(marketStates is not null)marketStates.TryGetValue(position.Symbol,out currentMarketState);
+                lifecycle=PositionLifecyclePolicyV1.Assess(position,opening,market,currentMarketState);
+                notes.Add($"position-legacy-protected-only:{position.Symbol}:{position.Side}:{lifecycle.Stage}:r={lifecycle.FavorableR:F2}:intraday-exit-authority=retired");
             }
 
             var risk=Math.Abs(position.EntryPrice-opening.StopLoss);
@@ -319,6 +311,13 @@ public sealed class PositionManagementSkill
                 continue;
             }
 
+            if(mediumHorizonPosition)
+            {
+                notes.Add($"medium-horizon-static-protection:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
+                continue;
+            }
+
+            var legacyLifecycle=lifecycle!;
             var partialId=ActionId("TP2",opening);
             var partialState=await db.GetOrderIntentStatusAsync(partialId,ct);
             if(favorable>=2&&partialState is null)
@@ -368,20 +367,21 @@ public sealed class PositionManagementSkill
                 notes.Add($"breakeven:{position.Symbol}:{position.Side}:{opening.ClientOrderId}");
             }
 
+            var activeLifecycle=lifecycle!;
             var partialCompleted=partialState is "COMPLETED" or "COMPLETED_PARTIAL";
             if(favorable>=2&&partialCompleted&&protectionState=="COMPLETED")
             {
-                if(lifecycle.FreshState&&lifecycle.Stage==PositionLifecycleStageV1.NormalPullback)
+                if(activeLifecycle.FreshState&&activeLifecycle.Stage==PositionLifecycleStageV1.NormalPullback)
                 {
-                    notes.Add($"structure-profit-lock-deferred-normal-pullback:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:anchor={lifecycle.StructuralAnchor}");
+                    notes.Add($"structure-profit-lock-deferred-normal-pullback:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:anchor={activeLifecycle.StructuralAnchor}");
                     continue;
                 }
-                if(lifecycle.FreshState&&lifecycle.Stage is not PositionLifecycleStageV1.ProfitExpansion and not PositionLifecycleStageV1.ExhaustionRisk)
+                if(activeLifecycle.FreshState&&activeLifecycle.Stage is not PositionLifecycleStageV1.ProfitExpansion and not PositionLifecycleStageV1.ExhaustionRisk)
                 {
-                    notes.Add($"structure-profit-lock-deferred-lifecycle:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:{lifecycle.Stage}");
+                    notes.Add($"structure-profit-lock-deferred-lifecycle:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:{activeLifecycle.Stage}");
                     continue;
                 }
-                if(!lifecycle.FreshState&&profitLockState is not null)
+                if(!activeLifecycle.FreshState&&profitLockState is not null)
                     continue;
                 if(tradingRules is null||!tradingRules.TryGetValue(position.Symbol,out var rule)||rule.TickSize<=0)
                 {
@@ -392,8 +392,8 @@ public sealed class PositionManagementSkill
                 var breakevenAnchor=position.Side==PositionSide.Long
                     ?Math.Max(position.EntryPrice,openingEntry)
                     :Math.Min(position.EntryPrice,openingEntry);
-                var structureLevel=lifecycle.FreshState&&lifecycle.StructuralAnchor>0
-                    ?lifecycle.StructuralAnchor
+                var structureLevel=activeLifecycle.FreshState&&activeLifecycle.StructuralAnchor>0
+                    ?activeLifecycle.StructuralAnchor
                     :position.Side==PositionSide.Long?market.Support:market.Resistance;
                 var structureBuffer=Math.Max(risk*.10m,market.Price*.0003m);
                 var rawStop=position.Side==PositionSide.Long
@@ -415,7 +415,7 @@ public sealed class PositionManagementSkill
                     :stop<currentProtectedStop&&stop>market.Price&&stop>opening.TakeProfit);
                 if(validStop)
                 {
-                    var adjustmentId=lifecycle.FreshState&&currentMarketState is not null
+                    var adjustmentId=activeLifecycle.FreshState&&currentMarketState is not null
                         ?RatchetActionId(opening,currentMarketState,stop)
                         :profitLockId;
                     var adjustmentState=string.Equals(adjustmentId,profitLockId,StringComparison.Ordinal)
@@ -424,13 +424,13 @@ public sealed class PositionManagementSkill
                     if(adjustmentState is null)
                     {
                         protections.Add(new(position.Symbol,position.Side,stop,opening.TakeProfit,L("Position.StructureProfitLock"),adjustmentId,opening.ClientOrderId));
-                        notes.Add(lifecycle.FreshState
-                            ?$"structure-profit-ratchet:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:stop={stop}:lifecycle={lifecycle.Stage}"
-                            :$"structure-profit-lock:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:lifecycle={lifecycle.Stage}");
+                        notes.Add(activeLifecycle.FreshState
+                            ?$"structure-profit-ratchet:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:stop={stop}:lifecycle={activeLifecycle.Stage}"
+                            :$"structure-profit-lock:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:lifecycle={activeLifecycle.Stage}");
                     }
                     else notes.Add($"structure-profit-ratchet-already-attempted:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:{adjustmentState}");
                 }
-                else notes.Add($"structure-profit-lock-waiting:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:lifecycle={lifecycle.Stage}");
+                else notes.Add($"structure-profit-lock-waiting:{position.Symbol}:{position.Side}:{opening.ClientOrderId}:level={structureLevel}:lifecycle={activeLifecycle.Stage}");
             }
         }
         return new(intents,protections,notes);

@@ -239,7 +239,9 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     [Fact]
     public void ProductionCompositionRoot_WiresTradingExecutionGatewayToReliableOrderExecutor()
     {
-        var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
+        var root=Environment.GetEnvironmentVariable("WPE_TEST_SOURCE_ROOT") is {Length:>0} configured
+            ?Path.GetFullPath(configured)
+            :Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","..","..",".."));
         var source=File.ReadAllText(Path.Combine(root,"Services","AutoTradingAgent.cs"));
 
         Assert.Contains("var executor=new ReliableOrderExecutor(",source,StringComparison.Ordinal);

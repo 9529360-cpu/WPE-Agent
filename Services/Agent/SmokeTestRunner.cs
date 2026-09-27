@@ -45,14 +45,14 @@ public static class SmokeTestRunner
             var positions=await exchange.GetPositionsAsync(ct);symbol=settings.Symbols.FirstOrDefault(s=>positions.All(p=>!p.Symbol.Equals(s,StringComparison.OrdinalIgnoreCase)));if(symbol is null)throw new InvalidOperationException(settings.Symbols.Count==0?"未配置交易品种，请先在 Setup 中选择至少一个品种":"所有已配置品种均已有仓位，无法选择不干扰现有仓位的冒烟品种");
             TradingRule? rule=null;MarketEvidence? market=null;DateTimeOffset ruleObservedAt=default;await Step(report,"交易规则与市场证据",async()=>{rule=await exchange.GetRulesAsync(symbol,ct);ruleObservedAt=DateTimeOffset.UtcNow;market=await exchange.GetMarketAsync(symbol,ct);market=realtime?.Enrich(market)??market;if(rule.StepSize<=0||rule.MinQuantity<=0||market.Price<=0)throw new InvalidOperationException("交易规则或市场价格无效");return $"{symbol} price={market.Price:F2}, step={rule.StepSize}, minQty={rule.MinQuantity}, minNotional={rule.MinNotional}, basis={market.Derivatives.Basis:P4}";});
             EvidencePack? evidence=null;await Step(report,"完整证据包与新闻",async()=>{evidence=await new EvidenceCollector(exchange,settings.Symbols,realtime).CollectAsync(ct);if(evidence.Markets.Count==0)throw new InvalidOperationException("没有可用市场证据");return $"completeness={evidence.Completeness}/100, markets={evidence.Markets.Count}, news={evidence.News.Count}, missing={string.Join(',',evidence.MissingSources)}";});
-            DecisionPlan? directPlan=null;await Step(report,"Direct candle-structure decision",()=>{directPlan=DirectMarketStructureDecisionSkill.Decide(evidence!,false);if(string.IsNullOrWhiteSpace(directPlan.Instrument)&&evidence!.Markets.Count>0)throw new InvalidOperationException("direct decision did not identify a market");return Task.FromResult($"{directPlan.Action} {directPlan.Instrument} · {directPlan.Reason}");});
+            DecisionPlan? mediumPlan=null;await Step(report,"Daily/4h medium-horizon decision",()=>{mediumPlan=MediumHorizonDecisionSkill.Decide(evidence!);if(string.IsNullOrWhiteSpace(mediumPlan.Instrument)&&evidence!.Markets.Count>0)throw new InvalidOperationException("medium-horizon decision did not identify a market");return Task.FromResult($"{mediumPlan.Action} {mediumPlan.Instrument} · {mediumPlan.Reason}");});
             await Step(report,"Model-off deterministic readiness",()=>
             {
-                var plan=directPlan??throw new InvalidOperationException("direct decision unavailable");
+                var plan=mediumPlan??throw new InvalidOperationException("medium-horizon decision unavailable");
                 var review=new DecisionGovernanceSkill().Review(plan,evidence!,settings.Decision);
                 var verdict=ModelOffSmokeSafetyVerdict.Evaluate(review.Accepted&&!string.IsNullOrWhiteSpace(review.Explanation),CanonicalSmokeInputsValid(evidence!,plan));
                 if(!verdict.Allowed)throw new InvalidOperationException(verdict.Code);
-                return Task.FromResult($"{verdict.Code}; action={review.Decision.Action}; instrument={review.Decision.Instrument}; local_direct=true");
+                return Task.FromResult($"{verdict.Code}; action={review.Decision.Action}; instrument={review.Decision.Instrument}; horizon=daily-4h");
             });
             await Step(report,"最小仓位开仓、成交与保护单",async()=>
             {
@@ -97,7 +97,7 @@ public static class SmokeTestRunner
         if(!evidence.Markets.TryGetValue(decision.Instrument,out var market)||market is null)return false;
         if(!MarketEvidenceProvenanceCanonicalizerV1.IsCanonical(market)||market.Price<=0||market.CollectedAt.Kind!=DateTimeKind.Utc)return false;
         if(!DeterministicPlanSkill.IsRiskIncreasing(decision.Action))return decision.Action==DecisionAction.Hold;
-        return DirectMarketStructureDecisionSkill.IsDirect(decision)&&DirectMarketStructureDecisionSkill.ContextMatches(decision,market);
+        return MediumHorizonDecisionSkill.IsMediumHorizon(decision)&&MediumHorizonDecisionSkill.ContextMatches(decision,market);
     }
     internal static SmokeMutationGateResult AssessMutationReadiness(SmokeMutationReadiness readiness,DateTimeOffset now)
     {

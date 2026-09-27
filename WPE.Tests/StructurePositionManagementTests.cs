@@ -59,7 +59,7 @@ public sealed class StructurePositionManagementTests
     }
 
     [Fact]
-    public async Task ConfirmedScenarioFlipClosesManagedLongWithStateReason()
+    public async Task LegacyIntradayScenarioFlipCannotForceAFullExit()
     {
         var path=TempDb();
         try
@@ -86,13 +86,9 @@ public sealed class StructurePositionManagementTests
                 tradingRules:Rules(),
                 marketStates:states);
 
-            var intent=Assert.Single(result.Intents);
-            Assert.True(intent.ReduceOnly);
-            Assert.Equal(DecisionAction.CloseLong,intent.Action);
-            Assert.Equal(PositionExitReasonCodes.MarketStateReversal,intent.ReasonCode);
-            Assert.StartsWith("WPE-PM-STATE-",intent.ClientOrderId,StringComparison.Ordinal);
-            Assert.Contains(result.Notes,x=>x.StartsWith("market-state-reversal:",StringComparison.Ordinal));
-            Assert.Empty(result.ProtectionAdjustments);
+            Assert.DoesNotContain(result.Intents,x=>x.Action==DecisionAction.CloseLong||x.Action==DecisionAction.CloseShort);
+            Assert.Contains(result.Notes,x=>x.StartsWith("position-legacy-protected-only:",StringComparison.Ordinal));
+            Assert.DoesNotContain(result.Notes,x=>x.StartsWith("market-state-reversal:",StringComparison.Ordinal));
         }
         finally
         {
