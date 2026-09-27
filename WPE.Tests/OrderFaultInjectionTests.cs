@@ -16,6 +16,43 @@ public sealed class OrderFaultInjectionTests : IDisposable
         ServiceLocator.SystemState.Status = AgentStatus.Running;
     }
 
+    [Theory]
+    [InlineData(PositionSide.Long, 48_000, 49_999, 50_001)]
+    [InlineData(PositionSide.Short, 52_000, 49_999, 50_001)]
+    public async Task PreflightUsesExecutableBookQuoteInsteadOfConfirmedCandlePrice(
+        PositionSide side,decimal staleCandlePrice,decimal bestBid,decimal bestAsk)
+    {
+        var market=new MarketEvidence(
+            "BTCUSDT",staleCandlePrice,49_000m,51_000m,50,0,0,0,
+            new(0,0,0,0,0,0,0),DateTime.UtcNow)
+        {
+            Quality=new()
+            {
+                QualityScore=100,
+                LiquidityScore=1,
+                SpreadBps=4,
+                AtrPercent=.01,
+                BestBid=bestBid,
+                BestAsk=bestAsk
+            }
+        };
+        var exchange=new QuoteMarketExchange(market);
+        var (executor,store)=CreateExecutor(exchange);
+        var intent=Opening("book-quote-preflight",.01m) with
+        {
+            Side=side,
+            Action=side==PositionSide.Long?DecisionAction.OpenLong:DecisionAction.OpenShort,
+            ExpectedPrice=50_000m
+        };
+
+        var result=await executor.ExecuteAsync("cycle-book-quote",intent,10,true,CancellationToken.None);
+
+        Assert.Contains("Execution.Protected",result,StringComparison.Ordinal);
+        Assert.Single(exchange.MarketRequests);
+        Assert.Single(exchange.ProtectionRequests);
+        Assert.Empty(await store.GetRecoverableIntentsAsync(CancellationToken.None));
+    }
+
     [Fact]
     public async Task PartialOpeningFill_IsProtectedAndStopsThePlan()
     {
@@ -263,6 +300,11 @@ public sealed class OrderFaultInjectionTests : IDisposable
         }
     }
 
+    private sealed class QuoteMarketExchange(MarketEvidence market) : ScriptedExchange
+    {
+        public override Task<MarketEvidence> GetMarketAsync(string symbol,CancellationToken ct)=>Task.FromResult(market);
+    }
+
     private sealed class ConcurrentIdempotentExchange : ExchangeStub
     {
         private readonly ConcurrentDictionary<string, ExchangeOrder> _orders = new(StringComparer.Ordinal);
@@ -353,7 +395,7 @@ public sealed class OrderFaultInjectionTests : IDisposable
         public Task<AccountSnapshot> GetAccountAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<TradingRule> GetRulesAsync(string symbol, CancellationToken ct) => throw new NotSupportedException();
-        public Task<MarketEvidence> GetMarketAsync(string symbol, CancellationToken ct) => Task.FromResult(HealthyMarket(symbol));
+        public virtual Task<MarketEvidence> GetMarketAsync(string symbol, CancellationToken ct) => Task.FromResult(HealthyMarket(symbol));
         public Task<IReadOnlyList<DerivativesSnapshot>> GetDerivativeHistoryAsync(string symbol, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<CandleEvidence>> GetCandlesAsync(string symbol,string interval,int limit,CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<CandleEvidence>> GetCandlesRangeAsync(string symbol,string interval,DateTime start,DateTime end,int limit,CancellationToken ct) => throw new NotSupportedException();

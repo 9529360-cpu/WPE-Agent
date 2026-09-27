@@ -600,7 +600,16 @@ public sealed class ReliableOrderExecutor:ITradingMutationExecutor,IDurableRevie
     {
         var market=await _ex.GetMarketAsync(intent.Symbol,ct);var quality=market.Quality;
         if(quality.QualityScore<65||quality.LiquidityScore<_limits.MinimumLiquidityScore||quality.SpreadBps>_limits.MaximumSpreadBps||quality.AtrPercent>_limits.MaxAtrPercent)throw new InvalidOperationException(L("Execution.PreflightBlocked",quality.QualityScore,quality.LiquidityScore,quality.SpreadBps,quality.AtrPercent));
-        if(intent.ExpectedPrice>0){var slippage=Math.Abs((double)((market.Price-intent.ExpectedPrice)/intent.ExpectedPrice))*10000;if(slippage>_limits.MaximumSlippageBps)throw new InvalidOperationException(L("Execution.SlippageBlocked",slippage,_limits.MaximumSlippageBps));}
+        if(intent.ExpectedPrice>0)
+        {
+            var executablePrice=intent.Side==PositionSide.Long&&quality.BestAsk>0
+                ?quality.BestAsk
+                :intent.Side==PositionSide.Short&&quality.BestBid>0
+                    ?quality.BestBid
+                    :market.Price;
+            var slippage=Math.Abs((double)((executablePrice-intent.ExpectedPrice)/intent.ExpectedPrice))*10000;
+            if(slippage>_limits.MaximumSlippageBps)throw new InvalidOperationException(L("Execution.SlippageBlocked",slippage,_limits.MaximumSlippageBps));
+        }
     }
     private async Task<ExchangeOrder> SubmitIdempotentlyAsync(ExecutionIntent intent,CancellationToken ct)
     {
