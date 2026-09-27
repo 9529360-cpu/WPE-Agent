@@ -97,7 +97,10 @@ public sealed class RiskGateTests
             limits);
 
         var intent=Assert.Single(result.Intents);
-        var effectiveLeverage=125m;
+        var effectiveLeverage=(decimal)RiskAndPositionPlanner.SelectEffectiveLeverage(
+            decision,
+            new TradingRule("BTCUSDT",.1m,.1m,.1m,5m,125),
+            limits);
         var initialMargin=intent.Quantity*intent.ExpectedPrice/effectiveLeverage;
         Assert.True(initialMargin<=evidence.Account.Equity*.05m);
         Assert.Equal(50m,initialMargin);
@@ -333,9 +336,34 @@ public sealed class RiskGateTests
 
         var effective=RiskAndPositionPlanner.SelectEffectiveLeverage(decision,rule,limits);
 
-        Assert.Equal(36,effective);
+        Assert.Equal(30,effective);
         Assert.True(effective<limits.Leverage);
         Assert.True(effective<=rule.MaxLeverage);
+    }
+
+    [Fact]
+    public void EffectiveLeverageKeepsRecentBtcStopInsideConservativeLiquidationReserve()
+    {
+        var decision=new DecisionPlan
+        {
+            Action=DecisionAction.OpenLong,
+            Instrument="BTCUSDT",
+            EntryPrice=84945m,
+            StopLossPrice=84428.2275m,
+            TakeProfitPrice=85875.1905m
+        };
+        var rule=new TradingRule("BTCUSDT",.0001m,.1m,.0001m,5m,125);
+        var limits=new RiskLimits{Leverage=150};
+
+        var effective=RiskAndPositionPlanner.SelectEffectiveLeverage(decision,rule,limits);
+        var stopFraction=(decision.EntryPrice-decision.StopLossPrice)/decision.EntryPrice;
+        const decimal maintenanceAllowance=.006m;
+        const decimal usableLiquidationSpan=.70m;
+        var conservativeSafeStopFraction=(1m/effective-maintenanceAllowance)*usableLiquidationSpan;
+
+        Assert.Equal(68,effective);
+        Assert.True(stopFraction<=conservativeSafeStopFraction);
+        Assert.True(effective<115);
     }
 
     [Fact]
