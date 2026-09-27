@@ -37,7 +37,14 @@ public sealed class RiskAndPositionPlanner
         if(!DeterministicPlanSkill.IsRiskIncreasing(decision.Action)||decision.EntryPrice<=0||decision.StopLossPrice<=0)return requested;
         var stopFraction=Math.Abs(decision.EntryPrice-decision.StopLossPrice)/decision.EntryPrice;
         if(stopFraction<=0)return 1;
-        var structuralMax=(int)Math.Floor(.70m/stopFraction);
+        // A futures liquidation price is materially closer than entry*(1-1/leverage)
+        // because maintenance margin consumes part of the nominal leverage span. Keep the
+        // planned stop inside the same 30% liquidation reserve used by PositionManagementSkill,
+        // while applying a conservative maintenance-margin allowance before the position exists.
+        const decimal usableLiquidationSpan=.70m;
+        var maintenanceAllowance=providerMax>=100?.006m:providerMax>=50?.010m:providerMax>=25?.020m:.030m;
+        var requiredNominalSpan=stopFraction/usableLiquidationSpan+maintenanceAllowance;
+        var structuralMax=(int)Math.Floor(1m/Math.Max(requiredNominalSpan,.00000001m));
         return Math.Clamp(Math.Min(requested,structuralMax),1,providerMax);
     }
 
