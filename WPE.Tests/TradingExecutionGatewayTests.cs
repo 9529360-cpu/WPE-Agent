@@ -85,6 +85,45 @@ public sealed class TradingExecutionGatewayTests:IDisposable
     }
 
     [Fact]
+    public async Task AutomaticGatewayClassifiesPersistedPreflightBlockAsKnownRejection()
+    {
+        var setup=Setup(TradingAuthorizationMode.Auto);
+        setup.Exchange.MarketOverride=new MarketEvidence(
+            "BTCUSDT",50_000m,49_000m,51_000m,50,0,0,0,new(0,1,1,1,1,1,0),Now.UtcDateTime)
+        {
+            Quality=new()
+            {
+                QualityScore=100,
+                LiquidityScore=1,
+                SpreadBps=25,
+                AtrPercent=.01,
+                BestBid=49_900m,
+                BestAsk=50_100m
+            }
+        };
+        var artifact=AutomaticArtifact();
+        var hashes=DurableExecutionArtifactCanonicalizerV2.ComputeHashes(artifact);
+        var receipt=new DeterministicRiskReceipt(
+            "risk-auto-preflight",artifact.CorrelationId,hashes.IntentHash,true,Now.AddSeconds(-5),Now.AddMinutes(1),null,hashes.ArtifactHash);
+
+        Assert.True((await setup.Store.SaveAutomaticExecutionAsync(artifact.CorrelationId,artifact,CancellationToken.None)).Succeeded);
+        Assert.True((await setup.Store.RecordAutomaticRiskDecisionAsync(artifact.CorrelationId,receipt,CancellationToken.None)).Succeeded);
+        Assert.True((await setup.Store.TryClaimAutomaticExecutionAsync(artifact.CorrelationId,"worker",TimeSpan.FromSeconds(30),CancellationToken.None)).Claimed);
+        Assert.True((await setup.Store.TryTransitionAutomaticExecutionAsync(
+            artifact.CorrelationId,AutomaticExecutionQueueStatus.Claimed,AutomaticExecutionQueueStatus.Executing,
+            "worker","automatic.executing",CancellationToken.None)).Succeeded);
+
+        var result=await new TradingAutomaticExecutionGateway(setup.Gateway,setup.Exchange,setup.Store,null,()=>Now)
+            .ExecuteAsync(artifact,receipt,CancellationToken.None);
+
+        Assert.Equal(AutomaticGatewayExecutionState.Rejected,result.State);
+        Assert.Equal("automatic.preflight-blocked",result.Code);
+        Assert.Equal("PREFLIGHT_BLOCKED",await setup.Store.GetOrderIntentStatusAsync("client-1",CancellationToken.None));
+        Assert.False(await setup.Store.HasExecutionSubmissionJournalAsync("client-1",CancellationToken.None));
+        Assert.Equal(0,setup.Exchange.MutationCount);
+    }
+
+    [Fact]
     public async Task AutomaticOrderObserverConfirmsMatchingExchangeOrderWithoutMutation()
     {
         var setup=Setup(TradingAuthorizationMode.Auto);var artifact=AutomaticArtifact();
@@ -482,11 +521,12 @@ public sealed class TradingExecutionGatewayTests:IDisposable
         public int MutationCount{get;private set;}
         public int AccountModeMutationCount{get;private set;}
         public ExchangeOrder? ObservedOrder{get;set;}
+        public MarketEvidence? MarketOverride{get;set;}
         public Task<AccountSnapshot> GetAccountAsync(CancellationToken ct)=>Task.FromResult(new AccountSnapshot(1_000,1_000,1_000,DateTime.UtcNow));
         public Task<IReadOnlyList<ManagedPosition>> GetPositionsAsync(CancellationToken ct)=>Task.FromResult<IReadOnlyList<ManagedPosition>>([]);
         public Task<IReadOnlyList<ExchangeOrder>> GetOpenOrdersAsync(string? symbol,CancellationToken ct)=>Task.FromResult<IReadOnlyList<ExchangeOrder>>([]);
         public Task<TradingRule> GetRulesAsync(string symbol,CancellationToken ct)=>Task.FromResult(new TradingRule(symbol,.001m,.1m,.001m,5m,20));
-        public Task<MarketEvidence> GetMarketAsync(string symbol,CancellationToken ct)=>Task.FromResult(new MarketEvidence(symbol,50_000m,49_000m,51_000m,50,0,0,0,new(0,1,1,1,1,1,0),DateTime.UtcNow){Quality=new(){QualityScore=100,LiquidityScore=1,SpreadBps=1,AtrPercent=.01,BestBid=49_999m,BestAsk=50_001m}});
+        public Task<MarketEvidence> GetMarketAsync(string symbol,CancellationToken ct)=>Task.FromResult(MarketOverride??new MarketEvidence(symbol,50_000m,49_000m,51_000m,50,0,0,0,new(0,1,1,1,1,1,0),DateTime.UtcNow){Quality=new(){QualityScore=100,LiquidityScore=1,SpreadBps=1,AtrPercent=.01,BestBid=49_999m,BestAsk=50_001m}});
         public Task<IReadOnlyList<DerivativesSnapshot>> GetDerivativeHistoryAsync(string symbol,CancellationToken ct)=>Task.FromResult<IReadOnlyList<DerivativesSnapshot>>([]);
         public Task<IReadOnlyList<CandleEvidence>> GetCandlesAsync(string symbol,string interval,int limit,CancellationToken ct)=>Task.FromResult<IReadOnlyList<CandleEvidence>>([]);
         public Task<IReadOnlyList<CandleEvidence>> GetCandlesRangeAsync(string symbol,string interval,DateTime start,DateTime end,int limit,CancellationToken ct)=>Task.FromResult<IReadOnlyList<CandleEvidence>>([]);
