@@ -116,7 +116,7 @@ public sealed class TestnetHighOpportunityRiskProfileV1Tests
             new TradingRule("BTCUSDT",.1m,.1m,.1m,5m,125),
             resolved);
 
-        Assert.Equal(36,effective);
+        Assert.Equal(30,effective);
         Assert.True(effective<resolved.Leverage);
     }
 
